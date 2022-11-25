@@ -1,3 +1,3 @@
 #!/usr/bin/env sh
 
-make test
+CPUS=1 make lint test
