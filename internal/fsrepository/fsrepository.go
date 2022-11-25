@@ -23,6 +23,7 @@ func New(root string) *FSRepository {
 
 func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	var paths []string
+
 	err := filepath.WalkDir(r.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -37,8 +38,9 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			panic(err.(*fs.PathError).Path + ": no such file or directory")
+		var pathError *fs.PathError
+		if errors.As(err, &pathError) {
+			panic(pathError.Path + ": no such file or directory")
 		}
 
 		panic(err.Error())
@@ -46,7 +48,8 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 
 	sort.Strings(paths)
 
-	var sourceFiles = make([]*gosourcefile.GoSourceFile, len(paths))
+	sourceFiles := make([]*gosourcefile.GoSourceFile, len(paths))
+
 	for i, path := range paths {
 		data, _ := os.ReadFile(path)
 		relativePath, _ := filepath.Rel(r.root, path)

@@ -1,0 +1,27 @@
+linters:
+  enable-all: true
+  disable:
+    - deadcode
+    - exhaustivestruct
+    - golint
+    - ifshort
+    - interfacer
+    - maligned
+    - nosnakecase
+    - scopelint
+    - structcheck
+    - varcheck
+    # doesn't work with generics
+    - rowserrcheck
+    - sqlclosecheck
+    - wastedassign
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: true
+
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - funlen
