@@ -4,8 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/gtramontina/ooze/fsrepository"
-	"github.com/gtramontina/ooze/gosourcefile"
+	"github.com/gtramontina/ooze/internal/fsrepository"
+	"github.com/gtramontina/ooze/internal/gosourcefile"
+
 	"github.com/stretchr/testify/assert"
 )
 

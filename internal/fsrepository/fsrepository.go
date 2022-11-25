@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gtramontina/ooze/gosourcefile"
+	"github.com/gtramontina/ooze/internal/gosourcefile"
 )
 
 type FSRepository struct {
