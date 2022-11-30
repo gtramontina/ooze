@@ -1,3 +1,6 @@
+# Reference:
+# https://github.com/golangci/golangci-lint/blob/master/.golangci.reference.yml
+
 linters:
   enable-all: true
   disable:
@@ -12,6 +15,7 @@ linters:
     - scopelint
     - structcheck
     - varcheck
+
     # doesn't work with generics
     - rowserrcheck
     - sqlclosecheck
