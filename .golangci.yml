@@ -1,6 +1,7 @@
 linters:
   enable-all: true
   disable:
+    # deprecated/replaced
     - deadcode
     - exhaustivestruct
     - golint
