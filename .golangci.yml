@@ -4,6 +4,8 @@
 linters:
   enable-all: true
   disable:
+    - ireturn # overly strict
+
     # deprecated/replaced
     - deadcode
     - exhaustivestruct
