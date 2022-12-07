@@ -44,7 +44,7 @@ func TestOoze(t *testing.T) {
 	|`),
 	)
 
-	sourceTwoMutations := gosourcefile.New("source.go", oozetesting.Source(`
+	sourceTwoMutations := gosourcefile.New("two_mutations.go", oozetesting.Source(`
 	|package source
 	|
 	|var number0 = 0
@@ -52,7 +52,7 @@ func TestOoze(t *testing.T) {
 	|`),
 	)
 
-	mutantTwoMutationsFirst := gomutatedfile.New("source.go", oozetesting.Source(`
+	mutantTwoMutationsFirst := gomutatedfile.New("two_mutations.go", oozetesting.Source(`
 	|package source
 	|
 	|var number0 = 1
@@ -60,7 +60,7 @@ func TestOoze(t *testing.T) {
 	|`),
 	)
 
-	mutantTwoMutationsSecond := gomutatedfile.New("source.go", oozetesting.Source(`
+	mutantTwoMutationsSecond := gomutatedfile.New("two_mutations.go", oozetesting.Source(`
 	|package source
 	|
 	|var number0 = 0
