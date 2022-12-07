@@ -1,7 +1,6 @@
 package ooze_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
@@ -16,93 +15,73 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var errNotImplemented = errors.New("not implemented")
-
 func TestOoze(t *testing.T) {
 	t.Parallel()
 
+	sourceDummy := gosourcefile.New("dummy.go", oozetesting.Source(`
+	|package dummy
+	|`),
+	)
+
+	sourceNoMutation := gosourcefile.New("no_mutation.go", oozetesting.Source(`
+	|package source
+	|
+	|var text = "value"
+	|`),
+	)
+
+	sourceOneMutation := gosourcefile.New("one_mutation.go", oozetesting.Source(`
+	|package source
+	|
+	|var number = 0
+	|`),
+	)
+
+	mutantOneMutation := gomutatedfile.New("one_mutation.go", oozetesting.Source(`
+	|package source
+	|
+	|var number = 1
+	|`),
+	)
+
 	t.Run("no files yields failed result", func(t *testing.T) {
 		t.Parallel()
-		diagnostic := ooze.New(fakerepository.New(), fakelaboratory.New(
-			fakelaboratory.NewTuple(
-				gomutatedfile.New("dummy.go", []byte{}),
-				result.Err[string](errNotImplemented),
-			),
-		)).Release(
-			[]viruses.Virus{
-				integerincrement.New(),
-			},
-		)
+		diagnostic := ooze.New(
+			fakerepository.New(),
+			fakelaboratory.New(),
+		).Release([]viruses.Virus{integerincrement.New()})
 
 		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
 	})
 
 	t.Run("no viruses yields failed result", func(t *testing.T) {
 		t.Parallel()
-		diagnostic := ooze.New(fakerepository.New(
-			gosourcefile.New("source.go", oozetesting.Source(`
-				|package source
-				|`),
-			),
-		), fakelaboratory.New(
-			fakelaboratory.NewTuple(
-				gomutatedfile.New("dummy.go", []byte{}),
-				result.Err[string](errNotImplemented),
-			),
-		)).Release(
-			[]viruses.Virus{},
-		)
+		diagnostic := ooze.New(
+			fakerepository.New(sourceDummy),
+			fakelaboratory.New(),
+		).Release([]viruses.Virus{})
 
 		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
 	})
 
-	t.Run("single file single virus with no possible infections yields failed result", func(t *testing.T) {
+	t.Run("one file, one virus and no infections yields failed result", func(t *testing.T) {
 		t.Parallel()
-		diagnostic := ooze.New(fakerepository.New(
-			gosourcefile.New("source.go", oozetesting.Source(`
-				|package source
-				|
-				|var text = "value"
-				|`),
-			),
-		), fakelaboratory.New(
-			fakelaboratory.NewTuple(
-				gomutatedfile.New("dummy.go", []byte{}),
-				result.Err[string](errNotImplemented),
-			),
-		)).Release(
-			[]viruses.Virus{
-				integerincrement.New(),
-			},
-		)
+		diagnostic := ooze.New(
+			fakerepository.New(sourceNoMutation),
+			fakelaboratory.New(),
+		).Release([]viruses.Virus{integerincrement.New()})
 
 		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
 	})
 
-	t.Run("single file single virus with one possible infection yields the laboratory result", func(t *testing.T) {
+	t.Run("one file, one virus and one infection yields the laboratory result", func(t *testing.T) {
 		t.Parallel()
-		diagnostic := ooze.New(fakerepository.New(
-			gosourcefile.New("source.go", oozetesting.Source(`
-				|package source
-				|
-				|var number = 0
-				|`),
+		diagnostic := ooze.New(
+			fakerepository.New(sourceOneMutation),
+			fakelaboratory.New(
+				fakelaboratory.NewTuple(mutantOneMutation, result.Ok("mutant died")),
 			),
-		), fakelaboratory.New(
-			fakelaboratory.NewTuple(
-				gomutatedfile.New("source.go", oozetesting.Source(`
-					|package source
-					|
-					|var number = 1
-					|`),
-				),
-				result.Ok("mutant died"),
-			),
-		)).Release(
-			[]viruses.Virus{
-				integerincrement.New(),
-			},
-		)
+		).Release([]viruses.Virus{integerincrement.New()})
 
 		assert.Equal(t, result.Ok("mutant died"), diagnostic)
 	})
