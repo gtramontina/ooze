@@ -31,7 +31,7 @@ func New(repository Repository, laboratory Laboratory) *Ooze {
 	}
 }
 
-func (o *Ooze) Release(viri []viruses.Virus) result.Result[string] {
+func (o *Ooze) Release(viri ...viruses.Virus) result.Result[string] {
 	if len(viri) == 0 {
 		return result.Err[string](ErrNoMutationsApplied)
 	}

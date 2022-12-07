@@ -11,7 +11,6 @@ import (
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelaboratory"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/viruses"
 	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
 )
@@ -74,7 +73,7 @@ func TestOoze(t *testing.T) {
 		diagnostic := ooze.New(
 			fakerepository.New(),
 			fakelaboratory.New(),
-		).Release([]viruses.Virus{integerincrement.New()})
+		).Release(integerincrement.New())
 
 		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
 	})
@@ -84,7 +83,7 @@ func TestOoze(t *testing.T) {
 		diagnostic := ooze.New(
 			fakerepository.New(sourceDummy),
 			fakelaboratory.New(),
-		).Release([]viruses.Virus{})
+		).Release()
 
 		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
 	})
@@ -94,7 +93,7 @@ func TestOoze(t *testing.T) {
 		diagnostic := ooze.New(
 			fakerepository.New(sourceNoMutation),
 			fakelaboratory.New(),
-		).Release([]viruses.Virus{integerincrement.New()})
+		).Release(integerincrement.New())
 
 		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
 	})
@@ -106,7 +105,7 @@ func TestOoze(t *testing.T) {
 			fakelaboratory.New(
 				fakelaboratory.NewTuple(mutantOneMutation, result.Ok("mutant died")),
 			),
-		).Release([]viruses.Virus{integerincrement.New()})
+		).Release(integerincrement.New())
 
 		assert.Equal(t, result.Ok("mutant died"), diagnostic)
 	})
@@ -159,7 +158,7 @@ func TestOoze(t *testing.T) {
 							fakelaboratory.NewTuple(mutantTwoMutationsFirst, scene.firstMutationResult),
 							fakelaboratory.NewTuple(mutantTwoMutationsSecond, scene.secondMutationResult),
 						),
-					).Release([]viruses.Virus{integerincrement.New()})
+					).Release(integerincrement.New())
 
 					assert.Equal(t, scene.expectedCombinedResult, diagnostic)
 				})
