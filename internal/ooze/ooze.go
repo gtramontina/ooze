@@ -3,6 +3,7 @@ package ooze
 import (
 	"errors"
 
+	"github.com/gtramontina/ooze/internal/goinfectedfile"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/result"
@@ -41,7 +42,11 @@ func (o *Ooze) Release(viri ...viruses.Virus) result.Result[string] {
 		return result.Err[string](ErrNoMutationsApplied)
 	}
 
-	incubated := sources[0].Incubate(viri[0])
+	var incubated []*goinfectedfile.GoInfectedFile
+	for _, virus := range viri {
+		incubated = append(incubated, sources[0].Incubate(virus)...)
+	}
+
 	if len(incubated) == 0 {
 		return result.Err[string](ErrNoMutationsApplied)
 	}
