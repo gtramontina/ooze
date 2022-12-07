@@ -32,3 +32,4 @@ issues:
     - path: _test\.go
       linters:
         - funlen
+        - goerr113

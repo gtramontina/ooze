@@ -1,6 +1,7 @@
 package ooze_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
@@ -44,6 +45,30 @@ func TestOoze(t *testing.T) {
 	|`),
 	)
 
+	sourceTwoMutations := gosourcefile.New("source.go", oozetesting.Source(`
+	|package source
+	|
+	|var number0 = 0
+	|var number1 = 1
+	|`),
+	)
+
+	mutantTwoMutationsFirst := gomutatedfile.New("source.go", oozetesting.Source(`
+	|package source
+	|
+	|var number0 = 1
+	|var number1 = 1
+	|`),
+	)
+
+	mutantTwoMutationsSecond := gomutatedfile.New("source.go", oozetesting.Source(`
+	|package source
+	|
+	|var number0 = 0
+	|var number1 = 2
+	|`),
+	)
+
 	t.Run("no files yields failed result", func(t *testing.T) {
 		t.Parallel()
 		diagnostic := ooze.New(
@@ -84,5 +109,61 @@ func TestOoze(t *testing.T) {
 		).Release([]viruses.Virus{integerincrement.New()})
 
 		assert.Equal(t, result.Ok("mutant died"), diagnostic)
+	})
+
+	t.Run("one file, one virus and two infections yields the combined laboratory result", func(t *testing.T) {
+		t.Parallel()
+		errFirstMutantSurvived := errors.New("first mutant survived")
+		errSecondMutantSurvived := errors.New("second mutant survived")
+
+		type scenario struct {
+			description            string
+			firstMutationResult    result.Result[string]
+			secondMutationResult   result.Result[string]
+			expectedCombinedResult result.Result[string]
+		}
+
+		for _, scene := range []scenario{
+			{
+				description:            "both mutants died",
+				firstMutationResult:    result.Ok("first mutant died"),
+				secondMutationResult:   result.Ok("second mutant died"),
+				expectedCombinedResult: result.Ok("second mutant died"),
+			},
+			{
+				description:            "first mutant survived, second died",
+				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				secondMutationResult:   result.Ok("second mutant died"),
+				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+			},
+			{
+				description:            "first mutant died, second survived",
+				firstMutationResult:    result.Ok("first mutant died"),
+				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
+				expectedCombinedResult: result.Err[string](errSecondMutantSurvived),
+			},
+			{
+				description:            "both mutants survived",
+				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
+				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+			},
+		} {
+			func(scene scenario) {
+				t.Run(scene.description, func(t *testing.T) {
+					t.Parallel()
+
+					diagnostic := ooze.New(
+						fakerepository.New(sourceTwoMutations),
+						fakelaboratory.New(
+							fakelaboratory.NewTuple(mutantTwoMutationsFirst, scene.firstMutationResult),
+							fakelaboratory.NewTuple(mutantTwoMutationsSecond, scene.secondMutationResult),
+						),
+					).Release([]viruses.Virus{integerincrement.New()})
+
+					assert.Equal(t, scene.expectedCombinedResult, diagnostic)
+				})
+			}(scene)
+		}
 	})
 }

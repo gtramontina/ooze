@@ -46,5 +46,10 @@ func (o *Ooze) Release(viri []viruses.Virus) result.Result[string] {
 		return result.Err[string](ErrNoMutationsApplied)
 	}
 
-	return o.laboratory.Test(incubated[0].Mutate())
+	diagnostic := result.Ok("")
+	for _, infectedFile := range incubated {
+		diagnostic = diagnostic.And(o.laboratory.Test(infectedFile.Mutate()))
+	}
+
+	return diagnostic
 }
