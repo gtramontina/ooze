@@ -18,33 +18,33 @@ import (
 func TestOoze(t *testing.T) {
 	t.Parallel()
 
-	sourceDummy := gosourcefile.New("dummy.go", oozetesting.Source(`
+	source0 := gosourcefile.New("src.go", oozetesting.Source(`
 	|package dummy
 	|`),
 	)
 
-	sourceNoMutation := gosourcefile.New("no_mutation.go", oozetesting.Source(`
+	source1 := gosourcefile.New("src.go", oozetesting.Source(`
 	|package source
 	|
 	|var text = "value"
 	|`),
 	)
 
-	sourceOneMutation := gosourcefile.New("one_mutation.go", oozetesting.Source(`
+	source2 := gosourcefile.New("src.go", oozetesting.Source(`
 	|package source
 	|
 	|var number = 0
 	|`),
 	)
 
-	mutantOneMutation := gomutatedfile.New("one_mutation.go", oozetesting.Source(`
+	source2integerincrementMutation1 := gomutatedfile.New("src.go", oozetesting.Source(`
 	|package source
 	|
 	|var number = 1
 	|`),
 	)
 
-	sourceTwoMutations := gosourcefile.New("two_mutations.go", oozetesting.Source(`
+	source3 := gosourcefile.New("src.go", oozetesting.Source(`
 	|package source
 	|
 	|var number0 = 0
@@ -52,7 +52,7 @@ func TestOoze(t *testing.T) {
 	|`),
 	)
 
-	mutantTwoMutationsFirst := gomutatedfile.New("two_mutations.go", oozetesting.Source(`
+	source3integerincrementMutation1 := gomutatedfile.New("src.go", oozetesting.Source(`
 	|package source
 	|
 	|var number0 = 1
@@ -60,7 +60,7 @@ func TestOoze(t *testing.T) {
 	|`),
 	)
 
-	mutantTwoMutationsSecond := gomutatedfile.New("two_mutations.go", oozetesting.Source(`
+	source3integerincrementMutation2 := gomutatedfile.New("src.go", oozetesting.Source(`
 	|package source
 	|
 	|var number0 = 0
@@ -81,7 +81,7 @@ func TestOoze(t *testing.T) {
 	t.Run("no viruses yields failed result", func(t *testing.T) {
 		t.Parallel()
 		diagnostic := ooze.New(
-			fakerepository.New(sourceDummy),
+			fakerepository.New(source0),
 			fakelaboratory.New(),
 		).Release()
 
@@ -91,7 +91,7 @@ func TestOoze(t *testing.T) {
 	t.Run("one file, one virus and no infections yields failed result", func(t *testing.T) {
 		t.Parallel()
 		diagnostic := ooze.New(
-			fakerepository.New(sourceNoMutation),
+			fakerepository.New(source1),
 			fakelaboratory.New(),
 		).Release(integerincrement.New())
 
@@ -101,9 +101,9 @@ func TestOoze(t *testing.T) {
 	t.Run("one file, one virus and one infection yields the laboratory result", func(t *testing.T) {
 		t.Parallel()
 		diagnostic := ooze.New(
-			fakerepository.New(sourceOneMutation),
+			fakerepository.New(source2),
 			fakelaboratory.New(
-				fakelaboratory.NewTuple(mutantOneMutation, result.Ok("mutant died")),
+				fakelaboratory.NewTuple(source2integerincrementMutation1, result.Ok("mutant died")),
 			),
 		).Release(integerincrement.New())
 
@@ -153,10 +153,10 @@ func TestOoze(t *testing.T) {
 					t.Parallel()
 
 					diagnostic := ooze.New(
-						fakerepository.New(sourceTwoMutations),
+						fakerepository.New(source3),
 						fakelaboratory.New(
-							fakelaboratory.NewTuple(mutantTwoMutationsFirst, scene.firstMutationResult),
-							fakelaboratory.NewTuple(mutantTwoMutationsSecond, scene.secondMutationResult),
+							fakelaboratory.NewTuple(source3integerincrementMutation1, scene.firstMutationResult),
+							fakelaboratory.NewTuple(source3integerincrementMutation2, scene.secondMutationResult),
 						),
 					).Release(integerincrement.New())
 
