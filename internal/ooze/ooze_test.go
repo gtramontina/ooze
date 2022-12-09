@@ -65,6 +65,16 @@ func TestOoze_nothing_to_test(t *testing.T) {
 func TestOoze_with_mutations(t *testing.T) {
 	t.Parallel()
 
+	errFirstMutantSurvived := errors.New("first mutant survived")
+	errSecondMutantSurvived := errors.New("second mutant survived")
+
+	type scenario struct {
+		description            string
+		firstMutationResult    result.Result[string]
+		secondMutationResult   result.Result[string]
+		expectedCombinedResult result.Result[string]
+	}
+
 	source2 := gosourcefile.New("src.go", oozetesting.Source(`
 	|package source
 	|
@@ -138,15 +148,6 @@ func TestOoze_with_mutations(t *testing.T) {
 
 	t.Run("one file, one virus and two infections yields the combined laboratory result", func(t *testing.T) {
 		t.Parallel()
-		errFirstMutantSurvived := errors.New("first mutant survived")
-		errSecondMutantSurvived := errors.New("second mutant survived")
-
-		type scenario struct {
-			description            string
-			firstMutationResult    result.Result[string]
-			secondMutationResult   result.Result[string]
-			expectedCombinedResult result.Result[string]
-		}
 
 		for _, scene := range []scenario{
 			{
@@ -194,15 +195,6 @@ func TestOoze_with_mutations(t *testing.T) {
 
 	t.Run("one file, two viri and one infection each file yields the combined laboratory result", func(t *testing.T) {
 		t.Parallel()
-		errFirstMutantSurvived := errors.New("first mutant survived")
-		errSecondMutantSurvived := errors.New("second mutant survived")
-
-		type scenario struct {
-			description            string
-			firstMutationResult    result.Result[string]
-			secondMutationResult   result.Result[string]
-			expectedCombinedResult result.Result[string]
-		}
 
 		for _, scene := range []scenario{
 			{
@@ -253,15 +245,6 @@ func TestOoze_with_mutations(t *testing.T) {
 
 	t.Run("two files, one virus and one infection each file yields the combined laboratory result", func(t *testing.T) {
 		t.Parallel()
-		errFirstMutantSurvived := errors.New("first mutant survived")
-		errSecondMutantSurvived := errors.New("second mutant survived")
-
-		type scenario struct {
-			description            string
-			firstMutationResult    result.Result[string]
-			secondMutationResult   result.Result[string]
-			expectedCombinedResult result.Result[string]
-		}
 
 		for _, scene := range []scenario{
 			{
