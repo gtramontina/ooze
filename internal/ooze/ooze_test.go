@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestOoze(t *testing.T) {
+func TestOoze_nothing_to_test(t *testing.T) {
 	t.Parallel()
 
 	source0 := gosourcefile.New("src.go", oozetesting.Source(`
@@ -30,6 +30,40 @@ func TestOoze(t *testing.T) {
 	|var text = "value"
 	|`),
 	)
+
+	t.Run("no files yields failed result", func(t *testing.T) {
+		t.Parallel()
+		diagnostic := ooze.New(
+			fakerepository.New(),
+			fakelaboratory.New(),
+		).Release(integerincrement.New())
+
+		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
+	})
+
+	t.Run("no viruses yields failed result", func(t *testing.T) {
+		t.Parallel()
+		diagnostic := ooze.New(
+			fakerepository.New(source0),
+			fakelaboratory.New(),
+		).Release()
+
+		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
+	})
+
+	t.Run("one file, one virus and no infections yields failed result", func(t *testing.T) {
+		t.Parallel()
+		diagnostic := ooze.New(
+			fakerepository.New(source1),
+			fakelaboratory.New(),
+		).Release(integerincrement.New())
+
+		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
+	})
+}
+
+func TestOoze_with_mutations(t *testing.T) {
+	t.Parallel()
 
 	source2 := gosourcefile.New("src.go", oozetesting.Source(`
 	|package source
@@ -75,36 +109,6 @@ func TestOoze(t *testing.T) {
 	|var number1 = 2
 	|`),
 	)
-
-	t.Run("no files yields failed result", func(t *testing.T) {
-		t.Parallel()
-		diagnostic := ooze.New(
-			fakerepository.New(),
-			fakelaboratory.New(),
-		).Release(integerincrement.New())
-
-		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
-	})
-
-	t.Run("no viruses yields failed result", func(t *testing.T) {
-		t.Parallel()
-		diagnostic := ooze.New(
-			fakerepository.New(source0),
-			fakelaboratory.New(),
-		).Release()
-
-		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
-	})
-
-	t.Run("one file, one virus and no infections yields failed result", func(t *testing.T) {
-		t.Parallel()
-		diagnostic := ooze.New(
-			fakerepository.New(source1),
-			fakelaboratory.New(),
-		).Release(integerincrement.New())
-
-		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
-	})
 
 	t.Run("one file, one virus and one infection yields the laboratory result", func(t *testing.T) {
 		t.Parallel()
