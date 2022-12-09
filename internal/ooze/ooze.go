@@ -43,8 +43,11 @@ func (o *Ooze) Release(viri ...viruses.Virus) result.Result[string] {
 	}
 
 	var incubated []*goinfectedfile.GoInfectedFile
-	for _, virus := range viri {
-		incubated = append(incubated, sources[0].Incubate(virus)...)
+
+	for _, source := range sources {
+		for _, virus := range viri {
+			incubated = append(incubated, source.Incubate(virus)...)
+		}
 	}
 
 	if len(incubated) == 0 {

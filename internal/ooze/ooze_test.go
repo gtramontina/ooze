@@ -110,6 +110,20 @@ func TestOoze_with_mutations(t *testing.T) {
 	|`),
 	)
 
+	source4 := gosourcefile.New("src.go", oozetesting.Source(`
+	|package source
+	|
+	|var anotherNumber = 0
+	|`),
+	)
+
+	source4integerincrementMutation1 := gomutatedfile.New("src.go", oozetesting.Source(`
+	|package source
+	|
+	|var anotherNumber = 1
+	|`),
+	)
+
 	t.Run("one file, one virus and one infection yields the laboratory result", func(t *testing.T) {
 		t.Parallel()
 		diagnostic := ooze.New(
@@ -229,6 +243,64 @@ func TestOoze_with_mutations(t *testing.T) {
 					).Release(
 						integerincrement.New(),
 						integerdecrement.New(),
+					)
+
+					assert.Equal(t, scene.expectedCombinedResult, diagnostic)
+				})
+			}(scene)
+		}
+	})
+
+	t.Run("two files, one virus and one infection each file yields the combined laboratory result", func(t *testing.T) {
+		t.Parallel()
+		errFirstMutantSurvived := errors.New("first mutant survived")
+		errSecondMutantSurvived := errors.New("second mutant survived")
+
+		type scenario struct {
+			description            string
+			firstMutationResult    result.Result[string]
+			secondMutationResult   result.Result[string]
+			expectedCombinedResult result.Result[string]
+		}
+
+		for _, scene := range []scenario{
+			{
+				description:            "both mutants died",
+				firstMutationResult:    result.Ok("first mutant died"),
+				secondMutationResult:   result.Ok("second mutant died"),
+				expectedCombinedResult: result.Ok("second mutant died"),
+			},
+			{
+				description:            "first mutant survived, second died",
+				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				secondMutationResult:   result.Ok("second mutant died"),
+				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+			},
+			{
+				description:            "first mutant died, second survived",
+				firstMutationResult:    result.Ok("first mutant died"),
+				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
+				expectedCombinedResult: result.Err[string](errSecondMutantSurvived),
+			},
+			{
+				description:            "both mutants survived",
+				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
+				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+			},
+		} {
+			func(scene scenario) {
+				t.Run(scene.description, func(t *testing.T) {
+					t.Parallel()
+
+					diagnostic := ooze.New(
+						fakerepository.New(source2, source4),
+						fakelaboratory.New(
+							fakelaboratory.NewTuple(source2integerincrementMutation1, scene.firstMutationResult),
+							fakelaboratory.NewTuple(source4integerincrementMutation1, scene.secondMutationResult),
+						),
+					).Release(
+						integerincrement.New(),
 					)
 
 					assert.Equal(t, scene.expectedCombinedResult, diagnostic)
