@@ -1,17 +1,39 @@
 package fakerepository
 
-import "github.com/gtramontina/ooze/internal/gosourcefile"
+import (
+	"sort"
+	"strings"
+
+	"github.com/gtramontina/ooze/internal/gosourcefile"
+)
+
+type FS map[string][]byte
 
 type FakeRepository struct {
-	sourceFiles []*gosourcefile.GoSourceFile
+	fs FS
 }
 
-func New(sourceFiles ...*gosourcefile.GoSourceFile) *FakeRepository {
+func New(fs FS) *FakeRepository {
 	return &FakeRepository{
-		sourceFiles: sourceFiles,
+		fs: fs,
 	}
 }
 
 func (r *FakeRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
-	return r.sourceFiles
+	var filePaths []string
+
+	for filePath := range r.fs {
+		if strings.HasSuffix(filePath, ".go") && !strings.HasSuffix(filePath, "_test.go") {
+			filePaths = append(filePaths, filePath)
+		}
+	}
+
+	sort.Strings(filePaths)
+
+	sources := make([]*gosourcefile.GoSourceFile, 0, len(filePaths))
+	for _, filePath := range filePaths {
+		sources = append(sources, gosourcefile.New(filePath, r.fs[filePath]))
+	}
+
+	return sources
 }
