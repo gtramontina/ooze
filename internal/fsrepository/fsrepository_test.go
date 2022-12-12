@@ -1,7 +1,9 @@
 package fsrepository_test
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/fsrepository"
@@ -118,5 +120,57 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 			gosourcefile.New("a/source2.go", []byte("source data 2")),
 			gosourcefile.New("source1.go", []byte("source data 1")),
 		}, files)
+	})
+}
+
+func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	assert.NoError(t, os.MkdirAll(dir+"/to-link/child_a/child_b", 0o700))
+
+	assert.NoError(t, os.MkdirAll(dir+"/to-link/child_a/child_b", 0o700))
+	assert.NoError(t, os.WriteFile(dir+"/to-link/readme.md", []byte(""), 0o600))
+	assert.NoError(t, os.WriteFile(dir+"/to-link/makefile", []byte(""), 0o600))
+	assert.NoError(t, os.WriteFile(dir+"/to-link/test_a.go", []byte(""), 0o600))
+	assert.NoError(t, os.WriteFile(dir+"/to-link/test_b.go", []byte(""), 0o600))
+	assert.NoError(t, os.WriteFile(dir+"/to-link/child_a/test_c.go", []byte(""), 0o600))
+	assert.NoError(t, os.WriteFile(dir+"/to-link/child_a/child_b/test_d.go", []byte(""), 0o600))
+
+	repository := fsrepository.New(dir + "/to-link")
+	temporaryRepository := repository.LinkAllToTemporaryRepository(dir + "/linked")
+
+	t.Run("creates a link of all files recursively", func(t *testing.T) {
+		t.Parallel()
+
+		var files []string
+		err := filepath.WalkDir(dir+"/linked", func(path string, entry fs.DirEntry, err error) error {
+			assert.NoError(t, err)
+			if entry.IsDir() {
+				return nil
+			}
+
+			info, err := entry.Info()
+			assert.NoError(t, err)
+			assert.True(t, info.Mode()&fs.ModeSymlink != 0)
+
+			files = append(files, path)
+
+			return nil
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, []string{
+			dir + "/linked/child_a/child_b/test_d.go",
+			dir + "/linked/child_a/test_c.go",
+			dir + "/linked/makefile",
+			dir + "/linked/readme.md",
+			dir + "/linked/test_a.go",
+			dir + "/linked/test_b.go",
+		}, files)
+	})
+
+	t.Run("results in a new temporary repository", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, fsrepository.NewTemporary(dir+"/linked"), temporaryRepository)
 	})
 }
