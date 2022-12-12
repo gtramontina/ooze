@@ -5,17 +5,31 @@ import (
 	"strings"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/laboratory"
 )
 
 type FS map[string][]byte
 
-type FakeRepository struct {
-	fs FS
+func (f FS) copy() FS {
+	fsCopy := FS{}
+	for k, v := range f {
+		fsCopy[k] = v
+	}
+
+	return fsCopy
 }
 
-func New(fs FS) *FakeRepository {
+type FakeRepository struct {
+	fs        FS
+	temps     []*FakeTemporaryRepository
+	tempCount int
+}
+
+func New(fs FS, temporaries ...*FakeTemporaryRepository) *FakeRepository {
 	return &FakeRepository{
-		fs: fs,
+		fs:        fs,
+		temps:     temporaries,
+		tempCount: 0,
 	}
 }
 
@@ -36,4 +50,17 @@ func (r *FakeRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	}
 
 	return sources
+}
+
+func (r *FakeRepository) LinkAllToTemporaryRepository(directoryPath string) laboratory.TemporaryRepository {
+	if r.tempCount >= len(r.temps) {
+		panic("fakerepository: temporary repositories not setup")
+	}
+
+	tempRepository := r.temps[r.tempCount]
+	tempRepository.root = directoryPath
+	tempRepository.fs = r.fs.copy()
+	r.tempCount++
+
+	return tempRepository
 }
