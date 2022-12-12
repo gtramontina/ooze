@@ -10,6 +10,6 @@ func Ok[Type any](value Type) Result[Type] {
 	return ok[Type]{value}
 }
 
-func Err[Type any](value error) Result[Type] {
-	return err[Type]{value}
+func Err[Type any](errorMessage string) Result[Type] {
+	return err[Type]{errorMessage}
 }

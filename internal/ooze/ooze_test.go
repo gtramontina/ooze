@@ -1,7 +1,6 @@
 package ooze_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
@@ -35,7 +34,7 @@ func TestOoze_nothing_to_test(t *testing.T) {
 			fakelaboratory.New(),
 		).Release(integerincrement.New())
 
-		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
+		assert.Equal(t, result.Err[string]("no mutations applied"), diagnostic)
 	})
 
 	t.Run("no viruses yields failed result", func(t *testing.T) {
@@ -45,7 +44,7 @@ func TestOoze_nothing_to_test(t *testing.T) {
 			fakelaboratory.New(),
 		).Release()
 
-		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
+		assert.Equal(t, result.Err[string]("no mutations applied"), diagnostic)
 	})
 
 	t.Run("one file, one virus and no infections yields failed result", func(t *testing.T) {
@@ -55,15 +54,12 @@ func TestOoze_nothing_to_test(t *testing.T) {
 			fakelaboratory.New(),
 		).Release(integerincrement.New())
 
-		assert.Equal(t, result.Err[string](ooze.ErrNoMutationsApplied), diagnostic)
+		assert.Equal(t, result.Err[string]("no mutations applied"), diagnostic)
 	})
 }
 
 func TestOoze_with_mutations(t *testing.T) {
 	t.Parallel()
-
-	errFirstMutantSurvived := errors.New("first mutant survived")
-	errSecondMutantSurvived := errors.New("second mutant survived")
 
 	type scenario struct {
 		description            string
@@ -152,21 +148,21 @@ func TestOoze_with_mutations(t *testing.T) {
 			},
 			{
 				description:            "first mutant survived, second died",
-				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				firstMutationResult:    result.Err[string]("first mutant survived"),
 				secondMutationResult:   result.Ok("second mutant died"),
-				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+				expectedCombinedResult: result.Err[string]("first mutant survived"),
 			},
 			{
 				description:            "first mutant died, second survived",
 				firstMutationResult:    result.Ok("first mutant died"),
-				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
-				expectedCombinedResult: result.Err[string](errSecondMutantSurvived),
+				secondMutationResult:   result.Err[string]("second mutant survived"),
+				expectedCombinedResult: result.Err[string]("second mutant survived"),
 			},
 			{
 				description:            "both mutants survived",
-				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
-				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
-				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+				firstMutationResult:    result.Err[string]("first mutant survived"),
+				secondMutationResult:   result.Err[string]("second mutant survived"),
+				expectedCombinedResult: result.Err[string]("first mutant survived"),
 			},
 		} {
 			func(scene scenario) {
@@ -199,21 +195,21 @@ func TestOoze_with_mutations(t *testing.T) {
 			},
 			{
 				description:            "first mutant survived, second died",
-				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				firstMutationResult:    result.Err[string]("first mutant survived"),
 				secondMutationResult:   result.Ok("second mutant died"),
-				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+				expectedCombinedResult: result.Err[string]("first mutant survived"),
 			},
 			{
 				description:            "first mutant died, second survived",
 				firstMutationResult:    result.Ok("first mutant died"),
-				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
-				expectedCombinedResult: result.Err[string](errSecondMutantSurvived),
+				secondMutationResult:   result.Err[string]("second mutant survived"),
+				expectedCombinedResult: result.Err[string]("second mutant survived"),
 			},
 			{
 				description:            "both mutants survived",
-				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
-				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
-				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+				firstMutationResult:    result.Err[string]("first mutant survived"),
+				secondMutationResult:   result.Err[string]("second mutant survived"),
+				expectedCombinedResult: result.Err[string]("first mutant survived"),
 			},
 		} {
 			func(scene scenario) {
@@ -249,21 +245,21 @@ func TestOoze_with_mutations(t *testing.T) {
 			},
 			{
 				description:            "first mutant survived, second died",
-				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
+				firstMutationResult:    result.Err[string]("first mutant survived"),
 				secondMutationResult:   result.Ok("second mutant died"),
-				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+				expectedCombinedResult: result.Err[string]("first mutant survived"),
 			},
 			{
 				description:            "first mutant died, second survived",
 				firstMutationResult:    result.Ok("first mutant died"),
-				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
-				expectedCombinedResult: result.Err[string](errSecondMutantSurvived),
+				secondMutationResult:   result.Err[string]("second mutant survived"),
+				expectedCombinedResult: result.Err[string]("second mutant survived"),
 			},
 			{
 				description:            "both mutants survived",
-				firstMutationResult:    result.Err[string](errFirstMutantSurvived),
-				secondMutationResult:   result.Err[string](errSecondMutantSurvived),
-				expectedCombinedResult: result.Err[string](errFirstMutantSurvived),
+				firstMutationResult:    result.Err[string]("first mutant survived"),
+				secondMutationResult:   result.Err[string]("second mutant survived"),
+				expectedCombinedResult: result.Err[string]("first mutant survived"),
 			},
 		} {
 			func(scene scenario) {

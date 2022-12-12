@@ -3,7 +3,7 @@ package result
 import "fmt"
 
 type err[Type any] struct {
-	value error
+	errorMessage string
 }
 
 func (err[Type]) seal() string {
@@ -11,9 +11,9 @@ func (err[Type]) seal() string {
 }
 
 func (e err[Type]) String() string {
-	return e.seal() + "(" + fmt.Sprintf("%+v", e.value) + ")"
+	return e.seal() + "(" + fmt.Sprintf("%+v", e.errorMessage) + ")"
 }
 
 func (e err[Type]) And(_ Result[Type]) Result[Type] {
-	return Err[Type](e.value)
+	return Err[Type](e.errorMessage)
 }
