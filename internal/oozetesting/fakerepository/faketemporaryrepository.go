@@ -7,8 +7,12 @@ type FakeTemporaryRepository struct {
 }
 
 func NewTemporary() *FakeTemporaryRepository {
+	return NewTemporaryAt("<unset>")
+}
+
+func NewTemporaryAt(root string) *FakeTemporaryRepository {
 	return &FakeTemporaryRepository{
-		root:    "<unset>",
+		root:    root,
 		fs:      FS{},
 		removed: false,
 	}
