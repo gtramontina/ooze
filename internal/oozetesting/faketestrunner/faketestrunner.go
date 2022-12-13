@@ -1,7 +1,7 @@
 package faketestrunner
 
 import (
-	"github.com/gtramontina/ooze/internal/laboratory"
+	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
 )
 
@@ -24,7 +24,7 @@ func NewResult(directoryPath string, result result.Result[string]) *Result {
 	return &Result{directoryPath: directoryPath, result: result}
 }
 
-func (t *FakeTestRunner) Test(repository laboratory.TemporaryRepository) result.Result[string] {
+func (t *FakeTestRunner) Test(repository ooze.TemporaryRepository) result.Result[string] {
 	for _, runnerResult := range t.results {
 		if runnerResult.directoryPath == repository.Root() {
 			return runnerResult.result

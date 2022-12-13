@@ -9,10 +9,17 @@ import (
 
 type Repository interface {
 	ListGoSourceFiles() []*gosourcefile.GoSourceFile
+	LinkAllToTemporaryRepository(temporaryPath string) TemporaryRepository
+}
+
+type TemporaryRepository interface {
+	Root() string
+	Overwrite(filePath string, data []byte)
+	Remove()
 }
 
 type Laboratory interface {
-	Test(repository Repository, infectedFile *goinfectedfile.GoInfectedFile) result.Result[string]
+	Test(repository Repository, file *goinfectedfile.GoInfectedFile) result.Result[string]
 }
 
 type Ooze struct {

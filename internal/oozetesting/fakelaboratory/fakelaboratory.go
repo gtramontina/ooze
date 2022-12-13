@@ -37,13 +37,10 @@ func New(tuples ...*Result) *FakeLaboratory {
 	}
 }
 
-func (l *FakeLaboratory) Test(
-	repository ooze.Repository,
-	infectedFile *goinfectedfile.GoInfectedFile,
-) result.Result[string] {
+func (l *FakeLaboratory) Test(repository ooze.Repository, file *goinfectedfile.GoInfectedFile) result.Result[string] {
 	for _, res := range l.results {
 		sameRepository := repository == res.expectedRepository
-		sameMutatedFile := reflect.DeepEqual(infectedFile.Mutate(), res.expectedMutatedFile)
+		sameMutatedFile := reflect.DeepEqual(file.Mutate(), res.expectedMutatedFile)
 
 		if sameRepository && sameMutatedFile {
 			return res.diagnostic
