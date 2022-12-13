@@ -20,6 +20,16 @@ func TestFSTemporaryRepository(t *testing.T) {
 		assert.Equal(t, dir, repository.Root())
 	})
 
+	t.Run("root path is absolute", func(t *testing.T) {
+		t.Parallel()
+
+		cwd, err := os.Getwd()
+		assert.NoError(t, err)
+
+		repository := fsrepository.NewTemporary(".")
+		assert.Equal(t, cwd, repository.Root())
+	})
+
 	t.Run("overwriting", func(t *testing.T) {
 		t.Parallel()
 

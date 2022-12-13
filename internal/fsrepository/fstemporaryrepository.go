@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,8 +20,13 @@ type FSTemporaryRepository struct {
 }
 
 func NewTemporary(root string) *FSTemporaryRepository {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		panic(err)
+	}
+
 	return &FSTemporaryRepository{
-		root:    root,
+		root:    absRoot,
 		removed: false,
 	}
 }
