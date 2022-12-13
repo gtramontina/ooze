@@ -3,7 +3,9 @@ package fakelaboratory
 import (
 	"reflect"
 
+	"github.com/gtramontina/ooze/internal/goinfectedfile"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
+	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
 )
 
@@ -26,9 +28,9 @@ func New(tuples ...*Tuple) *FakeLaboratory {
 	}
 }
 
-func (l *FakeLaboratory) Test(mutatedFile *gomutatedfile.GoMutatedFile) result.Result[string] {
+func (l *FakeLaboratory) Test(_ ooze.Repository, infectedFile *goinfectedfile.GoInfectedFile) result.Result[string] {
 	for _, tuple := range l.tuples {
-		if reflect.DeepEqual(mutatedFile, tuple.file) {
+		if reflect.DeepEqual(infectedFile.Mutate(), tuple.file) {
 			return tuple.diagnostic
 		}
 	}
