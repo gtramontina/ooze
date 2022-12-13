@@ -10,28 +10,43 @@ import (
 )
 
 type FakeLaboratory struct {
-	tuples []*Tuple
+	results []*Result
 }
 
-type Tuple struct {
-	file       *gomutatedfile.GoMutatedFile
-	diagnostic result.Result[string]
+type Result struct {
+	expectedRepository  ooze.Repository
+	expectedMutatedFile *gomutatedfile.GoMutatedFile
+	diagnostic          result.Result[string]
 }
 
-func NewTuple(file *gomutatedfile.GoMutatedFile, diagnostic result.Result[string]) *Tuple {
-	return &Tuple{file: file, diagnostic: diagnostic}
-}
-
-func New(tuples ...*Tuple) *FakeLaboratory {
-	return &FakeLaboratory{
-		tuples: tuples,
+func NewResult(
+	expectedRepository ooze.Repository,
+	expectedMutatedFile *gomutatedfile.GoMutatedFile,
+	diagnostic result.Result[string],
+) *Result {
+	return &Result{
+		expectedRepository:  expectedRepository,
+		expectedMutatedFile: expectedMutatedFile,
+		diagnostic:          diagnostic,
 	}
 }
 
-func (l *FakeLaboratory) Test(_ ooze.Repository, infectedFile *goinfectedfile.GoInfectedFile) result.Result[string] {
-	for _, tuple := range l.tuples {
-		if reflect.DeepEqual(infectedFile.Mutate(), tuple.file) {
-			return tuple.diagnostic
+func New(tuples ...*Result) *FakeLaboratory {
+	return &FakeLaboratory{
+		results: tuples,
+	}
+}
+
+func (l *FakeLaboratory) Test(
+	repository ooze.Repository,
+	infectedFile *goinfectedfile.GoInfectedFile,
+) result.Result[string] {
+	for _, res := range l.results {
+		sameRepository := repository == res.expectedRepository
+		sameMutatedFile := reflect.DeepEqual(infectedFile.Mutate(), res.expectedMutatedFile)
+
+		if sameRepository && sameMutatedFile {
+			return res.diagnostic
 		}
 	}
 

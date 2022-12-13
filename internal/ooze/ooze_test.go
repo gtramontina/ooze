@@ -126,10 +126,16 @@ func TestOoze_with_mutations(t *testing.T) {
 
 	t.Run("one file, one virus and one infection yields the laboratory result", func(t *testing.T) {
 		t.Parallel()
+
+		repository := fakerepository.New(fakerepository.FS{"source2.go": source2})
 		diagnostic := ooze.New(
-			fakerepository.New(fakerepository.FS{"source2.go": source2}),
+			repository,
 			fakelaboratory.New(
-				fakelaboratory.NewTuple(source2integerincrementMutation1, result.Ok("mutant died")),
+				fakelaboratory.NewResult(
+					repository,
+					source2integerincrementMutation1,
+					result.Ok("mutant died"),
+				),
 			),
 		).Release(integerincrement.New())
 
@@ -169,11 +175,20 @@ func TestOoze_with_mutations(t *testing.T) {
 				t.Run(scene.description, func(t *testing.T) {
 					t.Parallel()
 
+					repository := fakerepository.New(fakerepository.FS{"source3.go": source3})
 					diagnostic := ooze.New(
-						fakerepository.New(fakerepository.FS{"source3.go": source3}),
+						repository,
 						fakelaboratory.New(
-							fakelaboratory.NewTuple(source3integerincrementMutation1, scene.firstMutationResult),
-							fakelaboratory.NewTuple(source3integerincrementMutation2, scene.secondMutationResult),
+							fakelaboratory.NewResult(
+								repository,
+								source3integerincrementMutation1,
+								scene.firstMutationResult,
+							),
+							fakelaboratory.NewResult(
+								repository,
+								source3integerincrementMutation2,
+								scene.secondMutationResult,
+							),
 						),
 					).Release(integerincrement.New())
 
@@ -216,11 +231,20 @@ func TestOoze_with_mutations(t *testing.T) {
 				t.Run(scene.description, func(t *testing.T) {
 					t.Parallel()
 
+					repository := fakerepository.New(fakerepository.FS{"source2.go": source2})
 					diagnostic := ooze.New(
-						fakerepository.New(fakerepository.FS{"source2.go": source2}),
+						repository,
 						fakelaboratory.New(
-							fakelaboratory.NewTuple(source2integerincrementMutation1, scene.firstMutationResult),
-							fakelaboratory.NewTuple(source2integerdecrementMutation1, scene.secondMutationResult),
+							fakelaboratory.NewResult(
+								repository,
+								source2integerincrementMutation1,
+								scene.firstMutationResult,
+							),
+							fakelaboratory.NewResult(
+								repository,
+								source2integerdecrementMutation1,
+								scene.secondMutationResult,
+							),
 						),
 					).Release(
 						integerincrement.New(),
@@ -266,14 +290,23 @@ func TestOoze_with_mutations(t *testing.T) {
 				t.Run(scene.description, func(t *testing.T) {
 					t.Parallel()
 
+					repository := fakerepository.New(fakerepository.FS{
+						"source2.go": source2,
+						"source4.go": source4,
+					})
 					diagnostic := ooze.New(
-						fakerepository.New(fakerepository.FS{
-							"source2.go": source2,
-							"source4.go": source4,
-						}),
+						repository,
 						fakelaboratory.New(
-							fakelaboratory.NewTuple(source2integerincrementMutation1, scene.firstMutationResult),
-							fakelaboratory.NewTuple(source4integerincrementMutation1, scene.secondMutationResult),
+							fakelaboratory.NewResult(
+								repository,
+								source2integerincrementMutation1,
+								scene.firstMutationResult,
+							),
+							fakelaboratory.NewResult(
+								repository,
+								source4integerincrementMutation1,
+								scene.secondMutationResult,
+							),
 						),
 					).Release(
 						integerincrement.New(),
