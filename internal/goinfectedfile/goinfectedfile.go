@@ -45,3 +45,7 @@ func (f *GoInfectedFile) Mutate() *gomutatedfile.GoMutatedFile {
 
 	return gomutatedfile.New(f.relativePath, mutatedSource.Bytes())
 }
+
+func (f *GoInfectedFile) String() string {
+	return f.relativePath
+}

@@ -10,6 +10,7 @@ import (
 )
 
 type FakeLaboratory struct {
+	always  result.Result[string]
 	results []*Result
 }
 
@@ -33,11 +34,23 @@ func NewResult(
 
 func New(tuples ...*Result) *FakeLaboratory {
 	return &FakeLaboratory{
+		always:  nil,
 		results: tuples,
 	}
 }
 
+func NewAlways(diagnostic result.Result[string]) *FakeLaboratory {
+	return &FakeLaboratory{
+		always:  diagnostic,
+		results: []*Result{},
+	}
+}
+
 func (l *FakeLaboratory) Test(repository ooze.Repository, file *goinfectedfile.GoInfectedFile) result.Result[string] {
+	if l.always != nil {
+		return l.always
+	}
+
 	for _, res := range l.results {
 		sameRepository := repository == res.expectedRepository
 		sameMutatedFile := reflect.DeepEqual(file.Mutate(), res.expectedMutatedFile)
