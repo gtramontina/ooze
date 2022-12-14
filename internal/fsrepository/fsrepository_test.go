@@ -11,16 +11,30 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestFSRepository_ListGoSourceFiles(t *testing.T) {
+func TestFSRepository(t *testing.T) {
 	t.Parallel()
 
 	t.Run("panics when given root does not exist", func(t *testing.T) {
 		t.Parallel()
-		repository := fsrepository.New("nonexistent")
-		assert.PanicsWithValue(t, "nonexistent: no such file or directory", func() {
-			repository.ListGoSourceFiles()
+		assert.PanicsWithValue(t, "nonexistent: no such directory", func() {
+			fsrepository.New("nonexistent")
 		})
 	})
+
+	t.Run("panics when given root isn't a directory", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		assert.NoError(t, os.WriteFile(dir+"/not-a-dir", []byte("source data"), 0o600))
+
+		assert.PanicsWithValue(t, dir+"/not-a-dir: not a directory", func() {
+			fsrepository.New(dir + "/not-a-dir")
+		})
+	})
+}
+
+func TestFSRepository_ListGoSourceFiles(t *testing.T) {
+	t.Parallel()
 
 	t.Run("empty source files", func(t *testing.T) {
 		t.Parallel()

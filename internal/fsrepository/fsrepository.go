@@ -18,8 +18,26 @@ type FSRepository struct {
 }
 
 func New(root string) *FSRepository {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		panic(err)
+	}
+
+	stat, err := os.Stat(absRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		panic(root + ": no such directory")
+	}
+
+	if err != nil {
+		panic(err)
+	}
+
+	if !stat.IsDir() {
+		panic(root + ": not a directory")
+	}
+
 	return &FSRepository{
-		root: root,
+		root: absRoot,
 	}
 }
 
@@ -40,12 +58,7 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 		return nil
 	})
 	if err != nil {
-		var pathError *fs.PathError
-		if errors.As(err, &pathError) {
-			panic(pathError.Path + ": no such file or directory")
-		}
-
-		panic(err.Error())
+		panic(err)
 	}
 
 	sort.Strings(paths)
