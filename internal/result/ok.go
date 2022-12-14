@@ -22,3 +22,7 @@ func (o ok[Type]) String() string {
 func (ok[Type]) And(and Result[Type]) Result[Type] {
 	return and
 }
+
+func (ok[Type]) IsOk() bool {
+	return true
+}

@@ -26,6 +26,18 @@ type Laboratory interface {
 	Test(repository Repository, file *goinfectedfile.GoInfectedFile) result.Result[string]
 }
 
+type Reporter interface {
+	AddDiagnostic(diagnostic result.Result[string])
+	Summarize() *ReportSummary
+}
+
+type ReportSummary struct {
+	Total    int
+	Survived int
+	Killed   int
+	Score    float32
+}
+
 type Ooze struct {
 	repository Repository
 	laboratory Laboratory
