@@ -7,6 +7,10 @@ import (
 	"github.com/gtramontina/ooze/internal/viruses"
 )
 
+type Logger interface {
+	Logf(message string, args ...any)
+}
+
 type Repository interface {
 	ListGoSourceFiles() []*gosourcefile.GoSourceFile
 	LinkAllToTemporaryRepository(temporaryPath string) TemporaryRepository
