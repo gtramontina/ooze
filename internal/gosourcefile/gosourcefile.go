@@ -42,3 +42,7 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 
 	return infectedFiles
 }
+
+func (f *GoSourceFile) String() string {
+	return f.relativePath
+}
