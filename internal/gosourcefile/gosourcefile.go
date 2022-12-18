@@ -34,7 +34,7 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 
 	ast.Inspect(fileTree, func(node ast.Node) bool {
 		for _, infection := range virus.Incubate(node) {
-			infectedFiles = append(infectedFiles, goinfectedfile.New(f.relativePath, infection, fileSet, fileTree))
+			infectedFiles = append(infectedFiles, goinfectedfile.New(f.relativePath, f.rawContent, infection, fileSet, fileTree))
 		}
 
 		return true

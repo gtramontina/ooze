@@ -1,7 +1,7 @@
 package laboratory
 
 import (
-	"github.com/gtramontina/ooze/internal/goinfectedfile"
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
 )
@@ -26,11 +26,11 @@ func New(testRunner TestRunner, temporaryDirectory TemporaryDirectory) *Laborato
 	}
 }
 
-func (l *Laboratory) Test(repository ooze.Repository, file *goinfectedfile.GoInfectedFile) result.Result[string] {
+func (l *Laboratory) Test(repository ooze.Repository, file *gomutatedfile.GoMutatedFile) result.Result[string] {
 	tempRepository := repository.LinkAllToTemporaryRepository(l.temporaryDirectory.New())
 	defer tempRepository.Remove()
 
-	file.Mutate().WriteTo(tempRepository)
+	file.WriteTo(tempRepository)
 
 	return l.testRunner.Test(tempRepository)
 }

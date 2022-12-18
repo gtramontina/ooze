@@ -44,7 +44,7 @@ func TestIntegerIncrement(t *testing.T) {
 
 		assert.Equal(t,
 			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("source.go", mutation1),
+				gomutatedfile.New("Integer Increment", "source.go", source, mutation1),
 			},
 			oozetesting.Mutate(
 				integerincrement.New(),
@@ -78,8 +78,8 @@ func TestIntegerIncrement(t *testing.T) {
 
 		assert.Equal(t,
 			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("source.go", mutation1),
-				gomutatedfile.New("source.go", mutation2),
+				gomutatedfile.New("Integer Increment", "source.go", source, mutation1),
+				gomutatedfile.New("Integer Increment", "source.go", source, mutation2),
 			},
 			oozetesting.Mutate(
 				integerincrement.New(),
@@ -132,9 +132,9 @@ func TestIntegerIncrement(t *testing.T) {
 
 		assert.Equal(t,
 			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("source.go", mutation1),
-				gomutatedfile.New("source.go", mutation2),
-				gomutatedfile.New("source.go", mutation3),
+				gomutatedfile.New("Integer Increment", "source.go", source, mutation1),
+				gomutatedfile.New("Integer Increment", "source.go", source, mutation2),
+				gomutatedfile.New("Integer Increment", "source.go", source, mutation3),
 			},
 			oozetesting.Mutate(
 				integerincrement.New(),

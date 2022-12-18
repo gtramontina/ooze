@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"github.com/gtramontina/ooze/internal/goinfectedfile"
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/result"
 	"github.com/gtramontina/ooze/internal/viruses"
@@ -23,7 +24,7 @@ type TemporaryRepository interface {
 }
 
 type Laboratory interface {
-	Test(repository Repository, file *goinfectedfile.GoInfectedFile) result.Result[string]
+	Test(repository Repository, file *gomutatedfile.GoMutatedFile) result.Result[string]
 }
 
 type Reporter interface {
@@ -67,7 +68,7 @@ func (o *Ooze) Release(viri ...viruses.Virus) result.Result[string] {
 
 	diagnostic := result.Ok("")
 	for _, infectedFile := range incubated {
-		diagnostic = diagnostic.And(o.laboratory.Test(o.repository, infectedFile))
+		diagnostic = diagnostic.And(o.laboratory.Test(o.repository, infectedFile.Mutate()))
 	}
 
 	return diagnostic

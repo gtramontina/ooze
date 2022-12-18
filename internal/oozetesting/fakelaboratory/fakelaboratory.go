@@ -3,7 +3,6 @@ package fakelaboratory
 import (
 	"reflect"
 
-	"github.com/gtramontina/ooze/internal/goinfectedfile"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
@@ -46,14 +45,14 @@ func NewAlways(diagnostic result.Result[string]) *FakeLaboratory {
 	}
 }
 
-func (l *FakeLaboratory) Test(repository ooze.Repository, file *goinfectedfile.GoInfectedFile) result.Result[string] {
+func (l *FakeLaboratory) Test(repository ooze.Repository, file *gomutatedfile.GoMutatedFile) result.Result[string] {
 	if l.always != nil {
 		return l.always
 	}
 
 	for _, res := range l.results {
 		sameRepository := repository == res.expectedRepository
-		sameMutatedFile := reflect.DeepEqual(file.Mutate(), res.expectedMutatedFile)
+		sameMutatedFile := reflect.DeepEqual(file, res.expectedMutatedFile)
 
 		if sameRepository && sameMutatedFile {
 			return res.diagnostic

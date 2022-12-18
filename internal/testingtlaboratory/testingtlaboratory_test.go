@@ -4,25 +4,23 @@ import (
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/basicreporter"
-	"github.com/gtramontina/ooze/internal/goinfectedfile"
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelaboratory"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/result"
 	"github.com/gtramontina/ooze/internal/testingtlaboratory"
-	"github.com/gtramontina/ooze/internal/viruses"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestTestingTLaboratory(t *testing.T) {
 	t.Parallel()
 
-	noop := func() {}
 	repository := fakerepository.New(fakerepository.FS{})
-	infectedFile := goinfectedfile.New(
+	mutatedFile := gomutatedfile.New(
+		"test-infection",
 		"some-path.go",
-		viruses.NewInfection("test-infection", noop, noop),
 		nil,
 		nil,
 	)
@@ -39,7 +37,7 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		assert.Equal(t, 1, fakeT.HelperCalls())
 
-		laboratory.Test(repository, infectedFile)
+		laboratory.Test(repository, mutatedFile)
 
 		assert.Equal(t, 2, fakeT.HelperCalls())
 	})
@@ -54,7 +52,7 @@ func TestTestingTLaboratory(t *testing.T) {
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
 			reporter,
-		).Test(repository, infectedFile)
+		).Test(repository, mutatedFile)
 
 		assert.Equal(t, &ooze.ReportSummary{
 			Total:    0,
@@ -87,7 +85,7 @@ func TestTestingTLaboratory(t *testing.T) {
 				fakeT,
 				fakelaboratory.NewAlways(result.Ok("mutant killed")),
 				reporter,
-			).Test(repository, infectedFile)
+			).Test(repository, mutatedFile)
 
 			subtest := fakeT.GetSubtest("some-path.go~>test-infection")
 			assert.NotNil(t, subtest)
@@ -104,7 +102,7 @@ func TestTestingTLaboratory(t *testing.T) {
 				fakeT,
 				fakelaboratory.NewAlways(result.Err[string]("mutant survived")),
 				reporter,
-			).Test(repository, infectedFile)
+			).Test(repository, mutatedFile)
 
 			subtest := fakeT.GetSubtest("some-path.go~>test-infection")
 			assert.NotNil(t, subtest)

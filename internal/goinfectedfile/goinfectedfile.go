@@ -12,8 +12,9 @@ import (
 )
 
 type GoInfectedFile struct {
-	relativePath string
-	infection    *viruses.Infection
+	relativePath     string
+	rawSourceContent []byte
+	infection        *viruses.Infection
 
 	fileSet  *token.FileSet
 	fileTree *ast.File
@@ -21,15 +22,17 @@ type GoInfectedFile struct {
 
 func New(
 	relativePath string,
+	rawSourceContent []byte,
 	infection *viruses.Infection,
 	fileSet *token.FileSet,
 	fileTree *ast.File,
 ) *GoInfectedFile {
 	return &GoInfectedFile{
-		relativePath: relativePath,
-		infection:    infection,
-		fileSet:      fileSet,
-		fileTree:     fileTree,
+		relativePath:     relativePath,
+		rawSourceContent: rawSourceContent,
+		infection:        infection,
+		fileSet:          fileSet,
+		fileTree:         fileTree,
 	}
 }
 
@@ -43,13 +46,5 @@ func (f *GoInfectedFile) Mutate() *gomutatedfile.GoMutatedFile {
 		}
 	})
 
-	return gomutatedfile.New(f.relativePath, mutatedSource.Bytes())
-}
-
-func (f *GoInfectedFile) String() string {
-	return f.relativePath
-}
-
-func (f *GoInfectedFile) Label() string {
-	return f.relativePath + "~>" + f.infection.String()
+	return gomutatedfile.New(f.infection.String(), f.relativePath, f.rawSourceContent, mutatedSource.Bytes())
 }

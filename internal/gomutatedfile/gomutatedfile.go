@@ -5,17 +5,29 @@ type Repository interface {
 }
 
 type GoMutatedFile struct {
-	relativePath string
-	rawContent   []byte
+	infectionName     string
+	relativePath      string
+	rawSourceContent  []byte
+	rawMutatedContent []byte
 }
 
-func New(relativePath string, rawContent []byte) *GoMutatedFile {
+func New(infectionName, relativePath string, rawSourceContent, rawMutatedContent []byte) *GoMutatedFile {
 	return &GoMutatedFile{
-		relativePath: relativePath,
-		rawContent:   rawContent,
+		infectionName:     infectionName,
+		relativePath:      relativePath,
+		rawSourceContent:  rawSourceContent,
+		rawMutatedContent: rawMutatedContent,
 	}
 }
 
 func (f *GoMutatedFile) WriteTo(repository Repository) {
-	repository.Overwrite(f.relativePath, f.rawContent)
+	repository.Overwrite(f.relativePath, f.rawMutatedContent)
+}
+
+func (f *GoMutatedFile) String() string {
+	return f.relativePath
+}
+
+func (f *GoMutatedFile) Label() string {
+	return f.relativePath + "~>" + f.infectionName
 }

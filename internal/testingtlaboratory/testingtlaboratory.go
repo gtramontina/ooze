@@ -3,7 +3,7 @@ package testingtlaboratory
 import (
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/goinfectedfile"
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
 )
@@ -31,7 +31,7 @@ func New(t TestingT, delegate ooze.Laboratory, reporter ooze.Reporter) *TestingT
 
 func (l *TestingTLaboratory) Test(
 	repository ooze.Repository,
-	file *goinfectedfile.GoInfectedFile,
+	file *gomutatedfile.GoMutatedFile,
 ) result.Result[string] {
 	l.t.Helper()
 

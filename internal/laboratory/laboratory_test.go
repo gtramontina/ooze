@@ -3,14 +3,13 @@ package laboratory_test
 import (
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/oozetesting"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketempdirectory"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestrunner"
 	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -45,7 +44,7 @@ func TestLaboratory(t *testing.T) {
 		faketempdirectory.NewFakeTemporaryDirectory("tmpdir"),
 	).Test(
 		repository,
-		gosourcefile.New("source.go", source).Incubate(integerdecrement.New())[0],
+		gomutatedfile.New("dummy-infection", "source.go", source, sourceIntegerdecrementMutation1),
 	)
 
 	t.Run("copy all files to temporary repository replacing the mutated file", func(t *testing.T) {
