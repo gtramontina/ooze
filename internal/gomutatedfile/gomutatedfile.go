@@ -4,6 +4,10 @@ type Repository interface {
 	Overwrite(filePath string, data []byte)
 }
 
+type Differ interface {
+	Diff(leftName, rightName string, leftData, rightData []byte) string
+}
+
 type GoMutatedFile struct {
 	infectionName     string
 	relativePath      string
@@ -30,4 +34,13 @@ func (f *GoMutatedFile) String() string {
 
 func (f *GoMutatedFile) Label() string {
 	return f.relativePath + "~>" + f.infectionName
+}
+
+func (f *GoMutatedFile) Diff(differ Differ) string {
+	return differ.Diff(
+		f.relativePath+" (original)",
+		f.relativePath+" (mutated with '"+f.infectionName+"')",
+		f.rawSourceContent,
+		f.rawMutatedContent,
+	)
 }
