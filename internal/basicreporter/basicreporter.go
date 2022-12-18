@@ -1,17 +1,18 @@
 package basicreporter
 
 import (
-	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
 )
 
 type BasicReporter struct {
 	diagnostics []result.Result[string]
+	summary     *Summary
 }
 
 func New() *BasicReporter {
 	return &BasicReporter{
 		diagnostics: []result.Result[string]{},
+		summary:     nil,
 	}
 }
 
@@ -19,7 +20,7 @@ func (r *BasicReporter) AddDiagnostic(diagnostic result.Result[string]) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
-func (r *BasicReporter) Summarize() *ooze.ReportSummary {
+func (r *BasicReporter) Summarize() {
 	total := len(r.diagnostics)
 	survived := 0
 	killed := 0
@@ -37,10 +38,14 @@ func (r *BasicReporter) Summarize() *ooze.ReportSummary {
 		score = float32(killed) / float32(total)
 	}
 
-	return &ooze.ReportSummary{
+	r.summary = &Summary{
 		Total:    total,
 		Survived: survived,
 		Killed:   killed,
 		Score:    score,
 	}
+}
+
+func (r *BasicReporter) GetSummary() *Summary {
+	return r.summary
 }

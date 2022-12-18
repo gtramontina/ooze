@@ -29,14 +29,7 @@ type Laboratory interface {
 
 type Reporter interface {
 	AddDiagnostic(diagnostic result.Result[string])
-	Summarize() *ReportSummary
-}
-
-type ReportSummary struct {
-	Total    int
-	Survived int
-	Killed   int
-	Score    float32
+	Summarize()
 }
 
 type Ooze struct {

@@ -22,8 +22,7 @@ func (r *VerboseReporter) AddDiagnostic(diagnostic result.Result[string]) {
 	r.delegate.AddDiagnostic(diagnostic)
 }
 
-func (r *VerboseReporter) Summarize() *ooze.ReportSummary {
+func (r *VerboseReporter) Summarize() {
 	r.logger.Logf("summarizing report…")
-
-	return r.delegate.Summarize()
+	r.delegate.Summarize()
 }

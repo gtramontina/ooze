@@ -5,7 +5,6 @@ import (
 
 	"github.com/gtramontina/ooze/internal/basicreporter"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
-	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelaboratory"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
@@ -53,25 +52,27 @@ func TestTestingTLaboratory(t *testing.T) {
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
 			reporter,
 		).Test(repository, mutatedFile)
+		reporter.Summarize()
 
-		assert.Equal(t, &ooze.ReportSummary{
+		assert.Equal(t, &basicreporter.Summary{
 			Total:    0,
 			Survived: 0,
 			Killed:   0,
 			Score:    -1,
-		}, reporter.Summarize())
+		}, reporter.GetSummary())
 
 		subtest := fakeT.GetSubtest("some-path.go~>test-infection")
 		assert.NotNil(t, subtest)
 
 		subtest.Run()
+		reporter.Summarize()
 		assert.True(t, subtest.IsParallel())
-		assert.Equal(t, &ooze.ReportSummary{
+		assert.Equal(t, &basicreporter.Summary{
 			Total:    1,
 			Survived: 0,
 			Killed:   1,
 			Score:    1,
-		}, reporter.Summarize())
+		}, reporter.GetSummary())
 	})
 
 	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {
