@@ -5,7 +5,7 @@ type Repository interface {
 }
 
 type Differ interface {
-	Diff(leftName, rightName string, leftData, rightData []byte) string
+	Diff(a, b string, aData, bData []byte) string
 }
 
 type GoMutatedFile struct {

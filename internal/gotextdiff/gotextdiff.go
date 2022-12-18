@@ -14,8 +14,8 @@ func New() *GoTextDiff {
 	return &GoTextDiff{}
 }
 
-func (GoTextDiff) Diff(leftName, rightName string, leftData, rightData []byte) string {
-	edits := myers.ComputeEdits(span.URIFromPath(leftName), string(leftData), string(rightData))
+func (GoTextDiff) Diff(a, b string, aData, bData []byte) string {
+	edits := myers.ComputeEdits(span.URIFromPath(a), string(aData), string(bData))
 
-	return fmt.Sprint(gotextdiff.ToUnified(leftName, rightName, string(leftData), edits))
+	return fmt.Sprint(gotextdiff.ToUnified(a, b, string(aData), edits))
 }

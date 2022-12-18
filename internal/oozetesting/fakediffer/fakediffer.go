@@ -8,12 +8,12 @@ func New() *FakeDiffer {
 	return &FakeDiffer{}
 }
 
-func (d *FakeDiffer) Diff(leftName, rightName string, leftData, rightData []byte) string {
+func (d *FakeDiffer) Diff(a, b string, aData, bData []byte) string {
 	return strings.Join([]string{
-		"From: " + leftName,
-		"To: " + rightName,
+		"From: " + a,
+		"To: " + b,
 		"",
-		"- " + string(leftData),
-		"+ " + string(rightData),
+		"- " + string(aData),
+		"+ " + string(bData),
 	}, "\n")
 }
