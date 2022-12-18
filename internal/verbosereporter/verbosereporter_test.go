@@ -3,8 +3,8 @@ package verbosereporter_test
 import (
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/basicreporter"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelogger"
+	"github.com/gtramontina/ooze/internal/oozetesting/fakereporter"
 	"github.com/gtramontina/ooze/internal/result"
 	"github.com/gtramontina/ooze/internal/verbosereporter"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +20,7 @@ func TestVerboseReporter(t *testing.T) {
 
 		verbosereporter.New(
 			logger,
-			basicreporter.New(),
+			fakereporter.New(),
 		).AddDiagnostic(result.Ok("dummy"))
 
 		assert.Equal(t, []string{
@@ -35,7 +35,7 @@ func TestVerboseReporter(t *testing.T) {
 
 		verbosereporter.New(
 			logger,
-			basicreporter.New(),
+			fakereporter.New(),
 		).Summarize()
 
 		assert.Equal(t, []string{

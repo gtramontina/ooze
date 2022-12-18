@@ -1,27 +1,26 @@
-package basicreporter
+package fakereporter
 
 import (
 	"github.com/gtramontina/ooze/internal/result"
 )
 
-type BasicReporter struct {
+type FakeReporter struct {
 	diagnostics []result.Result[string]
 	summary     *Summary
 }
 
-func New() *BasicReporter {
-	return &BasicReporter{
+func New() *FakeReporter {
+	return &FakeReporter{
 		diagnostics: []result.Result[string]{},
 		summary:     nil,
 	}
 }
 
-func (r *BasicReporter) AddDiagnostic(diagnostic result.Result[string]) {
+func (r *FakeReporter) AddDiagnostic(diagnostic result.Result[string]) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
-func (r *BasicReporter) Summarize() {
-	total := len(r.diagnostics)
+func (r *FakeReporter) Summarize() {
 	survived := 0
 	killed := 0
 
@@ -33,19 +32,12 @@ func (r *BasicReporter) Summarize() {
 		}
 	}
 
-	var score float32 = -1
-	if total > 0 {
-		score = float32(killed) / float32(total)
-	}
-
 	r.summary = &Summary{
-		Total:    total,
 		Survived: survived,
 		Killed:   killed,
-		Score:    score,
 	}
 }
 
-func (r *BasicReporter) GetSummary() *Summary {
+func (r *FakeReporter) GetSummary() *Summary {
 	return r.summary
 }

@@ -3,9 +3,9 @@ package testingtlaboratory_test
 import (
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/basicreporter"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelaboratory"
+	"github.com/gtramontina/ooze/internal/oozetesting/fakereporter"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/result"
@@ -31,7 +31,7 @@ func TestTestingTLaboratory(t *testing.T) {
 		laboratory := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
-			basicreporter.New(),
+			fakereporter.New(),
 		)
 
 		assert.Equal(t, 1, fakeT.HelperCalls())
@@ -45,7 +45,7 @@ func TestTestingTLaboratory(t *testing.T) {
 		t.Parallel()
 
 		fakeT := faketestingt.New()
-		reporter := basicreporter.New()
+		reporter := fakereporter.New()
 
 		testingtlaboratory.New(
 			fakeT,
@@ -54,11 +54,9 @@ func TestTestingTLaboratory(t *testing.T) {
 		).Test(repository, mutatedFile)
 		reporter.Summarize()
 
-		assert.Equal(t, &basicreporter.Summary{
-			Total:    0,
+		assert.Equal(t, &fakereporter.Summary{
 			Survived: 0,
 			Killed:   0,
-			Score:    -1,
 		}, reporter.GetSummary())
 
 		subtest := fakeT.GetSubtest("some-path.go~>test-infection")
@@ -67,11 +65,9 @@ func TestTestingTLaboratory(t *testing.T) {
 		subtest.Run()
 		reporter.Summarize()
 		assert.True(t, subtest.IsParallel())
-		assert.Equal(t, &basicreporter.Summary{
-			Total:    1,
+		assert.Equal(t, &fakereporter.Summary{
 			Survived: 0,
 			Killed:   1,
-			Score:    1,
 		}, reporter.GetSummary())
 	})
 
@@ -80,7 +76,7 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		{
 			fakeT := faketestingt.New()
-			reporter := basicreporter.New()
+			reporter := fakereporter.New()
 
 			testingtlaboratory.New(
 				fakeT,
@@ -97,7 +93,7 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		{
 			fakeT := faketestingt.New()
-			reporter := basicreporter.New()
+			reporter := fakereporter.New()
 
 			testingtlaboratory.New(
 				fakeT,
