@@ -49,3 +49,7 @@ func (f *GoInfectedFile) Mutate() *gomutatedfile.GoMutatedFile {
 func (f *GoInfectedFile) String() string {
 	return f.relativePath
 }
+
+func (f *GoInfectedFile) Label() string {
+	return f.relativePath + "~>" + f.infection.String()
+}

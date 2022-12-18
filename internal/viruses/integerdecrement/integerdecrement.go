@@ -32,6 +32,7 @@ func (i *IntegerDecrement) Incubate(node ast.Node) []*viruses.Infection {
 
 	return []*viruses.Infection{
 		viruses.NewInfection(
+			"Integer Decrement",
 			func() { literal.Value = mutatedValue },
 			func() { literal.Value = originalValue },
 		),
