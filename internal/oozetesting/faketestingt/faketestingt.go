@@ -1,18 +1,21 @@
 package faketestingt
 
 import (
+	"fmt"
 	"testing"
 )
 
 type FakeTestingT struct {
 	helperCalls int
 	subtests    map[string]func(*testing.T)
+	logOutput   []string
 }
 
 func New() *FakeTestingT {
 	return &FakeTestingT{
 		helperCalls: 0,
 		subtests:    map[string]func(*testing.T){},
+		logOutput:   []string{},
 	}
 }
 
@@ -37,4 +40,12 @@ func (t *FakeTestingT) GetSubtest(name string) *SubTest {
 	}
 
 	return NewSubTest(subtest)
+}
+
+func (t *FakeTestingT) Logf(format string, args ...any) {
+	t.logOutput = append(t.logOutput, fmt.Sprintf(format, args...))
+}
+
+func (t *FakeTestingT) LogOutput() []string {
+	return t.logOutput
 }
