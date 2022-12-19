@@ -35,16 +35,18 @@ type Reporter interface {
 type Ooze struct {
 	repository Repository
 	laboratory Laboratory
+	reporter   Reporter
 }
 
-func New(repository Repository, laboratory Laboratory) *Ooze {
+func New(repository Repository, laboratory Laboratory, reporter Reporter) *Ooze {
 	return &Ooze{
 		repository: repository,
 		laboratory: laboratory,
+		reporter:   reporter,
 	}
 }
 
-func (o *Ooze) Release(viri ...viruses.Virus) result.Result[string] {
+func (o *Ooze) Release(viri ...viruses.Virus) {
 	sources := o.repository.ListGoSourceFiles()
 
 	var incubated []*goinfectedfile.GoInfectedFile
@@ -56,13 +58,10 @@ func (o *Ooze) Release(viri ...viruses.Virus) result.Result[string] {
 	}
 
 	if len(incubated) == 0 {
-		return result.Err[string]("no mutations applied")
+		return
 	}
 
-	diagnostic := result.Ok("")
 	for _, infectedFile := range incubated {
-		diagnostic = diagnostic.And(o.laboratory.Test(o.repository, infectedFile.Mutate()))
+		o.reporter.AddDiagnostic(o.laboratory.Test(o.repository, infectedFile.Mutate()))
 	}
-
-	return diagnostic
 }
