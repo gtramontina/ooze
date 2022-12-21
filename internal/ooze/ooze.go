@@ -27,8 +27,24 @@ type Laboratory interface {
 	Test(repository Repository, file *gomutatedfile.GoMutatedFile) <-chan result.Result[string]
 }
 
+type Diagnostic struct {
+	res  <-chan result.Result[string]
+	file *gomutatedfile.GoMutatedFile
+}
+
+func (d *Diagnostic) IsOk() bool {
+	return (<-d.res).IsOk()
+}
+
+func NewDiagnostic(res <-chan result.Result[string], file *gomutatedfile.GoMutatedFile) *Diagnostic {
+	return &Diagnostic{
+		res:  res,
+		file: file,
+	}
+}
+
 type Reporter interface {
-	AddDiagnostic(diagnostic <-chan result.Result[string])
+	AddDiagnostic(diagnostic *Diagnostic)
 	Summarize()
 }
 
@@ -62,6 +78,8 @@ func (o *Ooze) Release(viri ...viruses.Virus) {
 	}
 
 	for _, infectedFile := range incubated {
-		o.reporter.AddDiagnostic(o.laboratory.Test(o.repository, infectedFile.Mutate()))
+		mutatedFile := infectedFile.Mutate()
+		res := o.laboratory.Test(o.repository, mutatedFile)
+		o.reporter.AddDiagnostic(NewDiagnostic(res, mutatedFile))
 	}
 }

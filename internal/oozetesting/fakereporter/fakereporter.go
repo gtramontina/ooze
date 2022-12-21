@@ -1,22 +1,22 @@
 package fakereporter
 
 import (
-	"github.com/gtramontina/ooze/internal/result"
+	"github.com/gtramontina/ooze/internal/ooze"
 )
 
 type FakeReporter struct {
-	diagnostics []<-chan result.Result[string]
+	diagnostics []*ooze.Diagnostic
 	summary     *Summary
 }
 
 func New() *FakeReporter {
 	return &FakeReporter{
-		diagnostics: []<-chan result.Result[string]{},
+		diagnostics: []*ooze.Diagnostic{},
 		summary:     nil,
 	}
 }
 
-func (r *FakeReporter) AddDiagnostic(diagnostic <-chan result.Result[string]) {
+func (r *FakeReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
@@ -25,7 +25,7 @@ func (r *FakeReporter) Summarize() {
 	killed := 0
 
 	for _, diagnostic := range r.diagnostics {
-		if (<-diagnostic).IsOk() {
+		if diagnostic.IsOk() {
 			killed++
 		} else {
 			survived++

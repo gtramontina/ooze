@@ -2,7 +2,6 @@ package verbosereporter
 
 import (
 	"github.com/gtramontina/ooze/internal/ooze"
-	"github.com/gtramontina/ooze/internal/result"
 )
 
 type VerboseReporter struct {
@@ -17,7 +16,7 @@ func New(logger ooze.Logger, delegate ooze.Reporter) *VerboseReporter {
 	}
 }
 
-func (r *VerboseReporter) AddDiagnostic(diagnostic <-chan result.Result[string]) {
+func (r *VerboseReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
 	r.logger.Logf("registering diagnostic…")
 	r.delegate.AddDiagnostic(diagnostic)
 }

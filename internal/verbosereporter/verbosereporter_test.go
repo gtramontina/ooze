@@ -3,6 +3,8 @@ package verbosereporter_test
 import (
 	"testing"
 
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
+	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/oozetesting"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelogger"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakereporter"
@@ -22,7 +24,10 @@ func TestVerboseReporter(t *testing.T) {
 		verbosereporter.New(
 			logger,
 			fakereporter.New(),
-		).AddDiagnostic(oozetesting.AsChannel(result.Ok("dummy")))
+		).AddDiagnostic(ooze.NewDiagnostic(
+			oozetesting.AsChannel(result.Ok("dummy")),
+			gomutatedfile.New("dummy", "dummy.go", nil, nil),
+		))
 
 		assert.Equal(t, []string{
 			"registering diagnostic…",

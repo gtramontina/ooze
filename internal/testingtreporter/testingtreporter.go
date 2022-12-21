@@ -1,7 +1,7 @@
 package testingtreporter
 
 import (
-	"github.com/gtramontina/ooze/internal/result"
+	"github.com/gtramontina/ooze/internal/ooze"
 )
 
 type TestingT interface {
@@ -11,17 +11,17 @@ type TestingT interface {
 
 type TestingTReporter struct {
 	t           TestingT
-	diagnostics []<-chan result.Result[string]
+	diagnostics []*ooze.Diagnostic
 }
 
 func New(t TestingT) *TestingTReporter {
 	return &TestingTReporter{
 		t:           t,
-		diagnostics: []<-chan result.Result[string]{},
+		diagnostics: []*ooze.Diagnostic{},
 	}
 }
 
-func (r *TestingTReporter) AddDiagnostic(diagnostic <-chan result.Result[string]) {
+func (r *TestingTReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
@@ -33,7 +33,7 @@ func (r *TestingTReporter) Summarize() {
 	var killed, survived int
 
 	for _, diagnostic := range r.diagnostics {
-		if (<-diagnostic).IsOk() {
+		if diagnostic.IsOk() {
 			killed++
 		} else {
 			survived++
