@@ -5,7 +5,6 @@ import (
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakelaboratory"
-	"github.com/gtramontina/ooze/internal/oozetesting/fakereporter"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/result"
@@ -31,7 +30,6 @@ func TestTestingTLaboratory(t *testing.T) {
 		laboratory := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
-			fakereporter.New(),
 		)
 
 		assert.Equal(t, 1, fakeT.HelperCalls())
@@ -45,30 +43,19 @@ func TestTestingTLaboratory(t *testing.T) {
 		t.Parallel()
 
 		fakeT := faketestingt.New()
-		reporter := fakereporter.New()
 
-		testingtlaboratory.New(
+		diagnostic := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
-			reporter,
 		).Test(repository, mutatedFile)
-		reporter.Summarize()
-
-		assert.Equal(t, &fakereporter.Summary{
-			Survived: 0,
-			Killed:   0,
-		}, reporter.GetSummary())
 
 		subtest := fakeT.GetSubtest("some-path.go~>test-infection")
 		assert.NotNil(t, subtest)
 
 		subtest.Run()
-		reporter.Summarize()
+
 		assert.True(t, subtest.IsParallel())
-		assert.Equal(t, &fakereporter.Summary{
-			Survived: 0,
-			Killed:   1,
-		}, reporter.GetSummary())
+		assert.Equal(t, result.Ok("mutant killed"), <-diagnostic)
 	})
 
 	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {
@@ -76,12 +63,10 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		{
 			fakeT := faketestingt.New()
-			reporter := fakereporter.New()
 
 			testingtlaboratory.New(
 				fakeT,
 				fakelaboratory.NewAlways(result.Ok("mutant killed")),
-				reporter,
 			).Test(repository, mutatedFile)
 
 			subtest := fakeT.GetSubtest("some-path.go~>test-infection")
@@ -93,12 +78,10 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		{
 			fakeT := faketestingt.New()
-			reporter := fakereporter.New()
 
 			testingtlaboratory.New(
 				fakeT,
 				fakelaboratory.NewAlways(result.Err[string]("mutant survived")),
-				reporter,
 			).Test(repository, mutatedFile)
 
 			subtest := fakeT.GetSubtest("some-path.go~>test-infection")

@@ -3,6 +3,7 @@ package testingtreporter_test
 import (
 	"testing"
 
+	"github.com/gtramontina/ooze/internal/oozetesting"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/result"
 	"github.com/gtramontina/ooze/internal/testingtreporter"
@@ -44,7 +45,7 @@ func TestName(t *testing.T) {
 
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
-		reporter.AddDiagnostic(result.Ok("mutant killed"))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Ok("mutant killed")))
 		reporter.Summarize()
 
 		assert.Equal(t, []string{
@@ -62,7 +63,7 @@ func TestName(t *testing.T) {
 
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
-		reporter.AddDiagnostic(result.Err[string]("mutant survived"))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Err[string]("mutant survived")))
 		reporter.Summarize()
 
 		assert.Equal(t, []string{
@@ -80,14 +81,14 @@ func TestName(t *testing.T) {
 
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
-		reporter.AddDiagnostic(result.Err[string]("mutant survived"))
-		reporter.AddDiagnostic(result.Ok("mutant killed"))
-		reporter.AddDiagnostic(result.Ok("mutant killed"))
-		reporter.AddDiagnostic(result.Ok("mutant killed"))
-		reporter.AddDiagnostic(result.Err[string]("mutant survived"))
-		reporter.AddDiagnostic(result.Err[string]("mutant survived"))
-		reporter.AddDiagnostic(result.Ok("mutant killed"))
-		reporter.AddDiagnostic(result.Ok("mutant killed"))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Err[string]("mutant survived")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Ok("mutant killed")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Ok("mutant killed")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Ok("mutant killed")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Err[string]("mutant survived")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Err[string]("mutant survived")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Ok("mutant killed")))
+		reporter.AddDiagnostic(oozetesting.AsChannel(result.Ok("mutant killed")))
 		reporter.Summarize()
 
 		assert.Equal(t, []string{

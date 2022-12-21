@@ -5,18 +5,18 @@ import (
 )
 
 type FakeReporter struct {
-	diagnostics []result.Result[string]
+	diagnostics []<-chan result.Result[string]
 	summary     *Summary
 }
 
 func New() *FakeReporter {
 	return &FakeReporter{
-		diagnostics: []result.Result[string]{},
+		diagnostics: []<-chan result.Result[string]{},
 		summary:     nil,
 	}
 }
 
-func (r *FakeReporter) AddDiagnostic(diagnostic result.Result[string]) {
+func (r *FakeReporter) AddDiagnostic(diagnostic <-chan result.Result[string]) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
@@ -25,7 +25,7 @@ func (r *FakeReporter) Summarize() {
 	killed := 0
 
 	for _, diagnostic := range r.diagnostics {
-		if diagnostic.IsOk() {
+		if (<-diagnostic).IsOk() {
 			killed++
 		} else {
 			survived++

@@ -45,9 +45,15 @@ func NewAlways(diagnostic result.Result[string]) *FakeLaboratory {
 	}
 }
 
-func (l *FakeLaboratory) Test(repository ooze.Repository, file *gomutatedfile.GoMutatedFile) result.Result[string] {
+func (l *FakeLaboratory) Test(
+	repository ooze.Repository,
+	file *gomutatedfile.GoMutatedFile,
+) <-chan result.Result[string] {
+	diagnostic := make(chan result.Result[string], 1)
 	if l.always != nil {
-		return l.always
+		diagnostic <- l.always
+
+		return diagnostic
 	}
 
 	for _, res := range l.results {
@@ -55,7 +61,9 @@ func (l *FakeLaboratory) Test(repository ooze.Repository, file *gomutatedfile.Go
 		sameMutatedFile := reflect.DeepEqual(file, res.expectedMutatedFile)
 
 		if sameRepository && sameMutatedFile {
-			return res.diagnostic
+			diagnostic <- res.diagnostic
+
+			return diagnostic
 		}
 	}
 

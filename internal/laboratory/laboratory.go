@@ -26,11 +26,17 @@ func New(testRunner TestRunner, temporaryDirectory TemporaryDirectory) *Laborato
 	}
 }
 
-func (l *Laboratory) Test(repository ooze.Repository, file *gomutatedfile.GoMutatedFile) result.Result[string] {
+func (l *Laboratory) Test(
+	repository ooze.Repository,
+	file *gomutatedfile.GoMutatedFile,
+) <-chan result.Result[string] {
 	tempRepository := repository.LinkAllToTemporaryRepository(l.temporaryDirectory.New())
 	defer tempRepository.Remove()
 
 	file.WriteTo(tempRepository)
 
-	return l.testRunner.Test(tempRepository)
+	diagnostic := make(chan result.Result[string], 1)
+	diagnostic <- l.testRunner.Test(tempRepository)
+
+	return diagnostic
 }

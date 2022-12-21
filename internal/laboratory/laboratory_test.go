@@ -67,6 +67,6 @@ func TestLaboratory(t *testing.T) {
 	t.Run("reports the result of the test runner", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Equal(t, result.Ok("mutants died"), diagnostic)
+		assert.Equal(t, result.Ok("mutants died"), <-diagnostic)
 	})
 }

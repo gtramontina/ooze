@@ -24,11 +24,11 @@ type TemporaryRepository interface {
 }
 
 type Laboratory interface {
-	Test(repository Repository, file *gomutatedfile.GoMutatedFile) result.Result[string]
+	Test(repository Repository, file *gomutatedfile.GoMutatedFile) <-chan result.Result[string]
 }
 
 type Reporter interface {
-	AddDiagnostic(diagnostic result.Result[string])
+	AddDiagnostic(diagnostic <-chan result.Result[string])
 	Summarize()
 }
 

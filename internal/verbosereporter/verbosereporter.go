@@ -17,7 +17,7 @@ func New(logger ooze.Logger, delegate ooze.Reporter) *VerboseReporter {
 	}
 }
 
-func (r *VerboseReporter) AddDiagnostic(diagnostic result.Result[string]) {
+func (r *VerboseReporter) AddDiagnostic(diagnostic <-chan result.Result[string]) {
 	r.logger.Logf("registering diagnostic…")
 	r.delegate.AddDiagnostic(diagnostic)
 }

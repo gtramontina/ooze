@@ -11,17 +11,17 @@ type TestingT interface {
 
 type TestingTReporter struct {
 	t           TestingT
-	diagnostics []result.Result[string]
+	diagnostics []<-chan result.Result[string]
 }
 
 func New(t TestingT) *TestingTReporter {
 	return &TestingTReporter{
 		t:           t,
-		diagnostics: []result.Result[string]{},
+		diagnostics: []<-chan result.Result[string]{},
 	}
 }
 
-func (r *TestingTReporter) AddDiagnostic(diagnostic result.Result[string]) {
+func (r *TestingTReporter) AddDiagnostic(diagnostic <-chan result.Result[string]) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
@@ -33,7 +33,7 @@ func (r *TestingTReporter) Summarize() {
 	var killed, survived int
 
 	for _, diagnostic := range r.diagnostics {
-		if diagnostic.IsOk() {
+		if (<-diagnostic).IsOk() {
 			killed++
 		} else {
 			survived++

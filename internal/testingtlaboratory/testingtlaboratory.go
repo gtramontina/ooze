@@ -16,31 +16,29 @@ type TestingT interface {
 type TestingTLaboratory struct {
 	t        TestingT
 	delegate ooze.Laboratory
-	reporter ooze.Reporter
 }
 
-func New(t TestingT, delegate ooze.Laboratory, reporter ooze.Reporter) *TestingTLaboratory {
+func New(t TestingT, delegate ooze.Laboratory) *TestingTLaboratory {
 	t.Helper()
 
 	return &TestingTLaboratory{
 		t:        t,
 		delegate: delegate,
-		reporter: reporter,
 	}
 }
 
 func (l *TestingTLaboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
-) result.Result[string] {
+) <-chan result.Result[string] {
 	l.t.Helper()
+
+	diagnostic := make(chan result.Result[string], 1)
 
 	l.t.Run(file.Label(), func(t *testing.T) { //nolint:thelper
 		t.Parallel()
-
-		diagnostic := l.delegate.Test(repository, file)
-		l.reporter.AddDiagnostic(diagnostic)
+		diagnostic <- <-l.delegate.Test(repository, file)
 	})
 
-	return result.Ok[string]("ignored")
+	return diagnostic
 }

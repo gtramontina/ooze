@@ -21,10 +21,13 @@ func New(logger ooze.Logger, delegate ooze.Laboratory) *VerboseLaboratory {
 func (l *VerboseLaboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
-) result.Result[string] {
+) <-chan result.Result[string] {
 	l.logger.Logf("running laboratory tests for '%s'", file)
-	diagnostic := l.delegate.Test(repository, file)
-	l.logger.Logf("laboratory diagnostic for '%s': %+v", file, diagnostic)
+	d := <-l.delegate.Test(repository, file)
+	l.logger.Logf("laboratory diagnostic for '%s': %+v", file, d)
+
+	diagnostic := make(chan result.Result[string], 1)
+	diagnostic <- d
 
 	return diagnostic
 }
