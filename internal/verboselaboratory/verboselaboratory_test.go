@@ -29,7 +29,7 @@ func TestVerboseLaboratory(t *testing.T) {
 
 		assert.Equal(t, []string{
 			"running laboratory tests for 'some-path.go'",
-			"laboratory diagnostic for 'some-path.go': Ok[string](dummy result)",
+			"laboratory result for 'some-path.go': Ok[string](dummy result)",
 		}, logger.LoggedLines())
 	})
 }

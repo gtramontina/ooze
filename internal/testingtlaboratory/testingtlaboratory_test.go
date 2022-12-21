@@ -44,7 +44,7 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		fakeT := faketestingt.New()
 
-		diagnostic := testingtlaboratory.New(
+		outputChannel := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
 		).Test(repository, mutatedFile)
@@ -55,7 +55,7 @@ func TestTestingTLaboratory(t *testing.T) {
 		subtest.Run()
 
 		assert.True(t, subtest.IsParallel())
-		assert.Equal(t, result.Ok("mutant killed"), <-diagnostic)
+		assert.Equal(t, result.Ok("mutant killed"), <-outputChannel)
 	})
 
 	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {

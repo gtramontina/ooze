@@ -35,8 +35,8 @@ func (l *Laboratory) Test(
 
 	file.WriteTo(tempRepository)
 
-	diagnostic := make(chan result.Result[string], 1)
-	diagnostic <- l.testRunner.Test(tempRepository)
+	outputChannel := make(chan result.Result[string], 1)
+	outputChannel <- l.testRunner.Test(tempRepository)
 
-	return diagnostic
+	return outputChannel
 }

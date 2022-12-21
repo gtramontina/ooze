@@ -23,11 +23,11 @@ func (l *VerboseLaboratory) Test(
 	file *gomutatedfile.GoMutatedFile,
 ) <-chan result.Result[string] {
 	l.logger.Logf("running laboratory tests for '%s'", file)
-	d := <-l.delegate.Test(repository, file)
-	l.logger.Logf("laboratory diagnostic for '%s': %+v", file, d)
+	output := <-l.delegate.Test(repository, file)
+	l.logger.Logf("laboratory result for '%s': %+v", file, output)
 
-	diagnostic := make(chan result.Result[string], 1)
-	diagnostic <- d
+	outputChannel := make(chan result.Result[string], 1)
+	outputChannel <- output
 
-	return diagnostic
+	return outputChannel
 }

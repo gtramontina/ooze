@@ -16,18 +16,18 @@ type FakeLaboratory struct {
 type Result struct {
 	expectedRepository  ooze.Repository
 	expectedMutatedFile *gomutatedfile.GoMutatedFile
-	diagnostic          result.Result[string]
+	output              result.Result[string]
 }
 
 func NewResult(
 	expectedRepository ooze.Repository,
 	expectedMutatedFile *gomutatedfile.GoMutatedFile,
-	diagnostic result.Result[string],
+	output result.Result[string],
 ) *Result {
 	return &Result{
 		expectedRepository:  expectedRepository,
 		expectedMutatedFile: expectedMutatedFile,
-		diagnostic:          diagnostic,
+		output:              output,
 	}
 }
 
@@ -38,9 +38,9 @@ func New(tuples ...*Result) *FakeLaboratory {
 	}
 }
 
-func NewAlways(diagnostic result.Result[string]) *FakeLaboratory {
+func NewAlways(output result.Result[string]) *FakeLaboratory {
 	return &FakeLaboratory{
-		always:  diagnostic,
+		always:  output,
 		results: []*Result{},
 	}
 }
@@ -49,11 +49,11 @@ func (l *FakeLaboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
 ) <-chan result.Result[string] {
-	diagnostic := make(chan result.Result[string], 1)
+	outputChannel := make(chan result.Result[string], 1)
 	if l.always != nil {
-		diagnostic <- l.always
+		outputChannel <- l.always
 
-		return diagnostic
+		return outputChannel
 	}
 
 	for _, res := range l.results {
@@ -61,9 +61,9 @@ func (l *FakeLaboratory) Test(
 		sameMutatedFile := reflect.DeepEqual(file, res.expectedMutatedFile)
 
 		if sameRepository && sameMutatedFile {
-			diagnostic <- res.diagnostic
+			outputChannel <- res.output
 
-			return diagnostic
+			return outputChannel
 		}
 	}
 

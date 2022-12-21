@@ -33,12 +33,13 @@ func (l *TestingTLaboratory) Test(
 ) <-chan result.Result[string] {
 	l.t.Helper()
 
-	diagnostic := make(chan result.Result[string], 1)
+	outputChannel := make(chan result.Result[string], 1)
 
 	l.t.Run(file.Label(), func(t *testing.T) { //nolint:thelper
 		t.Parallel()
-		diagnostic <- <-l.delegate.Test(repository, file)
+		output := <-l.delegate.Test(repository, file)
+		outputChannel <- output
 	})
 
-	return diagnostic
+	return outputChannel
 }

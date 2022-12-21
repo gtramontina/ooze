@@ -20,13 +20,13 @@ func New(logger ooze.Logger, delegate laboratory.TestRunner) *VerboseTestRunner 
 
 func (r *VerboseTestRunner) Test(repository ooze.TemporaryRepository) result.Result[string] {
 	r.logger.Logf("running tests on '%s'…", repository.Root())
-	diagnostic := r.delegate.Test(repository)
+	output := r.delegate.Test(repository)
 
-	if diagnostic.IsOk() {
+	if output.IsOk() {
 		r.logger.Logf("tests for '%s' failed; mutant killed", repository.Root())
 	} else {
 		r.logger.Logf("tests for '%s' passed; mutant survived", repository.Root())
 	}
 
-	return diagnostic
+	return output
 }
