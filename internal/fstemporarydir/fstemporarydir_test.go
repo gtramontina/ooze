@@ -10,11 +10,7 @@ import (
 )
 
 func TestFSTemporaryDir(t *testing.T) {
-	t.Parallel()
-
 	t.Run("creates a temporary directory under the OS temporary directory", func(t *testing.T) {
-		t.Parallel()
-
 		temporaryDir := fstemporarydir.New("fs-temporary-dir-test-")
 
 		temporaryDirPathA := temporaryDir.New()

@@ -12,10 +12,7 @@ import (
 )
 
 func TestCMDTestRunner(t *testing.T) {
-	t.Parallel()
-
 	t.Run("has a positive result when subprocess exists unsuccessfully", func(t *testing.T) {
-		t.Parallel()
 		temporaryRepository := fakerepository.NewTemporaryAt(t.TempDir())
 
 		output := cmdtestrunner.New("sh", "-c", "printf 'tests failed'; exit 1").Test(temporaryRepository)
@@ -23,7 +20,6 @@ func TestCMDTestRunner(t *testing.T) {
 	})
 
 	t.Run("has a negative result when subprocess exists successfully", func(t *testing.T) {
-		t.Parallel()
 		temporaryRepository := fakerepository.NewTemporaryAt(t.TempDir())
 
 		output := cmdtestrunner.New("sh", "-c", "printf 'tests passed'; exit 0").Test(temporaryRepository)
@@ -31,7 +27,6 @@ func TestCMDTestRunner(t *testing.T) {
 	})
 
 	t.Run("runs within the given directory context", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		temporaryRepository := fakerepository.NewTemporaryAt(dir)
 
@@ -40,7 +35,6 @@ func TestCMDTestRunner(t *testing.T) {
 	})
 
 	t.Run("makes all environment variables available to the subprocess", func(t *testing.T) {
-		t.Parallel()
 		temporaryRepository := fakerepository.NewTemporaryAt(t.TempDir())
 
 		assert.NoError(t, os.Setenv("TEST_VAR_1", "test_value_1"))

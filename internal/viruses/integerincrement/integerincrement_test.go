@@ -11,10 +11,7 @@ import (
 )
 
 func TestIntegerIncrement(t *testing.T) {
-	t.Parallel()
-
 	t.Run("no mutations", func(t *testing.T) {
-		t.Parallel()
 		source := oozetesting.Source(`
 		|package source
 		|`)
@@ -29,7 +26,6 @@ func TestIntegerIncrement(t *testing.T) {
 	})
 
 	t.Run("one mutation", func(t *testing.T) {
-		t.Parallel()
 		source := oozetesting.Source(`
 		|package source
 		|
@@ -54,7 +50,6 @@ func TestIntegerIncrement(t *testing.T) {
 	})
 
 	t.Run("two mutations", func(t *testing.T) {
-		t.Parallel()
 		source := oozetesting.Source(`
 		|package source
 		|
@@ -89,7 +84,6 @@ func TestIntegerIncrement(t *testing.T) {
 	})
 
 	t.Run("many mutations", func(t *testing.T) {
-		t.Parallel()
 		source := oozetesting.Source(`
 		|package source
 		|

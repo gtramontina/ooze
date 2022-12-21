@@ -9,19 +9,13 @@ import (
 )
 
 func TestName(t *testing.T) {
-	t.Parallel()
-
 	t.Run("no diffs", func(t *testing.T) {
-		t.Parallel()
-
 		differ := gotextdiff.New()
 		diff := differ.Diff("a", "b", []byte("same\n"), []byte("same\n"))
 		assert.Equal(t, "", diff)
 	})
 
 	t.Run("simple diff", func(t *testing.T) {
-		t.Parallel()
-
 		differ := gotextdiff.New()
 		diff := differ.Diff("a", "b", []byte("same\n"), []byte("different\n"))
 		assert.Equal(t, []string{

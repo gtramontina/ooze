@@ -14,11 +14,7 @@ import (
 )
 
 func TestVerboseReporter(t *testing.T) {
-	t.Parallel()
-
 	t.Run("logs when adding a diagnostic", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verbosereporter.New(
@@ -35,8 +31,6 @@ func TestVerboseReporter(t *testing.T) {
 	})
 
 	t.Run("logs when summarizing", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verbosereporter.New(

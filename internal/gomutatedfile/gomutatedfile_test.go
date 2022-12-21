@@ -10,11 +10,7 @@ import (
 )
 
 func TestGoMutatedFile(t *testing.T) {
-	t.Parallel()
-
 	t.Run("prints a diff", func(t *testing.T) {
-		t.Parallel()
-
 		diff := gomutatedfile.New(
 			"some-infection",
 			"some-path.go",

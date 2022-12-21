@@ -13,11 +13,7 @@ import (
 )
 
 func TestName(t *testing.T) {
-	t.Parallel()
-
 	t.Run("summary is a test helper", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
 		reporter.Summarize()
@@ -26,8 +22,6 @@ func TestName(t *testing.T) {
 	})
 
 	t.Run("reports summary when there are no diagnostics", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
 		reporter.Summarize()
@@ -43,8 +37,6 @@ func TestName(t *testing.T) {
 	})
 
 	t.Run("reports summary when there is one positive diagnostic", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
@@ -64,8 +56,6 @@ func TestName(t *testing.T) {
 	})
 
 	t.Run("reports summary when there is one negative diagnostic", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
@@ -85,8 +75,6 @@ func TestName(t *testing.T) {
 	})
 
 	t.Run("reports summary when there are multiple mixed diagnostics", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(

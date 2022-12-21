@@ -10,19 +10,13 @@ import (
 )
 
 func TestFSTemporaryRepository(t *testing.T) {
-	t.Parallel()
-
 	t.Run("exposes the root path", func(t *testing.T) {
-		t.Parallel()
-
 		dir := t.TempDir()
 		repository := fsrepository.NewTemporary(dir)
 		assert.Equal(t, dir, repository.Root())
 	})
 
 	t.Run("root path is absolute", func(t *testing.T) {
-		t.Parallel()
-
 		cwd, err := os.Getwd()
 		assert.NoError(t, err)
 
@@ -31,11 +25,7 @@ func TestFSTemporaryRepository(t *testing.T) {
 	})
 
 	t.Run("overwriting", func(t *testing.T) {
-		t.Parallel()
-
 		t.Run("creates a new file when it doesn't exist", func(t *testing.T) {
-			t.Parallel()
-
 			dir := t.TempDir()
 			repository := fsrepository.NewTemporary(dir)
 			repository.Overwrite("file.txt", []byte("some data"))
@@ -46,8 +36,6 @@ func TestFSTemporaryRepository(t *testing.T) {
 		})
 
 		t.Run("an existing regular file", func(t *testing.T) {
-			t.Parallel()
-
 			dir := t.TempDir()
 			assert.NoError(t, os.WriteFile(dir+"/file.txt", []byte("original data"), 0o600))
 
@@ -66,8 +54,6 @@ func TestFSTemporaryRepository(t *testing.T) {
 		})
 
 		t.Run("an existing linked file", func(t *testing.T) {
-			t.Parallel()
-
 			dir := t.TempDir()
 			assert.NoError(t, os.WriteFile(dir+"/file.txt", []byte("original data"), 0o600))
 			assert.NoError(t, os.Symlink(dir+"/file.txt", dir+"/linked.txt"))
@@ -81,8 +67,6 @@ func TestFSTemporaryRepository(t *testing.T) {
 		})
 
 		t.Run("does not allow writing past the given root path", func(t *testing.T) {
-			t.Parallel()
-
 			dir := t.TempDir()
 			assert.NoError(t, os.MkdirAll(dir+"/cant-overwrite/child", 0o700))
 			assert.NoError(t, os.WriteFile(dir+"/cant-overwrite/original.txt", []byte("original data"), 0o600))
@@ -98,22 +82,16 @@ func TestFSTemporaryRepository(t *testing.T) {
 	})
 
 	t.Run("deleting", func(t *testing.T) {
-		t.Parallel()
-
 		dir := t.TempDir()
 		repository := fsrepository.NewTemporary(dir)
 		repository.Remove()
 
 		t.Run("removes the entire directory", func(t *testing.T) {
-			t.Parallel()
-
 			_, err := os.ReadDir(dir)
 			assert.ErrorIs(t, err, os.ErrNotExist)
 		})
 
 		t.Run("fails all other actions", func(t *testing.T) {
-			t.Parallel()
-
 			assert.PanicsWithError(t, "repository has been removed", func() {
 				repository.Root()
 			})

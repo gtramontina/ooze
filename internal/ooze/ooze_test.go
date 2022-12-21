@@ -16,8 +16,6 @@ import (
 )
 
 func TestOoze_nothing_to_test(t *testing.T) {
-	t.Parallel()
-
 	source0 := oozetesting.Source(`
 	|package dummy
 	|`)
@@ -29,8 +27,6 @@ func TestOoze_nothing_to_test(t *testing.T) {
 	|`)
 
 	t.Run("no files", func(t *testing.T) {
-		t.Parallel()
-
 		reporter := fakereporter.New()
 		ooze.New(
 			fakerepository.New(fakerepository.FS{}),
@@ -46,8 +42,6 @@ func TestOoze_nothing_to_test(t *testing.T) {
 	})
 
 	t.Run("no viruses yields failed result", func(t *testing.T) {
-		t.Parallel()
-
 		reporter := fakereporter.New()
 		ooze.New(
 			fakerepository.New(fakerepository.FS{"source0.go": source0}),
@@ -63,8 +57,6 @@ func TestOoze_nothing_to_test(t *testing.T) {
 	})
 
 	t.Run("one file, one virus and no infections yields failed result", func(t *testing.T) {
-		t.Parallel()
-
 		reporter := fakereporter.New()
 		ooze.New(
 			fakerepository.New(fakerepository.FS{"source1.go": source1}),
@@ -81,8 +73,6 @@ func TestOoze_nothing_to_test(t *testing.T) {
 }
 
 func TestOoze_with_mutations(t *testing.T) {
-	t.Parallel()
-
 	type scenario struct {
 		description          string
 		firstMutationResult  result.Result[string]
@@ -147,8 +137,6 @@ func TestOoze_with_mutations(t *testing.T) {
 	)
 
 	t.Run("one file, one virus and one infection", func(t *testing.T) {
-		t.Parallel()
-
 		reporter := fakereporter.New()
 		repository := fakerepository.New(fakerepository.FS{"source2.go": source2})
 		ooze.New(
@@ -171,8 +159,6 @@ func TestOoze_with_mutations(t *testing.T) {
 	})
 
 	t.Run("one file, one virus and two infections", func(t *testing.T) {
-		t.Parallel()
-
 		for _, scene := range []scenario{
 			{
 				description:          "both mutants died",
@@ -201,8 +187,6 @@ func TestOoze_with_mutations(t *testing.T) {
 		} {
 			func(scene scenario) {
 				t.Run(scene.description, func(t *testing.T) {
-					t.Parallel()
-
 					reporter := fakereporter.New()
 					repository := fakerepository.New(fakerepository.FS{"source3.go": source3})
 					ooze.New(
@@ -230,8 +214,6 @@ func TestOoze_with_mutations(t *testing.T) {
 	})
 
 	t.Run("one file, two viri and one infection each file", func(t *testing.T) {
-		t.Parallel()
-
 		for _, scene := range []scenario{
 			{
 				description:          "both mutants died",
@@ -260,8 +242,6 @@ func TestOoze_with_mutations(t *testing.T) {
 		} {
 			func(scene scenario) {
 				t.Run(scene.description, func(t *testing.T) {
-					t.Parallel()
-
 					reporter := fakereporter.New()
 					repository := fakerepository.New(fakerepository.FS{"source2.go": source2})
 					ooze.New(
@@ -292,8 +272,6 @@ func TestOoze_with_mutations(t *testing.T) {
 	})
 
 	t.Run("two files, one virus and one infection each file", func(t *testing.T) {
-		t.Parallel()
-
 		for _, scene := range []scenario{
 			{
 				description:          "both mutants died",
@@ -322,8 +300,6 @@ func TestOoze_with_mutations(t *testing.T) {
 		} {
 			func(scene scenario) {
 				t.Run(scene.description, func(t *testing.T) {
-					t.Parallel()
-
 					reporter := fakereporter.New()
 					repository := fakerepository.New(fakerepository.FS{
 						"source2.go": source2,

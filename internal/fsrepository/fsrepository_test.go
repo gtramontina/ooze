@@ -12,18 +12,13 @@ import (
 )
 
 func TestFSRepository(t *testing.T) {
-	t.Parallel()
-
 	t.Run("panics when given root does not exist", func(t *testing.T) {
-		t.Parallel()
 		assert.PanicsWithValue(t, "nonexistent: no such directory", func() {
 			fsrepository.New("nonexistent")
 		})
 	})
 
 	t.Run("panics when given root isn't a directory", func(t *testing.T) {
-		t.Parallel()
-
 		dir := t.TempDir()
 		assert.NoError(t, os.WriteFile(dir+"/not-a-dir", []byte("source data"), 0o600))
 
@@ -34,17 +29,13 @@ func TestFSRepository(t *testing.T) {
 }
 
 func TestFSRepository_ListGoSourceFiles(t *testing.T) {
-	t.Parallel()
-
 	t.Run("empty source files", func(t *testing.T) {
-		t.Parallel()
 		repository := fsrepository.New(t.TempDir())
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{}, files)
 	})
 
 	t.Run("single source file", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		assert.NoError(t, os.WriteFile(dir+"/source.go", []byte("source data"), 0o600))
 
@@ -56,7 +47,6 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	})
 
 	t.Run("multiple source files", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
 		assert.NoError(t, os.WriteFile(dir+"/source2.go", []byte("source data 2"), 0o600))
@@ -72,7 +62,6 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	})
 
 	t.Run("does not include non Go files", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
 		assert.NoError(t, os.WriteFile(dir+"/source2.rs", []byte("source data 2"), 0o600))
@@ -85,7 +74,6 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	})
 
 	t.Run("does not include Go test files", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
 		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("test data 1"), 0o600))
@@ -98,7 +86,6 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	})
 
 	t.Run("recursive directories", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		assert.NoError(t, os.MkdirAll(dir+"/a/b", 0o700))
 		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
@@ -115,7 +102,6 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	})
 
 	t.Run("relative root", func(t *testing.T) {
-		t.Parallel()
 		dir := t.TempDir()
 		assert.NoError(t, os.MkdirAll(dir+"/a/b", 0o700))
 
@@ -138,8 +124,6 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 }
 
 func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	assert.NoError(t, os.MkdirAll(dir+"/to-link/child_a/child_b", 0o700))
 
@@ -155,8 +139,6 @@ func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
 	temporaryRepository := repository.LinkAllToTemporaryRepository(dir + "/linked")
 
 	t.Run("creates a link of all files recursively", func(t *testing.T) {
-		t.Parallel()
-
 		var files []string
 		err := filepath.WalkDir(dir+"/linked", func(path string, entry fs.DirEntry, err error) error {
 			assert.NoError(t, err)
@@ -184,7 +166,6 @@ func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
 	})
 
 	t.Run("results in a new temporary repository", func(t *testing.T) {
-		t.Parallel()
 		assert.Equal(t, fsrepository.NewTemporary(dir+"/linked"), temporaryRepository)
 	})
 }

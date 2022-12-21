@@ -12,11 +12,7 @@ import (
 )
 
 func TestVerboseTestRunner(t *testing.T) {
-	t.Parallel()
-
 	t.Run("logs a successful (mutant killed) test", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verbosetestrunner.New(
@@ -33,8 +29,6 @@ func TestVerboseTestRunner(t *testing.T) {
 	})
 
 	t.Run("logs a unsuccessful (mutant survived) test", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verbosetestrunner.New(

@@ -10,11 +10,7 @@ import (
 )
 
 func TestVerboseRepository(t *testing.T) {
-	t.Parallel()
-
 	t.Run("logs when listing source files", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verboserepository.New(
@@ -33,8 +29,6 @@ func TestVerboseRepository(t *testing.T) {
 	})
 
 	t.Run("logs when linking to temporary path", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verboserepository.New(

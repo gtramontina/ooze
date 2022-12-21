@@ -10,11 +10,7 @@ import (
 )
 
 func TestVerboseTemporaryDir(t *testing.T) {
-	t.Parallel()
-
 	t.Run("logs when preparing a new temporary directory", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		verbosetemporarydir.New(

@@ -13,11 +13,7 @@ import (
 )
 
 func TestVerboseLaboratory(t *testing.T) {
-	t.Parallel()
-
 	t.Run("logs when running tests", func(t *testing.T) {
-		t.Parallel()
-
 		logger := fakelogger.New()
 
 		dummyRepository := fakerepository.New(fakerepository.FS{})

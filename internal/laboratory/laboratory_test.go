@@ -14,8 +14,6 @@ import (
 )
 
 func TestLaboratory(t *testing.T) {
-	t.Parallel()
-
 	source := oozetesting.Source(`
 	|package source
 	|
@@ -48,8 +46,6 @@ func TestLaboratory(t *testing.T) {
 	)
 
 	t.Run("copy all files to temporary repository replacing the mutated file", func(t *testing.T) {
-		t.Parallel()
-
 		actual := tempRepository.ListFiles()
 		expected := fakerepository.FS{
 			"readme.md": []byte("read me"),
@@ -59,14 +55,10 @@ func TestLaboratory(t *testing.T) {
 	})
 
 	t.Run("removes the temporary repository used", func(t *testing.T) {
-		t.Parallel()
-
 		assert.True(t, tempRepository.Removed())
 	})
 
 	t.Run("reports the result of the test runner", func(t *testing.T) {
-		t.Parallel()
-
 		assert.Equal(t, result.Ok("mutants died"), <-outputChannel)
 	})
 }

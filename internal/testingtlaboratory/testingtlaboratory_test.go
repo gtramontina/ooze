@@ -13,8 +13,6 @@ import (
 )
 
 func TestTestingTLaboratory(t *testing.T) {
-	t.Parallel()
-
 	repository := fakerepository.New(fakerepository.FS{})
 	mutatedFile := gomutatedfile.New(
 		"test-infection",
@@ -24,8 +22,6 @@ func TestTestingTLaboratory(t *testing.T) {
 	)
 
 	t.Run("tags the methods and function calls as T helpers", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 		laboratory := testingtlaboratory.New(
 			fakeT,
@@ -40,8 +36,6 @@ func TestTestingTLaboratory(t *testing.T) {
 	})
 
 	t.Run("sets up a subtest named after the infected file that delegates the test execution", func(t *testing.T) {
-		t.Parallel()
-
 		fakeT := faketestingt.New()
 
 		outputChannel := testingtlaboratory.New(
@@ -59,8 +53,6 @@ func TestTestingTLaboratory(t *testing.T) {
 	})
 
 	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {
-		t.Parallel()
-
 		{
 			fakeT := faketestingt.New()
 

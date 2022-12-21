@@ -5,6 +5,7 @@ linters:
   enable-all: true
   disable:
     - ireturn # overly strict
+    - paralleltest # not very helpful
 
     # deprecated/replaced
     - deadcode
