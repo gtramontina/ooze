@@ -7,19 +7,22 @@ import (
 type TestingT interface {
 	Helper()
 	Logf(format string, args ...any)
+	FailNow()
 }
 
 type TestingTReporter struct {
-	t           TestingT
-	diagnostics []*ooze.Diagnostic
-	calculator  ooze.ScoreCalculator
+	t                TestingT
+	diagnostics      []*ooze.Diagnostic
+	calculator       ooze.ScoreCalculator
+	minimumThreshold float32
 }
 
-func New(t TestingT, calculator ooze.ScoreCalculator) *TestingTReporter {
+func New(t TestingT, calculator ooze.ScoreCalculator, minimumThreshold float32) *TestingTReporter {
 	return &TestingTReporter{
-		t:           t,
-		diagnostics: []*ooze.Diagnostic{},
-		calculator:  calculator,
+		t:                t,
+		diagnostics:      []*ooze.Diagnostic{},
+		calculator:       calculator,
+		minimumThreshold: minimumThreshold,
 	}
 }
 
@@ -42,10 +45,16 @@ func (r *TestingTReporter) Summarize() {
 		}
 	}
 
+	score := r.calculator(total, killed)
+
 	r.t.Logf("********************************************************************************")
 	r.t.Logf("• Total: %8d", total)
 	r.t.Logf("• Killed: %7d", killed)
 	r.t.Logf("• Survived: %5d", survived)
-	r.t.Logf("• Score: %8.2f", r.calculator(total, killed))
+	r.t.Logf("• Score: %8.2f", score)
 	r.t.Logf("********************************************************************************")
+
+	if score < r.minimumThreshold {
+		r.t.FailNow()
+	}
 }

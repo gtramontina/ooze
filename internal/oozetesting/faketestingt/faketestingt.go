@@ -9,6 +9,7 @@ type FakeTestingT struct {
 	helperCalls int
 	subtests    map[string]func(*testing.T)
 	logOutput   []string
+	failedNow   bool
 }
 
 func New() *FakeTestingT {
@@ -16,11 +17,16 @@ func New() *FakeTestingT {
 		helperCalls: 0,
 		subtests:    map[string]func(*testing.T){},
 		logOutput:   []string{},
+		failedNow:   false,
 	}
 }
 
 func (t *FakeTestingT) Helper() {
 	t.helperCalls++
+}
+
+func (t *FakeTestingT) FailNow() {
+	t.failedNow = true
 }
 
 func (t *FakeTestingT) HelperCalls() int {
@@ -48,4 +54,8 @@ func (t *FakeTestingT) Logf(format string, args ...any) {
 
 func (t *FakeTestingT) LogOutput() []string {
 	return t.logOutput
+}
+
+func (t *FakeTestingT) FailedNow() bool {
+	return t.failedNow
 }

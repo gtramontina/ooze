@@ -16,7 +16,7 @@ import (
 func TestName(t *testing.T) {
 	t.Run("summary is a test helper", func(t *testing.T) {
 		fakeT := faketestingt.New()
-		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0))
+		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0), 0)
 		reporter.Summarize()
 
 		assert.Equal(t, 1, fakeT.HelperCalls())
@@ -24,7 +24,7 @@ func TestName(t *testing.T) {
 
 	t.Run("reports summary when there are no diagnostics", func(t *testing.T) {
 		fakeT := faketestingt.New()
-		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0))
+		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0), 0)
 		reporter.Summarize()
 
 		assert.Equal(t, []string{
@@ -39,7 +39,7 @@ func TestName(t *testing.T) {
 
 	t.Run("reports summary when there is one positive diagnostic", func(t *testing.T) {
 		fakeT := faketestingt.New()
-		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0))
+		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			oozetesting.AsChannel(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
@@ -58,7 +58,7 @@ func TestName(t *testing.T) {
 
 	t.Run("reports summary when there is one negative diagnostic", func(t *testing.T) {
 		fakeT := faketestingt.New()
-		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0))
+		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			oozetesting.AsChannel(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
@@ -77,7 +77,7 @@ func TestName(t *testing.T) {
 
 	t.Run("reports summary when there are multiple mixed diagnostics", func(t *testing.T) {
 		fakeT := faketestingt.New()
-		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0))
+		reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			oozetesting.AsChannel(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
@@ -125,7 +125,7 @@ func TestName(t *testing.T) {
 	t.Run("reports the score calculated by the given score calculator", func(t *testing.T) {
 		{
 			fakeT := faketestingt.New()
-			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.32))
+			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.32), 0)
 			reporter.Summarize()
 
 			assert.Equal(t, []string{
@@ -140,7 +140,7 @@ func TestName(t *testing.T) {
 
 		{
 			fakeT := faketestingt.New()
-			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.99))
+			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.99), 0)
 			reporter.Summarize()
 
 			assert.Equal(t, []string{
@@ -151,6 +151,40 @@ func TestName(t *testing.T) {
 				"• Score:     0.99",
 				"********************************************************************************",
 			}, fakeT.LogOutput())
+		}
+	})
+
+	t.Run("fails the given T when below the score is below the configured threshold", func(t *testing.T) {
+		{
+			fakeT := faketestingt.New()
+			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.99), 1.0)
+			reporter.Summarize()
+
+			assert.True(t, fakeT.FailedNow())
+		}
+
+		{
+			fakeT := faketestingt.New()
+			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(1.0), 1.0)
+			reporter.Summarize()
+
+			assert.False(t, fakeT.FailedNow())
+		}
+
+		{
+			fakeT := faketestingt.New()
+			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.005), 0.01)
+			reporter.Summarize()
+
+			assert.True(t, fakeT.FailedNow())
+		}
+
+		{
+			fakeT := faketestingt.New()
+			reporter := testingtreporter.New(fakeT, fakescorecalculator.Always(0.5), 0.5)
+			reporter.Summarize()
+
+			assert.False(t, fakeT.FailedNow())
 		}
 	})
 }
