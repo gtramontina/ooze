@@ -12,12 +12,14 @@ type TestingT interface {
 type TestingTReporter struct {
 	t           TestingT
 	diagnostics []*ooze.Diagnostic
+	calculator  ooze.ScoreCalculator
 }
 
-func New(t TestingT) *TestingTReporter {
+func New(t TestingT, calculator ooze.ScoreCalculator) *TestingTReporter {
 	return &TestingTReporter{
 		t:           t,
 		diagnostics: []*ooze.Diagnostic{},
+		calculator:  calculator,
 	}
 }
 
@@ -40,15 +42,10 @@ func (r *TestingTReporter) Summarize() {
 		}
 	}
 
-	var score float32 = -1
-	if total > 0 {
-		score = float32(killed) / float32(total)
-	}
-
 	r.t.Logf("********************************************************************************")
 	r.t.Logf("• Total: %8d", total)
 	r.t.Logf("• Killed: %7d", killed)
 	r.t.Logf("• Survived: %5d", survived)
-	r.t.Logf("• Score: %8.2f", score)
+	r.t.Logf("• Score: %8.2f", r.calculator(total, killed))
 	r.t.Logf("********************************************************************************")
 }

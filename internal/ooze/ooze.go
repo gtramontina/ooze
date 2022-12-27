@@ -27,6 +27,8 @@ type Laboratory interface {
 	Test(repository Repository, file *gomutatedfile.GoMutatedFile) <-chan result.Result[string]
 }
 
+type ScoreCalculator func(total, killed int) float32
+
 type Diagnostic struct {
 	res  <-chan result.Result[string]
 	file *gomutatedfile.GoMutatedFile
