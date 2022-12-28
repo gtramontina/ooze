@@ -43,7 +43,7 @@ func TestTestingTLaboratory(t *testing.T) {
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
 		).Test(repository, mutatedFile)
 
-		subtest := fakeT.GetSubtest("some-path.go~>test-infection")
+		subtest := fakeT.GetSubtest("some-path.go → test-infection")
 		assert.NotNil(t, subtest)
 
 		subtest.Run()
@@ -61,7 +61,7 @@ func TestTestingTLaboratory(t *testing.T) {
 				fakelaboratory.NewAlways(result.Ok("mutant killed")),
 			).Test(repository, mutatedFile)
 
-			subtest := fakeT.GetSubtest("some-path.go~>test-infection")
+			subtest := fakeT.GetSubtest("some-path.go → test-infection")
 			assert.NotNil(t, subtest)
 
 			subtest.Run()
@@ -76,7 +76,7 @@ func TestTestingTLaboratory(t *testing.T) {
 				fakelaboratory.NewAlways(result.Err[string]("mutant survived")),
 			).Test(repository, mutatedFile)
 
-			subtest := fakeT.GetSubtest("some-path.go~>test-infection")
+			subtest := fakeT.GetSubtest("some-path.go → test-infection")
 			assert.NotNil(t, subtest)
 
 			subtest.Run()

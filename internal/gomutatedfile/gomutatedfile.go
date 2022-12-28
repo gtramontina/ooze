@@ -33,7 +33,7 @@ func (f *GoMutatedFile) String() string {
 }
 
 func (f *GoMutatedFile) Label() string {
-	return f.relativePath + "~>" + f.infectionName
+	return f.relativePath + " → " + f.infectionName
 }
 
 func (f *GoMutatedFile) Diff(differ Differ) string {
