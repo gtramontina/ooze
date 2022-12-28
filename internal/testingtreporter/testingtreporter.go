@@ -12,17 +12,19 @@ type TestingT interface {
 
 type TestingTReporter struct {
 	t                TestingT
-	diagnostics      []*ooze.Diagnostic
+	logger           ooze.Logger
 	calculator       ooze.ScoreCalculator
 	minimumThreshold float32
+	diagnostics      []*ooze.Diagnostic
 }
 
-func New(t TestingT, calculator ooze.ScoreCalculator, minimumThreshold float32) *TestingTReporter {
+func New(t TestingT, logger ooze.Logger, calculator ooze.ScoreCalculator, minimumThreshold float32) *TestingTReporter {
 	return &TestingTReporter{
 		t:                t,
-		diagnostics:      []*ooze.Diagnostic{},
+		logger:           logger,
 		calculator:       calculator,
 		minimumThreshold: minimumThreshold,
+		diagnostics:      []*ooze.Diagnostic{},
 	}
 }
 
@@ -47,12 +49,12 @@ func (r *TestingTReporter) Summarize() {
 
 	score := r.calculator(total, killed)
 
-	r.t.Logf("********************************************************************************")
-	r.t.Logf("• Total: %8d", total)
-	r.t.Logf("• Killed: %7d", killed)
-	r.t.Logf("• Survived: %5d", survived)
-	r.t.Logf("• Score: %8.2f", score)
-	r.t.Logf("********************************************************************************")
+	r.logger.Logf("********************************************************************************")
+	r.logger.Logf("• Total: %8d", total)
+	r.logger.Logf("• Killed: %7d", killed)
+	r.logger.Logf("• Survived: %5d", survived)
+	r.logger.Logf("• Score: %8.2f", score)
+	r.logger.Logf("********************************************************************************")
 
 	if score < r.minimumThreshold {
 		r.t.FailNow()
