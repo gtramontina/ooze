@@ -19,6 +19,10 @@ test: $(pre-reqs)
 	@go test -v -race -cover ./...
 .PHONY: test
 
+test.mutation: $(pre-reqs)
+	@go test -count=1 -tags=mutation
+.PHONY: test.mutation
+
 lint: $(pre-reqs)
 	@golangci-lint -v run
 .PHONY: lint
