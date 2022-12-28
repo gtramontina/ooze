@@ -36,7 +36,7 @@ func TestName(t *testing.T) {
 			"• Total:        0",
 			"• Killed:       0",
 			"• Survived:     0",
-			"• Score:     0.00",
+			"• Score:     0.00 (minimum threshold: 0.00)",
 			"********************************************************************************",
 			"",
 		}, strings.Split(buffer.String(), "\n"))
@@ -57,7 +57,7 @@ func TestName(t *testing.T) {
 			"• Total:        1",
 			"• Killed:       1",
 			"• Survived:     0",
-			"• Score:     0.00",
+			"• Score:     0.00 (minimum threshold: 0.00)",
 			"********************************************************************************",
 			"",
 		}, strings.Split(buffer.String(), "\n"))
@@ -78,7 +78,7 @@ func TestName(t *testing.T) {
 			"• Total:        1",
 			"• Killed:       0",
 			"• Survived:     1",
-			"• Score:     0.00",
+			"• Score:     0.00 (minimum threshold: 0.00)",
 			"********************************************************************************",
 			"",
 		}, strings.Split(buffer.String(), "\n"))
@@ -127,7 +127,7 @@ func TestName(t *testing.T) {
 			"• Total:        8",
 			"• Killed:       5",
 			"• Survived:     3",
-			"• Score:     0.00",
+			"• Score:     0.00 (minimum threshold: 0.00)",
 			"********************************************************************************",
 			"",
 		}, strings.Split(buffer.String(), "\n"))
@@ -145,7 +145,7 @@ func TestName(t *testing.T) {
 				"• Total:        0",
 				"• Killed:       0",
 				"• Survived:     0",
-				"• Score:     0.32",
+				"• Score:     0.32 (minimum threshold: 0.00)",
 				"********************************************************************************",
 				"",
 			}, strings.Split(buffer.String(), "\n"))
@@ -162,7 +162,7 @@ func TestName(t *testing.T) {
 				"• Total:        0",
 				"• Killed:       0",
 				"• Survived:     0",
-				"• Score:     0.99",
+				"• Score:     0.99 (minimum threshold: 0.00)",
 				"********************************************************************************",
 				"",
 			}, strings.Split(buffer.String(), "\n"))

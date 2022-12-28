@@ -53,7 +53,7 @@ func (r *TestingTReporter) Summarize() {
 	r.logger.Logf("• Total: %8d", total)
 	r.logger.Logf("• Killed: %7d", killed)
 	r.logger.Logf("• Survived: %5d", survived)
-	r.logger.Logf("• Score: %8.2f", score)
+	r.logger.Logf("• Score: %8.2f (minimum threshold: %.2f)", score, r.minimumThreshold)
 	r.logger.Logf("********************************************************************************")
 
 	if score < r.minimumThreshold {
