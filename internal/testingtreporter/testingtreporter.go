@@ -50,20 +50,23 @@ func (r *TestingTReporter) Summarize() {
 
 	bold := color.New(color.Bold).SprintFunc()
 	scoreExit := func() {}
-	scoreColor := color.New(color.Bold, color.FgGreen).SprintFunc()
+	scoreColor := color.New(color.Bold, color.FgGreen).SprintfFunc()
+	scoreIcon := "✓"
 	score := r.calculator(total, killed)
 
 	if score < r.minimumThreshold {
 		scoreExit = r.t.FailNow
-		scoreColor = color.New(color.Bold, color.FgRed).SprintFunc()
+		scoreColor = color.New(color.Bold, color.FgRed).SprintfFunc()
+		scoreIcon = "⨯"
 	}
 
-	r.logger.Logf("********************************************************************************")
-	r.logger.Logf("• "+bold("Total")+": %8d", total)
-	r.logger.Logf("• "+bold("Killed")+": %7d", killed)
-	r.logger.Logf("• "+bold("Survived")+": %5d", survived)
-	r.logger.Logf("• "+scoreColor("Score: %8.2f (minimum threshold: %.2f)"), score, r.minimumThreshold)
-	r.logger.Logf("********************************************************************************")
+	r.logger.Logf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+	r.logger.Logf("┃ • "+bold("Total")+": %8d                    ┃", total)
+	r.logger.Logf("┃ • "+bold("Killed")+": %7d                    ┃", killed)
+	r.logger.Logf("┃ • "+bold("Survived")+": %5d                    ┃", survived)
+	r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨")
+	r.logger.Logf("┃ " + scoreColor("%s Score: %8.2f (minimum: %.2f)", scoreIcon, score, r.minimumThreshold) + "    ┃")
+	r.logger.Logf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
 
 	scoreExit()
 }
