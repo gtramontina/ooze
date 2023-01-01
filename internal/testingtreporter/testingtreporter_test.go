@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestName(t *testing.T) {
+func TestTestingTReporter(t *testing.T) {
 	t.Run("summary is a test helper", func(t *testing.T) {
 		fakeT := faketestingt.New()
 		reporter := testingtreporter.New(fakeT, iologger.New(&bytes.Buffer{}), fakescorecalculator.Always(0), 0)
