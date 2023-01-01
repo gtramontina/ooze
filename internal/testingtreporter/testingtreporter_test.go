@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
@@ -201,5 +202,44 @@ func TestTestingTReporter(t *testing.T) {
 
 			assert.False(t, fakeT.FailedNow())
 		}
+	})
+
+	t.Run("prints a colorful summary", func(t *testing.T) {
+		defer func(original bool) { color.NoColor = original }(color.NoColor)
+		color.NoColor = false
+
+		t.Run("successful", func(t *testing.T) {
+			buffer := &bytes.Buffer{}
+			logger := iologger.New(buffer)
+			reporter := testingtreporter.New(faketestingt.New(), logger, fakescorecalculator.Always(0.99), 0)
+			reporter.Summarize()
+
+			assert.Equal(t, []string{
+				"********************************************************************************",
+				"• \033[1mTotal\033[0m:        0",
+				"• \033[1mKilled\033[0m:       0",
+				"• \033[1mSurvived\033[0m:     0",
+				"• \033[1;32mScore:     0.99 (minimum threshold: 0.00)\033[0m",
+				"********************************************************************************",
+				"",
+			}, strings.Split(buffer.String(), "\n"))
+		})
+
+		t.Run("failure", func(t *testing.T) {
+			buffer := &bytes.Buffer{}
+			logger := iologger.New(buffer)
+			reporter := testingtreporter.New(faketestingt.New(), logger, fakescorecalculator.Always(0.99), 1.0)
+			reporter.Summarize()
+
+			assert.Equal(t, []string{
+				"********************************************************************************",
+				"• \033[1mTotal\033[0m:        0",
+				"• \033[1mKilled\033[0m:       0",
+				"• \033[1mSurvived\033[0m:     0",
+				"• \033[1;31mScore:     0.99 (minimum threshold: 1.00)\033[0m",
+				"********************************************************************************",
+				"",
+			}, strings.Split(buffer.String(), "\n"))
+		})
 	})
 }
