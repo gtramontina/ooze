@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -21,23 +22,54 @@ import (
 	"github.com/gtramontina/ooze/internal/verboserepository"
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/internal/verbosetestrunner"
+	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
 	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
+	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
 )
 
-func Release(t *testing.T) {
+func banner(log ooze.Logger) {
+	border := color.YellowString
+	text := color.CyanString
+
+	log.Logf(border("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"))
+	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐"))
+	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("│      │  │      │  ┌──────┘  ├─────  "))
+	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("└──────┘  └──────┘  └──────┘  └──────┘"))
+	log.Logf(border("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"))
+	log.Logf("Running…")
+}
+
+func Release(t *testing.T, options ...Option) {
 	t.Helper()
+
+	opts := &Options{
+		RepositoryRoot:   ".",
+		TestCommand:      "go test -count=1 ./...",
+		MinimumThreshold: 1.0,
+		Viruses: []viruses.Virus{
+			integerincrement.New(),
+			integerdecrement.New(),
+			loopbreak.New(),
+		},
+	}
+	for _, option := range options {
+		option(opts)
+	}
+
+	testCommandParts := strings.Split(opts.TestCommand, " ")
 
 	var (
 		log          ooze.Logger                   = iologger.New(os.Stdout)
-		repository   ooze.Repository               = fsrepository.New(".")
+		repository   ooze.Repository               = fsrepository.New(opts.RepositoryRoot)
 		temporaryDir laboratory.TemporaryDirectory = fstemporarydir.New("ooze-")
-		testRunner   laboratory.TestRunner         = cmdtestrunner.New("go", "test", "-count=1", "./...")
+		testRunner   laboratory.TestRunner         = cmdtestrunner.New(testCommandParts[0], testCommandParts[1:]...)
 		reporter     ooze.Reporter                 = testingtreporter.New(
 			t,
 			log,
 			prettydiff.New(gotextdiff.New()),
 			scorecalculator.New(),
-			0.5, //nolint:gomnd
+			opts.MinimumThreshold,
 		)
 	)
 
@@ -60,17 +92,9 @@ func Release(t *testing.T) {
 
 	lab = testingtlaboratory.New(t, lab)
 
-	border := color.YellowString
-	text := color.CyanString
-
-	log.Logf(border("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"))
-	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐"))
-	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("│      │  │      │  ┌──────┘  ├─────  "))
-	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("└──────┘  └──────┘  └──────┘  └──────┘"))
-	log.Logf(border("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"))
-	log.Logf("Running…")
+	banner(log)
 
 	ooze.New(repository, lab, reporter).Release(
-		integerincrement.New(),
+		opts.Viruses...,
 	)
 }
