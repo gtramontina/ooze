@@ -56,17 +56,7 @@ func (r *TestingTReporter) Summarize() {
 			killed++
 		} else {
 			survived++
-
-			r.logger.Logf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
-			r.logger.Logf("┃ 🧟 "+color.New(color.Bold, color.FgRed).Sprint("Mutant survived:")+" %s", diagnostic.Label())
-			r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
-
-			diff := []string{}
-			for _, line := range strings.Split(diagnostic.Diff(r.differ), "\n") {
-				diff = append(diff, "┃ "+line)
-			}
-			r.logger.Logf(strings.Join(diff, "\n"))
-			r.logger.Logf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
+			r.logDiff(diagnostic)
 		}
 	}
 
@@ -91,4 +81,18 @@ func (r *TestingTReporter) Summarize() {
 	r.logger.Logf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
 
 	scoreExit()
+}
+
+func (r *TestingTReporter) logDiff(diagnostic *ooze.Diagnostic) {
+	r.logger.Logf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
+	r.logger.Logf("┃ 🧟 "+color.New(color.Bold, color.FgRed).Sprint("Mutant survived:")+" %s", diagnostic.Label())
+	r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
+
+	diff := []string{}
+	for _, line := range strings.Split(diagnostic.Diff(r.differ), "\n") {
+		diff = append(diff, "┃ "+line)
+	}
+
+	r.logger.Logf(strings.Join(diff, "\n"))
+	r.logger.Logf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
 }
