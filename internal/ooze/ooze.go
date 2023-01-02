@@ -38,6 +38,14 @@ func (d *Diagnostic) IsOk() bool {
 	return (<-d.res).IsOk()
 }
 
+func (d *Diagnostic) Diff(differ gomutatedfile.Differ) string {
+	return d.file.Diff(differ)
+}
+
+func (d *Diagnostic) Label() string {
+	return d.file.Label()
+}
+
 func NewDiagnostic(res <-chan result.Result[string], file *gomutatedfile.GoMutatedFile) *Diagnostic {
 	return &Diagnostic{
 		res:  res,

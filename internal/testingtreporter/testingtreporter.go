@@ -1,7 +1,10 @@
 package testingtreporter
 
 import (
+	"strings"
+
 	"github.com/fatih/color"
+	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 )
 
@@ -14,15 +17,23 @@ type TestingT interface {
 type TestingTReporter struct {
 	t                TestingT
 	logger           ooze.Logger
+	differ           gomutatedfile.Differ
 	calculator       ooze.ScoreCalculator
 	minimumThreshold float32
 	diagnostics      []*ooze.Diagnostic
 }
 
-func New(t TestingT, logger ooze.Logger, calculator ooze.ScoreCalculator, minimumThreshold float32) *TestingTReporter {
+func New(
+	testingT TestingT,
+	logger ooze.Logger,
+	differ gomutatedfile.Differ,
+	calculator ooze.ScoreCalculator,
+	minimumThreshold float32,
+) *TestingTReporter {
 	return &TestingTReporter{
-		t:                t,
+		t:                testingT,
 		logger:           logger,
+		differ:           differ,
 		calculator:       calculator,
 		minimumThreshold: minimumThreshold,
 		diagnostics:      []*ooze.Diagnostic{},
@@ -45,6 +56,17 @@ func (r *TestingTReporter) Summarize() {
 			killed++
 		} else {
 			survived++
+
+			r.logger.Logf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
+			r.logger.Logf("┃ 🧟 "+color.New(color.Bold, color.FgRed).Sprint("Mutant survived:")+" %s", diagnostic.Label())
+			r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
+
+			diff := []string{}
+			for _, line := range strings.Split(diagnostic.Diff(r.differ), "\n") {
+				diff = append(diff, "┃ "+line)
+			}
+			r.logger.Logf(strings.Join(diff, "\n"))
+			r.logger.Logf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
 		}
 	}
 

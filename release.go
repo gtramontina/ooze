@@ -7,9 +7,11 @@ import (
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
+	"github.com/gtramontina/ooze/internal/gotextdiff"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
+	"github.com/gtramontina/ooze/internal/prettydiff"
 	"github.com/gtramontina/ooze/internal/scorecalculator"
 	"github.com/gtramontina/ooze/internal/testingtlaboratory"
 	"github.com/gtramontina/ooze/internal/testingtreporter"
@@ -29,7 +31,13 @@ func Release(t *testing.T) {
 		repository   ooze.Repository               = fsrepository.New(".")
 		temporaryDir laboratory.TemporaryDirectory = fstemporarydir.New("ooze-")
 		testRunner   laboratory.TestRunner         = cmdtestrunner.New("go", "test", "-count=1", "./...")
-		reporter     ooze.Reporter                 = testingtreporter.New(t, log, scorecalculator.New(), 0.5) //nolint:gomnd
+		reporter     ooze.Reporter                 = testingtreporter.New(
+			t,
+			log,
+			prettydiff.New(gotextdiff.New()),
+			scorecalculator.New(),
+			0.5, //nolint:gomnd
+		)
 	)
 
 	if testing.Verbose() {
