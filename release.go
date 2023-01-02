@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
@@ -58,6 +59,16 @@ func Release(t *testing.T) {
 	})
 
 	lab = testingtlaboratory.New(t, lab)
+
+	border := color.YellowString
+	text := color.CyanString
+
+	log.Logf(border("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"))
+	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐"))
+	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("│      │  │      │  ┌──────┘  ├─────  "))
+	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("└──────┘  └──────┘  └──────┘  └──────┘"))
+	log.Logf(border("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"))
+	log.Logf("Running…")
 
 	ooze.New(repository, lab, reporter).Release(
 		integerincrement.New(),
