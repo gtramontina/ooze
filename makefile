@@ -16,7 +16,7 @@ pre-reqs += .git/.hooks.log
 pre-reqs += .bin/golangci-lint
 
 test: $(pre-reqs)
-	@go test -v -race -cover ./...
+	@go test -v -race -cover -shuffle=on ./...
 .PHONY: test
 
 test.mutation: $(pre-reqs)
