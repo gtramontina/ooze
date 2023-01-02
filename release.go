@@ -23,6 +23,7 @@ import (
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/internal/verbosetestrunner"
 	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/internal/viruses/floatincrement"
 	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
 	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
 	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
@@ -51,6 +52,7 @@ func Release(t *testing.T, options ...Option) {
 			integerincrement.New(),
 			integerdecrement.New(),
 			loopbreak.New(),
+			floatincrement.New(),
 		},
 	}
 	for _, option := range options {
