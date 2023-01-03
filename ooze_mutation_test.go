@@ -5,11 +5,14 @@ package ooze_test
 import (
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
 )
 
 func TestMutation(t *testing.T) {
+	color.NoColor = false
+
 	ooze.Release(
 		t,
 		ooze.WithRepositoryRoot("."),
