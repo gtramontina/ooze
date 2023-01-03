@@ -16,7 +16,7 @@ func TestMutation(t *testing.T) {
 	ooze.Release(
 		t,
 		ooze.WithRepositoryRoot("."),
-		ooze.WithTestCommand("go test -timeout=60s -count=1 ./..."),
+		ooze.WithTestCommand("make test"),
 		ooze.WithMinimumThreshold(0.5),
 		ooze.WithViruses(
 			integerincrement.New(),
