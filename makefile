@@ -16,7 +16,7 @@ pre-reqs += .git/.hooks.log
 pre-reqs += .bin/golangci-lint
 
 test: $(pre-reqs)
-	@go test -v -race -cover -timeout=60s -shuffle=on ./...
+	@go test -race -cover -timeout=60s -shuffle=on ./...
 .PHONY: test
 
 test.mutation: $(pre-reqs)
