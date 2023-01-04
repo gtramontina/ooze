@@ -19,3 +19,7 @@ func (l *FakeLogger) Logf(message string, args ...any) {
 func (l *FakeLogger) LoggedLines() []string {
 	return l.lines
 }
+
+func (l *FakeLogger) Clear() {
+	l.lines = []string{}
+}

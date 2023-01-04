@@ -30,5 +30,5 @@ func (r *VerboseRepository) LinkAllToTemporaryRepository(temporaryPath string) o
 	repository := r.delegate.LinkAllToTemporaryRepository(temporaryPath)
 	r.logger.Logf("linked all files to temporary path '%s'", temporaryPath)
 
-	return repository
+	return NewVerboseTemporaryRepository(r.logger, repository)
 }

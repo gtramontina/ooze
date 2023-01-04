@@ -48,3 +48,47 @@ func TestVerboseRepository(t *testing.T) {
 		}, logger.LoggedLines())
 	})
 }
+
+func TestTemporaryRepository(t *testing.T) {
+	t.Run("logs when overwriting paths", func(t *testing.T) {
+		logger := fakelogger.New()
+
+		repository := verboserepository.New(
+			logger,
+			fakerepository.New(
+				fakerepository.FS{},
+				fakerepository.NewTemporaryAt("some-path"),
+			),
+		)
+
+		temporary := repository.LinkAllToTemporaryRepository("some-path")
+		logger.Clear()
+
+		temporary.Overwrite("source.go", []byte("dummy"))
+
+		assert.Equal(t, []string{
+			"overwriting 'source.go'…",
+		}, logger.LoggedLines())
+	})
+
+	t.Run("logs when removing", func(t *testing.T) {
+		logger := fakelogger.New()
+
+		repository := verboserepository.New(
+			logger,
+			fakerepository.New(
+				fakerepository.FS{},
+				fakerepository.NewTemporaryAt("some-path"),
+			),
+		)
+
+		temporary := repository.LinkAllToTemporaryRepository("some-path")
+		logger.Clear()
+
+		temporary.Remove()
+
+		assert.Equal(t, []string{
+			"removing 'some-path'…",
+		}, logger.LoggedLines())
+	})
+}
