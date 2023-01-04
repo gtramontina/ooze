@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/fatih/color"
+	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
-	"github.com/gtramontina/ooze/internal/oozetesting"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakescorecalculator"
 	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/oozetesting/stubdiffer"
@@ -68,7 +68,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 			0,
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Ok("mutant killed")),
+			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.Summarize()
@@ -96,7 +96,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 			0,
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Err[string]("mutant survived")),
+			future.Resolved(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.Summarize()
@@ -129,35 +129,35 @@ func TestTestingTReporterSummary(t *testing.T) {
 			0,
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Err[string]("mutant survived")),
+			future.Resolved(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Ok("mutant killed")),
+			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Ok("mutant killed")),
+			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Ok("mutant killed")),
+			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Err[string]("mutant survived")),
+			future.Resolved(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Err[string]("mutant survived")),
+			future.Resolved(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Ok("mutant killed")),
+			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
-			oozetesting.AsChannel(result.Ok("mutant killed")),
+			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
 		)
 		reporter.Summarize()

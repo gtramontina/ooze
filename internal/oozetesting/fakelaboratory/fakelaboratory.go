@@ -3,6 +3,7 @@ package fakelaboratory
 import (
 	"reflect"
 
+	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
@@ -48,12 +49,9 @@ func NewAlways(output result.Result[string]) *FakeLaboratory {
 func (l *FakeLaboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
-) <-chan result.Result[string] {
-	outputChannel := make(chan result.Result[string], 1)
+) future.Future[result.Result[string]] {
 	if l.always != nil {
-		outputChannel <- l.always
-
-		return outputChannel
+		return future.Resolved(l.always)
 	}
 
 	for _, res := range l.results {
@@ -61,9 +59,7 @@ func (l *FakeLaboratory) Test(
 		sameMutatedFile := reflect.DeepEqual(file, res.expectedMutatedFile)
 
 		if sameRepository && sameMutatedFile {
-			outputChannel <- res.output
-
-			return outputChannel
+			return future.Resolved(res.output)
 		}
 	}
 

@@ -1,6 +1,7 @@
 package laboratory
 
 import (
+	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/result"
@@ -29,14 +30,11 @@ func New(testRunner TestRunner, temporaryDirectory TemporaryDirectory) *Laborato
 func (l *Laboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
-) <-chan result.Result[string] {
+) future.Future[result.Result[string]] {
 	tempRepository := repository.LinkAllToTemporaryRepository(l.temporaryDirectory.New())
 	defer tempRepository.Remove()
 
 	file.WriteTo(tempRepository)
 
-	outputChannel := make(chan result.Result[string], 1)
-	outputChannel <- l.testRunner.Test(tempRepository)
-
-	return outputChannel
+	return future.Resolved(l.testRunner.Test(tempRepository))
 }

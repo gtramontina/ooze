@@ -38,7 +38,7 @@ func TestTestingTLaboratory(t *testing.T) {
 	t.Run("sets up a subtest named after the infected file that delegates the test execution", func(t *testing.T) {
 		fakeT := faketestingt.New()
 
-		outputChannel := testingtlaboratory.New(
+		fut := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
 		).Test(repository, mutatedFile)
@@ -49,7 +49,7 @@ func TestTestingTLaboratory(t *testing.T) {
 		subtest.Run()
 
 		assert.True(t, subtest.IsParallel())
-		assert.Equal(t, result.Ok("mutant killed"), <-outputChannel)
+		assert.Equal(t, result.Ok("mutant killed"), fut.Await())
 	})
 
 	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {

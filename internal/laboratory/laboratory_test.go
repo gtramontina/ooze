@@ -35,7 +35,7 @@ func TestLaboratory(t *testing.T) {
 		tempRepository,
 	)
 
-	outputChannel := laboratory.New(
+	fut := laboratory.New(
 		faketestrunner.New(
 			faketestrunner.NewResult("tmpdir-1", result.Ok("mutants died")),
 		),
@@ -59,6 +59,6 @@ func TestLaboratory(t *testing.T) {
 	})
 
 	t.Run("reports the result of the test runner", func(t *testing.T) {
-		assert.Equal(t, result.Ok("mutants died"), <-outputChannel)
+		assert.Equal(t, result.Ok("mutants died"), fut.Await())
 	})
 }

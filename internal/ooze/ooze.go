@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/goinfectedfile"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
@@ -24,18 +25,18 @@ type TemporaryRepository interface {
 }
 
 type Laboratory interface {
-	Test(repository Repository, file *gomutatedfile.GoMutatedFile) <-chan result.Result[string]
+	Test(repository Repository, file *gomutatedfile.GoMutatedFile) future.Future[result.Result[string]]
 }
 
 type ScoreCalculator func(total, killed int) float32
 
 type Diagnostic struct {
-	res  <-chan result.Result[string]
+	res  future.Future[result.Result[string]]
 	file *gomutatedfile.GoMutatedFile
 }
 
 func (d *Diagnostic) IsOk() bool {
-	return (<-d.res).IsOk()
+	return d.res.Await().IsOk()
 }
 
 func (d *Diagnostic) Diff(differ gomutatedfile.Differ) string {
@@ -46,7 +47,7 @@ func (d *Diagnostic) Label() string {
 	return d.file.Label()
 }
 
-func NewDiagnostic(res <-chan result.Result[string], file *gomutatedfile.GoMutatedFile) *Diagnostic {
+func NewDiagnostic(res future.Future[result.Result[string]], file *gomutatedfile.GoMutatedFile) *Diagnostic {
 	return &Diagnostic{
 		res:  res,
 		file: file,
@@ -90,6 +91,7 @@ func (o *Ooze) Release(viri ...viruses.Virus) {
 	for _, infectedFile := range incubated {
 		mutatedFile := infectedFile.Mutate()
 		res := o.laboratory.Test(o.repository, mutatedFile)
-		o.reporter.AddDiagnostic(NewDiagnostic(res, mutatedFile))
+		diagnostic := NewDiagnostic(res, mutatedFile)
+		o.reporter.AddDiagnostic(diagnostic)
 	}
 }
