@@ -4,7 +4,6 @@ type Result[Type any] interface {
 	seal() string
 	String() string
 	IsOk() bool
-	And(Result[Type]) Result[Type]
 }
 
 func Ok[Type any](value Type) Result[Type] {

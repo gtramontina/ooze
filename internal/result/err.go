@@ -14,10 +14,6 @@ func (e err[Type]) String() string {
 	return e.seal() + "(" + fmt.Sprintf("%+v", e.errorMessage) + ")"
 }
 
-func (e err[Type]) And(_ Result[Type]) Result[Type] {
-	return Err[Type](e.errorMessage)
-}
-
 func (err[Type]) IsOk() bool {
 	return false
 }

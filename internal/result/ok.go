@@ -19,10 +19,6 @@ func (o ok[Type]) String() string {
 	return o.seal() + "[" + kind + "](" + fmt.Sprintf("%+v", o.value) + ")"
 }
 
-func (ok[Type]) And(and Result[Type]) Result[Type] {
-	return and
-}
-
 func (ok[Type]) IsOk() bool {
 	return true
 }
