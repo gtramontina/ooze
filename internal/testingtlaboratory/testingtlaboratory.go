@@ -17,14 +17,16 @@ type TestingT interface {
 type TestingTLaboratory struct {
 	t        TestingT
 	delegate ooze.Laboratory
+	parallel bool
 }
 
-func New(t TestingT, delegate ooze.Laboratory) *TestingTLaboratory {
+func New(t TestingT, delegate ooze.Laboratory, parallel bool) *TestingTLaboratory {
 	t.Helper()
 
 	return &TestingTLaboratory{
 		t:        t,
 		delegate: delegate,
+		parallel: parallel,
 	}
 }
 
@@ -37,7 +39,10 @@ func (l *TestingTLaboratory) Test(
 	fut := future.Deferred[result.Result[string]]()
 
 	l.t.Run(file.Label(), func(t *testing.T) { //nolint:thelper
-		t.Parallel()
+		if l.parallel {
+			t.Parallel()
+		}
+
 		fut.Resolve(l.delegate.Test(repository, file).Await())
 	})
 

@@ -8,6 +8,7 @@ type Options struct {
 	RepositoryRoot   string
 	TestCommand      string
 	MinimumThreshold float32
+	Parallel         bool
 	Viruses          []viruses.Virus
 }
 
@@ -26,6 +27,12 @@ func WithTestCommand(testCommand string) func(*Options) {
 func WithMinimumThreshold(minimumThreshold float32) func(*Options) {
 	return func(options *Options) {
 		options.MinimumThreshold = minimumThreshold
+	}
+}
+
+func Parallel() func(*Options) {
+	return func(options *Options) {
+		options.Parallel = true
 	}
 }
 

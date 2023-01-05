@@ -48,6 +48,7 @@ func Release(t *testing.T, options ...Option) {
 		RepositoryRoot:   ".",
 		TestCommand:      "go test -count=1 ./...",
 		MinimumThreshold: 1.0,
+		Parallel:         false,
 		Viruses: []viruses.Virus{
 			integerincrement.New(),
 			integerdecrement.New(),
@@ -92,7 +93,7 @@ func Release(t *testing.T, options ...Option) {
 		reporter.Summarize()
 	})
 
-	lab = testingtlaboratory.New(t, lab)
+	lab = testingtlaboratory.New(t, lab, opts.Parallel)
 
 	banner(log)
 

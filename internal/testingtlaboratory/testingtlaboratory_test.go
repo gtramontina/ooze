@@ -26,6 +26,7 @@ func TestTestingTLaboratory(t *testing.T) {
 		laboratory := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
+			false,
 		)
 
 		assert.Equal(t, 1, fakeT.HelperCalls())
@@ -41,6 +42,7 @@ func TestTestingTLaboratory(t *testing.T) {
 		fut := testingtlaboratory.New(
 			fakeT,
 			fakelaboratory.NewAlways(result.Ok("mutant killed")),
+			false,
 		).Test(repository, mutatedFile)
 
 		subtest := fakeT.GetSubtest("some-path.go → test-infection")
@@ -48,8 +50,43 @@ func TestTestingTLaboratory(t *testing.T) {
 
 		subtest.Run()
 
-		assert.True(t, subtest.IsParallel())
 		assert.Equal(t, result.Ok("mutant killed"), fut.Await())
+	})
+
+	t.Run("runs the subtest in parallel when indicated", func(t *testing.T) {
+		{
+			fakeT := faketestingt.New()
+
+			testingtlaboratory.New(
+				fakeT,
+				fakelaboratory.NewAlways(result.Ok("mutant killed")),
+				false,
+			).Test(repository, mutatedFile)
+
+			subtest := fakeT.GetSubtest("some-path.go → test-infection")
+			assert.NotNil(t, subtest)
+
+			subtest.Run()
+
+			assert.False(t, subtest.IsParallel())
+		}
+
+		{
+			fakeT := faketestingt.New()
+
+			testingtlaboratory.New(
+				fakeT,
+				fakelaboratory.NewAlways(result.Ok("mutant killed")),
+				true,
+			).Test(repository, mutatedFile)
+
+			subtest := fakeT.GetSubtest("some-path.go → test-infection")
+			assert.NotNil(t, subtest)
+
+			subtest.Run()
+
+			assert.True(t, subtest.IsParallel())
+		}
 	})
 
 	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {
@@ -59,6 +96,7 @@ func TestTestingTLaboratory(t *testing.T) {
 			testingtlaboratory.New(
 				fakeT,
 				fakelaboratory.NewAlways(result.Ok("mutant killed")),
+				false,
 			).Test(repository, mutatedFile)
 
 			subtest := fakeT.GetSubtest("some-path.go → test-infection")
@@ -74,6 +112,7 @@ func TestTestingTLaboratory(t *testing.T) {
 			testingtlaboratory.New(
 				fakeT,
 				fakelaboratory.NewAlways(result.Err[string]("mutant survived")),
+				false,
 			).Test(repository, mutatedFile)
 
 			subtest := fakeT.GetSubtest("some-path.go → test-infection")

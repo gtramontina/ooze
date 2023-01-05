@@ -21,6 +21,7 @@ func TestMutation(t *testing.T) {
 		ooze.WithRepositoryRoot("."),
 		ooze.WithTestCommand("make test MAKEFLAGS="),
 		ooze.WithMinimumThreshold(0.5),
+		ooze.Parallel(),
 		ooze.WithViruses(
 			integerincrement.New(),
 			integerdecrement.New(),
