@@ -12,7 +12,7 @@ pre-reqs += .git/.hooks.log
 
 .bin/golangci-lint: $(pre-reqs)
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-	| sh -s -- -b $(PWD)/.bin -d $(golangci-lint-version)
+	| sh -s -- -b $(PWD)/$(dir $@) -d $(golangci-lint-version)
 pre-reqs += .bin/golangci-lint
 
 test: $(pre-reqs)
