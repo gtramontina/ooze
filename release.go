@@ -2,7 +2,6 @@ package ooze
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -31,8 +30,9 @@ import (
 )
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
-	RepositoryRoot:           ".",
-	TestCommand:              "go test -count=1 ./...",
+	Repository:               fsrepository.New("."),
+	TestRunner:               cmdtestrunner.New("go", "test", "-count=1", "./..."),
+	TemporaryDir:             fstemporarydir.New("ooze-"),
 	MinimumThreshold:         1.0,
 	Parallel:                 false,
 	IgnoreSourceFilesPattern: nil,
@@ -64,34 +64,28 @@ func Release(t *testing.T, options ...Option) {
 		opts = option(opts)
 	}
 
-	testCommandParts := strings.Split(opts.TestCommand, " ")
+	var logger ooze.Logger = iologger.New(os.Stdout)
 
-	var (
-		log          ooze.Logger                   = iologger.New(os.Stdout)
-		repository   ooze.Repository               = fsrepository.New(opts.RepositoryRoot)
-		temporaryDir laboratory.TemporaryDirectory = fstemporarydir.New("ooze-")
-		testRunner   laboratory.TestRunner         = cmdtestrunner.New(testCommandParts[0], testCommandParts[1:]...)
-		reporter     ooze.Reporter                 = testingtreporter.New(
-			t,
-			log,
-			prettydiff.New(gotextdiff.New()),
-			scorecalculator.New(),
-			opts.MinimumThreshold,
-		)
+	var reporter ooze.Reporter = testingtreporter.New(
+		t,
+		logger,
+		prettydiff.New(gotextdiff.New()),
+		scorecalculator.New(),
+		opts.MinimumThreshold,
 	)
 
 	if opts.IgnoreSourceFilesPattern != nil {
-		repository = ignoredrepository.New(opts.IgnoreSourceFilesPattern, repository)
+		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPattern, opts.Repository)
 	}
 
 	if testing.Verbose() {
-		repository = verboserepository.New(t, repository)
-		temporaryDir = verbosetemporarydir.New(t, temporaryDir)
-		testRunner = verbosetestrunner.New(t, testRunner)
+		opts.Repository = verboserepository.New(t, opts.Repository)
+		opts.TemporaryDir = verbosetemporarydir.New(t, opts.TemporaryDir)
+		opts.TestRunner = verbosetestrunner.New(t, opts.TestRunner)
 		reporter = verbosereporter.New(t, reporter)
 	}
 
-	var lab ooze.Laboratory = laboratory.New(testRunner, temporaryDir)
+	var lab ooze.Laboratory = laboratory.New(opts.TestRunner, opts.TemporaryDir)
 	if testing.Verbose() {
 		lab = verboselaboratory.New(t, lab)
 	}
@@ -103,9 +97,9 @@ func Release(t *testing.T, options ...Option) {
 
 	lab = testingtlaboratory.New(t, lab, opts.Parallel)
 
-	banner(log)
+	banner(logger)
 
-	ooze.New(repository, lab, reporter).Release(
+	ooze.New(opts.Repository, lab, reporter).Release(
 		opts.Viruses...,
 	)
 }

@@ -2,15 +2,21 @@ package ooze
 
 import (
 	"regexp"
+	"strings"
 
+	"github.com/gtramontina/ooze/internal/cmdtestrunner"
+	"github.com/gtramontina/ooze/internal/fsrepository"
+	"github.com/gtramontina/ooze/internal/laboratory"
+	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/viruses"
 )
 
 type Option func(Options) Options
 
 type Options struct {
-	RepositoryRoot           string
-	TestCommand              string
+	Repository               ooze.Repository
+	TestRunner               laboratory.TestRunner
+	TemporaryDir             laboratory.TemporaryDirectory
 	MinimumThreshold         float32
 	Parallel                 bool
 	IgnoreSourceFilesPattern *regexp.Regexp
@@ -19,7 +25,7 @@ type Options struct {
 
 func WithRepositoryRoot(repositoryRoot string) func(Options) Options {
 	return func(options Options) Options {
-		options.RepositoryRoot = repositoryRoot
+		options.Repository = fsrepository.New(repositoryRoot)
 
 		return options
 	}
@@ -27,7 +33,8 @@ func WithRepositoryRoot(repositoryRoot string) func(Options) Options {
 
 func WithTestCommand(testCommand string) func(Options) Options {
 	return func(options Options) Options {
-		options.TestCommand = testCommand
+		testCommandParts := strings.Split(testCommand, " ")
+		options.TestRunner = cmdtestrunner.New(testCommandParts[0], testCommandParts[1:]...)
 
 		return options
 	}
