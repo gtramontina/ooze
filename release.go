@@ -29,6 +29,19 @@ import (
 	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
 )
 
+var defaultOptions = Options{ //nolint:gochecknoglobals
+	RepositoryRoot:   ".",
+	TestCommand:      "go test -count=1 ./...",
+	MinimumThreshold: 1.0,
+	Parallel:         false,
+	Viruses: []viruses.Virus{
+		integerincrement.New(),
+		integerdecrement.New(),
+		loopbreak.New(),
+		floatincrement.New(),
+	},
+}
+
 func banner(log ooze.Logger) {
 	border := color.YellowString
 	text := color.CyanString
@@ -44,20 +57,9 @@ func banner(log ooze.Logger) {
 func Release(t *testing.T, options ...Option) {
 	t.Helper()
 
-	opts := &Options{
-		RepositoryRoot:   ".",
-		TestCommand:      "go test -count=1 ./...",
-		MinimumThreshold: 1.0,
-		Parallel:         false,
-		Viruses: []viruses.Virus{
-			integerincrement.New(),
-			integerdecrement.New(),
-			loopbreak.New(),
-			floatincrement.New(),
-		},
-	}
+	opts := defaultOptions
 	for _, option := range options {
-		option(opts)
+		opts = option(opts)
 	}
 
 	testCommandParts := strings.Split(opts.TestCommand, " ")
