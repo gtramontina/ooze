@@ -1,4 +1,4 @@
-package testingtreporter
+package consolereporter
 
 import (
 	"strings"
@@ -6,16 +6,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze"
+	"github.com/gtramontina/ooze/internal/result"
 )
 
-type TestingT interface {
-	Helper()
-	Logf(format string, args ...any)
-	FailNow()
-}
-
-type TestingTReporter struct {
-	t                TestingT
+type ConsoleReporter struct {
 	logger           ooze.Logger
 	differ           gomutatedfile.Differ
 	calculator       ooze.ScoreCalculator
@@ -24,14 +18,12 @@ type TestingTReporter struct {
 }
 
 func New(
-	testingT TestingT,
 	logger ooze.Logger,
 	differ gomutatedfile.Differ,
 	calculator ooze.ScoreCalculator,
 	minimumThreshold float32,
-) *TestingTReporter {
-	return &TestingTReporter{
-		t:                testingT,
+) *ConsoleReporter {
+	return &ConsoleReporter{
 		logger:           logger,
 		differ:           differ,
 		calculator:       calculator,
@@ -40,13 +32,11 @@ func New(
 	}
 }
 
-func (r *TestingTReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
+func (r *ConsoleReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
-func (r *TestingTReporter) Summarize() {
-	r.t.Helper()
-
+func (r *ConsoleReporter) Summarize() result.Result[any] {
 	total := len(r.diagnostics)
 
 	var killed, survived int
@@ -61,13 +51,13 @@ func (r *TestingTReporter) Summarize() {
 	}
 
 	bold := color.New(color.Bold).SprintFunc()
-	scoreExit := func() {}
+	res := result.Ok[any](nil)
 	scoreColor := color.New(color.Bold, color.FgGreen).SprintfFunc()
 	scoreIcon := "✓"
 	score := r.calculator(total, killed)
 
 	if score < r.minimumThreshold {
-		scoreExit = r.t.FailNow
+		res = result.Err[any]("")
 		scoreColor = color.New(color.Bold, color.FgRed).SprintfFunc()
 		scoreIcon = "⨯"
 	}
@@ -80,10 +70,10 @@ func (r *TestingTReporter) Summarize() {
 	r.logger.Logf("┃ " + scoreColor("%s Score: %8.2f (minimum: %.2f)", scoreIcon, score, r.minimumThreshold) + "    ┃")
 	r.logger.Logf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
 
-	scoreExit()
+	return res
 }
 
-func (r *TestingTReporter) logDiff(diagnostic *ooze.Diagnostic) {
+func (r *ConsoleReporter) logDiff(diagnostic *ooze.Diagnostic) {
 	r.logger.Logf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
 	r.logger.Logf("┃ 🧟 "+color.New(color.Bold, color.FgRed).Sprint("Mutant survived:")+" %s", diagnostic.Label())
 	r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")

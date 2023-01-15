@@ -34,7 +34,7 @@ func TestOoze_nothing_to_test(t *testing.T) {
 			reporter,
 		).Release(integerincrement.New())
 
-		reporter.Summarize()
+		assert.Equal(t, result.Ok[any](nil), reporter.Summarize())
 		assert.Equal(t, &fakereporter.Summary{
 			Survived: 0,
 			Killed:   0,
@@ -49,7 +49,7 @@ func TestOoze_nothing_to_test(t *testing.T) {
 			reporter,
 		).Release()
 
-		reporter.Summarize()
+		assert.Equal(t, result.Ok[any](nil), reporter.Summarize())
 		assert.Equal(t, &fakereporter.Summary{
 			Survived: 0,
 			Killed:   0,
@@ -64,7 +64,7 @@ func TestOoze_nothing_to_test(t *testing.T) {
 			reporter,
 		).Release(integerincrement.New())
 
-		reporter.Summarize()
+		assert.Equal(t, result.Ok[any](nil), reporter.Summarize())
 		assert.Equal(t, &fakereporter.Summary{
 			Survived: 0,
 			Killed:   0,
@@ -72,14 +72,15 @@ func TestOoze_nothing_to_test(t *testing.T) {
 	})
 }
 
-func TestOoze_with_mutations(t *testing.T) {
-	type scenario struct {
-		description          string
-		firstMutationResult  result.Result[string]
-		secondMutationResult result.Result[string]
-		expectedSummary      *fakereporter.Summary
-	}
+type scenario struct {
+	description           string
+	firstMutationResult   result.Result[string]
+	secondMutationResult  result.Result[string]
+	expectedSummaryResult result.Result[any]
+	expectedSummary       *fakereporter.Summary
+}
 
+func TestOoze_with_mutations(t *testing.T) {
 	source2 := oozetesting.Source(`
 	|package source
 	|
@@ -151,7 +152,7 @@ func TestOoze_with_mutations(t *testing.T) {
 			reporter,
 		).Release(integerincrement.New())
 
-		reporter.Summarize()
+		assert.Equal(t, result.Ok[any](nil), reporter.Summarize())
 		assert.Equal(t, &fakereporter.Summary{
 			Survived: 0,
 			Killed:   1,
@@ -161,28 +162,32 @@ func TestOoze_with_mutations(t *testing.T) {
 	t.Run("one file, one virus and two infections", func(t *testing.T) {
 		for _, scene := range []scenario{
 			{
-				description:          "both mutants died",
-				firstMutationResult:  result.Ok("first mutant died"),
-				secondMutationResult: result.Ok("second mutant died"),
-				expectedSummary:      &fakereporter.Summary{Survived: 0, Killed: 2},
+				description:           "both mutants died",
+				firstMutationResult:   result.Ok("first mutant died"),
+				secondMutationResult:  result.Ok("second mutant died"),
+				expectedSummaryResult: result.Ok[any](nil),
+				expectedSummary:       &fakereporter.Summary{Survived: 0, Killed: 2},
 			},
 			{
-				description:          "first mutant survived, second died",
-				firstMutationResult:  result.Err[string]("first mutant survived"),
-				secondMutationResult: result.Ok("second mutant died"),
-				expectedSummary:      &fakereporter.Summary{Survived: 1, Killed: 1},
+				description:           "first mutant survived, second died",
+				firstMutationResult:   result.Err[string]("first mutant survived"),
+				secondMutationResult:  result.Ok("second mutant died"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 1, Killed: 1},
 			},
 			{
-				description:          "first mutant died, second survived",
-				firstMutationResult:  result.Ok("first mutant died"),
-				secondMutationResult: result.Err[string]("second mutant survived"),
-				expectedSummary:      &fakereporter.Summary{Survived: 1, Killed: 1},
+				description:           "first mutant died, second survived",
+				firstMutationResult:   result.Ok("first mutant died"),
+				secondMutationResult:  result.Err[string]("second mutant survived"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 1, Killed: 1},
 			},
 			{
-				description:          "both mutants survived",
-				firstMutationResult:  result.Err[string]("first mutant survived"),
-				secondMutationResult: result.Err[string]("second mutant survived"),
-				expectedSummary:      &fakereporter.Summary{Survived: 2, Killed: 0},
+				description:           "both mutants survived",
+				firstMutationResult:   result.Err[string]("first mutant survived"),
+				secondMutationResult:  result.Err[string]("second mutant survived"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 2, Killed: 0},
 			},
 		} {
 			func(scene scenario) {
@@ -206,7 +211,7 @@ func TestOoze_with_mutations(t *testing.T) {
 						reporter,
 					).Release(integerincrement.New())
 
-					reporter.Summarize()
+					assert.Equal(t, scene.expectedSummaryResult, reporter.Summarize())
 					assert.Equal(t, scene.expectedSummary, reporter.GetSummary())
 				})
 			}(scene)
@@ -216,28 +221,32 @@ func TestOoze_with_mutations(t *testing.T) {
 	t.Run("one file, two viri and one infection each file", func(t *testing.T) {
 		for _, scene := range []scenario{
 			{
-				description:          "both mutants died",
-				firstMutationResult:  result.Ok("first mutant died"),
-				secondMutationResult: result.Ok("second mutant died"),
-				expectedSummary:      &fakereporter.Summary{Survived: 0, Killed: 2},
+				description:           "both mutants died",
+				firstMutationResult:   result.Ok("first mutant died"),
+				secondMutationResult:  result.Ok("second mutant died"),
+				expectedSummaryResult: result.Ok[any](nil),
+				expectedSummary:       &fakereporter.Summary{Survived: 0, Killed: 2},
 			},
 			{
-				description:          "first mutant survived, second died",
-				firstMutationResult:  result.Err[string]("first mutant survived"),
-				secondMutationResult: result.Ok("second mutant died"),
-				expectedSummary:      &fakereporter.Summary{Survived: 1, Killed: 1},
+				description:           "first mutant survived, second died",
+				firstMutationResult:   result.Err[string]("first mutant survived"),
+				secondMutationResult:  result.Ok("second mutant died"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 1, Killed: 1},
 			},
 			{
-				description:          "first mutant died, second survived",
-				firstMutationResult:  result.Ok("first mutant died"),
-				secondMutationResult: result.Err[string]("second mutant survived"),
-				expectedSummary:      &fakereporter.Summary{Survived: 1, Killed: 1},
+				description:           "first mutant died, second survived",
+				firstMutationResult:   result.Ok("first mutant died"),
+				secondMutationResult:  result.Err[string]("second mutant survived"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 1, Killed: 1},
 			},
 			{
-				description:          "both mutants survived",
-				firstMutationResult:  result.Err[string]("first mutant survived"),
-				secondMutationResult: result.Err[string]("second mutant survived"),
-				expectedSummary:      &fakereporter.Summary{Survived: 2, Killed: 0},
+				description:           "both mutants survived",
+				firstMutationResult:   result.Err[string]("first mutant survived"),
+				secondMutationResult:  result.Err[string]("second mutant survived"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 2, Killed: 0},
 			},
 		} {
 			func(scene scenario) {
@@ -264,7 +273,7 @@ func TestOoze_with_mutations(t *testing.T) {
 						integerdecrement.New(),
 					)
 
-					reporter.Summarize()
+					assert.Equal(t, scene.expectedSummaryResult, reporter.Summarize())
 					assert.Equal(t, scene.expectedSummary, reporter.GetSummary())
 				})
 			}(scene)
@@ -274,28 +283,32 @@ func TestOoze_with_mutations(t *testing.T) {
 	t.Run("two files, one virus and one infection each file", func(t *testing.T) {
 		for _, scene := range []scenario{
 			{
-				description:          "both mutants died",
-				firstMutationResult:  result.Ok("first mutant died"),
-				secondMutationResult: result.Ok("second mutant died"),
-				expectedSummary:      &fakereporter.Summary{Survived: 0, Killed: 2},
+				description:           "both mutants died",
+				firstMutationResult:   result.Ok("first mutant died"),
+				secondMutationResult:  result.Ok("second mutant died"),
+				expectedSummaryResult: result.Ok[any](nil),
+				expectedSummary:       &fakereporter.Summary{Survived: 0, Killed: 2},
 			},
 			{
-				description:          "first mutant survived, second died",
-				firstMutationResult:  result.Err[string]("first mutant survived"),
-				secondMutationResult: result.Ok("second mutant died"),
-				expectedSummary:      &fakereporter.Summary{Survived: 1, Killed: 1},
+				description:           "first mutant survived, second died",
+				firstMutationResult:   result.Err[string]("first mutant survived"),
+				secondMutationResult:  result.Ok("second mutant died"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 1, Killed: 1},
 			},
 			{
-				description:          "first mutant died, second survived",
-				firstMutationResult:  result.Ok("first mutant died"),
-				secondMutationResult: result.Err[string]("second mutant survived"),
-				expectedSummary:      &fakereporter.Summary{Survived: 1, Killed: 1},
+				description:           "first mutant died, second survived",
+				firstMutationResult:   result.Ok("first mutant died"),
+				secondMutationResult:  result.Err[string]("second mutant survived"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 1, Killed: 1},
 			},
 			{
-				description:          "both mutants survived",
-				firstMutationResult:  result.Err[string]("first mutant survived"),
-				secondMutationResult: result.Err[string]("second mutant survived"),
-				expectedSummary:      &fakereporter.Summary{Survived: 2, Killed: 0},
+				description:           "both mutants survived",
+				firstMutationResult:   result.Err[string]("first mutant survived"),
+				secondMutationResult:  result.Err[string]("second mutant survived"),
+				expectedSummaryResult: result.Err[any](""),
+				expectedSummary:       &fakereporter.Summary{Survived: 2, Killed: 0},
 			},
 		} {
 			func(scene scenario) {
@@ -324,7 +337,7 @@ func TestOoze_with_mutations(t *testing.T) {
 						integerincrement.New(),
 					)
 
-					reporter.Summarize()
+					assert.Equal(t, scene.expectedSummaryResult, reporter.Summarize())
 					assert.Equal(t, scene.expectedSummary, reporter.GetSummary())
 				})
 			}(scene)

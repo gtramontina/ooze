@@ -56,7 +56,7 @@ func NewDiagnostic(res future.Future[result.Result[string]], file *gomutatedfile
 
 type Reporter interface {
 	AddDiagnostic(diagnostic *Diagnostic)
-	Summarize()
+	Summarize() result.Result[any]
 }
 
 type Ooze struct {

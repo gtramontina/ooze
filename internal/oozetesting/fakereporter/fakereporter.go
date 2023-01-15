@@ -2,6 +2,7 @@ package fakereporter
 
 import (
 	"github.com/gtramontina/ooze/internal/ooze"
+	"github.com/gtramontina/ooze/internal/result"
 )
 
 type FakeReporter struct {
@@ -20,7 +21,7 @@ func (r *FakeReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
 	r.diagnostics = append(r.diagnostics, diagnostic)
 }
 
-func (r *FakeReporter) Summarize() {
+func (r *FakeReporter) Summarize() result.Result[any] {
 	survived := 0
 	killed := 0
 
@@ -36,6 +37,12 @@ func (r *FakeReporter) Summarize() {
 		Survived: survived,
 		Killed:   killed,
 	}
+
+	if survived > 0 {
+		return result.Err[any]("")
+	}
+
+	return result.Ok[any](nil)
 }
 
 func (r *FakeReporter) GetSummary() *Summary {

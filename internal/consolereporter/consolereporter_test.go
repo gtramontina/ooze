@@ -1,4 +1,4 @@
-package testingtreporter_test
+package consolereporter_test
 
 import (
 	"bytes"
@@ -6,43 +6,22 @@ import (
 	"testing"
 
 	"github.com/fatih/color"
+	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakescorecalculator"
-	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/oozetesting/stubdiffer"
 	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/testingtreporter"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTestingTReporterSummary(t *testing.T) {
-	t.Run("summary is a test helper", func(t *testing.T) {
-		fakeT := faketestingt.New()
-		reporter := testingtreporter.New(
-			fakeT,
-			iologger.New(&bytes.Buffer{}),
-			stubdiffer.New("+dummy diff"),
-			fakescorecalculator.Always(0),
-			0,
-		)
-		reporter.Summarize()
-
-		assert.Equal(t, 1, fakeT.HelperCalls())
-	})
-
+func TestConsoleReporterSummary(t *testing.T) {
 	t.Run("reports summary when there are no diagnostics", func(t *testing.T) {
 		buffer := &bytes.Buffer{}
 		logger := iologger.New(buffer)
-		reporter := testingtreporter.New(
-			faketestingt.New(),
-			logger,
-			stubdiffer.New("+dummy diff"),
-			fakescorecalculator.Always(0),
-			0,
-		)
+		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.Summarize()
 
 		assert.Equal(t, []string{
@@ -60,13 +39,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 	t.Run("reports summary when there is one positive diagnostic", func(t *testing.T) {
 		buffer := &bytes.Buffer{}
 		logger := iologger.New(buffer)
-		reporter := testingtreporter.New(
-			faketestingt.New(),
-			logger,
-			stubdiffer.New("+dummy diff"),
-			fakescorecalculator.Always(0),
-			0,
-		)
+		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			future.Resolved(result.Ok("mutant killed")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
@@ -88,13 +61,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 	t.Run("reports summary when there is one negative diagnostic", func(t *testing.T) {
 		buffer := &bytes.Buffer{}
 		logger := iologger.New(buffer)
-		reporter := testingtreporter.New(
-			faketestingt.New(),
-			logger,
-			stubdiffer.New("+dummy diff"),
-			fakescorecalculator.Always(0),
-			0,
-		)
+		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			future.Resolved(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
@@ -121,13 +88,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 	t.Run("reports summary when there are multiple mixed diagnostics", func(t *testing.T) {
 		buffer := &bytes.Buffer{}
 		logger := iologger.New(buffer)
-		reporter := testingtreporter.New(
-			faketestingt.New(),
-			logger,
-			stubdiffer.New("+dummy diff"),
-			fakescorecalculator.Always(0),
-			0,
-		)
+		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			future.Resolved(result.Err[string]("mutant survived")),
 			gomutatedfile.New("dummy", "dummy.go", nil, nil)),
@@ -193,13 +154,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 		{
 			buffer := &bytes.Buffer{}
 			logger := iologger.New(buffer)
-			reporter := testingtreporter.New(
-				faketestingt.New(),
-				logger,
-				stubdiffer.New("+dummy diff"),
-				fakescorecalculator.Always(0.32),
-				0,
-			)
+			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.32), 0)
 			reporter.Summarize()
 
 			assert.Equal(t, []string{
@@ -217,13 +172,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 		{
 			buffer := &bytes.Buffer{}
 			logger := iologger.New(buffer)
-			reporter := testingtreporter.New(
-				faketestingt.New(),
-				logger,
-				stubdiffer.New("+dummy diff"),
-				fakescorecalculator.Always(0.99),
-				0,
-			)
+			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.99), 0)
 			reporter.Summarize()
 
 			assert.Equal(t, []string{
@@ -246,13 +195,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 		t.Run("successful", func(t *testing.T) {
 			buffer := &bytes.Buffer{}
 			logger := iologger.New(buffer)
-			reporter := testingtreporter.New(
-				faketestingt.New(),
-				logger,
-				stubdiffer.New("+dummy diff"),
-				fakescorecalculator.Always(0.99),
-				0,
-			)
+			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.99), 0)
 			reporter.Summarize()
 
 			assert.Equal(t, []string{
@@ -270,13 +213,7 @@ func TestTestingTReporterSummary(t *testing.T) {
 		t.Run("failure", func(t *testing.T) {
 			buffer := &bytes.Buffer{}
 			logger := iologger.New(buffer)
-			reporter := testingtreporter.New(
-				faketestingt.New(),
-				logger,
-				stubdiffer.New("+dummy diff"),
-				fakescorecalculator.Always(0.99),
-				1.0,
-			)
+			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.99), 1.0)
 			reporter.Summarize()
 
 			assert.Equal(t, []string{
@@ -293,62 +230,50 @@ func TestTestingTReporterSummary(t *testing.T) {
 	})
 }
 
-func TestTestingTReporter(t *testing.T) {
-	t.Run("fails the given T when below the score is below the configured", func(t *testing.T) {
+func TestConsoleReporter(t *testing.T) {
+	t.Run("fails when below the score is below the configured", func(t *testing.T) {
 		{
-			fakeT := faketestingt.New()
-			reporter := testingtreporter.New(
-				fakeT,
+			reporter := consolereporter.New(
 				iologger.New(&bytes.Buffer{}),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(0.99),
 				1.0,
 			)
-			reporter.Summarize()
 
-			assert.True(t, fakeT.FailedNow())
+			assert.Equal(t, result.Err[any](""), reporter.Summarize())
 		}
 
 		{
-			fakeT := faketestingt.New()
-			reporter := testingtreporter.New(
-				fakeT,
+			reporter := consolereporter.New(
 				iologger.New(&bytes.Buffer{}),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(1.0),
 				1.0,
 			)
-			reporter.Summarize()
 
-			assert.False(t, fakeT.FailedNow())
+			assert.Equal(t, result.Ok[any](nil), reporter.Summarize())
 		}
 
 		{
-			fakeT := faketestingt.New()
-			reporter := testingtreporter.New(
-				fakeT,
+			reporter := consolereporter.New(
 				iologger.New(&bytes.Buffer{}),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(0.005),
 				0.01,
 			)
-			reporter.Summarize()
 
-			assert.True(t, fakeT.FailedNow())
+			assert.Equal(t, result.Err[any](""), reporter.Summarize())
 		}
 
 		{
-			fakeT := faketestingt.New()
-			reporter := testingtreporter.New(
-				fakeT,
+			reporter := consolereporter.New(
 				iologger.New(&bytes.Buffer{}),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(0.5),
 				0.5,
 			)
-			reporter.Summarize()
 
-			assert.False(t, fakeT.FailedNow())
+			assert.Equal(t, result.Ok[any](nil), reporter.Summarize())
 		}
 	})
 }

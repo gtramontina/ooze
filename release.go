@@ -6,6 +6,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
+	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
 	"github.com/gtramontina/ooze/internal/gotextdiff"
@@ -16,7 +17,6 @@ import (
 	"github.com/gtramontina/ooze/internal/prettydiff"
 	"github.com/gtramontina/ooze/internal/scorecalculator"
 	"github.com/gtramontina/ooze/internal/testingtlaboratory"
-	"github.com/gtramontina/ooze/internal/testingtreporter"
 	"github.com/gtramontina/ooze/internal/verboselaboratory"
 	"github.com/gtramontina/ooze/internal/verbosereporter"
 	"github.com/gtramontina/ooze/internal/verboserepository"
@@ -66,8 +66,7 @@ func Release(t *testing.T, options ...Option) {
 
 	var logger ooze.Logger = iologger.New(os.Stdout)
 
-	var reporter ooze.Reporter = testingtreporter.New(
-		t,
+	var reporter ooze.Reporter = consolereporter.New(
 		logger,
 		prettydiff.New(gotextdiff.New()),
 		scorecalculator.New(),
@@ -92,7 +91,10 @@ func Release(t *testing.T, options ...Option) {
 
 	t.Cleanup(func() {
 		t.Helper()
-		reporter.Summarize()
+		res := reporter.Summarize()
+		if !res.IsOk() {
+			t.FailNow()
+		}
 	})
 
 	lab = testingtlaboratory.New(t, lab, opts.Parallel)

@@ -2,6 +2,7 @@ package verbosereporter
 
 import (
 	"github.com/gtramontina/ooze/internal/ooze"
+	"github.com/gtramontina/ooze/internal/result"
 )
 
 type VerboseReporter struct {
@@ -21,7 +22,8 @@ func (r *VerboseReporter) AddDiagnostic(diagnostic *ooze.Diagnostic) {
 	r.delegate.AddDiagnostic(diagnostic)
 }
 
-func (r *VerboseReporter) Summarize() {
+func (r *VerboseReporter) Summarize() result.Result[any] {
 	r.logger.Logf("summarizing report…")
-	r.delegate.Summarize()
+
+	return r.delegate.Summarize()
 }
