@@ -1,15 +1,20 @@
 package ooze
 
-import "github.com/gtramontina/ooze/internal/viruses"
+import (
+	"regexp"
+
+	"github.com/gtramontina/ooze/internal/viruses"
+)
 
 type Option func(Options) Options
 
 type Options struct {
-	RepositoryRoot   string
-	TestCommand      string
-	MinimumThreshold float32
-	Parallel         bool
-	Viruses          []viruses.Virus
+	RepositoryRoot           string
+	TestCommand              string
+	MinimumThreshold         float32
+	Parallel                 bool
+	IgnoreSourceFilesPattern *regexp.Regexp
+	Viruses                  []viruses.Virus
 }
 
 func WithRepositoryRoot(repositoryRoot string) func(Options) Options {
@@ -39,6 +44,14 @@ func WithMinimumThreshold(minimumThreshold float32) func(Options) Options {
 func Parallel() func(Options) Options {
 	return func(options Options) Options {
 		options.Parallel = true
+
+		return options
+	}
+}
+
+func IgnoreSourceFiles(pattern string) func(Options) Options {
+	return func(options Options) Options {
+		options.IgnoreSourceFilesPattern = regexp.MustCompile(pattern)
 
 		return options
 	}

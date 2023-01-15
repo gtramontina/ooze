@@ -10,6 +10,7 @@ import (
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
 	"github.com/gtramontina/ooze/internal/gotextdiff"
+	"github.com/gtramontina/ooze/internal/ignoredrepository"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
@@ -30,10 +31,11 @@ import (
 )
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
-	RepositoryRoot:   ".",
-	TestCommand:      "go test -count=1 ./...",
-	MinimumThreshold: 1.0,
-	Parallel:         false,
+	RepositoryRoot:           ".",
+	TestCommand:              "go test -count=1 ./...",
+	MinimumThreshold:         1.0,
+	Parallel:                 false,
+	IgnoreSourceFilesPattern: nil,
 	Viruses: []viruses.Virus{
 		integerincrement.New(),
 		integerdecrement.New(),
@@ -77,6 +79,10 @@ func Release(t *testing.T, options ...Option) {
 			opts.MinimumThreshold,
 		)
 	)
+
+	if opts.IgnoreSourceFilesPattern != nil {
+		repository = ignoredrepository.New(opts.IgnoreSourceFilesPattern, repository)
+	}
 
 	if testing.Verbose() {
 		repository = verboserepository.New(t, repository)
