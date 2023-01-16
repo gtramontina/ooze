@@ -4,7 +4,7 @@ CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
 golangci-lint-version = v1.50.1
-tparse-version = v0.11.1
+gotestsum-version = v1.9.0
 
 .git/.hooks.log:
 	@git config core.hooksPath .githooks
@@ -16,12 +16,12 @@ pre-reqs += .git/.hooks.log
 	| sh -s -- -b $(PWD)/$(dir $@) -d $(golangci-lint-version)
 pre-reqs += .bin/golangci-lint
 
-.bin/tparse:
-	@GOBIN="$(PWD)/$(dir $@)" go install github.com/mfridman/tparse@$(tparse-version)
-pre-reqs += .bin/tparse
+.bin/gotestsum:
+	@GOBIN="$(PWD)/$(dir $@)" go install gotest.tools/gotestsum@$(gotestsum-version)
+pre-reqs += .bin/gotestsum
 
 test: $(pre-reqs)
-	@go test -race -cover -timeout=60s -shuffle=on -json ./... | tparse -all -follow
+	@gotestsum --format-hide-empty-pkg -- -race -cover -timeout=60s -shuffle=on ./...
 .PHONY: test
 
 test.mutation: $(pre-reqs)
