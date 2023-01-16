@@ -24,6 +24,10 @@ test: $(pre-reqs)
 	@gotestsum --format-hide-empty-pkg -- -race -cover -timeout=60s -shuffle=on ./...
 .PHONY: test
 
+test.failfast: $(pre-reqs)
+	@gotestsum --format-hide-empty-pkg --max-fails=1 -- -timeout=60s -failfast ./...
+.PHONY: test.failfast
+
 test.mutation: $(pre-reqs)
 	@go test -timeout=30m -count=1 -v -tags=mutation
 .PHONY: test.mutation

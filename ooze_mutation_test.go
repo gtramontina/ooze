@@ -19,7 +19,7 @@ func TestMutation(t *testing.T) {
 	ooze.Release(
 		t,
 		ooze.WithRepositoryRoot("."),
-		ooze.WithTestCommand("make test MAKEFLAGS="),
+		ooze.WithTestCommand("make test.failfast MAKEFLAGS="),
 		ooze.WithMinimumThreshold(0.5),
 		ooze.Parallel(),
 		ooze.IgnoreSourceFiles("^release\\.go$"),
