@@ -25,10 +25,10 @@ func TestMutation(t *testing.T) {
 		ooze.Parallel(),
 		ooze.IgnoreSourceFiles("^release\\.go$"),
 		ooze.WithViruses(
-			integerincrement.New(),
-			integerdecrement.New(),
-			floatincrement.New(),
 			floatdecrement.New(),
+			floatincrement.New(),
+			integerdecrement.New(),
+			integerincrement.New(),
 			loopbreak.New(),
 		),
 	)

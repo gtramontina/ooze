@@ -38,11 +38,11 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 	Parallel:                 false,
 	IgnoreSourceFilesPattern: nil,
 	Viruses: []viruses.Virus{
-		integerincrement.New(),
-		integerdecrement.New(),
-		loopbreak.New(),
-		floatincrement.New(),
 		floatdecrement.New(),
+		floatincrement.New(),
+		integerdecrement.New(),
+		integerincrement.New(),
+		loopbreak.New(),
 	},
 }
 
