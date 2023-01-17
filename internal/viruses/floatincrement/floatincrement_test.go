@@ -49,6 +49,30 @@ func TestFloatIncrement_32(t *testing.T) {
 		)
 	})
 
+	t.Run("one mutation fine precision", func(t *testing.T) {
+		source := oozetesting.Source(`
+		|package source
+		|
+		|var number float32 = 0.1e-14
+		|`)
+
+		mutation1 := oozetesting.Source(`
+		|package source
+		|
+		|var number float32 = 1.000000000000001
+		|`)
+
+		assert.Equal(t,
+			[]*gomutatedfile.GoMutatedFile{
+				gomutatedfile.New("Float Increment", "source.go", source, mutation1),
+			},
+			oozetesting.Mutate(
+				floatincrement.New(),
+				gosourcefile.New("source.go", source),
+			),
+		)
+	})
+
 	t.Run("two mutations", func(t *testing.T) {
 		source := oozetesting.Source(`
 		|package source
@@ -164,6 +188,30 @@ func TestFloatIncrement_64(t *testing.T) {
 		|package source
 		|
 		|var number float64 = 1
+		|`)
+
+		assert.Equal(t,
+			[]*gomutatedfile.GoMutatedFile{
+				gomutatedfile.New("Float Increment", "source.go", source, mutation1),
+			},
+			oozetesting.Mutate(
+				floatincrement.New(),
+				gosourcefile.New("source.go", source),
+			),
+		)
+	})
+
+	t.Run("one mutation fine precision", func(t *testing.T) {
+		source := oozetesting.Source(`
+		|package source
+		|
+		|var number float64 = 0.1e-14
+		|`)
+
+		mutation1 := oozetesting.Source(`
+		|package source
+		|
+		|var number float64 = 1.000000000000001
 		|`)
 
 		assert.Equal(t,

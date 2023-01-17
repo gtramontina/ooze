@@ -1,6 +1,7 @@
 package floatincrement
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"reflect"
@@ -32,7 +33,7 @@ func (i *FloatIncrement) Incubate(node ast.Node) []*viruses.Infection {
 	}
 
 	originalFloat++
-	mutatedValue := strconv.FormatFloat(originalFloat, 'f', -1, 64)
+	mutatedValue := fmt.Sprintf("%v", originalFloat)
 
 	return []*viruses.Infection{
 		viruses.NewInfection(
