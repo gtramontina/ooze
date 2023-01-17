@@ -3,6 +3,7 @@ package floatincrement
 import (
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strconv"
 
 	"github.com/gtramontina/ooze/internal/viruses"
@@ -22,7 +23,10 @@ func (i *FloatIncrement) Incubate(node ast.Node) []*viruses.Infection {
 
 	originalValue := literal.Value
 
-	originalFloat, err := strconv.ParseFloat(originalValue, 64)
+	var originalFloat float64
+	bitSize := reflect.TypeOf(originalFloat).Bits()
+
+	originalFloat, err := strconv.ParseFloat(originalValue, bitSize)
 	if err != nil {
 		return nil
 	}
