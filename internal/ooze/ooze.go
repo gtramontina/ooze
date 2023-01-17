@@ -84,10 +84,6 @@ func (o *Ooze) Release(viri ...viruses.Virus) {
 		}
 	}
 
-	if len(incubated) == 0 {
-		return
-	}
-
 	for _, infectedFile := range incubated {
 		mutatedFile := infectedFile.Mutate()
 		res := o.laboratory.Test(o.repository, mutatedFile)
