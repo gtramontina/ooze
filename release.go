@@ -23,6 +23,7 @@ import (
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/internal/verbosetestrunner"
 	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/internal/viruses/floatdecrement"
 	"github.com/gtramontina/ooze/internal/viruses/floatincrement"
 	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
 	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
@@ -41,6 +42,7 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 		integerdecrement.New(),
 		loopbreak.New(),
 		floatincrement.New(),
+		floatdecrement.New(),
 	},
 }
 
