@@ -3,7 +3,7 @@ package prettydiff
 import (
 	"strings"
 
-	"github.com/fatih/color"
+	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 )
 
@@ -25,11 +25,11 @@ func (d *PrettyDiff) Diff(a, b string, aData, bData []byte) string {
 
 		switch {
 		case strings.HasPrefix(trimmed, "-"):
-			line = color.New(color.Bold, color.FgRed).Sprint(line)
+			line = color.BoldRed(line)
 		case strings.HasPrefix(trimmed, "+"):
-			line = color.GreenString(line)
+			line = color.Green(line)
 		case strings.HasPrefix(trimmed, "@"):
-			line = color.BlueString(line)
+			line = color.Blue(line)
 		}
 
 		pretty[lineNumber] = line

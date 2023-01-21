@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fatih/color"
+	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
@@ -189,8 +189,8 @@ func TestConsoleReporterSummary(t *testing.T) {
 	})
 
 	t.Run("prints a colorful summary", func(t *testing.T) {
-		defer func(original bool) { color.NoColor = original }(color.NoColor)
-		color.NoColor = false
+		reset := color.Force()
+		defer reset()
 
 		t.Run("successful", func(t *testing.T) {
 			buffer := &bytes.Buffer{}

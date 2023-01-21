@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/fatih/color"
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
+	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
@@ -47,8 +47,8 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 }
 
 func banner(log ooze.Logger) {
-	border := color.YellowString
-	text := color.CyanString
+	border := color.Yellow
+	text := color.Cyan
 
 	log.Logf(border("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"))
 	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐"))

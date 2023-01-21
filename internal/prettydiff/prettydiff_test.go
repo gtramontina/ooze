@@ -3,15 +3,15 @@ package prettydiff_test
 import (
 	"testing"
 
-	"github.com/fatih/color"
+	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/oozetesting/stubdiffer"
 	"github.com/gtramontina/ooze/internal/prettydiff"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPrettyDiff(t *testing.T) {
-	defer func(noColor bool) { color.NoColor = noColor }(color.NoColor)
-	color.NoColor = false
+	reset := color.Force()
+	defer reset()
 
 	t.Run("delegates to the underlying differ", func(t *testing.T) {
 		differ := prettydiff.New(stubdiffer.New("some diff"))
