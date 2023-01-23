@@ -8,13 +8,17 @@ import (
 	"go/token"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
-	"github.com/gtramontina/ooze/internal/viruses"
 )
+
+type Infection interface {
+	fmt.Stringer
+	Infect(func())
+}
 
 type GoInfectedFile struct {
 	relativePath     string
 	rawSourceContent []byte
-	infection        *viruses.Infection
+	infection        Infection
 
 	fileSet  *token.FileSet
 	fileTree *ast.File
@@ -23,7 +27,7 @@ type GoInfectedFile struct {
 func New(
 	relativePath string,
 	rawSourceContent []byte,
-	infection *viruses.Infection,
+	infection Infection,
 	fileSet *token.FileSet,
 	fileTree *ast.File,
 ) *GoInfectedFile {
