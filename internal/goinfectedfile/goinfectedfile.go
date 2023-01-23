@@ -39,7 +39,7 @@ func New(
 func (f *GoInfectedFile) Mutate() *gomutatedfile.GoMutatedFile {
 	mutatedSource := &bytes.Buffer{}
 
-	f.infection.Mutate(func() {
+	f.infection.Infect(func() {
 		err := format.Node(mutatedSource, f.fileSet, f.fileTree)
 		if err != nil {
 			panic(fmt.Errorf("failed formating mutated source: %w", err))
