@@ -20,5 +20,5 @@ jobs:
           go-version: 1.19
           cache: true
 
-      - name: '🧟 Mutation Tests'
+      - name: '🧬 Mutation Tests'
         run: make test.mutation

@@ -74,7 +74,7 @@ func (r *ConsoleReporter) Summarize() result.Result[any] {
 
 func (r *ConsoleReporter) logDiff(diagnostic *ooze.Diagnostic) {
 	r.logger.Logf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╍┅")
-	r.logger.Logf("┃ 🧟 "+color.BoldRed("Mutant survived:")+" %s", diagnostic.Label())
+	r.logger.Logf("┃ 🧬 "+color.BoldRed("Mutant survived:")+" %s", diagnostic.Label())
 	r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
 
 	diff := []string{}
