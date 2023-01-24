@@ -1,4 +1,4 @@
-name: Mutation Tests
+name: '🧬 Mutation Tests'
 on:
   workflow_run:
     workflows: ["Continuous Integration"]
