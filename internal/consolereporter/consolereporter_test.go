@@ -1,16 +1,14 @@
 package consolereporter_test
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
-	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
+	"github.com/gtramontina/ooze/internal/oozetesting/fakelogger"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakescorecalculator"
 	"github.com/gtramontina/ooze/internal/oozetesting/stubdiffer"
 	"github.com/gtramontina/ooze/internal/result"
@@ -19,8 +17,7 @@ import (
 
 func TestConsoleReporterSummary(t *testing.T) {
 	t.Run("reports summary when there are no diagnostics", func(t *testing.T) {
-		buffer := &bytes.Buffer{}
-		logger := iologger.New(buffer)
+		logger := fakelogger.New()
 		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.Summarize()
 
@@ -32,13 +29,11 @@ func TestConsoleReporterSummary(t *testing.T) {
 			"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 			"┃ ✓ Score:     0.00 (minimum: 0.00)    ┃",
 			"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-			"",
-		}, strings.Split(buffer.String(), "\n"))
+		}, logger.LoggedLines())
 	})
 
 	t.Run("reports summary when there is one positive diagnostic", func(t *testing.T) {
-		buffer := &bytes.Buffer{}
-		logger := iologger.New(buffer)
+		logger := fakelogger.New()
 		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			future.Resolved(result.Ok("mutant killed")),
@@ -54,13 +49,11 @@ func TestConsoleReporterSummary(t *testing.T) {
 			"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 			"┃ ✓ Score:     0.00 (minimum: 0.00)    ┃",
 			"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-			"",
-		}, strings.Split(buffer.String(), "\n"))
+		}, logger.LoggedLines())
 	})
 
 	t.Run("reports summary when there is one negative diagnostic", func(t *testing.T) {
-		buffer := &bytes.Buffer{}
-		logger := iologger.New(buffer)
+		logger := fakelogger.New()
 		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			future.Resolved(result.Err[string]("mutant survived")),
@@ -81,13 +74,11 @@ func TestConsoleReporterSummary(t *testing.T) {
 			"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 			"┃ ✓ Score:     0.00 (minimum: 0.00)    ┃",
 			"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-			"",
-		}, strings.Split(buffer.String(), "\n"))
+		}, logger.LoggedLines())
 	})
 
 	t.Run("reports summary when there are multiple mixed diagnostics", func(t *testing.T) {
-		buffer := &bytes.Buffer{}
-		logger := iologger.New(buffer)
+		logger := fakelogger.New()
 		reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0), 0)
 		reporter.AddDiagnostic(ooze.NewDiagnostic(
 			future.Resolved(result.Err[string]("mutant survived")),
@@ -146,14 +137,12 @@ func TestConsoleReporterSummary(t *testing.T) {
 			"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 			"┃ ✓ Score:     0.00 (minimum: 0.00)    ┃",
 			"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-			"",
-		}, strings.Split(buffer.String(), "\n"))
+		}, logger.LoggedLines())
 	})
 
 	t.Run("reports the score calculated by the given score calculator", func(t *testing.T) {
 		{
-			buffer := &bytes.Buffer{}
-			logger := iologger.New(buffer)
+			logger := fakelogger.New()
 			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.32), 0)
 			reporter.Summarize()
 
@@ -165,13 +154,11 @@ func TestConsoleReporterSummary(t *testing.T) {
 				"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 				"┃ ✓ Score:     0.32 (minimum: 0.00)    ┃",
 				"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-				"",
-			}, strings.Split(buffer.String(), "\n"))
+			}, logger.LoggedLines())
 		}
 
 		{
-			buffer := &bytes.Buffer{}
-			logger := iologger.New(buffer)
+			logger := fakelogger.New()
 			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.99), 0)
 			reporter.Summarize()
 
@@ -183,8 +170,7 @@ func TestConsoleReporterSummary(t *testing.T) {
 				"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 				"┃ ✓ Score:     0.99 (minimum: 0.00)    ┃",
 				"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-				"",
-			}, strings.Split(buffer.String(), "\n"))
+			}, logger.LoggedLines())
 		}
 	})
 
@@ -193,8 +179,7 @@ func TestConsoleReporterSummary(t *testing.T) {
 		defer reset()
 
 		t.Run("successful", func(t *testing.T) {
-			buffer := &bytes.Buffer{}
-			logger := iologger.New(buffer)
+			logger := fakelogger.New()
 			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.99), 0)
 			reporter.Summarize()
 
@@ -206,13 +191,11 @@ func TestConsoleReporterSummary(t *testing.T) {
 				"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 				"┃ \033[1;32m✓ Score:     0.99 (minimum: 0.00)\033[0m    ┃",
 				"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-				"",
-			}, strings.Split(buffer.String(), "\n"))
+			}, logger.LoggedLines())
 		})
 
 		t.Run("failure", func(t *testing.T) {
-			buffer := &bytes.Buffer{}
-			logger := iologger.New(buffer)
+			logger := fakelogger.New()
 			reporter := consolereporter.New(logger, stubdiffer.New("+dummy diff"), fakescorecalculator.Always(0.99), 1.0)
 			reporter.Summarize()
 
@@ -224,8 +207,7 @@ func TestConsoleReporterSummary(t *testing.T) {
 				"┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨",
 				"┃ \033[1;31m⨯ Score:     0.99 (minimum: 1.00)\033[0m    ┃",
 				"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
-				"",
-			}, strings.Split(buffer.String(), "\n"))
+			}, logger.LoggedLines())
 		})
 	})
 }
@@ -234,7 +216,7 @@ func TestConsoleReporter(t *testing.T) {
 	t.Run("fails when below the score is below the configured", func(t *testing.T) {
 		{
 			reporter := consolereporter.New(
-				iologger.New(&bytes.Buffer{}),
+				fakelogger.New(),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(0.99),
 				1.0,
@@ -245,7 +227,7 @@ func TestConsoleReporter(t *testing.T) {
 
 		{
 			reporter := consolereporter.New(
-				iologger.New(&bytes.Buffer{}),
+				fakelogger.New(),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(1.0),
 				1.0,
@@ -256,7 +238,7 @@ func TestConsoleReporter(t *testing.T) {
 
 		{
 			reporter := consolereporter.New(
-				iologger.New(&bytes.Buffer{}),
+				fakelogger.New(),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(0.005),
 				0.01,
@@ -267,7 +249,7 @@ func TestConsoleReporter(t *testing.T) {
 
 		{
 			reporter := consolereporter.New(
-				iologger.New(&bytes.Buffer{}),
+				fakelogger.New(),
 				stubdiffer.New("+dummy diff"),
 				fakescorecalculator.Always(0.5),
 				0.5,
