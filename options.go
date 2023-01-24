@@ -8,7 +8,7 @@ import (
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
-	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/viruses"
 )
 
 type Option func(Options) Options

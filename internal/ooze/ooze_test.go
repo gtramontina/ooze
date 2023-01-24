@@ -10,8 +10,8 @@ import (
 	"github.com/gtramontina/ooze/internal/oozetesting/fakereporter"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
 	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
-	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
+	"github.com/gtramontina/ooze/viruses/integerdecrement"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -7,9 +7,9 @@ import (
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/fsrepository"
-	"github.com/gtramontina/ooze/internal/viruses"
-	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
-	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
+	"github.com/gtramontina/ooze/viruses"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/gtramontina/ooze/viruses/loopbreak"
 	"github.com/stretchr/testify/assert"
 )
 

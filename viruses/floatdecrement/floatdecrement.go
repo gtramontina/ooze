@@ -1,4 +1,4 @@
-package floatincrement
+package floatdecrement
 
 import (
 	"fmt"
@@ -7,16 +7,16 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/viruses"
 )
 
-type FloatIncrement struct{}
+type FloatDecrement struct{}
 
-func New() *FloatIncrement {
-	return &FloatIncrement{}
+func New() *FloatDecrement {
+	return &FloatDecrement{}
 }
 
-func (i *FloatIncrement) Incubate(node ast.Node) []*viruses.Infection {
+func (i *FloatDecrement) Incubate(node ast.Node) []*viruses.Infection {
 	literal, ok := node.(*ast.BasicLit)
 	if !ok || literal.Kind != token.FLOAT {
 		return nil
@@ -32,12 +32,12 @@ func (i *FloatIncrement) Incubate(node ast.Node) []*viruses.Infection {
 		return nil
 	}
 
-	originalFloat++
+	originalFloat--
 	mutatedValue := fmt.Sprintf("%v", originalFloat)
 
 	return []*viruses.Infection{
 		viruses.NewInfection(
-			"Float Increment",
+			"Float Decrement",
 			func() { literal.Value = mutatedValue },
 			func() { literal.Value = originalValue },
 		),

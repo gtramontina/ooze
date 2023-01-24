@@ -5,7 +5,7 @@ import (
 	"go/token"
 	"strconv"
 
-	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/viruses"
 )
 
 type IntegerDecrement struct{}

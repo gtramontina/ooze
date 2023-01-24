@@ -7,11 +7,11 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/gtramontina/ooze"
-	"github.com/gtramontina/ooze/internal/viruses/floatdecrement"
-	"github.com/gtramontina/ooze/internal/viruses/floatincrement"
-	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
-	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
-	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
+	"github.com/gtramontina/ooze/viruses/floatdecrement"
+	"github.com/gtramontina/ooze/viruses/floatincrement"
+	"github.com/gtramontina/ooze/viruses/integerdecrement"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/gtramontina/ooze/viruses/loopbreak"
 )
 
 func TestMutation(t *testing.T) {

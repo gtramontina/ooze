@@ -6,7 +6,7 @@ import (
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/oozetesting"
-	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
+	"github.com/gtramontina/ooze/viruses/loopbreak"
 	"github.com/stretchr/testify/assert"
 )
 

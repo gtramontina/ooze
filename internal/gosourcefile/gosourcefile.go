@@ -7,7 +7,7 @@ import (
 	"go/token"
 
 	"github.com/gtramontina/ooze/internal/goinfectedfile"
-	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/viruses"
 )
 
 type GoSourceFile struct {

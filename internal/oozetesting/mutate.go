@@ -3,7 +3,7 @@ package oozetesting
 import (
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
-	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/viruses"
 )
 
 func Mutate(virus viruses.Virus, source *gosourcefile.GoSourceFile) []*gomutatedfile.GoMutatedFile {

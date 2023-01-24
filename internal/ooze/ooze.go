@@ -6,7 +6,7 @@ import (
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/viruses"
+	"github.com/gtramontina/ooze/viruses"
 )
 
 type Logger interface {

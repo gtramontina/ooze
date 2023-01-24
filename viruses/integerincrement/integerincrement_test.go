@@ -6,7 +6,7 @@ import (
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/oozetesting"
-	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
 )
 

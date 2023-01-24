@@ -22,12 +22,12 @@ import (
 	"github.com/gtramontina/ooze/internal/verboserepository"
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/internal/verbosetestrunner"
-	"github.com/gtramontina/ooze/internal/viruses"
-	"github.com/gtramontina/ooze/internal/viruses/floatdecrement"
-	"github.com/gtramontina/ooze/internal/viruses/floatincrement"
-	"github.com/gtramontina/ooze/internal/viruses/integerdecrement"
-	"github.com/gtramontina/ooze/internal/viruses/integerincrement"
-	"github.com/gtramontina/ooze/internal/viruses/loopbreak"
+	"github.com/gtramontina/ooze/viruses"
+	"github.com/gtramontina/ooze/viruses/floatdecrement"
+	"github.com/gtramontina/ooze/viruses/floatincrement"
+	"github.com/gtramontina/ooze/viruses/integerdecrement"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/gtramontina/ooze/viruses/loopbreak"
 )
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
