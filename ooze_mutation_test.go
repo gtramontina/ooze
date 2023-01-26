@@ -5,8 +5,8 @@ package ooze_test
 import (
 	"testing"
 
-	"github.com/fatih/color"
 	"github.com/gtramontina/ooze"
+	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/viruses/floatdecrement"
 	"github.com/gtramontina/ooze/viruses/floatincrement"
 	"github.com/gtramontina/ooze/viruses/integerdecrement"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestMutation(t *testing.T) {
-	color.NoColor = false
+	color.Force()
 
 	ooze.Release(
 		t,
