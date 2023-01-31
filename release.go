@@ -58,6 +58,26 @@ func banner(log ooze.Logger) {
 	log.Logf("Running…")
 }
 
+// Release releases the ooze! It infects all source files with viruses that
+// mutate the source code DNA and perform tests to determine whether the mutants
+// survive.
+//
+// This is the entry point to configure and run mutation tests. You may want to
+// configure it with some options. Here is the available options and their
+// defaults:
+//
+//   - WithRepositoryRoot: `.`
+//   - WithTestCommand: `go test -count=1 ./...`
+//   - WithMinimumThreshold: `1.0`
+//   - Parallel: `false`
+//   - IgnoreSourceFiles: `nil`
+//   - WithViruses: all available (see viruses.Virus' implementations)
+//
+// The results are then presented in the console. If the mutation score is equal
+// to or above the configured threshold (WithMinimumThreshold), the execution is
+// considered successful. Failed otherwise. Regardless of the execution result,
+// any surviving mutant (no tests failed after applying the source code
+// mutation) will also be presented in the console for analysis.
 func Release(t *testing.T, options ...Option) {
 	t.Helper()
 
