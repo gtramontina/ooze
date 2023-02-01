@@ -3,413 +3,50 @@ package loopbreak_test
 import (
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/gomutatedfile"
-	"github.com/gtramontina/ooze/internal/gosourcefile"
-	"github.com/gtramontina/ooze/internal/oozetesting"
+	"github.com/gtramontina/ooze/oozetesting"
 	"github.com/gtramontina/ooze/viruses/loopbreak"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestLoopBreak_ContinueBreak(t *testing.T) {
-	t.Run("no mutations", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
-
-	t.Run("one mutation", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		mutation1 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("Loop Break", "source.go", source, mutation1),
-			},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
-
-	t.Run("two mutations", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		mutation1 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		mutation2 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("Loop Break", "source.go", source, mutation1),
-				gomutatedfile.New("Loop Break", "source.go", source, mutation2),
-			},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
-
-	t.Run("many mutations", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		mutation1 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		mutation2 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		mutation3 := oozetesting.Source(`
-				|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("Loop Break", "source.go", source, mutation1),
-				gomutatedfile.New("Loop Break", "source.go", source, mutation2),
-				gomutatedfile.New("Loop Break", "source.go", source, mutation3),
-			},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
+	oozetesting.Run(t, oozetesting.NewScenarios(
+		"Loop Break",
+		loopbreak.New(),
+		oozetesting.Mutations{
+			"no mutations": {"source.continue.0.go", []string{}},
+			"one mutation": {"source.continue.1.go", []string{
+				"source.continue.1.mut.1.go",
+			}},
+			"two mutations": {"source.continue.2.go", []string{
+				"source.continue.2.mut.1.go",
+				"source.continue.2.mut.2.go",
+			}},
+			"many mutations": {"source.continue.3.go", []string{
+				"source.continue.3.mut.1.go",
+				"source.continue.3.mut.2.go",
+				"source.continue.3.mut.3.go",
+			}},
+		},
+	))
 }
 
 func TestLoopBreak_BreakContinue(t *testing.T) {
-	t.Run("no mutations", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
-
-	t.Run("one mutation", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		mutation1 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("Loop Break", "source.go", source, mutation1),
-			},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
-
-	t.Run("two mutations", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		mutation1 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		mutation2 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("Loop Break", "source.go", source, mutation1),
-				gomutatedfile.New("Loop Break", "source.go", source, mutation2),
-			},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
-
-	t.Run("many mutations", func(t *testing.T) {
-		source := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		mutation1 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		mutation2 := oozetesting.Source(`
-		|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		break
-		|	}
-		|}
-		|`)
-
-		mutation3 := oozetesting.Source(`
-				|package source
-		|
-		|func main() {
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var a = 1
-		|	}
-		|	for {
-		|		break
-		|	}
-		|	for {
-		|		var b = 2
-		|	}
-		|	for {
-		|		continue
-		|	}
-		|}
-		|`)
-
-		assert.Equal(t,
-			[]*gomutatedfile.GoMutatedFile{
-				gomutatedfile.New("Loop Break", "source.go", source, mutation1),
-				gomutatedfile.New("Loop Break", "source.go", source, mutation2),
-				gomutatedfile.New("Loop Break", "source.go", source, mutation3),
-			},
-			oozetesting.Mutate(
-				loopbreak.New(),
-				gosourcefile.New("source.go", source),
-			),
-		)
-	})
+	oozetesting.Run(t, oozetesting.NewScenarios(
+		"Loop Break",
+		loopbreak.New(),
+		oozetesting.Mutations{
+			"no mutations": {"source.break.0.go", []string{}},
+			"one mutation": {"source.break.1.go", []string{
+				"source.break.1.mut.1.go",
+			}},
+			"two mutations": {"source.break.2.go", []string{
+				"source.break.2.mut.1.go",
+				"source.break.2.mut.2.go",
+			}},
+			"many mutations": {"source.break.3.go", []string{
+				"source.break.3.mut.1.go",
+				"source.break.3.mut.2.go",
+				"source.break.3.mut.3.go",
+			}},
+		},
+	))
 }
