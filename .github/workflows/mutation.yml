@@ -1,7 +1,7 @@
 name: '🧬 Mutation Tests'
 on:
   workflow_run:
-    workflows: ["Continuous Integration"]
+    workflows: ["🧩 Continuous Integration"]
     branches: [main]
     types:
       - completed
