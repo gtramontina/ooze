@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
-golangci-lint-version = v1.50.1
+golangci-lint-version = v1.51.0
 gotestsum-version = v1.9.0
 
 .git/.hooks.log:
