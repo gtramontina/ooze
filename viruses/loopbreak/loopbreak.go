@@ -37,6 +37,7 @@ func (l *LoopBreak) Incubate(node ast.Node) []*viruses.Infection {
 		viruses.NewInfection(
 			"Loop Break",
 			func() { statement.Tok = mutatedToken },
-			func() { statement.Tok = originalToken }),
+			func() { statement.Tok = originalToken },
+		),
 	}
 }
