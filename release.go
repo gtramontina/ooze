@@ -23,6 +23,7 @@ import (
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/internal/verbosetestrunner"
 	"github.com/gtramontina/ooze/viruses"
+	"github.com/gtramontina/ooze/viruses/arithmeticassignmentinvert"
 	"github.com/gtramontina/ooze/viruses/floatdecrement"
 	"github.com/gtramontina/ooze/viruses/floatincrement"
 	"github.com/gtramontina/ooze/viruses/integerdecrement"
@@ -38,6 +39,7 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 	Parallel:                 false,
 	IgnoreSourceFilesPattern: nil,
 	Viruses: []viruses.Virus{
+		arithmeticassignmentinvert.New(),
 		floatdecrement.New(),
 		floatincrement.New(),
 		integerdecrement.New(),
