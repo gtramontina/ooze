@@ -1,16 +1,16 @@
-package conditionalinvert_test
+package comparisoninvert_test
 
 import (
 	"testing"
 
 	"github.com/gtramontina/ooze/oozetesting"
-	"github.com/gtramontina/ooze/viruses/conditionalinvert"
+	"github.com/gtramontina/ooze/viruses/comparisoninvert"
 )
 
-func TestConditionalInvert(t *testing.T) {
+func TestComparisonInvert(t *testing.T) {
 	oozetesting.Run(t, oozetesting.NewScenarios(
-		"Conditional Invert",
-		conditionalinvert.New(),
+		"Comparison Invert",
+		comparisoninvert.New(),
 		oozetesting.Mutations{
 			"no mutations": {"source.0.go", []string{}},
 			"one mutation > to <=": {"source.1.go", []string{

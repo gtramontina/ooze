@@ -1,4 +1,4 @@
-package conditionalinvert
+package comparisoninvert
 
 import (
 	"go/ast"
@@ -7,12 +7,12 @@ import (
 	"github.com/gtramontina/ooze/viruses"
 )
 
-type ConditionalInvert struct {
+type ComparisonInvert struct {
 	mutations map[token.Token]token.Token
 }
 
-func New() *ConditionalInvert {
-	return &ConditionalInvert{
+func New() *ComparisonInvert {
+	return &ComparisonInvert{
 		mutations: map[token.Token]token.Token{
 			token.GTR: token.LEQ,
 			token.LSS: token.GEQ,
@@ -24,7 +24,7 @@ func New() *ConditionalInvert {
 	}
 }
 
-func (v *ConditionalInvert) Incubate(node ast.Node) []*viruses.Infection {
+func (v *ComparisonInvert) Incubate(node ast.Node) []*viruses.Infection {
 	expression, matches := node.(*ast.BinaryExpr)
 	if !matches {
 		return nil
@@ -39,7 +39,7 @@ func (v *ConditionalInvert) Incubate(node ast.Node) []*viruses.Infection {
 
 	return []*viruses.Infection{
 		viruses.NewInfection(
-			"Conditional Invert",
+			"Comparison Invert",
 			func() { expression.Op = mutatedOperation },
 			func() { expression.Op = originalOperation },
 		),
