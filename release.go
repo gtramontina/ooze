@@ -27,6 +27,7 @@ import (
 	"github.com/gtramontina/ooze/viruses/arithmeticassignment"
 	"github.com/gtramontina/ooze/viruses/arithmeticassignmentinvert"
 	"github.com/gtramontina/ooze/viruses/bitwise"
+	"github.com/gtramontina/ooze/viruses/comparison"
 	"github.com/gtramontina/ooze/viruses/conditionalinvert"
 	"github.com/gtramontina/ooze/viruses/floatdecrement"
 	"github.com/gtramontina/ooze/viruses/floatincrement"
@@ -48,6 +49,7 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 		arithmeticassignmentinvert.New(),
 		bitwise.New(),
 		conditionalinvert.New(),
+		comparison.New(),
 		floatdecrement.New(),
 		floatincrement.New(),
 		integerdecrement.New(),
