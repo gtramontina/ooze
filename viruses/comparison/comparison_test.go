@@ -7,7 +7,7 @@ import (
 	"github.com/gtramontina/ooze/viruses/comparison"
 )
 
-func TestConditional(t *testing.T) {
+func TestComparison(t *testing.T) {
 	oozetesting.Run(t, oozetesting.NewScenarios(
 		"Comparison",
 		comparison.New(),
