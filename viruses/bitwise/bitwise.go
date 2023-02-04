@@ -1,0 +1,47 @@
+package bitwise
+
+import (
+	"go/ast"
+	"go/token"
+
+	"github.com/gtramontina/ooze/viruses"
+)
+
+type Bitwise struct {
+	mutations map[token.Token]token.Token
+}
+
+func New() *Bitwise {
+	return &Bitwise{
+		mutations: map[token.Token]token.Token{
+			token.AND:     token.OR,
+			token.OR:      token.AND,
+			token.XOR:     token.AND,
+			token.AND_NOT: token.AND,
+			token.SHL:     token.SHR,
+			token.SHR:     token.SHL,
+		},
+	}
+}
+
+func (a *Bitwise) Incubate(node ast.Node) []*viruses.Infection {
+	expression, matches := node.(*ast.BinaryExpr)
+	if !matches {
+		return nil
+	}
+
+	originalOperation := expression.Op
+
+	mutatedOperation, matches := a.mutations[expression.Op]
+	if !matches {
+		return nil
+	}
+
+	return []*viruses.Infection{
+		viruses.NewInfection(
+			"Bitwise",
+			func() { expression.Op = mutatedOperation },
+			func() { expression.Op = originalOperation },
+		),
+	}
+}
