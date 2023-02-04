@@ -16,7 +16,7 @@ func New() *FloatDecrement {
 	return &FloatDecrement{}
 }
 
-func (i *FloatDecrement) Incubate(node ast.Node) []*viruses.Infection {
+func (v *FloatDecrement) Incubate(node ast.Node) []*viruses.Infection {
 	literal, ok := node.(*ast.BasicLit)
 	if !ok || literal.Kind != token.FLOAT {
 		return nil

@@ -14,7 +14,7 @@ func New() *IntegerIncrement {
 	return &IntegerIncrement{}
 }
 
-func (i *IntegerIncrement) Incubate(node ast.Node) []*viruses.Infection {
+func (v *IntegerIncrement) Incubate(node ast.Node) []*viruses.Infection {
 	literal, ok := node.(*ast.BasicLit)
 	if !ok || literal.Kind != token.INT {
 		return nil

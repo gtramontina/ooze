@@ -20,7 +20,7 @@ func New() *LoopBreak {
 	}
 }
 
-func (l *LoopBreak) Incubate(node ast.Node) []*viruses.Infection {
+func (v *LoopBreak) Incubate(node ast.Node) []*viruses.Infection {
 	statement, matches := node.(*ast.BranchStmt)
 	if !matches {
 		return nil
@@ -28,7 +28,7 @@ func (l *LoopBreak) Incubate(node ast.Node) []*viruses.Infection {
 
 	originalToken := statement.Tok
 
-	mutatedToken, ok := l.mutations[statement.Tok]
+	mutatedToken, ok := v.mutations[statement.Tok]
 	if !ok {
 		return nil
 	}

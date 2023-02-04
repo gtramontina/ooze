@@ -23,7 +23,7 @@ func New() *Arithmetic {
 	}
 }
 
-func (a *Arithmetic) Incubate(node ast.Node) []*viruses.Infection {
+func (v *Arithmetic) Incubate(node ast.Node) []*viruses.Infection {
 	expression, matches := node.(*ast.BinaryExpr)
 	if !matches {
 		return nil
@@ -31,7 +31,7 @@ func (a *Arithmetic) Incubate(node ast.Node) []*viruses.Infection {
 
 	originalOperation := expression.Op
 
-	mutatedOperation, matches := a.mutations[expression.Op]
+	mutatedOperation, matches := v.mutations[expression.Op]
 	if !matches {
 		return nil
 	}

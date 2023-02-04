@@ -23,7 +23,7 @@ func New() *ArithmeticAssignmentInvert {
 	}
 }
 
-func (a *ArithmeticAssignmentInvert) Incubate(node ast.Node) []*viruses.Infection {
+func (v *ArithmeticAssignmentInvert) Incubate(node ast.Node) []*viruses.Infection {
 	statement, matches := node.(*ast.AssignStmt)
 	if !matches {
 		return nil
@@ -31,7 +31,7 @@ func (a *ArithmeticAssignmentInvert) Incubate(node ast.Node) []*viruses.Infectio
 
 	originalToken := statement.Tok
 
-	mutatedToken, matches := a.mutations[statement.Tok]
+	mutatedToken, matches := v.mutations[statement.Tok]
 	if !matches {
 		return nil
 	}
