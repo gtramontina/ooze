@@ -7,8 +7,10 @@ import (
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/gotextdiff"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type Mutations map[string]struct {
@@ -48,13 +50,28 @@ func Run(t *testing.T, scenes *Scenarios) {
 		}
 
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t,
-				expectedMutatedFiles,
-				mutate(
-					scenes.virus,
-					gosourcefile.New(testcase.SourceFileName, source),
-				),
+			actualMutatedFiles := mutate(
+				scenes.virus,
+				gosourcefile.New(testcase.SourceFileName, source),
 			)
+
+			require.Equal(t,
+				len(expectedMutatedFiles),
+				len(actualMutatedFiles),
+				"Expected %d mutated files; got %d", len(expectedMutatedFiles), len(actualMutatedFiles),
+			)
+
+			for i, actualMutatedFile := range actualMutatedFiles {
+				expectedMutatedFile := expectedMutatedFiles[i]
+				assert.Equal(t,
+					expectedMutatedFile,
+					actualMutatedFile,
+					"Actual and expected (filename %s) mutants are not equal", testcase.MutantFileNames[i])
+
+				if t.Failed() {
+					t.Logf("Mutated filed diff:\n%s", actualMutatedFile.Diff(gotextdiff.New()))
+				}
+			}
 		})
 	}
 }
