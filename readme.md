@@ -1,8 +1,5 @@
 <h1 align="center">
-	<img src="https://img.icons8.com/color/512/booger.png" width="48" align="center" alt="ooze icon">
-	Ooze
-	<img src="https://img.icons8.com/color/512/booger.png" width="48" align="center" alt="ooze icon"><br>
-	<sup><sup><sub>Go Mutation Testing</sub></sup></sup>
+	<img src="https://gist.githubusercontent.com/gtramontina/602897948a0699e627a15be882ef0af9/raw/81e944c1c7e65666a3c75bbfc398c53a9ea1bb2a/ooze.svg">
 </h1>
 
 ### 🚀 Quick Start
