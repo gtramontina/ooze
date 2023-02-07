@@ -99,6 +99,10 @@ The table below presents all available options.
 
 `TODO`
 
+## Tips
+
+`TODO`
+
 ## Prior Art
 
 Ooze is heavily inspired by [go-mutesting](https://github.com/zimmski/go-mutesting), by [@zimmski](https://github.com/zimmski), and by extra mutations added to a [fork](https://github.com/avito-tech/go-mutesting) by [@avito-tech](https://github.com/avito-tech).
