@@ -64,13 +64,20 @@ The table below presents all available options.
 
 ### 🦠 Viruses
 
-| Virus                                                              | Name              | Description                                           |
-|--------------------------------------------------------------------|-------------------|-------------------------------------------------------|
-| [`floatdecrement`](viruses/floatdecrement/floatdecrement.go)       | Float Decrement   | Decrements floating points by `1.0`.                  |
-| [`floatincrement`](viruses/floatincrement/floatincrement.go)       | Float Increment   | Increments floating points by `1.0`.                  |
-| [`integerdecrement`](viruses/integerdecrement/integerdecrement.go) | Integer Decrement | Decrements integers by `1`.                           |
-| [`integerincrement`](viruses/integerincrement/integerincrement.go) | Integer Increment | Increments integers by `1`.                           |
-| [`loopbreak`](viruses/loopbreak/loopbreak.go)                      | Loop Break        | Replaces loop `break` with `continue` and vice-versa. |
+| Virus                                                                                            | Name                         | Description                                                                                    |
+|--------------------------------------------------------------------------------------------------|------------------------------|------------------------------------------------------------------------------------------------|
+| [`arithmetic`](viruses/arithmetic/arithmetic.go)                                                 | Arithmetic                   | Replaces `+` with `-`, `*` with `/`, `%` with `*` and vice-versa.                              |
+| [`arithmeticassignment`](viruses/arithmeticassignment/arithmeticassignment.go)                   | Arithmetic Assignment        | Replaces `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `&#124;=`, `^=`, `<<=`, `>>=` and `&^=` with `=`. |
+| [`arithmeticassignmentinvert`](viruses/arithmeticassignmentinvert/arithmeticassignmentinvert.go) | Arithmetic Assignment Invert | `TODO`                                                                                         |
+| [`bitwise`](viruses/bitwise/bitwise.go)                                                          | Bitwise                      | `TODO`                                                                                         |
+| [`comparison`](viruses/comparison/comparison.go)                                                 | Comparison                   | `TODO`                                                                                         |
+| [`comparisoninvert`](viruses/comparisoninvert/comparisoninvert.go)                               | Comparison Invert            | `TODO`                                                                                         |
+| [`comparisonreplace`](viruses/comparisonreplace/comparisonreplace.go)                            | Comparison Replace           | `TODO`                                                                                         |
+| [`floatdecrement`](viruses/floatdecrement/floatdecrement.go)                                     | Float Decrement              | Decrements floating points by `1.0`.                                                           |
+| [`floatincrement`](viruses/floatincrement/floatincrement.go)                                     | Float Increment              | Increments floating points by `1.0`.                                                           |
+| [`integerdecrement`](viruses/integerdecrement/integerdecrement.go)                               | Integer Decrement            | Decrements integers by `1`.                                                                    |
+| [`integerincrement`](viruses/integerincrement/integerincrement.go)                               | Integer Increment            | Increments integers by `1`.                                                                    |
+| [`loopbreak`](viruses/loopbreak/loopbreak.go)                                                    | Loop Break                   | Replaces loop `break` with `continue` and vice-versa.                                          |
 
 #### Custom viruses (`TODO`)
 
