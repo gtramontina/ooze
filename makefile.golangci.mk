@@ -1,4 +1,4 @@
-golangci-lint-version = v1.51.0
+golangci-lint-version = v1.51.1
 
 .bin/golangci-lint: makefile.golangci.mk
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
