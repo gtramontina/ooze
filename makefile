@@ -3,22 +3,13 @@ SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
-golangci-lint-version = v1.51.0
-gotestsum-version = v1.9.0
+include makefile.golangci.mk
+include makefile.gotestsum.mk
 
 .git/.hooks.log:
 	@git config core.hooksPath .githooks
 	@git config --get core.hooksPath > $@
 pre-reqs += .git/.hooks.log
-
-.bin/golangci-lint: $(pre-reqs)
-	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-	| sh -s -- -b $(PWD)/$(dir $@) -d $(golangci-lint-version)
-pre-reqs += .bin/golangci-lint
-
-.bin/gotestsum:
-	@GOBIN="$(PWD)/$(dir $@)" go install gotest.tools/gotestsum@$(gotestsum-version)
-pre-reqs += .bin/gotestsum
 
 test: $(pre-reqs)
 	@gotestsum --format-hide-empty-pkg -- -race -cover -timeout=60s -shuffle=on ./...
