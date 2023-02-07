@@ -2,7 +2,25 @@
 	<img src="https://gist.githubusercontent.com/gtramontina/602897948a0699e627a15be882ef0af9/raw/81e944c1c7e65666a3c75bbfc398c53a9ea1bb2a/ooze.svg">
 </h1>
 
-### 🚀 Quick Start
+## Mutation Testing?
+
+Mutation testing is a technique used to assess the quality and coverage of test suites. It involves introducing controlled changes to the code base, simulating common programming mistakes. These changes are, then, put to test against the test suites. A failing test suite is a good sign. It indicates that the tests are identifying mutations in the code—it "killed the mutant". If all tests pass, we have a surviving mutant. This highlights an area with weak coverage. It is an opportunity for improvement.
+
+There are different types of changes that mutation tests can perform. A common collection usually include:
+
+* Changing an operator;
+* Replacing a constant;
+* Removing a statement;
+* Increasing/decreasing numbers;
+* Flipping booleans;
+
+Mutations can also be domain/application-specific. Although, these are up to the maintainers of such application to develop.
+
+It is worth mentioning that mutation tests can be quite expensive to run. Especially on larger code bases. And the reason is that for every mutation, on every source file, the entire suite of tests has to run. One can look at the bright side of this and think as an incentive to keep the test suites fast.
+
+Mutation testing is a great ally in developing a robust code base and a reliable set of test suites.
+
+## Quick Start
 
 1. Install ooze:
 
@@ -34,9 +52,7 @@
 	go test -v -tags=mutation
 	```
 
-#### 💁 Explained (`TODO`)
-
-### 🎛️ Settings
+## Settings
 
 Ooze's [`Release`](release.go) method takes variadic [`Options`](options.go), like so:
 
@@ -62,7 +78,7 @@ The table below presents all available options.
 | `IgnoreSourceFiles`    | `nil`                     | Regular expression representing source files to be filtered out and not suffer any mutations.                                                                                                                                                                              |
 | `WithViruses`          | all available (see below) | A list of viruses to infect the source files with. You can also implement your own viruses (generic or even application-specific).                                                                                                                                         |
 
-### 🦠 Viruses
+## Viruses
 
 | Virus                                                                                            | Name                         | Description                                                                                    |
 |--------------------------------------------------------------------------------------------------|------------------------------|------------------------------------------------------------------------------------------------|
@@ -79,43 +95,20 @@ The table below presents all available options.
 | [`integerincrement`](viruses/integerincrement/integerincrement.go)                               | Integer Increment            | Increments integers by `1`.                                                                    |
 | [`loopbreak`](viruses/loopbreak/loopbreak.go)                                                    | Loop Break                   | Replaces loop `break` with `continue` and vice-versa.                                          |
 
-#### Custom viruses (`TODO`)
+### Custom viruses
 
-### ➕ More…
-<details><summary><b>🧬 Mutation Testing</b></summary><hr>
-Mutation testing is a technique used to assess the quality and coverage of test suites. It involves introducing controlled changes to the code base, simulating common programming mistakes. These changes are, then, put to test against the test suites. A failing test suite is a good sign. It indicates that the tests are identifying mutations in the code—it "killed the mutant". If all tests pass, we have a surviving mutant. This highlights an area with weak coverage. It is an opportunity for improvement.
+`TODO`
 
-There are different types of changes that mutation tests can perform. A common collection usually include:
-
-* Changing an operator;
-* Replacing a constant;
-* Removing a statement;
-* Increasing/decreasing numbers;
-* Flipping booleans;
-
-Mutations can also be domain/application-specific. Although, these are up to the maintainers of such application to develop.
-
-It is worth mentioning that mutation tests can be quite expensive to run. Especially on larger code bases. And the reason is that for every mutation, on every source file, the entire suite of tests has to run. One can look at the bright side of this and think as an incentive to keep the test suites fast.
-
-Mutation testing is a great ally in developing a robust code base and a reliable set of test suites.
-
-</details>
-
-<details><summary><b>🎨 Prior Art</b></summary><hr>
+## Prior Art
 
 Ooze is heavily inspired by [go-mutesting](https://github.com/zimmski/go-mutesting), by [@zimmski](https://github.com/zimmski), and by extra mutations added to a [fork](https://github.com/avito-tech/go-mutesting) by [@avito-tech](https://github.com/avito-tech).
 
 You can find more resources and tools on this subject by browsing through the [mutation testing](https://github.com/topics/mutation-testing) topic on GitHub. The [awesome-mutation-testing](https://github.com/theofidry/awesome-mutation-testing) repository also contains many good resources.
 
-</details>
-
-<details><summary><b>📜 License</b></summary><hr>
+## License
 
 Ooze is open-source software released under the [MIT License](LICENSE).
 
-Booger icon by [Icons8](https://icons8.com/).
-</details>
-
 ---
 
-<img src="https://img.icons8.com/color/512/booger.png" width="24" align="right" alt="ooze icon">
+<img src="https://gist.githubusercontent.com/gtramontina/b9e3bbd944cd9dd60f05f4b6e85ef4e6/raw/cba36a00f58cb34bf4ac0f2bc0da7bc0ef3d088c/ooze.logo.svg" width="24" align="right" alt="ooze icon">
