@@ -30,6 +30,8 @@ Mutation testing is a great ally in developing a robust code base and a reliable
 	go get github.com/gtramontina/ooze
 	```
 
+	This pulls the latest version of Ooze and updates your `go.mod` and `go.sum` to reference this new dependency.
+
 2. Create a `mutation_test.go` file in the root of your repository and add the following:
 
 	```go
@@ -48,11 +50,20 @@ Mutation testing is a great ally in developing a robust code base and a reliable
 	}
 	```
 
+	The build tag is so you can better control _when_ to run these tests (see the next step). This is a test as you'd write any other Go test. What differs is what the test actually does. And this is where it delegates to Ooze, by `Release`ing it.
+
 3. Run with:
 
 	```shell
 	go test -v -tags=mutation
 	```
+
+	This will execute all tests in the current package including the sources tagged with `mutation`. This assumes that the above is the only test file in the root of your project. If you have other tests, you may want to put the mutation tests in a separate package, under `./mutation` for example, and configure Ooze to use `..` as the repository root (see [`WithRepositoryRoot`](#Settings) below).
+
+	The `-v` flag is optional. It is used to print the progress of the tests as they run. If you don't want to see this, you can remove it.
+
+	> **Note**
+	> printing to `stdout` while Go tests are running has its intricacies. Running the tests at a particular package (without specifying which test file or subpackages, like `./...`), allows for Ooze to print progress and reports as they happen. Otherwise, the output is buffered and printed at the end of the test run and, in some cases, only if a test fails. This is a limitation of Go's testing framework.
 
 ## Settings
 
