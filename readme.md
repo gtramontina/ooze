@@ -99,7 +99,9 @@ The table below presents all available options.
 
 ### Custom viruses
 
-`TODO`
+Ooze's viruses to follow the [`viruses.Virus`](viruses/virus.go) interface. All it takes to write a new virus is to have a struct that implements this interface. To get this new virus running, let Ooze know about it by running `Release` with the `WithViruses(…)` option. In order to test it, you may want to use the [oozetesting](oozetesting) package to help out. Take a look at the existing [viruses](viruses) to have an idea.
+
+If your new virus is domain-agnostic, and you find it useful, consider contributing it to this project. You can also write domain-specific viruses. One that look for a particular struct type and change it in a particular way, for example.
 
 ## Tips
 
