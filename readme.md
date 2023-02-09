@@ -116,7 +116,9 @@ If your new virus is domain-agnostic, and you find it useful, consider contribut
 
 ## Tips
 
-`TODO`
+1. Ooze runs your test suite for every mutant it creates. Having a fast suite is a good idea. The way Ooze detects that a mutant was killed is by having a failing test. The quicker your suite catches the faster the mutation testing will finish. Go testing framework allows for us to flag it to fail fast with `-failfast`. Although this is better than nothing, this doesn't work across packages (see this [issue](https://github.com/golang/go/issues/33038) for more details). This is where [gotestsum](https://github.com/gotestyourself/gotestsum) comes in. It allows us to fail even faster by configuring it with `--max-fails=1`.
+2. Mutation testing usually takes a significant amount of time to run. Especially if you have a large codebase. It may be a good approach to run it on a separate path on your CI pipeline; preferably after you get confirmation that your test suite is passing. This way you can get the results of the mutation testing without slowing down your main pipeline.
+3. Ooze runs itself. I recommend exploring this codebase to get a better idea of how to use it.
 
 ## Prior Art
 
