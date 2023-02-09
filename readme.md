@@ -24,6 +24,14 @@ Mutation testing is a great ally in developing a robust code base and a reliable
 
 ## Quick Start
 
+### Prerequisites
+
+In order to ensure that you get accurate results, make sure that test suite that Ooze will run is passing. Otherwise, Ooze will report as if all mutants have been killed.
+
+When Ooze reports that it found a living mutant, it will print a diff of the changes the virus made to the source file. The mutant source is printed using Go's [`go/format`](https://pkg.go.dev/go/format) package. This means that, if your source code isn't gofmt'd, the diff may contain some formatting changes that are not relevant to the mutation. This isn't a prerequisite per se, but for a better experience, it is recommended that you run `gofmt` on your source files.
+
+### Installation
+
 1. Install ooze:
 
 	```shell
