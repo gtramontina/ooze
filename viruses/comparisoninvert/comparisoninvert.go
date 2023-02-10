@@ -11,6 +11,9 @@ type ComparisonInvert struct {
 	mutations map[token.Token]token.Token
 }
 
+// New returns a new ComparisonInvert virus.
+//
+// It replaces `>` with `<=`, `<` with `>=`, `==` with `!=` and vice versa.
 func New() *ComparisonInvert {
 	return &ComparisonInvert{
 		mutations: map[token.Token]token.Token{

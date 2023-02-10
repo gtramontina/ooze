@@ -11,6 +11,9 @@ type ArithmeticAssignmentInvert struct {
 	mutations map[token.Token]token.Token
 }
 
+// New creates a new ArithmeticAssignmentInvert virus.
+//
+// It replaces `+=` with `-=`, `*=` with `/=`, `%=` with `*=` and vice versa.
 func New() *ArithmeticAssignmentInvert {
 	return &ArithmeticAssignmentInvert{
 		mutations: map[token.Token]token.Token{

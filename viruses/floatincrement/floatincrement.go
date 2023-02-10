@@ -12,6 +12,9 @@ import (
 
 type FloatIncrement struct{}
 
+// New returns a new FloatIncrement virus.
+//
+// It increments floating points by `1.0`.
 func New() *FloatIncrement {
 	return &FloatIncrement{}
 }

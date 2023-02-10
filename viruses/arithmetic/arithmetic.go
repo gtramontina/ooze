@@ -11,6 +11,9 @@ type Arithmetic struct {
 	mutations map[token.Token]token.Token
 }
 
+// New creates a new Arithmetic virus.
+//
+// It replaces `+` with `-`, `*` with `/`, `%` with `*` and vice versa.
 func New() *Arithmetic {
 	return &Arithmetic{
 		mutations: map[token.Token]token.Token{

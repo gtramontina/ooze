@@ -11,6 +11,10 @@ type ArithmeticAssignment struct {
 	mutations map[token.Token]token.Token
 }
 
+// New creates a new ArithmeticAssignment virus.
+//
+// It replaces `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, <code>&#124;=</code>, `^=`,
+// `<<=`, `>>=` and `&^=` with `=`.
 func New() *ArithmeticAssignment {
 	return &ArithmeticAssignment{
 		mutations: map[token.Token]token.Token{

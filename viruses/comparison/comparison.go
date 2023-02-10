@@ -11,6 +11,9 @@ type Comparison struct {
 	mutations map[token.Token]token.Token
 }
 
+// New returns a new Comparison virus.
+//
+// It replaces `<` with `<=`, `>` with `>=` and vice versa.
 func New() *Comparison {
 	return &Comparison{
 		mutations: map[token.Token]token.Token{

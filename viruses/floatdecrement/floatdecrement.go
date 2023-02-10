@@ -12,6 +12,9 @@ import (
 
 type FloatDecrement struct{}
 
+// New returns a new FloatDecrement virus.
+//
+// It decrements floating points by `1.0`.
 func New() *FloatDecrement {
 	return &FloatDecrement{}
 }

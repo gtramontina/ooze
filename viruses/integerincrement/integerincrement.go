@@ -10,6 +10,9 @@ import (
 
 type IntegerIncrement struct{}
 
+// New returns a new IntegerIncrement virus.
+//
+// It increments integers by `1`.
 func New() *IntegerIncrement {
 	return &IntegerIncrement{}
 }

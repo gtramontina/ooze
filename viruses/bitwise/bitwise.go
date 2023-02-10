@@ -11,6 +11,10 @@ type Bitwise struct {
 	mutations map[token.Token]token.Token
 }
 
+// New creates a new Bitwise virus.
+//
+// It replaces `&` with `|`, `|` with `&`, `^` with `&`, `&^` with `&`, `<<`
+// with `>>` and `>>` with `<<`.
 func New() *Bitwise {
 	return &Bitwise{
 		mutations: map[token.Token]token.Token{

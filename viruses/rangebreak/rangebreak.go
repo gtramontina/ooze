@@ -9,6 +9,9 @@ import (
 
 type RangeBreak struct{}
 
+// New returns a new RangeBreak virus.
+//
+// It adds an early break to `range`s.
 func New() *RangeBreak {
 	return &RangeBreak{}
 }

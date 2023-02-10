@@ -11,6 +11,9 @@ type LoopBreak struct {
 	mutations map[token.Token]token.Token
 }
 
+// New returns a new LoopBreak virus.
+//
+// It replaces loop `break` with `continue` and vice versa.
 func New() *LoopBreak {
 	return &LoopBreak{
 		mutations: map[token.Token]token.Token{

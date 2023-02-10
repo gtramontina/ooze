@@ -12,6 +12,11 @@ type ComparisonReplace struct {
 	mutations map[token.Token]*ast.Ident
 }
 
+// New returns a new ComparisonReplace virus.
+//
+// It replaces the left and right sides of an `&&` comparison with `true` and
+// the left and right sides of an `||` with false. E.g. `1 == 1 && 2 == 2` gets
+// two mutations: `true && 2 == 2` and `1 == 1 && true`.
 func New() *ComparisonReplace {
 	return &ComparisonReplace{
 		mutations: map[token.Token]*ast.Ident{

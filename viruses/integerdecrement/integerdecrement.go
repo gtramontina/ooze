@@ -10,6 +10,9 @@ import (
 
 type IntegerDecrement struct{}
 
+// New returns a new IntegerDecrement virus.
+//
+// It decrements integers by `1`.
 func New() *IntegerDecrement {
 	return &IntegerDecrement{}
 }
