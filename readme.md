@@ -73,6 +73,14 @@ When Ooze reports that it found a living mutant, it will print a diff of the cha
 	> **Note**
 	> printing to `stdout` while Go tests are running has its intricacies. Running the tests at a particular package (without specifying which test file or subpackages, like `./...`), allows for Ooze to print progress and reports as they happen. Otherwise, the output is buffered and printed at the end of the test run and, in some cases, only if a test fails. This is a limitation of Go's testing framework.
 
+### Results
+
+Once all tests on all mutants have run, Ooze will print a report with the results. It will also exit with a non-zero exit code if the mutation score is below the minimum threshold (see [`WithMinimumThreshold`](#Settings) below). This is an example of the report:
+
+![report sample](.assets/report.png)
+
+More examples of the results can be found in the [`mutation.yml`](https://github.com/gtramontina/ooze/actions/workflows/mutation.yml) workflow.
+
 ## Settings
 
 Ooze's [`Release`](release.go) method takes variadic [`Options`](options.go), like so:
