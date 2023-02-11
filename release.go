@@ -35,6 +35,7 @@ import (
 	"github.com/gtramontina/ooze/viruses/integerdecrement"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/gtramontina/ooze/viruses/loopbreak"
+	"github.com/gtramontina/ooze/viruses/loopcondition"
 	"github.com/gtramontina/ooze/viruses/rangebreak"
 )
 
@@ -58,6 +59,7 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 		integerdecrement.New(),
 		integerincrement.New(),
 		loopbreak.New(),
+		loopcondition.New(),
 		rangebreak.New(),
 	},
 }
