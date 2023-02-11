@@ -1,6 +1,6 @@
 <h1 align="center">
 <a href="https://github.com/gtramontina/ooze">
-	<img src="https://gist.githubusercontent.com/gtramontina/602897948a0699e627a15be882ef0af9/raw/81e944c1c7e65666a3c75bbfc398c53a9ea1bb2a/ooze.svg" alt="ooze logo">
+	<img src=".assets/logo.svg" alt="ooze logo">
 </a>
 </h1>
 
@@ -143,5 +143,5 @@ Ooze is open-source software released under the [MIT License](LICENSE).
 ---
 
 <a href="https://github.com/gtramontina/ooze">
-	<img src="https://gist.githubusercontent.com/gtramontina/b9e3bbd944cd9dd60f05f4b6e85ef4e6/raw/cba36a00f58cb34bf4ac0f2bc0da7bc0ef3d088c/ooze.logo.svg" width="24" align="right" alt="ooze icon">
+	<img src=".assets/icon.svg" width="24" align="right" alt="ooze icon">
 </a>
