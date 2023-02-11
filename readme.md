@@ -4,6 +4,12 @@
 </a>
 </h1>
 
+<p align="center">
+	<a href="https://pkg.go.dev/github.com/gtramontina/ooze"><img src="https://pkg.go.dev/badge/github.com/gtramontina/ooze.svg" alt="Go Reference"></a>
+	<a href="https://github.com/gtramontina/ooze/actions/workflows/ci.yml"><img src="https://github.com/gtramontina/ooze/actions/workflows/ci.yml/badge.svg" alt="CI Workflow"></a>
+	<a href="https://github.com/gtramontina/ooze/actions/workflows/mutation.yml"><img src="https://github.com/gtramontina/ooze/actions/workflows/mutation.yml/badge.svg" alt="Mutation Testing Workflow"></a>
+</p>
+
 ## Mutation Testing?
 
 Mutation testing is a technique used to assess the quality and coverage of test suites. It involves introducing controlled changes to the code base, simulating common programming mistakes. These changes are, then, put to test against the test suites. A failing test suite is a good sign. It indicates that the tests are identifying mutations in the code—it "killed the mutant". If all tests pass, we have a surviving mutant. This highlights an area with weak coverage. It is an opportunity for improvement.
