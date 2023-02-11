@@ -64,18 +64,6 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 	},
 }
 
-func banner(log ooze.Logger) {
-	border := color.Yellow
-	text := color.Cyan
-
-	log.Logf(border("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"))
-	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐"))
-	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("│      │  │      │  ┌──────┘  ├─────  "))
-	log.Logf("%[1]s%[2]s%[1]s", border("┃"), text("└──────┘  └──────┘  └──────┘  └──────┘"))
-	log.Logf(border("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"))
-	log.Logf("Running…")
-}
-
 // Release releases the ooze! It infects all source files with viruses that
 // mutate the source code DNA and perform tests to determine whether the mutants
 // survive.
@@ -139,8 +127,7 @@ func Release(t *testing.T, options ...Option) {
 
 	lab = testingtlaboratory.New(t, lab, opts.Parallel)
 
-	banner(logger)
-
+	logger.Logf("%s %s", color.Yellow("┃"), color.Green("Releasing Ooze…"))
 	ooze.New(opts.Repository, lab, reporter).Release(
 		opts.Viruses...,
 	)
