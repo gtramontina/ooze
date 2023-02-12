@@ -14,37 +14,37 @@ func TestArithmeticAssignment(t *testing.T) {
 		oozetesting.Mutations{
 			"no mutations": {"source.0.go", []string{}},
 			"one mutation += to =": {"source.1.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation -= to =": {"source.2.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation *= to =": {"source.3.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation /= to =": {"source.4.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation %= to =": {"source.5.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation &= to =": {"source.6.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation |= to =": {"source.7.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation ^= to =": {"source.8.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation <<= to =": {"source.9.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation >>= to =": {"source.10.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"one mutation &^= to =": {"source.11.go", []string{
-				"source.*.mut.1.go",
+				"source.all.mut.1.go",
 			}},
 			"many mutations": {"source.12.go", []string{
 				"source.12.mut.1.go",
