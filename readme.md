@@ -74,7 +74,7 @@ When Ooze reports that it found a living mutant, it will print a diff of the cha
 
 	This will execute all tests in the current package including the sources tagged with `mutation`. This assumes that the above is the only test file in the root of your project. If you have other tests, you may want to put the mutation tests in a separate package, under `./mutation` for example, and configure Ooze to use `..` as the repository root (see [`WithRepositoryRoot`](#Settings) below).
 
-	The `-v` flag is optional. It is used to print the progress of the tests as they run. If you don't want to see this, you can remove it.
+	If `-v` is enabled, Ooze will also be verbose. To enable Ooze's verbose mode only without the test framework verbosity, use `-ooze.v`.
 
 	> **Note**
 	> printing to `stdout` while Go tests are running has its intricacies. Running the tests at a particular package (without specifying which test file or subpackages, like `./...`), allows for Ooze to print progress and reports as they happen. Otherwise, the output is buffered and printed at the end of the test run and, in some cases, only if a test fails. This is a limitation of Go's testing framework.

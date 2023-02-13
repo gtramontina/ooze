@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"flag"
 	"os"
 	"testing"
 
@@ -38,6 +39,12 @@ import (
 	"github.com/gtramontina/ooze/viruses/loopcondition"
 	"github.com/gtramontina/ooze/viruses/rangebreak"
 )
+
+var oozeVerbose *bool //nolint:gochecknoglobals
+
+func init() { //nolint:gochecknoinits
+	oozeVerbose = flag.Bool("ooze.v", false, "verbose: print additional output")
+}
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
 	Repository:               fsrepository.New("."),
@@ -105,7 +112,7 @@ func Release(t *testing.T, options ...Option) {
 		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPattern, opts.Repository)
 	}
 
-	if testing.Verbose() {
+	if verbose() {
 		opts.Repository = verboserepository.New(logger, opts.Repository)
 		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
 		opts.TestRunner = verbosetestrunner.New(logger, opts.TestRunner)
@@ -113,7 +120,7 @@ func Release(t *testing.T, options ...Option) {
 	}
 
 	var lab ooze.Laboratory = laboratory.New(opts.TestRunner, opts.TemporaryDir)
-	if testing.Verbose() {
+	if verbose() {
 		lab = verboselaboratory.New(logger, lab)
 	}
 
@@ -131,4 +138,8 @@ func Release(t *testing.T, options ...Option) {
 	ooze.New(opts.Repository, lab, reporter).Release(
 		opts.Viruses...,
 	)
+}
+
+func verbose() bool {
+	return *oozeVerbose || testing.Verbose()
 }
