@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
+	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
@@ -85,6 +86,16 @@ func IgnoreSourceFiles(pattern string) func(Options) Options {
 func WithViruses(virus viruses.Virus, rest ...viruses.Virus) func(Options) Options {
 	return func(options Options) Options {
 		options.Viruses = append([]viruses.Virus{virus}, rest...)
+
+		return options
+	}
+}
+
+// ForceColors forces the use of colors in the output. This is useful when
+// running the mutation tests in a CI environment, for example.
+func ForceColors() func(Options) Options {
+	return func(options Options) Options {
+		color.Force()
 
 		return options
 	}
