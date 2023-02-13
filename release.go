@@ -106,15 +106,15 @@ func Release(t *testing.T, options ...Option) {
 	}
 
 	if testing.Verbose() {
-		opts.Repository = verboserepository.New(t, opts.Repository)
-		opts.TemporaryDir = verbosetemporarydir.New(t, opts.TemporaryDir)
-		opts.TestRunner = verbosetestrunner.New(t, opts.TestRunner)
-		reporter = verbosereporter.New(t, reporter)
+		opts.Repository = verboserepository.New(logger, opts.Repository)
+		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
+		opts.TestRunner = verbosetestrunner.New(logger, opts.TestRunner)
+		reporter = verbosereporter.New(logger, reporter)
 	}
 
 	var lab ooze.Laboratory = laboratory.New(opts.TestRunner, opts.TemporaryDir)
 	if testing.Verbose() {
-		lab = verboselaboratory.New(t, lab)
+		lab = verboselaboratory.New(logger, lab)
 	}
 
 	t.Cleanup(func() {
