@@ -3,6 +3,7 @@ package bitwise
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -28,7 +29,7 @@ func New() *Bitwise {
 	}
 }
 
-func (v *Bitwise) Incubate(node ast.Node) []*viruses.Infection {
+func (v *Bitwise) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	expression, matches := node.(*ast.BinaryExpr)
 	if !matches {
 		return nil

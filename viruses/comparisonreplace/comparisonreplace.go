@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -26,7 +27,7 @@ func New() *ComparisonReplace {
 	}
 }
 
-func (v *ComparisonReplace) Incubate(node ast.Node) []*viruses.Infection {
+func (v *ComparisonReplace) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	expression, matches := node.(*ast.BinaryExpr)
 	if !matches {
 		return nil

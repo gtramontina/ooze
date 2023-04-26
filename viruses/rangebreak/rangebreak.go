@@ -3,6 +3,7 @@ package rangebreak
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -16,7 +17,7 @@ func New() *RangeBreak {
 	return &RangeBreak{}
 }
 
-func (v *RangeBreak) Incubate(node ast.Node) []*viruses.Infection {
+func (v *RangeBreak) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	statement, matches := node.(*ast.RangeStmt)
 	if !matches {
 		return nil

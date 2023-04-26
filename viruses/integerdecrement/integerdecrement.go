@@ -3,6 +3,7 @@ package integerdecrement
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strconv"
 
 	"github.com/gtramontina/ooze/viruses"
@@ -17,7 +18,7 @@ func New() *IntegerDecrement {
 	return &IntegerDecrement{}
 }
 
-func (v *IntegerDecrement) Incubate(node ast.Node) []*viruses.Infection {
+func (v *IntegerDecrement) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	literal, ok := node.(*ast.BasicLit)
 	if !ok || literal.Kind != token.INT {
 		return nil

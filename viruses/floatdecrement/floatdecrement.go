@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"reflect"
 	"strconv"
 
@@ -19,7 +20,7 @@ func New() *FloatDecrement {
 	return &FloatDecrement{}
 }
 
-func (v *FloatDecrement) Incubate(node ast.Node) []*viruses.Infection {
+func (v *FloatDecrement) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	literal, ok := node.(*ast.BasicLit)
 	if !ok || literal.Kind != token.FLOAT {
 		return nil

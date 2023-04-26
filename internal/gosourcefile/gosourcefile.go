@@ -3,8 +3,10 @@ package gosourcefile
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/internal/goinfectedfile"
 	"github.com/gtramontina/ooze/viruses"
@@ -30,10 +32,22 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 		panic(fmt.Errorf("failed parsing file '%s': %w", f.relativePath, err))
 	}
 
+	cfg := types.Config{
+		Importer: importer.Default(),
+	}
+
+	info := types.Info{
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+		Types: map[ast.Expr]types.TypeAndValue{},
+	}
+
+	_, _ = cfg.Check(f.relativePath, fileSet, []*ast.File{fileTree}, &info)
+
 	var infectedFiles []*goinfectedfile.GoInfectedFile
 
 	ast.Inspect(fileTree, func(node ast.Node) bool {
-		for _, infection := range virus.Incubate(node) {
+		for _, infection := range virus.Incubate(node, &info) {
 			infectedFiles = append(infectedFiles, goinfectedfile.New(f.relativePath, f.rawContent, infection, fileSet, fileTree))
 		}
 
