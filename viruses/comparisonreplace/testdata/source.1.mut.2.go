@@ -3,5 +3,5 @@
 package source
 
 func main() {
-	a := 1 == 1 && true
+	_ = 1 == 1 && true
 }

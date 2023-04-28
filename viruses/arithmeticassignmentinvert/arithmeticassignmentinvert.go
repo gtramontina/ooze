@@ -3,6 +3,7 @@ package arithmeticassignmentinvert
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -26,7 +27,7 @@ func New() *ArithmeticAssignmentInvert {
 	}
 }
 
-func (v *ArithmeticAssignmentInvert) Incubate(node ast.Node) []*viruses.Infection {
+func (v *ArithmeticAssignmentInvert) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	statement, matches := node.(*ast.AssignStmt)
 	if !matches {
 		return nil

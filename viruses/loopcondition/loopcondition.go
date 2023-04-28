@@ -3,6 +3,7 @@ package loopcondition
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -25,7 +26,7 @@ func New() *LoopCondition {
 	}
 }
 
-func (v *LoopCondition) Incubate(node ast.Node) []*viruses.Infection {
+func (v *LoopCondition) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	statement, matches := node.(*ast.ForStmt)
 	if !matches {
 		return nil

@@ -3,6 +3,7 @@ package comparisoninvert
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -27,7 +28,7 @@ func New() *ComparisonInvert {
 	}
 }
 
-func (v *ComparisonInvert) Incubate(node ast.Node) []*viruses.Infection {
+func (v *ComparisonInvert) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	expression, matches := node.(*ast.BinaryExpr)
 	if !matches {
 		return nil

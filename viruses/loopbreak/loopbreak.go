@@ -3,6 +3,7 @@ package loopbreak
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -23,7 +24,7 @@ func New() *LoopBreak {
 	}
 }
 
-func (v *LoopBreak) Incubate(node ast.Node) []*viruses.Infection {
+func (v *LoopBreak) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	statement, matches := node.(*ast.BranchStmt)
 	if !matches {
 		return nil

@@ -3,6 +3,7 @@ package arithmetic
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -26,7 +27,7 @@ func New() *Arithmetic {
 	}
 }
 
-func (v *Arithmetic) Incubate(node ast.Node) []*viruses.Infection {
+func (v *Arithmetic) Incubate(node ast.Node, _ *types.Info) []*viruses.Infection {
 	expression, matches := node.(*ast.BinaryExpr)
 	if !matches {
 		return nil
