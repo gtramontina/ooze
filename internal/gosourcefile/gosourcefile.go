@@ -32,11 +32,11 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 		panic(fmt.Errorf("failed parsing file '%s': %w", f.relativePath, err))
 	}
 
-	cfg := types.Config{
+	cfg := types.Config{ //nolint:exhaustruct // default values for missing fields are okay
 		Importer: importer.Default(),
 	}
 
-	info := types.Info{
+	info := types.Info{ //nolint:exhaustruct // Info.TypeOf needs Defs, Uses, and Types populated, we don't need the rest
 		Defs:  map[*ast.Ident]types.Object{},
 		Uses:  map[*ast.Ident]types.Object{},
 		Types: map[ast.Expr]types.TypeAndValue{},

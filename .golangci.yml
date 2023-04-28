@@ -9,7 +9,6 @@ linters:
 
     # deprecated/replaced
     - deadcode
-    - exhaustruct
     - exhaustivestruct
     - golint
     - ifshort
