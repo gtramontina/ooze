@@ -1,4 +1,4 @@
-gotestsum-version = v1.9.0
+gotestsum-version = v1.10.0
 
 .bin/gotestsum: makefile.gotestsum.mk
 	@GOBIN="$(PWD)/$(dir $@)" go install gotest.tools/gotestsum@$(gotestsum-version)

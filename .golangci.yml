@@ -20,11 +20,6 @@ linters:
     - structcheck
     - varcheck
 
-    # doesn't work with generics
-    - rowserrcheck
-    - sqlclosecheck
-    - wastedassign
-
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
