@@ -42,7 +42,9 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 		Types: map[ast.Expr]types.TypeAndValue{},
 	}
 
-	_, _ = cfg.Check(f.relativePath, fileSet, []*ast.File{fileTree}, &info)
+	if _, err := cfg.Check(f.relativePath, fileSet, []*ast.File{fileTree}, &info); err != nil {
+		panic(fmt.Errorf("failed type checking for file '%s': %w", f.relativePath, err))
+	}
 
 	var infectedFiles []*goinfectedfile.GoInfectedFile
 

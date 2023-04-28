@@ -7,13 +7,13 @@ func main() {
 		break
 	}
 	for {
-		var a = 1
+		var _ = 1
 	}
 	for {
 		break
 	}
 	for {
-		var b = 2
+		var _ = 2
 	}
 	for {
 		break
