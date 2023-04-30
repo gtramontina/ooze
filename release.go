@@ -128,7 +128,7 @@ func Release(t *testing.T, options ...Option) {
 		t.Helper()
 		res := reporter.Summarize()
 		if !res.IsOk() {
-			t.FailNow()
+			t.Fail()
 		}
 	})
 
