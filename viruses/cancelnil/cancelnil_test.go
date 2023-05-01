@@ -12,7 +12,7 @@ func TestCancelNil(t *testing.T) {
 		"Call cancel(nil)",
 		cancelnil.New(),
 		oozetesting.Mutations{
-			// "no mutations": {"source.0.go", []string{}},
+			"no mutations": {"source.0.go", []string{}},
 			"one mutation": {"source.1.go", []string{
 				"source.1.mut.1.go",
 			}},
