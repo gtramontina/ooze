@@ -33,7 +33,7 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 	}
 
 	cfg := types.Config{ //nolint:exhaustruct // default values for missing fields are okay
-		Importer: importer.Default(),
+		Importer: importer.ForCompiler(token.NewFileSet(), "source", nil),
 	}
 
 	info := types.Info{ //nolint:exhaustruct // Info.TypeOf needs Defs, Uses, and Types populated, we don't need the rest
