@@ -46,7 +46,7 @@ func (r *FakeRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 
 	sources := make([]*gosourcefile.GoSourceFile, 0, len(filePaths))
 	for _, filePath := range filePaths {
-		sources = append(sources, gosourcefile.New(filePath, r.fs[filePath]))
+		sources = append(sources, gosourcefile.New("", filePath, r.fs[filePath]))
 	}
 
 	return sources
