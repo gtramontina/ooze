@@ -3,10 +3,8 @@ package gosourcefile
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 
 	"github.com/gtramontina/ooze/internal/goinfectedfile"
 	"github.com/gtramontina/ooze/viruses"
@@ -32,24 +30,10 @@ func (f *GoSourceFile) Incubate(virus viruses.Virus) []*goinfectedfile.GoInfecte
 		panic(fmt.Errorf("failed parsing file '%s': %w", f.relativePath, err))
 	}
 
-	cfg := types.Config{ //nolint:exhaustruct // default values for missing fields are okay
-		Importer: importer.Default(),
-	}
-
-	info := types.Info{ //nolint:exhaustruct // Info.TypeOf needs Defs, Uses, and Types populated, we don't need the rest
-		Defs:  map[*ast.Ident]types.Object{},
-		Uses:  map[*ast.Ident]types.Object{},
-		Types: map[ast.Expr]types.TypeAndValue{},
-	}
-
-	if _, err := cfg.Check(f.relativePath, fileSet, []*ast.File{fileTree}, &info); err != nil {
-		panic(fmt.Errorf("failed type checking for file '%s': %w", f.relativePath, err))
-	}
-
 	var infectedFiles []*goinfectedfile.GoInfectedFile
 
 	ast.Inspect(fileTree, func(node ast.Node) bool {
-		for _, infection := range virus.Incubate(node, &info) {
+		for _, infection := range virus.Incubate(node, nil) {
 			infectedFiles = append(infectedFiles, goinfectedfile.New(f.relativePath, f.rawContent, infection, fileSet, fileTree))
 		}
 
