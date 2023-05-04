@@ -6,6 +6,9 @@ retract (
 	// This version contains an issue that prevents Ooze from running on
 	// internal packages. See https://github.com/gtramontina/ooze/issues/9.
 	v0.3.0
+
+	// This version contains retractions only.
+	v0.3.1
 )
 
 require (
