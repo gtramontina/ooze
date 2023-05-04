@@ -8,7 +8,6 @@ import (
 )
 
 func TestCancelNil(t *testing.T) {
-	t.Skip("temporarily: https://github.com/gtramontina/ooze/pull/10")
 	oozetesting.Run(t, oozetesting.NewScenarios(
 		"Call cancel(nil)",
 		cancelnil.New(),
