@@ -28,7 +28,6 @@ import (
 	"github.com/gtramontina/ooze/viruses/arithmeticassignment"
 	"github.com/gtramontina/ooze/viruses/arithmeticassignmentinvert"
 	"github.com/gtramontina/ooze/viruses/bitwise"
-	"github.com/gtramontina/ooze/viruses/cancelnil"
 	"github.com/gtramontina/ooze/viruses/comparison"
 	"github.com/gtramontina/ooze/viruses/comparisoninvert"
 	"github.com/gtramontina/ooze/viruses/comparisonreplace"
@@ -59,7 +58,6 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 		arithmeticassignment.New(),
 		arithmeticassignmentinvert.New(),
 		bitwise.New(),
-		cancelnil.New(),
 		comparison.New(),
 		comparisoninvert.New(),
 		comparisonreplace.New(),

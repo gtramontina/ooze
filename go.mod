@@ -2,6 +2,15 @@ module github.com/gtramontina/ooze
 
 go 1.20
 
+retract (
+	// This version contains an issue that prevents Ooze from running on
+	// internal packages. See https://github.com/gtramontina/ooze/issues/9.
+	v0.3.0
+
+	// This version contains retractions only.
+	v0.3.1
+)
+
 require (
 	github.com/fatih/color v1.15.0
 	github.com/hexops/gotextdiff v1.0.3
