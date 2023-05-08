@@ -68,7 +68,7 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	for i, path := range paths {
 		data, _ := os.ReadFile(path)
 		relativePath, _ := filepath.Rel(r.root, path)
-		sourceFiles[i] = gosourcefile.New(relativePath, data)
+		sourceFiles[i] = gosourcefile.New(r.root, relativePath, data)
 	}
 
 	return sourceFiles

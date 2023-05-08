@@ -42,7 +42,7 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source.go", []byte("source data")),
+			gosourcefile.New(dir, "source.go", []byte("source data")),
 		}, files)
 	})
 
@@ -55,9 +55,9 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source1.go", []byte("source data 1")),
-			gosourcefile.New("source2.go", []byte("source data 2")),
-			gosourcefile.New("source3.go", []byte("source data 3")),
+			gosourcefile.New(dir, "source1.go", []byte("source data 1")),
+			gosourcefile.New(dir, "source2.go", []byte("source data 2")),
+			gosourcefile.New(dir, "source3.go", []byte("source data 3")),
 		}, files)
 	})
 
@@ -69,7 +69,7 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source1.go", []byte("source data 1")),
+			gosourcefile.New(dir, "source1.go", []byte("source data 1")),
 		}, files)
 	})
 
@@ -81,7 +81,7 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source1.go", []byte("source data 1")),
+			gosourcefile.New(dir, "source1.go", []byte("source data 1")),
 		}, files)
 	})
 
@@ -95,9 +95,9 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("a/b/source3.go", []byte("source data 3")),
-			gosourcefile.New("a/source2.go", []byte("source data 2")),
-			gosourcefile.New("source1.go", []byte("source data 1")),
+			gosourcefile.New(dir, "a/b/source3.go", []byte("source data 3")),
+			gosourcefile.New(dir, "a/source2.go", []byte("source data 2")),
+			gosourcefile.New(dir, "source1.go", []byte("source data 1")),
 		}, files)
 	})
 
@@ -116,9 +116,9 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("a/b/source3.go", []byte("source data 3")),
-			gosourcefile.New("a/source2.go", []byte("source data 2")),
-			gosourcefile.New("source1.go", []byte("source data 1")),
+			gosourcefile.New(dir, "a/b/source3.go", []byte("source data 3")),
+			gosourcefile.New(dir, "a/source2.go", []byte("source data 2")),
+			gosourcefile.New(dir, "source1.go", []byte("source data 1")),
 		}, files)
 	})
 }

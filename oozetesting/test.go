@@ -35,6 +35,11 @@ func NewScenarios(virusName string, virus viruses.Virus, mutations Mutations) *S
 func Run(t *testing.T, scenes *Scenarios) {
 	t.Helper()
 
+	workDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for name, testcase := range scenes.mutations {
 		source, err := os.ReadFile(path.Join("testdata", testcase.SourceFileName))
 		assert.NoError(t, err)
@@ -52,7 +57,7 @@ func Run(t *testing.T, scenes *Scenarios) {
 		t.Run(name, func(t *testing.T) {
 			actualMutatedFiles := mutate(
 				scenes.virus,
-				gosourcefile.New(testcase.SourceFileName, source),
+				gosourcefile.New(path.Join(workDir, "testdata"), testcase.SourceFileName, source),
 			)
 
 			require.Equal(t,

@@ -45,8 +45,8 @@ func TestIgnoredRepository(t *testing.T) {
 			)
 
 			assert.Equal(t, []*gosourcefile.GoSourceFile{
-				gosourcefile.New("source1.go", []byte("source 1")),
-				gosourcefile.New("source3.go", []byte("source 3")),
+				gosourcefile.New("", "source1.go", []byte("source 1")),
+				gosourcefile.New("", "source3.go", []byte("source 3")),
 			}, repository.ListGoSourceFiles())
 		}
 
@@ -63,9 +63,9 @@ func TestIgnoredRepository(t *testing.T) {
 			)
 
 			assert.Equal(t, []*gosourcefile.GoSourceFile{
-				gosourcefile.New("dir/subdir/source4.go", []byte("source 4")),
-				gosourcefile.New("dir/subdir/source5.go", []byte("source 5")),
-				gosourcefile.New("source1.go", []byte("source 1")),
+				gosourcefile.New("", "dir/subdir/source4.go", []byte("source 4")),
+				gosourcefile.New("", "dir/subdir/source5.go", []byte("source 5")),
+				gosourcefile.New("", "source1.go", []byte("source 1")),
 			}, repository.ListGoSourceFiles())
 		}
 	})

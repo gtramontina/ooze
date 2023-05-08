@@ -1,5 +1,3 @@
-//go:build testdata
-
 package source
 
 import "fmt"
