@@ -13,7 +13,7 @@ retract (
 require (
 	github.com/fatih/color v1.15.0
 	github.com/hexops/gotextdiff v1.0.3
-	github.com/stretchr/testify v1.8.3
+	github.com/stretchr/testify v1.8.4
 )
 
 require (
