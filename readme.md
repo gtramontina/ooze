@@ -6,6 +6,7 @@
 
 <p align="center">
 	<a href="https://pkg.go.dev/github.com/gtramontina/ooze"><img src="https://pkg.go.dev/badge/github.com/gtramontina/ooze.svg" alt="Go Reference"></a>
+	<a href="https://goreportcard.com/badge/github.com/gtramontina/ooze"><img src="https://goreportcard.com/badge/github.com/gtramontina/ooze" alt="Go Report Card"></a>
 	<a href="https://github.com/gtramontina/ooze/actions/workflows/ci.yml"><img src="https://github.com/gtramontina/ooze/actions/workflows/ci.yml/badge.svg" alt="CI Workflow"></a>
 	<a href="https://github.com/gtramontina/ooze/actions/workflows/mutation.yml"><img src="https://github.com/gtramontina/ooze/actions/workflows/mutation.yml/badge.svg" alt="Mutation Testing Workflow"></a>
 </p>
