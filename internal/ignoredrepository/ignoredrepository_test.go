@@ -13,7 +13,7 @@ import (
 func TestIgnoredRepository(t *testing.T) {
 	t.Run("empty repository yields empty results", func(t *testing.T) {
 		repository := ignoredrepository.New(
-			regexp.MustCompile(".*"),
+			[]*regexp.Regexp{regexp.MustCompile(".*")},
 			fakerepository.New(fakerepository.FS{}),
 		)
 
@@ -22,7 +22,7 @@ func TestIgnoredRepository(t *testing.T) {
 
 	t.Run("multiple files with match all pattern yields no files", func(t *testing.T) {
 		repository := ignoredrepository.New(
-			regexp.MustCompile(".*"),
+			[]*regexp.Regexp{regexp.MustCompile(".*")},
 			fakerepository.New(fakerepository.FS{
 				"source1.go": []byte("source 1"),
 				"source2.go": []byte("source 2"),
@@ -36,7 +36,7 @@ func TestIgnoredRepository(t *testing.T) {
 	t.Run("multiple files with specific pattern yields filtered files", func(t *testing.T) {
 		{
 			repository := ignoredrepository.New(
-				regexp.MustCompile(".*2.*"),
+				[]*regexp.Regexp{regexp.MustCompile(".*2.*")},
 				fakerepository.New(fakerepository.FS{
 					"source1.go": []byte("source 1"),
 					"source2.go": []byte("source 2"),
@@ -52,7 +52,7 @@ func TestIgnoredRepository(t *testing.T) {
 
 		{
 			repository := ignoredrepository.New(
-				regexp.MustCompile("^dir/source.*$"),
+				[]*regexp.Regexp{regexp.MustCompile("^dir/source.*$")},
 				fakerepository.New(fakerepository.FS{
 					"source1.go":            []byte("source 1"),
 					"dir/source2.go":        []byte("source 2"),
@@ -69,13 +69,39 @@ func TestIgnoredRepository(t *testing.T) {
 			}, repository.ListGoSourceFiles())
 		}
 	})
+
+	t.Run("multiple files with multiple patterns", func(t *testing.T) {
+		{
+			repository := ignoredrepository.New(
+				[]*regexp.Regexp{
+					regexp.MustCompile(".*2.*"),
+					regexp.MustCompile(".*3.*"),
+					regexp.MustCompile(".*5.*"),
+				},
+				fakerepository.New(fakerepository.FS{
+					"source1.go": []byte("source 1"),
+					"source2.go": []byte("source 2"),
+					"source3.go": []byte("source 3"),
+					"source4.go": []byte("source 4"),
+					"source5.go": []byte("source 5"),
+					"source6.go": []byte("source 6"),
+				}),
+			)
+
+			assert.Equal(t, []*gosourcefile.GoSourceFile{
+				gosourcefile.New("source1.go", []byte("source 1")),
+				gosourcefile.New("source4.go", []byte("source 4")),
+				gosourcefile.New("source6.go", []byte("source 6")),
+			}, repository.ListGoSourceFiles())
+		}
+	})
 }
 
 func TestIgnoredRepository_LinkAllToTemporaryRepository(t *testing.T) {
 	t.Run("delegates to underlying repository", func(t *testing.T) {
 		expectedTempRepository := fakerepository.NewTemporary()
 		repository := ignoredrepository.New(
-			regexp.MustCompile("dummy"),
+			[]*regexp.Regexp{regexp.MustCompile("dummy")},
 			fakerepository.New(fakerepository.FS{}, expectedTempRepository),
 		)
 

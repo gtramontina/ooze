@@ -8,13 +8,13 @@ import (
 )
 
 type FilteredRepository struct {
-	pattern  *regexp.Regexp
+	patterns []*regexp.Regexp
 	delegate ooze.Repository
 }
 
-func New(pattern *regexp.Regexp, delegate ooze.Repository) *FilteredRepository {
+func New(patterns []*regexp.Regexp, delegate ooze.Repository) *FilteredRepository {
 	return &FilteredRepository{
-		pattern:  pattern,
+		patterns: patterns,
 		delegate: delegate,
 	}
 }
@@ -22,10 +22,14 @@ func New(pattern *regexp.Regexp, delegate ooze.Repository) *FilteredRepository {
 func (r *FilteredRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	filtered := []*gosourcefile.GoSourceFile{}
 
+FILE_LOOP:
 	for _, file := range r.delegate.ListGoSourceFiles() {
-		if !r.pattern.MatchString(file.String()) {
-			filtered = append(filtered, file)
+		for _, pattern := range r.patterns {
+			if pattern.MatchString(file.String()) {
+				continue FILE_LOOP
+			}
 		}
+		filtered = append(filtered, file)
 	}
 
 	return filtered

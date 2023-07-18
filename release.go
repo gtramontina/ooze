@@ -47,12 +47,12 @@ func init() { //nolint:gochecknoinits
 }
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
-	Repository:               fsrepository.New("."),
-	TestRunner:               cmdtestrunner.New("go", "test", "-count=1", "./..."),
-	TemporaryDir:             fstemporarydir.New("ooze-"),
-	MinimumThreshold:         1.0,
-	Parallel:                 false,
-	IgnoreSourceFilesPattern: nil,
+	Repository:                fsrepository.New("."),
+	TestRunner:                cmdtestrunner.New("go", "test", "-count=1", "./..."),
+	TemporaryDir:              fstemporarydir.New("ooze-"),
+	MinimumThreshold:          1.0,
+	Parallel:                  false,
+	IgnoreSourceFilesPatterns: nil,
 	Viruses: []viruses.Virus{
 		arithmetic.New(),
 		arithmeticassignment.New(),
@@ -108,8 +108,8 @@ func Release(t *testing.T, options ...Option) {
 		opts.MinimumThreshold,
 	)
 
-	if opts.IgnoreSourceFilesPattern != nil {
-		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPattern, opts.Repository)
+	if opts.IgnoreSourceFilesPatterns != nil {
+		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPatterns, opts.Repository)
 	}
 
 	if verbose() {
