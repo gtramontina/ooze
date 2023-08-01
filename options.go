@@ -15,13 +15,13 @@ import (
 type Option func(Options) Options
 
 type Options struct {
-	Repository               ooze.Repository
-	TestRunner               laboratory.TestRunner
-	TemporaryDir             laboratory.TemporaryDirectory
-	MinimumThreshold         float32
-	Parallel                 bool
-	IgnoreSourceFilesPattern *regexp.Regexp
-	Viruses                  []viruses.Virus
+	Repository                ooze.Repository
+	TestRunner                laboratory.TestRunner
+	TemporaryDir              laboratory.TemporaryDirectory
+	MinimumThreshold          float32
+	Parallel                  bool
+	IgnoreSourceFilesPatterns []*regexp.Regexp
+	Viruses                   []viruses.Virus
 }
 
 // WithRepositoryRoot configures which directory is the repository root. This is
@@ -70,11 +70,13 @@ func Parallel() func(Options) Options {
 	}
 }
 
-// IgnoreSourceFiles configures a regular expression representing source files
+// IgnoreSourceFiles configures regular expressions representing source files
 // to be filtered out and not suffer any mutations.
-func IgnoreSourceFiles(pattern string) func(Options) Options {
+func IgnoreSourceFiles(patterns ...string) func(Options) Options {
 	return func(options Options) Options {
-		options.IgnoreSourceFilesPattern = regexp.MustCompile(pattern)
+		for _, pattern := range patterns {
+			options.IgnoreSourceFilesPatterns = append(options.IgnoreSourceFilesPatterns, regexp.MustCompile(pattern))
+		}
 
 		return options
 	}

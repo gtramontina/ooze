@@ -51,12 +51,12 @@ func TestOptions(t *testing.T) {
 	t.Run("can configure source files to ignore", func(t *testing.T) {
 		{
 			options := ooze.IgnoreSourceFiles(".*")(ooze.Options{})
-			assert.Equal(t, regexp.MustCompile(".*"), options.IgnoreSourceFilesPattern)
+			assert.Equal(t, []*regexp.Regexp{regexp.MustCompile(".*")}, options.IgnoreSourceFilesPatterns)
 		}
 
 		{
 			options := ooze.IgnoreSourceFiles(`.*\.go`)(ooze.Options{})
-			assert.Equal(t, regexp.MustCompile(`.*\.go`), options.IgnoreSourceFilesPattern)
+			assert.Equal(t, []*regexp.Regexp{regexp.MustCompile(`.*\.go`)}, options.IgnoreSourceFilesPatterns)
 		}
 	})
 
