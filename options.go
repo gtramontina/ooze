@@ -70,7 +70,7 @@ func Parallel() func(Options) Options {
 	}
 }
 
-// IgnoreSourceFiles configures a egular expressions representing source files
+// IgnoreSourceFiles configures regular expressions representing source files
 // to be filtered out and not suffer any mutations.
 func IgnoreSourceFiles(patterns ...string) func(Options) Options {
 	return func(options Options) Options {
