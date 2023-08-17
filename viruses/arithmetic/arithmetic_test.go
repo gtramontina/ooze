@@ -12,7 +12,8 @@ func TestArithmetic(t *testing.T) {
 		"Arithmetic",
 		arithmetic.New(),
 		oozetesting.Mutations{
-			"no mutations": {"source.0.go", []string{}},
+			"no mutations":                        {"source.0.go", []string{}},
+			"no mutation of string concatenation": {"source.7.go", []string{}},
 			"one mutation + to -": {"source.1.go", []string{
 				"source.2.go",
 			}},
