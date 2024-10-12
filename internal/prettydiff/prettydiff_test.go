@@ -24,7 +24,7 @@ func TestPrettyDiff(t *testing.T) {
 		differ := prettydiff.New(stubdiffer.New("- some removal"))
 		diff := differ.Diff("dummy-a.go", "dummy-b.go", []byte("dummy-a"), []byte("dummy-b"))
 
-		assert.Equal(t, "\033[1;31m- some removal\033[0m", diff)
+		assert.Equal(t, "\033[1;31m- some removal\033[22;0m", diff)
 	})
 
 	t.Run("colorizes additions", func(t *testing.T) {

@@ -1,7 +1,6 @@
 package cmdtestrunner_test
 
 import (
-	"os"
 	"path"
 	"testing"
 
@@ -37,11 +36,11 @@ func TestCMDTestRunner(t *testing.T) {
 	t.Run("makes all environment variables available to the subprocess", func(t *testing.T) {
 		temporaryRepository := fakerepository.NewTemporaryAt(t.TempDir())
 
-		assert.NoError(t, os.Setenv("TEST_VAR_1", "test_value_1"))
+		t.Setenv("TEST_VAR_1", "test_value_1")
 		output := cmdtestrunner.New("sh", "-c", "printf $TEST_VAR_1").Test(temporaryRepository)
 		assert.Equal(t, result.Err[string]("test_value_1"), output)
 
-		assert.NoError(t, os.Setenv("TEST_VAR_2", "test_value_2"))
+		t.Setenv("TEST_VAR_2", "test_value_2")
 		output = cmdtestrunner.New("sh", "-c", "printf $TEST_VAR_2").Test(temporaryRepository)
 		assert.Equal(t, result.Err[string]("test_value_2"), output)
 	})

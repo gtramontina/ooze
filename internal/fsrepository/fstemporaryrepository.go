@@ -54,7 +54,7 @@ func (r *FSTemporaryRepository) Overwrite(filePath string, data []byte) {
 		panic(fmt.Errorf("failed removing existing file '%s': %w", filePath, err))
 	}
 
-	err := os.WriteFile(fullPath, data, os.ModePerm)
+	err := os.WriteFile(fullPath, data, os.ModePerm) //nolint:gosec
 	if err != nil {
 		panic(fmt.Errorf("failed writing data to file '%s', %w", filePath, err))
 	}

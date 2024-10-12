@@ -12,7 +12,7 @@ import (
 
 type Infection interface {
 	fmt.Stringer
-	Infect(func())
+	Infect(fn func())
 }
 
 type GoInfectedFile struct {

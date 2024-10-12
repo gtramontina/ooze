@@ -3,9 +3,6 @@ SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
-include makefile.golangci.mk
-include makefile.gotestsum.mk
-
 .git/.hooks.log:
 	@git config core.hooksPath .githooks
 	@git config --get core.hooksPath > $@

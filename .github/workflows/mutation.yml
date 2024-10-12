@@ -1,8 +1,8 @@
-name: '🧬 Mutation Tests'
+name: "🧬 Mutation Tests"
 on:
   workflow_run:
-    workflows: ["🧩 Continuous Integration"]
-    branches: [main]
+    workflows: [ "🧩 Continuous Integration" ]
+    branches: [ main ]
     types:
       - completed
 
@@ -10,15 +10,12 @@ jobs:
 
   Mutation:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v3
-        with:
-          go-version-file: 'go.mod'
-          cache: true
+      - name: Install Devbox
+        uses: jetify-com/devbox-install-action@v0.11.0
 
-      - name: '🧬 Mutation Tests'
-        run: make test.mutation
+      - name: "🧬 Mutation Tests"
+        run: devbox run -- make test.mutation
