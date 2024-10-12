@@ -11,7 +11,7 @@ import (
 
 type TestingT interface {
 	Helper()
-	Run(string, func(*testing.T)) bool
+	Run(name string, testFn func(*testing.T)) bool
 }
 
 type TestingTLaboratory struct {

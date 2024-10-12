@@ -59,7 +59,7 @@ func TestDeferred(t *testing.T) {
 	})
 
 	t.Run("only one concurrent resolve calls win", func(t *testing.T) {
-		for i := 0; i < 1000; i++ { // arbitrary number of repetitions to try and catch concurrency issues
+		for range 1000 { // arbitrary number of repetitions to try and catch concurrency issues
 			fut := future.Deferred[int]()
 
 			go func() { fut.Resolve(10) }()

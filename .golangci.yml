@@ -9,8 +9,11 @@ linters:
 
     # deprecated/replaced
     - deadcode
+    - execinquery
     - exhaustivestruct
+    - exportloopref
     - golint
+    - gomnd
     - ifshort
     - interfacer
     - maligned
@@ -18,6 +21,11 @@ linters:
     - scopelint
     - structcheck
     - varcheck
+
+    # to review
+    - depguard
+    - testifylint
+    - wsl
 
 issues:
   max-issues-per-linter: 0

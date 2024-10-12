@@ -50,7 +50,7 @@ func TestFSTemporaryRepository(t *testing.T) {
 			assert.NoError(t, err)
 			mask := syscall.Umask(0)
 			defer syscall.Umask(mask)
-			assert.Equal(t, os.ModePerm^os.FileMode(mask), stat.Mode())
+			assert.Equal(t, os.ModePerm^os.FileMode(mask), stat.Mode()) //nolint:gosec
 		})
 
 		t.Run("an existing linked file", func(t *testing.T) {

@@ -1,34 +1,34 @@
-name: '🧩 Continuous Integration'
+name: "🧩 Continuous Integration"
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, upgrade-versions ]
   pull_request:
     branches: [ main ]
 
 jobs:
 
   CI:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.continue-on-error }}
     strategy:
       matrix:
-        go-version: [ '1.20' ]
+        go-version: [ "1.22" ]
         continue-on-error: [ false ]
         include:
-          - go-version: 'stable'
+          - go-version: "latest"
             continue-on-error: true
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+
+    - name: Install Devbox
+      uses: jetify-com/devbox-install-action@v0.11.0
 
     - name: Set up Go ${{ matrix.go-version }}
-      uses: actions/setup-go@v3
-      with:
-        go-version: ${{ matrix.go-version }}
-        cache: true
+      run: devbox add go@${{ matrix.go-version }}
 
-    - name: '🧹 Lint'
-      run: make lint
+    - name: "🧹 Lint"
+      run: devbox run -- make lint
 
-    - name: '🧪 Test'
-      run: make test
+    - name: "🧪 Test"
+      run: devbox run -- make test
