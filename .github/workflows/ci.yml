@@ -9,26 +9,54 @@ on:
 jobs:
 
   CI:
-    runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.continue-on-error }}
     strategy:
       matrix:
-        go-version: [ "1.22" ]
-        continue-on-error: [ false ]
-        include:
-          - go-version: "latest"
-            continue-on-error: true
+        runs-on:
+          - "ubuntu-latest"
+          - "windows-latest"
+        go-version:
+          - "1.22"
+          - "latest"
+
+    runs-on: ${{ matrix.runs-on }}
+    continue-on-error: false
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Devbox
-      uses: jetify-com/devbox-install-action@v0.11.0
+      # Ubuntu -----------------------------------------------------------------
 
-    - name: Set up Go ${{ matrix.go-version }}
-      run: devbox add go@${{ matrix.go-version }}
+      - if: ${{ matrix.runs-on == 'ubuntu-latest' }}
+        name: "🐧 - Install Devbox"
+        uses: jetify-com/devbox-install-action@v0.11.0
 
-    - name: "🧹 Lint"
-      run: devbox run -- make lint
+      - if: ${{ matrix.runs-on == 'ubuntu-latest' }}
+        name: "🐧 - Set up Go ${{ matrix.go-version }}"
+        run: devbox add go@${{ matrix.go-version }}
 
-    - name: "🧪 Test"
-      run: devbox run -- make test
+      - if: ${{ matrix.runs-on == 'ubuntu-latest' }}
+        name: "🐧 - 🧹 Lint"
+        run: devbox run -- make lint
+
+      - if: ${{ matrix.runs-on == 'ubuntu-latest' }}
+        name: "🐧 - 🧪 Test"
+        run: devbox run -- make test
+
+      # Windows ----------------------------------------------------------------
+
+      - if: ${{ matrix.runs-on == 'windows-latest' }}
+        name: "🪟 - Set up Go ${{ matrix.go-version }}"
+        uses: actions/setup-go@v5
+        with:
+          check-latest: ${{ matrix.go-version == 'latest' }}
+          go-version: ${{ matrix.go-version != 'latest' && matrix.go-version || null }}
+
+      - if: ${{ matrix.runs-on == 'windows-latest' }}
+        name: "🪟 - 🧹 Lint"
+        run: |
+          choco install golangci-lint --version=1.61.0 -y
+          golangci-lint -v --timeout 5m run
+
+      - if: ${{ matrix.runs-on == 'windows-latest' }}
+        name: "🪟 - 🧪 Test"
+        run: go test ./...
