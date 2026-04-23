@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Devbox
-        uses: jetify-com/devbox-install-action@v0.11.0
+        uses: jetify-com/devbox-install-action@v0.15.0
 
       - name: "🧬 Mutation Tests"
         run: devbox run -- make test.mutation
