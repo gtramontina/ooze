@@ -19,7 +19,7 @@ jobs:
           - go-version: "latest"
             continue-on-error: true
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install Devbox
       uses: jetify-com/devbox-install-action@v0.15.0
