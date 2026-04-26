@@ -10,6 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func assertGoSourceFilesEqual(t *testing.T, expected, actual []*gosourcefile.GoSourceFile) {
+	t.Helper()
+	assert.True(t, gosourcefile.EqualSlice(expected, actual))
+}
+
 func TestIgnoredRepository(t *testing.T) {
 	t.Run("empty repository yields empty results", func(t *testing.T) {
 		repository := ignoredrepository.New(
@@ -24,9 +29,9 @@ func TestIgnoredRepository(t *testing.T) {
 		repository := ignoredrepository.New(
 			[]*regexp.Regexp{regexp.MustCompile(".*")},
 			fakerepository.New(fakerepository.FS{
-				"source1.go": []byte("source 1"),
-				"source2.go": []byte("source 2"),
-				"source3.go": []byte("source 3"),
+				"source1.go": []byte("package p"),
+				"source2.go": []byte("package p"),
+				"source3.go": []byte("package p"),
 			}),
 		)
 
@@ -38,15 +43,15 @@ func TestIgnoredRepository(t *testing.T) {
 			repository := ignoredrepository.New(
 				[]*regexp.Regexp{regexp.MustCompile(".*2.*")},
 				fakerepository.New(fakerepository.FS{
-					"source1.go": []byte("source 1"),
-					"source2.go": []byte("source 2"),
-					"source3.go": []byte("source 3"),
+					"source1.go": []byte("package p"),
+					"source2.go": []byte("package p"),
+					"source3.go": []byte("package p"),
 				}),
 			)
 
-			assert.Equal(t, []*gosourcefile.GoSourceFile{
-				gosourcefile.New("source1.go", []byte("source 1")),
-				gosourcefile.New("source3.go", []byte("source 3")),
+			assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+				gosourcefile.Parse("source1.go", []byte("package p")),
+				gosourcefile.Parse("source3.go", []byte("package p")),
 			}, repository.ListGoSourceFiles())
 		}
 
@@ -54,18 +59,18 @@ func TestIgnoredRepository(t *testing.T) {
 			repository := ignoredrepository.New(
 				[]*regexp.Regexp{regexp.MustCompile("^dir/source.*$")},
 				fakerepository.New(fakerepository.FS{
-					"source1.go":            []byte("source 1"),
-					"dir/source2.go":        []byte("source 2"),
-					"dir/source3.go":        []byte("source 3"),
-					"dir/subdir/source4.go": []byte("source 4"),
-					"dir/subdir/source5.go": []byte("source 5"),
+					"source1.go":            []byte("package p"),
+					"dir/source2.go":        []byte("package p"),
+					"dir/source3.go":        []byte("package p"),
+					"dir/subdir/source4.go": []byte("package p"),
+					"dir/subdir/source5.go": []byte("package p"),
 				}),
 			)
 
-			assert.Equal(t, []*gosourcefile.GoSourceFile{
-				gosourcefile.New("dir/subdir/source4.go", []byte("source 4")),
-				gosourcefile.New("dir/subdir/source5.go", []byte("source 5")),
-				gosourcefile.New("source1.go", []byte("source 1")),
+			assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+				gosourcefile.Parse("dir/subdir/source4.go", []byte("package p")),
+				gosourcefile.Parse("dir/subdir/source5.go", []byte("package p")),
+				gosourcefile.Parse("source1.go", []byte("package p")),
 			}, repository.ListGoSourceFiles())
 		}
 	})
@@ -79,19 +84,19 @@ func TestIgnoredRepository(t *testing.T) {
 					regexp.MustCompile(".*5.*"),
 				},
 				fakerepository.New(fakerepository.FS{
-					"source1.go": []byte("source 1"),
-					"source2.go": []byte("source 2"),
-					"source3.go": []byte("source 3"),
-					"source4.go": []byte("source 4"),
-					"source5.go": []byte("source 5"),
-					"source6.go": []byte("source 6"),
+					"source1.go": []byte("package p"),
+					"source2.go": []byte("package p"),
+					"source3.go": []byte("package p"),
+					"source4.go": []byte("package p"),
+					"source5.go": []byte("package p"),
+					"source6.go": []byte("package p"),
 				}),
 			)
 
-			assert.Equal(t, []*gosourcefile.GoSourceFile{
-				gosourcefile.New("source1.go", []byte("source 1")),
-				gosourcefile.New("source4.go", []byte("source 4")),
-				gosourcefile.New("source6.go", []byte("source 6")),
+			assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+				gosourcefile.Parse("source1.go", []byte("package p")),
+				gosourcefile.Parse("source4.go", []byte("package p")),
+				gosourcefile.Parse("source6.go", []byte("package p")),
 			}, repository.ListGoSourceFiles())
 		}
 	})

@@ -11,6 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func assertGoSourceFilesEqual(t *testing.T, expected, actual []*gosourcefile.GoSourceFile) {
+	t.Helper()
+	assert.True(t, gosourcefile.EqualSlice(expected, actual))
+}
+
 func TestFSRepository(t *testing.T) {
 	t.Run("panics when given root does not exist", func(t *testing.T) {
 		assert.PanicsWithValue(t, "nonexistent: no such directory", func() {
@@ -30,95 +35,103 @@ func TestFSRepository(t *testing.T) {
 
 func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	t.Run("empty source files", func(t *testing.T) {
-		repository := fsrepository.New(t.TempDir())
+		dir := t.TempDir()
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
+		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{}, files)
+		assert.Nil(t, files)
 	})
 
 	t.Run("single source file", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source.go", []byte("source data"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source.go", []byte("package p"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source.go", []byte("source data")),
+		assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.Parse("source.go", []byte("package p")),
 		}, files)
 	})
 
 	t.Run("multiple source files", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source2.go", []byte("source data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source3.go", []byte("source data 3"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source2.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source3.go", []byte("package p"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source1.go", []byte("source data 1")),
-			gosourcefile.New("source2.go", []byte("source data 2")),
-			gosourcefile.New("source3.go", []byte("source data 3")),
+		assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.Parse("source1.go", []byte("package p")),
+			gosourcefile.Parse("source2.go", []byte("package p")),
+			gosourcefile.Parse("source3.go", []byte("package p")),
 		}, files)
 	})
 
 	t.Run("does not include non Go files", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("package p"), 0o600))
 		assert.NoError(t, os.WriteFile(dir+"/source2.rs", []byte("source data 2"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source1.go", []byte("source data 1")),
+		assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.Parse("source1.go", []byte("package p")),
 		}, files)
 	})
 
 	t.Run("does not include Go test files", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("test data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("package p"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("source1.go", []byte("source data 1")),
+		assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.Parse("source1.go", []byte("package p")),
 		}, files)
 	})
 
 	t.Run("recursive directories", func(t *testing.T) {
 		dir := t.TempDir()
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
 		assert.NoError(t, os.MkdirAll(dir+"/a/b", 0o700))
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/source2.go", []byte("source data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/b/source3.go", []byte("source data 3"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/a/source2.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/a/b/source3.go", []byte("package p"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("a/b/source3.go", []byte("source data 3")),
-			gosourcefile.New("a/source2.go", []byte("source data 2")),
-			gosourcefile.New("source1.go", []byte("source data 1")),
+		assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.Parse("a/b/source3.go", []byte("package p")),
+			gosourcefile.Parse("a/source2.go", []byte("package p")),
+			gosourcefile.Parse("source1.go", []byte("package p")),
 		}, files)
 	})
 
 	t.Run("relative root", func(t *testing.T) {
 		dir := t.TempDir()
+		assert.NoError(t, os.WriteFile(dir+"/go.mod", []byte("module m\n"), 0o600))
 		assert.NoError(t, os.MkdirAll(dir+"/a/b", 0o700))
 
 		assert.NoError(t, os.WriteFile(dir+"/readme.md", []byte("read me"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("test data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/source2.go", []byte("source data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/source2_test.go", []byte("test data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/b/source3.go", []byte("source data 3"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/b/source3_test.go", []byte("test data 3"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/a/source2.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/a/source2_test.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/a/b/source3.go", []byte("package p"), 0o600))
+		assert.NoError(t, os.WriteFile(dir+"/a/b/source3_test.go", []byte("package p"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
-		assert.Equal(t, []*gosourcefile.GoSourceFile{
-			gosourcefile.New("a/b/source3.go", []byte("source data 3")),
-			gosourcefile.New("a/source2.go", []byte("source data 2")),
-			gosourcefile.New("source1.go", []byte("source data 1")),
+		assertGoSourceFilesEqual(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.Parse("a/b/source3.go", []byte("package p")),
+			gosourcefile.Parse("a/source2.go", []byte("package p")),
+			gosourcefile.Parse("source1.go", []byte("package p")),
 		}, files)
 	})
 }

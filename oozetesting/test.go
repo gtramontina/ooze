@@ -50,9 +50,11 @@ func Run(t *testing.T, scenes *Scenarios) {
 		}
 
 		t.Run(name, func(t *testing.T) {
+			sourceFile := gosourcefile.Parse(testcase.SourceFileName, source)
+
 			actualMutatedFiles := mutate(
 				scenes.virus,
-				gosourcefile.New(testcase.SourceFileName, source),
+				sourceFile,
 			)
 
 			require.Equal(t,
