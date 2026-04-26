@@ -11,6 +11,7 @@ import (
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/ooze"
+	"golang.org/x/tools/go/packages"
 )
 
 type FSRepository struct {
@@ -42,33 +43,71 @@ func New(root string) *FSRepository {
 }
 
 func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
-	var paths []string
-
-	err := filepath.WalkDir(r.root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			return nil
-		}
-
-		paths = append(paths, path)
-
-		return nil
-	})
-	if err != nil {
-		panic(err)
+	cfg := &packages.Config{ //nolint:exhaustruct
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+			packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+		Dir: r.root,
 	}
 
-	sort.Strings(paths)
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil || len(pkgs) == 0 {
+		return nil
+	}
 
-	sourceFiles := make([]*gosourcefile.GoSourceFile, len(paths))
+	for _, pkg := range pkgs {
+		if len(pkg.Errors) > 0 {
+			return nil
+		}
+	}
 
-	for i, path := range paths {
-		data, _ := os.ReadFile(path)
-		relativePath, _ := filepath.Rel(r.root, path)
-		sourceFiles[i] = gosourcefile.New(relativePath, data)
+	var sourceFiles []*gosourcefile.GoSourceFile
+	seen := make(map[string]bool)
+
+	for _, pkg := range pkgs {
+		sourceFiles = r.collectPackageFiles(pkg, seen, sourceFiles)
+	}
+
+	if len(sourceFiles) == 0 {
+		return nil
+	}
+
+	sort.Slice(sourceFiles, func(i, j int) bool {
+		return sourceFiles[i].String() < sourceFiles[j].String()
+	})
+
+	return sourceFiles
+}
+
+func (r *FSRepository) collectPackageFiles(
+	pkg *packages.Package,
+	seen map[string]bool,
+	sourceFiles []*gosourcefile.GoSourceFile,
+) []*gosourcefile.GoSourceFile {
+	for i, file := range pkg.Syntax {
+		if i >= len(pkg.CompiledGoFiles) {
+			continue
+		}
+
+		absPath := pkg.CompiledGoFiles[i]
+		if seen[absPath] {
+			continue
+		}
+
+		seen[absPath] = true
+
+		relativePath, err := filepath.Rel(r.root, absPath)
+		if err != nil || strings.HasSuffix(relativePath, "_test.go") {
+			continue
+		}
+
+		rawContent, err := os.ReadFile(absPath)
+		if err != nil {
+			continue
+		}
+
+		sourceFiles = append(sourceFiles, gosourcefile.New(
+			relativePath, rawContent, pkg.Fset, file, pkg.TypesInfo,
+		))
 	}
 
 	return sourceFiles

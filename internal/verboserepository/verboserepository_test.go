@@ -16,9 +16,9 @@ func TestVerboseRepository(t *testing.T) {
 		verboserepository.New(
 			logger,
 			fakerepository.New(fakerepository.FS{
-				"file_a.go":     []byte("contents a"),
-				"file_b.go":     []byte("contents b"),
-				"dir/file_c.go": []byte("contents c"),
+				"file_a.go":     []byte("package p"),
+				"file_b.go":     []byte("package p"),
+				"dir/file_c.go": []byte("package p"),
 			}),
 		).ListGoSourceFiles()
 
@@ -35,8 +35,8 @@ func TestVerboseRepository(t *testing.T) {
 			logger,
 			fakerepository.New(
 				fakerepository.FS{
-					"file_a.go": []byte("contents a"),
-					"file_b.go": []byte("contents b"),
+					"file_a.go": []byte("package p"),
+					"file_b.go": []byte("package p"),
 				},
 				fakerepository.NewTemporaryAt("dummy"),
 			),
