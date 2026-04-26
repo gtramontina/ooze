@@ -1,6 +1,8 @@
 # Reference:
 # https://github.com/golangci/golangci-lint/blob/master/.golangci.reference.yml
 
+version: 2
+
 linters:
   enable-all: true
   disable:
@@ -8,21 +10,6 @@ linters:
     - paralleltest # not very helpful
 
     # deprecated/replaced
-    - deadcode
-    - execinquery
-    - exhaustivestruct
-    - exportloopref
-    - golint
-    - gomnd
-    - ifshort
-    - interfacer
-    - maligned
-    - nosnakecase
-    - scopelint
-    - structcheck
-    - varcheck
-
-    # to review
     - depguard
     - testifylint
     - wsl

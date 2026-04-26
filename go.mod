@@ -1,6 +1,6 @@
 module github.com/gtramontina/ooze
 
-go 1.22
+go 1.25
 
 retract (
 	// This version contains retractions only.
