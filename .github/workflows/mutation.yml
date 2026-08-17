@@ -10,12 +10,12 @@ jobs:
 
   Mutation:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Devbox
-        uses: jetify-com/devbox-install-action@v0.15.0
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
 
       - name: "🧬 Mutation Tests"
         run: devbox run -- make test.mutation

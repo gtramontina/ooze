@@ -1,0 +1,51 @@
+name: "🔭 Go Compatibility Canaries"
+
+on:
+  schedule:
+    - cron: "17 3 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  latest:
+    name: Latest stable Go
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Devbox
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
+      - name: Set up latest Go
+        run: devbox add go@latest
+
+      - name: Report Go version
+        run: devbox run -- go version
+
+      - name: Test
+        run: devbox run -- env -u NO_COLOR TERM=xterm make test
+
+  tip:
+    name: Go development tip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Devbox
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
+      - name: Set up Go tip
+        run: |
+          devbox run -- env GOBIN="${{ github.workspace }}/.bin" go install golang.org/dl/gotip@v0.0.0-20260813173624-d893dcb5e30a
+          devbox run -- sh -c 'GOROOT_BOOTSTRAP="$(go env GOROOT)" .bin/gotip download'
+
+      - name: Report Go version
+        run: devbox run -- .bin/gotip version
+
+      - name: Test
+        run: devbox run -- env -u NO_COLOR TERM=xterm .bin/gotip test -race -cover -timeout=60s -shuffle=on ./...

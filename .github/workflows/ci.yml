@@ -9,23 +9,21 @@ on:
 jobs:
 
   CI:
-    runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.continue-on-error }}
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        go-version: [ "1.22" ]
-        continue-on-error: [ false ]
-        include:
-          - go-version: "latest"
-            continue-on-error: true
+        go-version: [ "1.26.6" ]
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Install Devbox
-      uses: jetify-com/devbox-install-action@v0.15.0
+      uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
 
-    - name: Set up Go ${{ matrix.go-version }}
-      run: devbox add go@${{ matrix.go-version }}
+    - name: Verify pinned Go ${{ matrix.go-version }}
+      run: test "$(devbox run -- go env GOVERSION)" = "go${{ matrix.go-version }}"
+
+    - name: Report Go version
+      run: devbox run -- go version
 
     - name: "🧹 Lint"
       run: devbox run -- make lint

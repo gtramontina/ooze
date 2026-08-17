@@ -1,6 +1,7 @@
 package fakerepository
 
 import (
+	"maps"
 	"sort"
 	"strings"
 
@@ -12,9 +13,7 @@ type FS map[string][]byte
 
 func (f FS) copy() FS {
 	fsCopy := FS{}
-	for k, v := range f {
-		fsCopy[k] = v
-	}
+	maps.Copy(fsCopy, f)
 
 	return fsCopy
 }
