@@ -35,6 +35,13 @@ type Diagnostic struct {
 	file *gomutatedfile.GoMutatedFile
 }
 
+func NewDiagnostic(res future.Future[result.Result[string]], file *gomutatedfile.GoMutatedFile) *Diagnostic {
+	return &Diagnostic{
+		res:  res,
+		file: file,
+	}
+}
+
 func (d *Diagnostic) IsOk() bool {
 	return d.res.Await().IsOk()
 }
@@ -45,13 +52,6 @@ func (d *Diagnostic) Diff(differ gomutatedfile.Differ) string {
 
 func (d *Diagnostic) Label() string {
 	return d.file.Label()
-}
-
-func NewDiagnostic(res future.Future[result.Result[string]], file *gomutatedfile.GoMutatedFile) *Diagnostic {
-	return &Diagnostic{
-		res:  res,
-		file: file,
-	}
 }
 
 type Reporter interface {
@@ -76,7 +76,7 @@ func New(repository Repository, laboratory Laboratory, reporter Reporter) *Ooze 
 func (o *Ooze) Release(viri ...viruses.Virus) {
 	sources := o.repository.ListGoSourceFiles()
 
-	var incubated []*goinfectedfile.GoInfectedFile
+	incubated := make([]*goinfectedfile.GoInfectedFile, 0, len(sources)*len(viri))
 
 	for _, source := range sources {
 		for _, virus := range viri {

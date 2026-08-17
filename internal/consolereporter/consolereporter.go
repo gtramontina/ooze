@@ -77,8 +77,9 @@ func (r *ConsoleReporter) logDiff(diagnostic *ooze.Diagnostic) {
 	r.logger.Logf("┃ 🧬 "+color.BoldRed("Mutant survived:")+" %s", diagnostic.Label())
 	r.logger.Logf("┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
 
-	diff := []string{}
-	for _, line := range strings.Split(diagnostic.Diff(r.differ), "\n") {
+	lines := strings.Split(diagnostic.Diff(r.differ), "\n")
+	diff := make([]string, 0, len(lines))
+	for _, line := range lines {
 		diff = append(diff, "┃ "+line)
 	}
 

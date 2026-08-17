@@ -39,7 +39,7 @@ func Run(t *testing.T, scenes *Scenarios) {
 		source, err := os.ReadFile(path.Join("testdata", testcase.SourceFileName))
 		assert.NoError(t, err)
 
-		expectedMutatedFiles := []*gomutatedfile.GoMutatedFile{}
+		expectedMutatedFiles := make([]*gomutatedfile.GoMutatedFile, 0, len(testcase.MutantFileNames))
 
 		for _, mutantFileName := range testcase.MutantFileNames {
 			mutant, err := os.ReadFile(path.Join("testdata", mutantFileName))
@@ -77,9 +77,10 @@ func Run(t *testing.T, scenes *Scenarios) {
 }
 
 func mutate(virus viruses.Virus, source *gosourcefile.GoSourceFile) []*gomutatedfile.GoMutatedFile {
-	mutatedFiles := []*gomutatedfile.GoMutatedFile{}
+	infectedFiles := source.Incubate(virus)
+	mutatedFiles := make([]*gomutatedfile.GoMutatedFile, 0, len(infectedFiles))
 
-	for _, infectedFile := range source.Incubate(virus) {
+	for _, infectedFile := range infectedFiles {
 		mutatedFiles = append(mutatedFiles, infectedFile.Mutate())
 	}
 

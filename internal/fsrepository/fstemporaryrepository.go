@@ -50,8 +50,12 @@ func (r *FSTemporaryRepository) Overwrite(filePath string, data []byte) {
 		panic(fmt.Errorf("%w: resolved path '%s' does not belong to root '%s'", errNotAllowed, fullPath, r.root))
 	}
 
-	if _, err := os.Stat(fullPath); err == nil && os.Remove(fullPath) != nil {
-		panic(fmt.Errorf("failed removing existing file '%s': %w", filePath, err))
+	_, statErr := os.Stat(fullPath)
+	if statErr == nil {
+		removeErr := os.Remove(fullPath)
+		if removeErr != nil {
+			panic(fmt.Errorf("failed removing existing file '%s': %w", filePath, removeErr))
+		}
 	}
 
 	err := os.WriteFile(fullPath, data, os.ModePerm) //nolint:gosec

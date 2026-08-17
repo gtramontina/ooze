@@ -29,7 +29,7 @@ func (v *FloatDecrement) Incubate(node ast.Node, _ *types.Info) []*viruses.Infec
 	originalValue := literal.Value
 
 	var originalFloat float64
-	bitSize := reflect.TypeOf(originalFloat).Bits()
+	bitSize := reflect.TypeFor[float64]().Bits()
 
 	originalFloat, err := strconv.ParseFloat(originalValue, bitSize)
 	if err != nil {

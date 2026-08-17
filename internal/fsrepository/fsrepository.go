@@ -97,7 +97,7 @@ func (r *FSRepository) LinkAllToTemporaryRepository(temporaryPath string) ooze.T
 			return fmt.Errorf("failed creating directory tree for '%s': %w", linkPath, err)
 		}
 
-		err = os.Symlink(absolutePath, linkPath)
+		err = os.Symlink(absolutePath, linkPath) //nolint:gosec // Trusted source path.
 		if err != nil {
 			return fmt.Errorf("failed creating link from '%s' to '%s': %w", path, linkPath, err)
 		}

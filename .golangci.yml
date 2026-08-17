@@ -1,40 +1,54 @@
 # Reference:
-# https://github.com/golangci/golangci-lint/blob/master/.golangci.reference.yml
+# https://golangci-lint.run/docs/configuration/file/
+
+version: "2"
 
 linters:
-  enable-all: true
+  default: all
   disable:
     - ireturn # overly strict
     - paralleltest # not very helpful
 
-    # deprecated/replaced
-    - deadcode
-    - execinquery
-    - exhaustivestruct
-    - exportloopref
-    - golint
-    - gomnd
-    - ifshort
-    - interfacer
-    - maligned
-    - nosnakecase
-    - scopelint
-    - structcheck
-    - varcheck
-
     # to review
     - depguard
+    - gomodguard # replaced by gomodguard_v2
+    - mnd
     - testifylint
     - wsl
+    - wsl_v5
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - dupl
+          - err113
+          - funlen
+          - goconst
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
   fix: true
 
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - dupl
-        - funlen
-        - goerr113
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

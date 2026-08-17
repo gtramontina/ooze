@@ -21,7 +21,7 @@ func New(name string, args ...string) *CMDTestRunner {
 }
 
 func (t *CMDTestRunner) Test(repository ooze.TemporaryRepository) result.Result[string] {
-	command := exec.Command(t.name, t.args...) //nolint:gosec
+	command := exec.Command(t.name, t.args...) //nolint:gosec,noctx // Trusted command; runner has no context.
 	command.Dir = repository.Root()
 	command.Env = os.Environ()
 
