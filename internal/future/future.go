@@ -10,6 +10,6 @@ func Resolved[T any](value T) Future[T] {
 
 func Deferred[T any]() *DeferredFuture[T] {
 	return &DeferredFuture[T]{ //nolint:exhaustruct
-		channel: make(chan T),
+		ready: make(chan struct{}),
 	}
 }
