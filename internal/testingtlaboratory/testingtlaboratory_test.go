@@ -1,125 +1,218 @@
-package testingtlaboratory_test
+package testingtlaboratory //nolint:testpackage // Exercises the private scheduling seam.
 
 import (
 	"testing"
+	"time"
 
+	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
-	"github.com/gtramontina/ooze/internal/oozetesting/fakelaboratory"
+	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/oozetesting/fakerepository"
-	"github.com/gtramontina/ooze/internal/oozetesting/faketestingt"
 	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/testingtlaboratory"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTestingTLaboratory(t *testing.T) {
+func TestTestingTLaboratorySchedulesSerialMutation(t *testing.T) {
 	repository := fakerepository.New(fakerepository.FS{})
-	mutatedFile := gomutatedfile.New(
-		"test-infection",
-		"some-path.go",
-		nil,
-		nil,
+	mutatedFile := gomutatedfile.New("test-infection", "some-path.go", nil, nil)
+	subtests := newControlledSubtests()
+	delegate := &recordingLaboratory{result: result.Ok("mutant killed"), calls: 0}
+
+	fut := newWithSubtests(subtests, delegate, serial).Test(repository, mutatedFile)
+
+	assert.Equal(t, []scheduledSubtest{{
+		name: "some-path.go → test-infection",
+		mode: serial,
+	}}, subtests.scheduled)
+	assert.Equal(t, 1, delegate.calls)
+	assert.Equal(t, result.Ok("mutant killed"), fut.Await())
+}
+
+func TestTestingTLaboratorySchedulesParallelMutation(t *testing.T) {
+	repository := fakerepository.New(fakerepository.FS{})
+	mutatedFile := gomutatedfile.New("test-infection", "some-path.go", nil, nil)
+	subtests := newControlledSubtests()
+	delegate := &recordingLaboratory{result: result.Err[string]("mutant survived"), calls: 0}
+
+	fut := newWithSubtests(subtests, delegate, parallel).Test(repository, mutatedFile)
+
+	assert.Equal(t, []scheduledSubtest{{
+		name: "some-path.go → test-infection",
+		mode: parallel,
+	}}, subtests.scheduled)
+	assert.Zero(t, delegate.calls)
+
+	subtests.Release()
+
+	assert.Equal(t, 1, delegate.calls)
+	assert.Equal(t, result.Err[string]("mutant survived"), fut.Await())
+}
+
+func TestTestingTLaboratoryRejectsFilteredMutationSubtest(t *testing.T) {
+	subtests := newControlledSubtests()
+	subtests.accept = false
+	laboratory := newWithSubtests(
+		subtests,
+		&recordingLaboratory{result: result.Ok("mutant killed"), calls: 0},
+		serial,
 	)
+	mutatedFile := gomutatedfile.New("test-infection", "some-path.go", nil, nil)
 
-	t.Run("tags the methods and function calls as T helpers", func(t *testing.T) {
-		fakeT := faketestingt.New()
-		laboratory := testingtlaboratory.New(
-			fakeT,
-			fakelaboratory.NewAlways(result.Ok("mutant killed")),
-			false,
-		)
+	assert.PanicsWithValue(
+		t,
+		`mutation subtest "some-path.go → test-infection" was filtered out`,
+		func() {
+			laboratory.Test(fakerepository.New(fakerepository.FS{}), mutatedFile)
+		},
+	)
+}
 
-		assert.Equal(t, 1, fakeT.HelperCalls())
+func TestTestingTLaboratoryResolvesParallelFutureWhenDelegatePanics(t *testing.T) {
+	subtests := newControlledSubtests()
+	laboratory := newWithSubtests(subtests, panickingLaboratory{}, parallel)
+	mutatedFile := gomutatedfile.New("test-infection", "some-path.go", nil, nil)
+	fut := laboratory.Test(fakerepository.New(fakerepository.FS{}), mutatedFile)
 
-		laboratory.Test(repository, mutatedFile)
+	assert.PanicsWithValue(t, "laboratory panic", subtests.Release)
 
-		assert.Equal(t, 2, fakeT.HelperCalls())
+	resolved := make(chan result.Result[string], 1)
+	go func() { resolved <- fut.Await() }()
+	select {
+	case actual := <-resolved:
+		assert.Equal(t, result.Err[string]("mutation execution aborted"), actual)
+	case <-time.After(time.Second):
+		t.Fatal("future was not resolved after delegate panic")
+	}
+}
+
+func TestTestingSubtestsRunSerialBodyBeforeReturning(t *testing.T) {
+	executed := false
+
+	started := (testingSubtests{t: t}).Run("serial mutation", serial, func() {
+		executed = true
 	})
 
-	t.Run("sets up a subtest named after the infected file that delegates the test execution", func(t *testing.T) {
-		fakeT := faketestingt.New()
+	assert.True(t, started)
+	assert.True(t, executed)
+}
 
-		fut := testingtlaboratory.New(
-			fakeT,
-			fakelaboratory.NewAlways(result.Ok("mutant killed")),
-			false,
-		).Test(repository, mutatedFile)
+func TestTestingSubtestsDeferParallelBodyUntilParentReturns(t *testing.T) {
+	parentReturned := make(chan struct{})
+	executed := make(chan struct{}, 1)
 
-		subtest := fakeT.GetSubtest("some-path.go → test-infection")
-		assert.NotNil(t, subtest)
+	passed := t.Run("parent", func(t *testing.T) {
+		started := (testingSubtests{t: t}).Run("parallel mutation", parallel, func() {
+			select {
+			case <-parentReturned:
+				executed <- struct{}{}
+			default:
+				t.Error("parallel mutation ran before its parent returned")
+			}
+		})
 
-		subtest.Run()
+		assert.True(t, started)
+		select {
+		case <-executed:
+			t.Fatal("parallel mutation ran while its parent was active")
+		default:
+		}
 
-		assert.Equal(t, result.Ok("mutant killed"), fut.Await())
+		close(parentReturned)
 	})
 
-	t.Run("runs the subtest in parallel when indicated", func(t *testing.T) {
-		{
-			fakeT := faketestingt.New()
+	assert.True(t, passed)
+	select {
+	case <-executed:
+	default:
+		t.Fatal("parallel mutation did not finish before its parent subtest returned")
+	}
+}
 
-			testingtlaboratory.New(
-				fakeT,
-				fakelaboratory.NewAlways(result.Ok("mutant killed")),
-				false,
-			).Test(repository, mutatedFile)
+func TestParallelMutationFutureResolvesBeforeParentCleanup(t *testing.T) {
+	cleanupRan := make(chan struct{}, 1)
+	passed := t.Run("parent", func(t *testing.T) {
+		mutatedFile := gomutatedfile.New("test-infection", "some-path.go", nil, nil)
+		fut := New(
+			t,
+			&recordingLaboratory{result: result.Err[string]("mutant survived"), calls: 0},
+			true,
+		).Test(fakerepository.New(fakerepository.FS{}), mutatedFile)
 
-			subtest := fakeT.GetSubtest("some-path.go → test-infection")
-			assert.NotNil(t, subtest)
-
-			subtest.Run()
-
-			assert.False(t, subtest.IsParallel())
-		}
-
-		{
-			fakeT := faketestingt.New()
-
-			testingtlaboratory.New(
-				fakeT,
-				fakelaboratory.NewAlways(result.Ok("mutant killed")),
-				true,
-			).Test(repository, mutatedFile)
-
-			subtest := fakeT.GetSubtest("some-path.go → test-infection")
-			assert.NotNil(t, subtest)
-
-			subtest.Run()
-
-			assert.True(t, subtest.IsParallel())
-		}
+		t.Cleanup(func() {
+			assert.Equal(t, result.Err[string]("mutant survived"), fut.Await())
+			cleanupRan <- struct{}{}
+		})
 	})
 
-	t.Run("subtests never fail regardless of the laboratory results", func(t *testing.T) {
-		{
-			fakeT := faketestingt.New()
+	assert.True(t, passed, "a survived mutant is data, not a failed Go subtest")
+	select {
+	case <-cleanupRan:
+	default:
+		t.Fatal("parent cleanup did not run after its parallel mutation")
+	}
+}
 
-			testingtlaboratory.New(
-				fakeT,
-				fakelaboratory.NewAlways(result.Ok("mutant killed")),
-				false,
-			).Test(repository, mutatedFile)
+type scheduledSubtest struct {
+	name string
+	mode execution
+}
 
-			subtest := fakeT.GetSubtest("some-path.go → test-infection")
-			assert.NotNil(t, subtest)
+type controlledSubtests struct {
+	scheduled []scheduledSubtest
+	pending   []func()
+	accept    bool
+}
 
-			subtest.Run()
-			assert.False(t, subtest.Failed())
-		}
+func newControlledSubtests() *controlledSubtests {
+	return &controlledSubtests{
+		scheduled: []scheduledSubtest{},
+		pending:   []func(){},
+		accept:    true,
+	}
+}
 
-		{
-			fakeT := faketestingt.New()
+func (s *controlledSubtests) Run(name string, mode execution, body func()) bool {
+	s.scheduled = append(s.scheduled, scheduledSubtest{name: name, mode: mode})
+	if !s.accept {
+		return false
+	}
 
-			testingtlaboratory.New(
-				fakeT,
-				fakelaboratory.NewAlways(result.Err[string]("mutant survived")),
-				false,
-			).Test(repository, mutatedFile)
+	if mode == parallel {
+		s.pending = append(s.pending, body)
 
-			subtest := fakeT.GetSubtest("some-path.go → test-infection")
-			assert.NotNil(t, subtest)
+		return true
+	}
 
-			subtest.Run()
-			assert.False(t, subtest.Failed())
-		}
-	})
+	body()
+
+	return true
+}
+
+func (s *controlledSubtests) Release() {
+	for _, body := range s.pending {
+		body()
+	}
+}
+
+type recordingLaboratory struct {
+	result result.Result[string]
+	calls  int
+}
+
+type panickingLaboratory struct{}
+
+func (panickingLaboratory) Test(
+	_ ooze.Repository,
+	_ *gomutatedfile.GoMutatedFile,
+) future.Future[result.Result[string]] {
+	panic("laboratory panic")
+}
+
+func (l *recordingLaboratory) Test(
+	_ ooze.Repository,
+	_ *gomutatedfile.GoMutatedFile,
+) future.Future[result.Result[string]] {
+	l.calls++
+
+	return future.Resolved(l.result)
 }

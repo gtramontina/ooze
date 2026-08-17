@@ -1,6 +1,7 @@
 package testingtlaboratory
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/future"
@@ -9,24 +10,32 @@ import (
 	"github.com/gtramontina/ooze/internal/result"
 )
 
-type TestingT interface {
-	Helper()
-	Run(name string, testFn func(*testing.T)) bool
-}
-
 type TestingTLaboratory struct {
-	t        TestingT
+	subtests subtests
 	delegate ooze.Laboratory
-	parallel bool
+	mode     execution
 }
 
-func New(t TestingT, delegate ooze.Laboratory, parallel bool) *TestingTLaboratory {
+func New(t *testing.T, delegate ooze.Laboratory, runInParallel bool) *TestingTLaboratory {
 	t.Helper()
 
+	mode := serial
+	if runInParallel {
+		mode = parallel
+	}
+
+	return newWithSubtests(testingSubtests{t: t}, delegate, mode)
+}
+
+func newWithSubtests(
+	subtests subtests,
+	delegate ooze.Laboratory,
+	mode execution,
+) *TestingTLaboratory {
 	return &TestingTLaboratory{
-		t:        t,
+		subtests: subtests,
 		delegate: delegate,
-		parallel: parallel,
+		mode:     mode,
 	}
 }
 
@@ -34,17 +43,51 @@ func (l *TestingTLaboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
 ) future.Future[result.Result[string]] {
-	l.t.Helper()
-
 	fut := future.Deferred[result.Result[string]]()
 
-	l.t.Run(file.Label(), func(t *testing.T) { //nolint:thelper
-		if l.parallel {
+	started := l.subtests.Run(file.Label(), l.mode, func() {
+		completed := false
+		defer func() {
+			if !completed {
+				fut.Resolve(result.Err[string]("mutation execution aborted"))
+			}
+		}()
+
+		fut.Resolve(l.delegate.Test(repository, file).Await())
+		completed = true
+	})
+	if !started {
+		panic(fmt.Sprintf("mutation subtest %q was filtered out", file.Label()))
+	}
+
+	return fut
+}
+
+type execution uint8
+
+const (
+	serial execution = iota
+	parallel
+)
+
+type subtests interface {
+	Run(name string, mode execution, body func()) bool
+}
+
+type testingSubtests struct {
+	t *testing.T
+}
+
+func (s testingSubtests) Run(name string, mode execution, body func()) bool {
+	started := false
+	s.t.Run(name, func(t *testing.T) {
+		started = true
+		if mode == parallel {
 			t.Parallel()
 		}
 
-		fut.Resolve(l.delegate.Test(repository, file).Await())
+		body()
 	})
 
-	return fut
+	return started
 }
