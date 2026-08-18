@@ -1,4 +1,5 @@
 name: "🧬 Mutation Tests"
+
 on:
   workflow_run:
     workflows: [ "🧩 Continuous Integration" ]
@@ -6,16 +7,45 @@ on:
     types:
       - completed
 
+permissions:
+  contents: read
+
 jobs:
 
-  Mutation:
+  mutation:
+    name: ${{ matrix.name }}
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    env:
+      GOTOOLCHAIN: local
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            runner: ubuntu-24.04
+          - name: Windows 2025
+            runner: windows-2025
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Install Devbox
-        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+      - name: Set up Go 1.26.6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      - name: Report Go version
+        run: go version
+
+      - name: Install gotestsum 1.13.0
+        shell: bash
+        run: |
+          go install gotest.tools/gotestsum@v1.13.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: "🧬 Mutation Tests"
-        run: devbox run -- make test.mutation
+        run: go test -timeout=30m -count=1 -v -tags=mutation
