@@ -8,7 +8,8 @@ on:
 
 jobs:
 
-  CI:
+  test:
+    name: Go ${{ matrix.go-version }}
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -30,3 +31,12 @@ jobs:
 
     - name: "🧪 Test"
       run: devbox run -- make test
+
+  required:
+    name: CI
+    if: ${{ always() }}
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify current Go
+        run: test "${{ needs.test.result }}" = "success"

@@ -37,6 +37,8 @@ In order to ensure that you get accurate results, make sure that test suite that
 
 When Ooze reports that it found a living mutant, it will print a diff of the changes the virus made to the source file. The mutant source is printed using Go's [`go/format`](https://pkg.go.dev/go/format) package. This means that, if your source code isn't gofmt'd, the diff may contain some formatting changes that are not relevant to the mutation. This isn't a prerequisite per se, but for a better experience, it is recommended that you run `gofmt` on your source files.
 
+Ooze supports Go 1.25 and every stable Go release through the current version.
+
 ### Installation
 
 1. Install ooze:
