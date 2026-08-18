@@ -16,11 +16,11 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/hexops/gotextdiff v1.0.3
 	github.com/stretchr/testify v1.12.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
