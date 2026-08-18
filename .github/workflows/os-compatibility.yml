@@ -1,0 +1,52 @@
+name: "🖥️ OS Compatibility"
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GOTOOLCHAIN: local
+    strategy:
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            runner: ubuntu-24.04
+          - name: macOS 26
+            runner: macos-26
+          - name: Windows 2025
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go 1.26.6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      - name: Report Go version
+        run: go version
+
+      - name: Test
+        run: go test -race -cover -timeout=60s -shuffle=on ./...
+
+  required:
+    name: OS Compatibility
+    if: ${{ always() }}
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify supported operating systems
+        run: test "${{ needs.test.result }}" = "success"

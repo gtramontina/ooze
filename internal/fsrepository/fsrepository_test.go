@@ -20,10 +20,11 @@ func TestFSRepository(t *testing.T) {
 
 	t.Run("panics when given root isn't a directory", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/not-a-dir", []byte("source data"), 0o600))
+		filePath := filepath.Join(dir, "not-a-dir")
+		assert.NoError(t, os.WriteFile(filePath, []byte("source data"), 0o600))
 
-		assert.PanicsWithValue(t, dir+"/not-a-dir: not a directory", func() {
-			fsrepository.New(dir + "/not-a-dir")
+		assert.PanicsWithValue(t, filePath+": not a directory", func() {
+			fsrepository.New(filePath)
 		})
 	})
 }
@@ -37,7 +38,7 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 	t.Run("single source file", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source.go", []byte("source data"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source.go"), []byte("source data"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
@@ -48,9 +49,9 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 	t.Run("multiple source files", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source2.go", []byte("source data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source3.go", []byte("source data 3"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1.go"), []byte("source data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source2.go"), []byte("source data 2"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source3.go"), []byte("source data 3"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
@@ -63,8 +64,8 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 	t.Run("does not include non Go files", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source2.rs", []byte("source data 2"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1.go"), []byte("source data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source2.rs"), []byte("source data 2"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
@@ -75,8 +76,8 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 	t.Run("does not include Go test files", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("test data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1.go"), []byte("source data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1_test.go"), []byte("test data 1"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
@@ -87,10 +88,10 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 	t.Run("recursive directories", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.MkdirAll(dir+"/a/b", 0o700))
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/source2.go", []byte("source data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/b/source3.go", []byte("source data 3"), 0o600))
+		assert.NoError(t, os.MkdirAll(filepath.Join(dir, "a", "b"), 0o700))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1.go"), []byte("source data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "a", "source2.go"), []byte("source data 2"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "a", "b", "source3.go"), []byte("source data 3"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
@@ -103,15 +104,15 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 	t.Run("relative root", func(t *testing.T) {
 		dir := t.TempDir()
-		assert.NoError(t, os.MkdirAll(dir+"/a/b", 0o700))
+		assert.NoError(t, os.MkdirAll(filepath.Join(dir, "a", "b"), 0o700))
 
-		assert.NoError(t, os.WriteFile(dir+"/readme.md", []byte("read me"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source1.go", []byte("source data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/source1_test.go", []byte("test data 1"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/source2.go", []byte("source data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/source2_test.go", []byte("test data 2"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/b/source3.go", []byte("source data 3"), 0o600))
-		assert.NoError(t, os.WriteFile(dir+"/a/b/source3_test.go", []byte("test data 3"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "readme.md"), []byte("read me"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1.go"), []byte("source data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "source1_test.go"), []byte("test data 1"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "a", "source2.go"), []byte("source data 2"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "a", "source2_test.go"), []byte("test data 2"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "a", "b", "source3.go"), []byte("source data 3"), 0o600))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "a", "b", "source3_test.go"), []byte("test data 3"), 0o600))
 
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
@@ -125,47 +126,61 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 
 func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
 	dir := t.TempDir()
-	assert.NoError(t, os.MkdirAll(dir+"/to-link/child_a/child_b", 0o700))
+	assert.NoError(t, os.MkdirAll(filepath.Join(dir, "to-link", "child_a", "child_b"), 0o700))
 
-	assert.NoError(t, os.MkdirAll(dir+"/to-link/child_a/child_b", 0o700))
-	assert.NoError(t, os.WriteFile(dir+"/to-link/readme.md", []byte(""), 0o600))
-	assert.NoError(t, os.WriteFile(dir+"/to-link/makefile", []byte(""), 0o600))
-	assert.NoError(t, os.WriteFile(dir+"/to-link/test_a.go", []byte(""), 0o600))
-	assert.NoError(t, os.WriteFile(dir+"/to-link/test_b.go", []byte(""), 0o600))
-	assert.NoError(t, os.WriteFile(dir+"/to-link/child_a/test_c.go", []byte(""), 0o600))
-	assert.NoError(t, os.WriteFile(dir+"/to-link/child_a/child_b/test_d.go", []byte(""), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "to-link", "readme.md"), []byte("readme"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "to-link", "makefile"), []byte("makefile"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "to-link", "test_a.go"), []byte("test a"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "to-link", "test_b.go"), []byte("test b"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "to-link", "child_a", "test_c.go"), []byte("test c"), 0o600))
+	nestedSourcePath := filepath.Join(dir, "to-link", "child_a", "child_b", "test_d.go")
+	assert.NoError(t, os.WriteFile(nestedSourcePath, []byte("test d"), 0o600))
 
-	repository := fsrepository.New(dir + "/to-link")
-	temporaryRepository := repository.LinkAllToTemporaryRepository(dir + "/linked")
+	sourceRoot := filepath.Join(dir, "to-link")
+	linkedRoot := filepath.Join(dir, "linked")
+	repository := fsrepository.New(sourceRoot)
+	temporaryRepository := repository.LinkAllToTemporaryRepository(linkedRoot)
 
 	t.Run("creates a link of all files recursively", func(t *testing.T) {
 		var files []string
-		err := filepath.WalkDir(dir+"/linked", func(path string, entry fs.DirEntry, err error) error {
+		err := filepath.WalkDir(linkedRoot, func(path string, entry fs.DirEntry, err error) error {
 			assert.NoError(t, err)
 			if entry.IsDir() {
 				return nil
 			}
 
-			info, err := entry.Info()
+			relativePath, err := filepath.Rel(linkedRoot, path)
 			assert.NoError(t, err)
-			assert.True(t, info.Mode()&fs.ModeSymlink != 0)
+			assertMaterializedFile(t, filepath.Join(sourceRoot, relativePath), path)
 
-			files = append(files, path)
+			files = append(files, filepath.ToSlash(relativePath))
 
 			return nil
 		})
 		assert.NoError(t, err)
 		assert.Equal(t, []string{
-			dir + "/linked/child_a/child_b/test_d.go",
-			dir + "/linked/child_a/test_c.go",
-			dir + "/linked/makefile",
-			dir + "/linked/readme.md",
-			dir + "/linked/test_a.go",
-			dir + "/linked/test_b.go",
+			"child_a/child_b/test_d.go",
+			"child_a/test_c.go",
+			"makefile",
+			"readme.md",
+			"test_a.go",
+			"test_b.go",
 		}, files)
 	})
 
 	t.Run("results in a new temporary repository", func(t *testing.T) {
-		assert.Equal(t, fsrepository.NewTemporary(dir+"/linked"), temporaryRepository)
+		assert.Equal(t, fsrepository.NewTemporary(linkedRoot), temporaryRepository)
+	})
+
+	t.Run("isolates overwritten files from their sources", func(t *testing.T) {
+		temporaryRepository.Overwrite("test_a.go", []byte("mutated"))
+
+		materialized, err := os.ReadFile(filepath.Join(linkedRoot, "test_a.go"))
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("mutated"), materialized)
+
+		source, err := os.ReadFile(filepath.Join(sourceRoot, "test_a.go"))
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("test a"), source)
 	})
 }
