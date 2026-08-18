@@ -97,7 +97,7 @@ func TestIgnoredRepository(t *testing.T) {
 	})
 }
 
-func TestIgnoredRepository_LinkAllToTemporaryRepository(t *testing.T) {
+func TestIgnoredRepository_MaterializeTemporaryRepository(t *testing.T) {
 	t.Run("delegates to underlying repository", func(t *testing.T) {
 		expectedTempRepository := fakerepository.NewTemporary()
 		repository := ignoredrepository.New(
@@ -105,7 +105,7 @@ func TestIgnoredRepository_LinkAllToTemporaryRepository(t *testing.T) {
 			fakerepository.New(fakerepository.FS{}, expectedTempRepository),
 		)
 
-		actualTempRepository := repository.LinkAllToTemporaryRepository("temporary-path")
+		actualTempRepository := repository.MaterializeTemporaryRepository("temporary-path")
 
 		assert.Equal(t, expectedTempRepository, actualTempRepository)
 		assert.Equal(t, "temporary-path", expectedTempRepository.Root())

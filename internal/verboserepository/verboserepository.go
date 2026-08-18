@@ -25,10 +25,10 @@ func (r *VerboseRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return files
 }
 
-func (r *VerboseRepository) LinkAllToTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
-	r.logger.Logf("linking all files to temporary path '%s'…", temporaryPath)
-	repository := r.delegate.LinkAllToTemporaryRepository(temporaryPath)
-	r.logger.Logf("linked all files to temporary path '%s'", temporaryPath)
+func (r *VerboseRepository) MaterializeTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
+	r.logger.Logf("materializing all files at temporary path '%s'…", temporaryPath)
+	repository := r.delegate.MaterializeTemporaryRepository(temporaryPath)
+	r.logger.Logf("materialized all files at temporary path '%s'", temporaryPath)
 
 	return NewVerboseTemporaryRepository(r.logger, repository)
 }

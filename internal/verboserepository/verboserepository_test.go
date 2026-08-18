@@ -28,7 +28,7 @@ func TestVerboseRepository(t *testing.T) {
 		}, logger.LoggedLines())
 	})
 
-	t.Run("logs when linking to temporary path", func(t *testing.T) {
+	t.Run("logs when materializing at a temporary path", func(t *testing.T) {
 		logger := fakelogger.New()
 
 		verboserepository.New(
@@ -40,11 +40,11 @@ func TestVerboseRepository(t *testing.T) {
 				},
 				fakerepository.NewTemporaryAt("dummy"),
 			),
-		).LinkAllToTemporaryRepository("some-path")
+		).MaterializeTemporaryRepository("some-path")
 
 		assert.Equal(t, []string{
-			"linking all files to temporary path 'some-path'…",
-			"linked all files to temporary path 'some-path'",
+			"materializing all files at temporary path 'some-path'…",
+			"materialized all files at temporary path 'some-path'",
 		}, logger.LoggedLines())
 	})
 }
@@ -61,7 +61,7 @@ func TestTemporaryRepository(t *testing.T) {
 			),
 		)
 
-		temporary := repository.LinkAllToTemporaryRepository("some-path")
+		temporary := repository.MaterializeTemporaryRepository("some-path")
 		logger.Clear()
 
 		temporary.Overwrite("source.go", []byte("dummy"))
@@ -82,7 +82,7 @@ func TestTemporaryRepository(t *testing.T) {
 			),
 		)
 
-		temporary := repository.LinkAllToTemporaryRepository("some-path")
+		temporary := repository.MaterializeTemporaryRepository("some-path")
 		logger.Clear()
 
 		temporary.Remove()

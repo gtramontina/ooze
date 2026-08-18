@@ -74,7 +74,7 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return sourceFiles
 }
 
-func (r *FSRepository) LinkAllToTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
+func (r *FSRepository) MaterializeTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
 	rootSize := len(strings.Split(r.root, string(os.PathSeparator)))
 
 	err := filepath.WalkDir(r.root, func(path string, entry fs.DirEntry, err error) error {

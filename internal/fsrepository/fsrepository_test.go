@@ -124,7 +124,7 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 	})
 }
 
-func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
+func TestFSRepository_MaterializeTemporaryRepository(t *testing.T) {
 	dir := t.TempDir()
 	assert.NoError(t, os.MkdirAll(filepath.Join(dir, "to-link", "child_a", "child_b"), 0o700))
 
@@ -137,19 +137,19 @@ func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
 	assert.NoError(t, os.WriteFile(nestedSourcePath, []byte("test d"), 0o600))
 
 	sourceRoot := filepath.Join(dir, "to-link")
-	linkedRoot := filepath.Join(dir, "linked")
+	materializedRoot := filepath.Join(dir, "materialized")
 	repository := fsrepository.New(sourceRoot)
-	temporaryRepository := repository.LinkAllToTemporaryRepository(linkedRoot)
+	temporaryRepository := repository.MaterializeTemporaryRepository(materializedRoot)
 
-	t.Run("creates a link of all files recursively", func(t *testing.T) {
+	t.Run("materializes all files recursively", func(t *testing.T) {
 		var files []string
-		err := filepath.WalkDir(linkedRoot, func(path string, entry fs.DirEntry, err error) error {
+		err := filepath.WalkDir(materializedRoot, func(path string, entry fs.DirEntry, err error) error {
 			assert.NoError(t, err)
 			if entry.IsDir() {
 				return nil
 			}
 
-			relativePath, err := filepath.Rel(linkedRoot, path)
+			relativePath, err := filepath.Rel(materializedRoot, path)
 			assert.NoError(t, err)
 			assertMaterializedFile(t, filepath.Join(sourceRoot, relativePath), path)
 
@@ -169,13 +169,13 @@ func TestFSRepository_LinkAllToTemporaryRepository(t *testing.T) {
 	})
 
 	t.Run("results in a new temporary repository", func(t *testing.T) {
-		assert.Equal(t, fsrepository.NewTemporary(linkedRoot), temporaryRepository)
+		assert.Equal(t, fsrepository.NewTemporary(materializedRoot), temporaryRepository)
 	})
 
 	t.Run("isolates overwritten files from their sources", func(t *testing.T) {
 		temporaryRepository.Overwrite("test_a.go", []byte("mutated"))
 
-		materialized, err := os.ReadFile(filepath.Join(linkedRoot, "test_a.go"))
+		materialized, err := os.ReadFile(filepath.Join(materializedRoot, "test_a.go"))
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("mutated"), materialized)
 

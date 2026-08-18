@@ -15,7 +15,7 @@ type Logger interface {
 
 type Repository interface {
 	ListGoSourceFiles() []*gosourcefile.GoSourceFile
-	LinkAllToTemporaryRepository(temporaryPath string) TemporaryRepository
+	MaterializeTemporaryRepository(temporaryPath string) TemporaryRepository
 }
 
 type TemporaryRepository interface {

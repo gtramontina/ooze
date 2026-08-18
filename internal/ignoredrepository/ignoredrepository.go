@@ -35,6 +35,6 @@ FILE_LOOP:
 	return filtered
 }
 
-func (r *FilteredRepository) LinkAllToTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
-	return r.delegate.LinkAllToTemporaryRepository(temporaryPath)
+func (r *FilteredRepository) MaterializeTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
+	return r.delegate.MaterializeTemporaryRepository(temporaryPath)
 }

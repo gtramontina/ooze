@@ -51,7 +51,7 @@ func (r *FakeRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return sources
 }
 
-func (r *FakeRepository) LinkAllToTemporaryRepository(directoryPath string) ooze.TemporaryRepository {
+func (r *FakeRepository) MaterializeTemporaryRepository(directoryPath string) ooze.TemporaryRepository {
 	if r.tempCount >= len(r.temps) {
 		panic("fakerepository: temporary repositories not setup")
 	}

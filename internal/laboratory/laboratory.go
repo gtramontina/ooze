@@ -31,7 +31,7 @@ func (l *Laboratory) Test(
 	repository ooze.Repository,
 	file *gomutatedfile.GoMutatedFile,
 ) future.Future[result.Result[string]] {
-	tempRepository := repository.LinkAllToTemporaryRepository(l.temporaryDirectory.New())
+	tempRepository := repository.MaterializeTemporaryRepository(l.temporaryDirectory.New())
 	defer tempRepository.Remove()
 
 	file.WriteTo(tempRepository)
