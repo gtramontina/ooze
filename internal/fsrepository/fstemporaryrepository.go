@@ -3,10 +3,9 @@ package fsrepository
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 )
 
 var (
@@ -44,21 +43,28 @@ func (r *FSTemporaryRepository) Overwrite(filePath string, data []byte) {
 		panic(errRemoved)
 	}
 
-	fullPath := path.Join(r.root, filePath)
-
-	if !strings.HasPrefix(fullPath, r.root) {
-		panic(fmt.Errorf("%w: resolved path '%s' does not belong to root '%s'", errNotAllowed, fullPath, r.root))
+	relativePath := filepath.Clean(filepath.FromSlash(filePath))
+	if relativePath == "." || !filepath.IsLocal(relativePath) {
+		panic(fmt.Errorf("%w: path '%s' does not identify a file within root '%s'", errNotAllowed, filePath, r.root))
 	}
 
-	_, statErr := os.Stat(fullPath)
+	root, err := os.OpenRoot(r.root)
+	if err != nil {
+		panic(fmt.Errorf("failed opening repository root '%s': %w", r.root, err))
+	}
+	defer func() { _ = root.Close() }()
+
+	_, statErr := root.Lstat(relativePath)
 	if statErr == nil {
-		removeErr := os.Remove(fullPath)
+		removeErr := root.Remove(relativePath)
 		if removeErr != nil {
 			panic(fmt.Errorf("failed removing existing file '%s': %w", filePath, removeErr))
 		}
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		panic(fmt.Errorf("failed inspecting file '%s': %w", filePath, statErr))
 	}
 
-	err := os.WriteFile(fullPath, data, os.ModePerm) //nolint:gosec
+	err = root.WriteFile(relativePath, data, os.ModePerm)
 	if err != nil {
 		panic(fmt.Errorf("failed writing data to file '%s', %w", filePath, err))
 	}

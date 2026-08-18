@@ -65,18 +65,19 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 
 	sourceFiles := make([]*gosourcefile.GoSourceFile, len(paths))
 
-	for i, path := range paths {
-		data, _ := os.ReadFile(path)
-		relativePath, _ := filepath.Rel(r.root, path)
-		sourceFiles[i] = gosourcefile.New(relativePath, data)
+	for index, filePath := range paths {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			panic(fmt.Errorf("failed reading source file '%s': %w", filePath, err))
+		}
+
+		sourceFiles[index] = gosourcefile.New(r.logicalPath(filePath), data)
 	}
 
 	return sourceFiles
 }
 
 func (r *FSRepository) MaterializeTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
-	rootSize := len(strings.Split(r.root, string(os.PathSeparator)))
-
 	err := filepath.WalkDir(r.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -86,20 +87,20 @@ func (r *FSRepository) MaterializeTemporaryRepository(temporaryPath string) ooze
 			return err
 		}
 
-		absolutePath, err := filepath.Abs(path)
+		relativePath, err := filepath.Rel(r.root, path)
 		if err != nil {
-			return fmt.Errorf("failed getting absolute path for '%s': %w", path, err)
+			return fmt.Errorf("failed getting path relative to '%s' for '%s': %w", r.root, path, err)
 		}
 
-		linkPath := filepath.Join(temporaryPath, filepath.Join(strings.Split(path, string(os.PathSeparator))[rootSize:]...))
-		err = os.MkdirAll(filepath.Dir(linkPath), os.ModePerm)
+		materializedPath := filepath.Join(temporaryPath, relativePath)
+		err = os.MkdirAll(filepath.Dir(materializedPath), os.ModePerm)
 		if err != nil {
-			return fmt.Errorf("failed creating directory tree for '%s': %w", linkPath, err)
+			return fmt.Errorf("failed creating directory tree for '%s': %w", materializedPath, err)
 		}
 
-		err = os.Symlink(absolutePath, linkPath) //nolint:gosec // Trusted source path.
+		err = materializeFile(path, materializedPath)
 		if err != nil {
-			return fmt.Errorf("failed creating link from '%s' to '%s': %w", path, linkPath, err)
+			return fmt.Errorf("failed materializing '%s' at '%s': %w", path, materializedPath, err)
 		}
 
 		return nil
@@ -109,4 +110,13 @@ func (r *FSRepository) MaterializeTemporaryRepository(temporaryPath string) ooze
 	}
 
 	return NewTemporary(temporaryPath)
+}
+
+func (r *FSRepository) logicalPath(filePath string) string {
+	relativePath, err := filepath.Rel(r.root, filePath)
+	if err != nil {
+		panic(fmt.Errorf("failed resolving source path '%s' from root '%s': %w", filePath, r.root, err))
+	}
+
+	return filepath.ToSlash(relativePath)
 }

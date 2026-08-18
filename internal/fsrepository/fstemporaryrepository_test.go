@@ -7,6 +7,7 @@ import (
 
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFSTemporaryRepository(t *testing.T) {
@@ -97,7 +98,7 @@ func TestFSTemporaryRepository(t *testing.T) {
 				})
 
 				info, err := os.Stat(dir)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.True(t, info.IsDir())
 			})
 		}
