@@ -24,6 +24,8 @@ jobs:
         include:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
+          - name: macOS 26
+            runner: macos-26
           - name: Windows 2025
             runner: windows-2025
     steps:
