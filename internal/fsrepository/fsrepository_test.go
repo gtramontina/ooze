@@ -1,6 +1,7 @@
 package fsrepository_test
 
 import (
+	"go/build"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -86,6 +87,39 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		}, files)
 	})
 
+	t.Run("only includes source files matching the current build context", func(t *testing.T) {
+		dir := t.TempDir()
+		currentOS := build.Default.GOOS
+		currentArch := build.Default.GOARCH
+		otherOS := "windows"
+		if currentOS == otherOS {
+			otherOS = "linux"
+		}
+		otherArch := "amd64"
+		if currentArch == otherArch {
+			otherArch = "arm64"
+		}
+
+		writeSourceFile(t, dir, "architecture_"+currentArch+".go", "package fixture\n")
+		writeSourceFile(t, dir, "architecture_"+otherArch+".go", "package fixture\n")
+		writeSourceFile(t, dir, "combined_"+currentOS+"_"+currentArch+".go", "package fixture\n")
+		writeSourceFile(t, dir, "common.go", "package fixture\n")
+		writeSourceFile(t, dir, "filename_"+currentOS+".go", "package fixture\n")
+		writeSourceFile(t, dir, "filename_"+otherOS+".go", "package fixture\n")
+		writeSourceFile(t, dir, "constraint_current.go", "//go:build "+currentOS+"\n\npackage fixture\n")
+		writeSourceFile(t, dir, "constraint_other.go", "//go:build "+otherOS+"\n\npackage fixture\n")
+
+		repository := fsrepository.New(dir)
+		files := repository.ListGoSourceFiles()
+		assert.Equal(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.New("architecture_"+currentArch+".go", []byte("package fixture\n")),
+			gosourcefile.New("combined_"+currentOS+"_"+currentArch+".go", []byte("package fixture\n")),
+			gosourcefile.New("common.go", []byte("package fixture\n")),
+			gosourcefile.New("constraint_current.go", []byte("//go:build "+currentOS+"\n\npackage fixture\n")),
+			gosourcefile.New("filename_"+currentOS+".go", []byte("package fixture\n")),
+		}, files)
+	})
+
 	t.Run("recursive directories", func(t *testing.T) {
 		dir := t.TempDir()
 		assert.NoError(t, os.MkdirAll(filepath.Join(dir, "a", "b"), 0o700))
@@ -122,6 +156,11 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 			gosourcefile.New("source1.go", []byte("source data 1")),
 		}, files)
 	})
+}
+
+func writeSourceFile(t *testing.T, root, name, contents string) {
+	t.Helper()
+	assert.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600))
 }
 
 func TestFSRepository_MaterializeTemporaryRepository(t *testing.T) {
