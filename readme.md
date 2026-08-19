@@ -27,6 +27,8 @@ Mutations can also be domain/application-specific. Although, these are up to the
 
 It is worth mentioning that mutation tests can be quite expensive to run. Especially on larger code bases. And the reason is that for every mutation, on every source file, the entire suite of tests has to run. One can look at the bright side of this and think as an incentive to keep the test suites fast.
 
+Ooze only mutates source files included by the current platform's default Go build context. Files excluded by `GOOS`/`GOARCH` filename suffixes or `//go:build` constraints are skipped. Custom build tags passed only through `WithTestCommand` do not change source-file discovery.
+
 Mutation testing is a great ally in developing a robust code base and a reliable set of test suites.
 
 ## Quick Start
