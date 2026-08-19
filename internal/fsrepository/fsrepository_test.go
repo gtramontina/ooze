@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/fsrepository"
@@ -86,6 +87,28 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		}, files)
 	})
 
+	t.Run("only includes source files matching the current build context", func(t *testing.T) {
+		dir := t.TempDir()
+		otherOS := "windows"
+		if runtime.GOOS == otherOS {
+			otherOS = "linux"
+		}
+
+		writeSourceFile(t, dir, "common.go", "package fixture\n")
+		writeSourceFile(t, dir, "filename_"+runtime.GOOS+".go", "package fixture\n")
+		writeSourceFile(t, dir, "filename_"+otherOS+".go", "package fixture\n")
+		writeSourceFile(t, dir, "constraint_current.go", "//go:build "+runtime.GOOS+"\n\npackage fixture\n")
+		writeSourceFile(t, dir, "constraint_other.go", "//go:build "+otherOS+"\n\npackage fixture\n")
+
+		repository := fsrepository.New(dir)
+		files := repository.ListGoSourceFiles()
+		assert.Equal(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.New("common.go", []byte("package fixture\n")),
+			gosourcefile.New("constraint_current.go", []byte("//go:build "+runtime.GOOS+"\n\npackage fixture\n")),
+			gosourcefile.New("filename_"+runtime.GOOS+".go", []byte("package fixture\n")),
+		}, files)
+	})
+
 	t.Run("recursive directories", func(t *testing.T) {
 		dir := t.TempDir()
 		assert.NoError(t, os.MkdirAll(filepath.Join(dir, "a", "b"), 0o700))
@@ -122,6 +145,11 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 			gosourcefile.New("source1.go", []byte("source data 1")),
 		}, files)
 	})
+}
+
+func writeSourceFile(t *testing.T, root, name, contents string) {
+	t.Helper()
+	assert.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600))
 }
 
 func TestFSRepository_MaterializeTemporaryRepository(t *testing.T) {

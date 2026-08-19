@@ -3,6 +3,7 @@ package fsrepository
 import (
 	"errors"
 	"fmt"
+	"go/build"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,7 +15,8 @@ import (
 )
 
 type FSRepository struct {
-	root string
+	root         string
+	buildContext build.Context
 }
 
 func New(root string) *FSRepository {
@@ -37,7 +39,8 @@ func New(root string) *FSRepository {
 	}
 
 	return &FSRepository{
-		root: absRoot,
+		root:         absRoot,
+		buildContext: build.Default,
 	}
 }
 
@@ -50,6 +53,14 @@ func (r *FSRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 		}
 
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			return nil
+		}
+
+		matches, err := r.buildContext.MatchFile(filepath.Dir(path), entry.Name())
+		if err != nil {
+			return fmt.Errorf("match Go source file '%s' to build context: %w", path, err)
+		}
+		if !matches {
 			return nil
 		}
 
