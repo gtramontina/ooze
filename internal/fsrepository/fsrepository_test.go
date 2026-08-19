@@ -93,7 +93,14 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		if runtime.GOOS == otherOS {
 			otherOS = "linux"
 		}
+		otherArch := "amd64"
+		if runtime.GOARCH == otherArch {
+			otherArch = "arm64"
+		}
 
+		writeSourceFile(t, dir, "architecture_"+runtime.GOARCH+".go", "package fixture\n")
+		writeSourceFile(t, dir, "architecture_"+otherArch+".go", "package fixture\n")
+		writeSourceFile(t, dir, "combined_"+runtime.GOOS+"_"+runtime.GOARCH+".go", "package fixture\n")
 		writeSourceFile(t, dir, "common.go", "package fixture\n")
 		writeSourceFile(t, dir, "filename_"+runtime.GOOS+".go", "package fixture\n")
 		writeSourceFile(t, dir, "filename_"+otherOS+".go", "package fixture\n")
@@ -103,6 +110,8 @@ func TestFSRepository_ListGoSourceFiles(t *testing.T) {
 		repository := fsrepository.New(dir)
 		files := repository.ListGoSourceFiles()
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.New("architecture_"+runtime.GOARCH+".go", []byte("package fixture\n")),
+			gosourcefile.New("combined_"+runtime.GOOS+"_"+runtime.GOARCH+".go", []byte("package fixture\n")),
 			gosourcefile.New("common.go", []byte("package fixture\n")),
 			gosourcefile.New("constraint_current.go", []byte("//go:build "+runtime.GOOS+"\n\npackage fixture\n")),
 			gosourcefile.New("filename_"+runtime.GOOS+".go", []byte("package fixture\n")),
