@@ -12,6 +12,10 @@ _Avoid_: Run, release
 The process-local coordination authority shared by every Ooze campaign in one Go process. It owns campaign registration, admission, start and terminal linearization, and runtime-wide emergency settlement; after a fatal epoch it remains closed for the life of the process.
 _Avoid_: Global lock, campaign scheduler
 
+**Detected capacity**:
+The positive process-local Go-concurrency snapshot that supplies the full-automatic admission bound and the execution-profile value of serial attempts. It remains fixed for one process runtime and is not a claim that Ooze owns that many CPUs.
+_Avoid_: Worker count, CPU count
+
 **Repository snapshot**:
 The immutable source state from which the baseline and every mutant repository in a campaign are materialized.
 _Avoid_: Working tree, repository copy
@@ -25,15 +29,15 @@ One execution of the configured test command against a materialized repository. 
 _Avoid_: Test, run, worker
 
 **Baseline**:
-The unmutated attempt that establishes whether a non-empty campaign may admit mutants and supplies observations for automatic execution policy.
+The unmutated attempt that establishes whether a non-empty campaign may admit mutants.
 _Avoid_: Dry run, control
 
 **Execution profile**:
-The child CPU allocation fixed by the campaign mode and preserved across its baseline, primary attempts, and confirmations. Automatic campaigns use one child CPU; serial campaigns use Ooze's full detected capacity.
-_Avoid_: Worker count, confirmation override
+The inherited, cooperative Go runtime setting fixed by the campaign mode and preserved across its baseline, primary attempts, and confirmations. Automatic attempt roots receive `GOMAXPROCS=1`; serial attempt roots receive the detected-capacity value. Descendants may override or ignore it, so it is not an aggregate CPU or process-tree quota.
+_Avoid_: CPU allocation, subtree quota, confirmation override
 
 **Confirmation**:
-A fresh, process-local exclusive attempt that resolves one provisional mutant result after all competing attempts have drained.
+A fresh, process-local exclusive attempt that resolves a primary deadline with recorded peer overlap after all competing attempts have drained. A primary deadline without recorded peer overlap needs no confirmation.
 _Avoid_: Retry, rerun
 
 **Confirmation queue**:
@@ -41,12 +45,28 @@ The stable, finite ordering of provisional mutants awaiting confirmation while t
 _Avoid_: Retry batch, recovery queue
 
 **Serial attempt**:
-A primary attempt that runs process-local exclusively with Ooze's full owned CPU capacity. Separate campaigns may be interleaved between serial attempts, but never overlap one.
+A primary attempt that runs process-local exclusively and receives the full detected-capacity cooperative execution profile. Separate campaigns may be interleaved between serial attempts, but never overlap one.
 _Avoid_: Serial campaign, campaign lock
 
 **Admission**:
 Capacity reserved by Ooze's process-local policy for an attempt to proceed toward start commitment. Admission is either shared with bounded peers or exclusive after every peer has drained; it does not itself authorize launch, and waiting is ordinary scheduling rather than resource pressure.
 _Avoid_: Worker slot, semaphore
+
+**Recorded peer overlap**:
+The fact latched for a primary attempt once its live execution-domain obligation coexists with another Ooze-owned attempt's live obligation after both start commitments were accepted. It remains true if the peer drains before the primary trips and determines whether that primary's deadline requires confirmation; it is not a resource-usage measurement.
+_Avoid_: Active at trip, shared mode
+
+**Full automatic admission**:
+The initial automatic admission state, in which at most the detected capacity of shared automatic primary attempts may overlap across every campaign in the process runtime.
+_Avoid_: Ramp, calibrated capacity
+
+**Single-admission automatic**:
+The irreversible automatic fallback state, in which at most one automatic primary attempt may run in the process runtime and the automatic execution profile remains unchanged. It is not a serial attempt or an inferred resource capacity.
+_Avoid_: Serial fallback, learned capacity
+
+**Capacity pressure**:
+A trustworthy hard resource-exhaustion observation from shared automatic execution, or a primary deadline with recorded peer overlap that disappears under exclusive confirmation. It moves the process runtime from full automatic admission to single-admission automatic but never determines a mutant outcome or repairs uncertain evidence.
+_Avoid_: Host load, slow test, killed mutant
 
 **Start commitment**:
 The process runtime's accepted authorization for one prepared attempt generation to begin external execution. It creates an execution-domain obligation before launch, so later admission closure cannot reinterpret that attempt as unstarted.
@@ -85,7 +105,7 @@ _Avoid_: Cleanup unconfirmed, leaked process
 ## Outcomes
 
 **Provisional trip**:
-The first attempt-local deadline or process-fuse observation for a primary mutant attempt. It cannot affect the mutation score until confirmation.
+The first primary-mutant deadline observation from an attempt with recorded peer overlap. It cannot affect the mutation score until exclusive confirmation; a deadline without recorded peer overlap becomes directly attributable after authoritative drainage.
 _Avoid_: Timeout result, runaway result
 
 **Attributable outcome**:

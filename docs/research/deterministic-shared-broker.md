@@ -4,7 +4,14 @@ _Research date: 2026-08-21. This is a design input, not an implementation specif
 
 > **Resolution note:** The later [campaign transition-algebra decision](https://github.com/gtramontina/ooze/issues/57)
 > pins FIFO exclusive-barrier semantics and composes the pure broker with a pure process-runtime core.
-> This report preserves the comparative research while using those resolved constraints below.
+> [Managed-admission decision #58](https://github.com/gtramontina/ooze/issues/58) subsequently pins
+> only two automatic admission states: start at aggregate detected capacity `P`, then irreversibly
+> enter single-admission automatic after trustworthy hard shared exhaustion or after a primary
+> deadline with recorded peer overlap disappears in exclusive confirmation. There is no
+> ramp, fractional backoff, recovery, or confirmation toggle. A deadline without recorded peer
+> overlap is classified directly after authoritative drainage;
+> process-fuse normalization remains deferred. This report preserves the comparative research while
+> using those resolved constraints below.
 
 ## Conclusion
 
@@ -58,16 +65,23 @@ The common design is not machine-global locking. It is a semantic scheduler barr
 
 ## Why Ooze deliberately provides the stronger guarantee
 
-Peer mutation tools establish that phase-ordering a baseline before a run-local pool is conventional. That alone would be enough if Ooze's baseline were only a green-suite gate. Under the agreed model it also supplies observations to automatic execution policy. Letting another campaign's Ooze attempts overlap would contaminate the very evidence used to choose capacity. The process broker therefore treats the baseline as exclusive too.
+Peer mutation tools establish that phase-ordering a baseline before a run-local pool is conventional. Ooze gives the baseline the stronger process-local exclusive boundary so Ooze-owned peer work cannot manufacture a false baseline failure. The baseline gates mutant admission; it is not a capacity probe and does not drive a ramp.
 
-Confirmation has an even stronger reason. A provisional trip exists because the primary attempt's deadline or process fuse cannot yet be attributed safely. An exclusive confirmation removes every competing attempt that Ooze itself admitted in this process. A run-local retry like Stryker.NET's cannot support that statement when other groups remain active.
+Confirmation has an even stronger reason. Once a primary's accepted execution-domain obligation
+coexists with another Ooze-owned attempt obligation, the runtime latches recorded peer overlap for
+that primary. The fact remains true if the peer drains before the primary's deadline. Such a deadline
+cannot yet be attributed safely. An exclusive confirmation removes every competing attempt that Ooze
+itself admitted in this process. A run-local retry like Stryker.NET's cannot support that statement
+when other groups remain active. A primary deadline without recorded peer overlap is already
+attributable after its execution domain drains and does not enter the confirmation lane. Process-fuse
+observations remain outside this resolved timeout rule until their later normalization decision.
 
 The performance cost is narrow and intentional:
 
 - automatic primary mutant attempts remain shared across campaigns, while `Serial()` attempts are
   exclusive;
 - a non-empty campaign pays one exclusive baseline;
-- only provisionally tripped mutants pay an exclusive confirmation;
+- only primary deadlines with recorded peer overlap pay an exclusive confirmation;
 - an exclusive request stops _new_ admissions and lets active leases drain; it does not preempt or retry healthy work; and
 - one broker decision is tiny compared with repository materialization and child execution.
 
@@ -144,7 +158,7 @@ process-runtime core retains the cross-module state required to make a broker gr
 
 ```text
 broker:
-  detected capacity P, current admission capacity, and policy generation
+  detected capacity P and automatic admission state FullAutomatic(P) | SingleAdmissionAutomatic
   ordered pending requests
   active shared leases
   optional active exclusive lease
@@ -155,7 +169,7 @@ process runtime:
   Open | FatalClosing(epoch) | ClosedDrained(epoch) | ClosedUnconfirmed(epoch, nonempty residual)
   fatal epoch's stable ingress-ordered causes and elected reporting owner
   registered campaigns and open/closed primary gates
-  pending-start, prospective-domain, and owned-domain obligations
+  pending-start, prospective-domain, and owned-domain obligations plus recorded peer-overlap facts
   terminal-candidate and accepted-commit correlations
   next campaign, effect, event, and fatal-epoch IDs
 ```
@@ -169,8 +183,6 @@ Ordered state must use tickets or another stable order; decisions must never dep
 - **Request ID/ticket:** identifies one admission request and its position in arbitration.
 - **Lease ID:** identifies the permission that must be returned exactly once.
 - **Event sequence:** identifies the production linearization or simulated event order for diagnostics and replay.
-- **Policy generation:** needed only if capacity may change while requests are pending, so stale capacity effects cannot be mistaken for current policy.
-
 A durable broker-replacement epoch, globally unique IDs, durable sequence log, and cross-process
 identity are unnecessary unless a later design actually permits messages to survive broker
 replacement. The required in-memory process-runtime fatal epoch is different: it orders emergency
@@ -192,25 +204,41 @@ RequestStartCommit(campaign, attempt-generation, lease, phase-authorization)
 ProposeTerminalCandidate(campaign, outcome)
 CloseRuntime(cause)
 SettleRuntimeEmergency(epoch, obligation, observation)
-CapacityChanged(generation, capacity)
+EnterSingleAdmissionAutomatic(reason)
 ```
 
 Under the agreed campaign contract, an automatic primary mutant attempt requests `Shared`; a
 `Serial()` primary, baseline, or confirmation requests `Exclusive`. Every start commitment must match
 the granted lease for that attempt generation, the relevant primary gate or sole phase slot, and an
 open runtime. Automatic mode preserves `GOMAXPROCS=1` for baseline, primary, and confirmation children;
-`Serial()` preserves full `P` for all three classes. Before the first provisional trip reaches the
-campaign reducer, the shared coordination boundary atomically closes that campaign's primary-start
-gate and installs an attempt-independent confirmation barrier in the FIFO. Start commitment or closure
-wins at that one linearization point; installation cannot lag in an asynchronous effect queue. The
-barrier is not grantable until the pre-closure committed set and associated resources settle, the
-stable queue is sealed, and the barrier binds to its catalogue-first confirmation.
+`Serial()` preserves full `P` for all three classes. Whenever accepted live execution-domain
+obligations coexist, the shared coordination boundary latches recorded peer overlap for each affected
+primary. At a primary deadline, it consults that retained fact rather than the active set at the trip
+instant. With recorded peer overlap, it atomically closes that campaign's primary-start gate and
+installs an attempt-independent confirmation barrier in the FIFO before the provisional trip reaches
+the campaign reducer. Start commitment or
+closure wins at that one linearization point; installation cannot lag in an asynchronous effect
+queue. The barrier is not grantable until the pre-closure committed set and associated resources
+settle, the stable queue is sealed, and the barrier binds to its catalogue-first confirmation. With
+no recorded peer overlap, no confirmation barrier is installed: authoritative drainage permits
+direct timeout classification.
+
+Automatic admission starts in `FullAutomatic(P)`. A trustworthy hard resource-exhaustion observation
+from shared automatic execution, or a deadline with recorded peer overlap whose exclusive
+confirmation terminates ordinarily, emits the idempotent `EnterSingleAdmissionAutomatic` transition.
+Existing leases drain; future automatic grants cannot overlap. The transition does not classify the
+affected mutant, infer a new numeric capacity, or alter the automatic `GOMAXPROCS=1` execution
+profile. Hard exhaustion aborts the affected campaign unscored and is not retried. A repeated
+exclusive deadline supports an intrinsic timeout and leaves admission unchanged.
 
 Cancellation is explicit and correlated. A cancellation acknowledgement settles an ungranted request;
 a known late grant is returned. Neither cancellation nor a terminal proposal may erase an active
 lease, and waiting remains the absence of a grant rather than a hidden outcome.
 
-Baseline observations, attempt completion, provisional trips, confirmation results, execution-domain drainage, and deadline expiry belong to the campaign engine and runner model. They become explicit driver events when they can cause a later broker or campaign transition. The broker should not inspect test results.
+Baseline observations, attempt completion, overlap facts, provisional trips, confirmation results,
+execution-domain drainage, normalized hard-exhaustion observations, and deadline expiry belong to
+the campaign engine and runner model. They become explicit driver events when they can cause a later
+broker or campaign transition. The broker should not inspect test results.
 
 ### Effects
 
@@ -222,6 +250,7 @@ AdmissionGranted(request, lease)
 AdmissionCancelled(request)
 ConfirmationBarrierInstalled(campaign, wave)
 ConfirmationBarrierBound(campaign, wave, first-mutant)
+SingleAdmissionAutomaticEntered(reason)
 StartCommitAccepted(campaign, attempt-generation, lease)
 StartCommitRejected(campaign, attempt-generation)
 TerminalCommitAccepted(campaign)
@@ -295,7 +324,9 @@ This preserves the production coordination contract while making reset, isolatio
 
 ## Invariants worth asserting from the first slice
 
-1. A new shared grant never makes active shared capacity exceed current process capacity. A later capacity reduction may leave temporary overcommit only while existing leases drain.
+1. A new shared grant never makes active shared admission exceed `P` in full automatic mode or one in
+   single-admission automatic. The one-way transition may leave temporary overcommit only while
+   existing leases drain.
 2. If an exclusive lease exists, it is the only active lease; if any shared lease exists, no exclusive lease exists.
 3. Every granted lease belongs to exactly one registered campaign, one request, and one attempt
    generation.
@@ -303,7 +334,7 @@ This preserves the production coordination contract while making reset, isolatio
 5. A later shared ticket never overtakes an earlier exclusive ticket.
 6. A closed campaign receives no new grant, and a non-open runtime accepts no registration, grant,
    start commitment, or normal terminal commit.
-7. Capacity reduction never revokes an existing lease; it only constrains future grants.
+7. Entering single-admission automatic never revokes an existing lease; it only constrains future grants.
 8. Contention alone cannot produce a campaign result or mutation evidence.
 9. A start commitment is accepted only against the matching lease, generation, gate, and phase slot;
    acceptance creates the prospective execution-domain obligation before launch.
@@ -322,19 +353,28 @@ These assertions belong in the pure state-machine tests (and can use the propose
 - **Do not enumerate all goroutine interleavings.** Enumerate meaningful domain events; Loom's state-space warnings apply directly.
 - **Do not run real child processes inside the deterministic simulator.** Supply a deterministic runner and verify native supervision separately.
 - **Do not make a package global the only way to reach broker state.** That would couple tests, hide lifecycle, and turn process-local exclusivity into nondeterministic test pollution.
+- **Do not add a generic capacity-policy plug-in, `OOZE_*` override, focused mutant selector, or
+  timeout-confirmation switch to this runner slice.** Future configuration and catalogue selection
+  can resolve into campaign input before execution; they do not justify speculative broker states or
+  public seams now.
 
 ## Explicitly deferred questions
 
-1. The exact automatic capacity formula, ramp-up observations, pressure signal, and capacity-reduction
-   amount remain capacity-policy decisions. Cautious admission, monotonic backoff within a runtime
-   generation, and never revoking an active lease are already fixed constraints.
-2. One request and granted lease correlate with one attempt generation. Capacity arithmetic and the
-   precise lazy refill mechanics remain broker-policy details within the fixed at-most-`P` automatic
-   outstanding-demand bound.
-3. Whether production failure diagnostics persist a complete replay trace or only a bounded tail can wait until the simulation format exists.
-4. Whether bounded exhaustive exploration adds enough value beyond seeded traces should be measured on the pure reducer before adopting a model-checking framework.
-5. Equal throughput between simultaneous campaigns is not currently a requirement. The required fairness property is no starvation behind later arrivals.
+1. The automatic process-fuse observation and its normalization remain owned by the later fuse
+   decision; #58 does not treat an unspecified fuse trip as capacity pressure or mutation evidence.
+2. Whether production failure diagnostics persist a complete replay trace or only a bounded tail can wait until the simulation format exists.
+3. Whether bounded exhaustive exploration adds enough value beyond seeded traces should be measured on the pure reducer before adopting a model-checking framework.
+4. Equal throughput between simultaneous campaigns is not currently a requirement. The required fairness property is no starvation behind later arrivals.
 
 ## Recommended decision text
 
-> Ooze coordinates concurrent campaigns through one process-local admission broker whose arbitration is a deterministic state machine. Broker commands are linearized into an explicit ordered trace; contention waits and cannot itself become a campaign failure. Shared admissions follow stable ticket order, and an earlier exclusive admission forms a barrier that later shared work cannot overtake. Production goroutine arrival may choose the linearization of overlapping calls, but real time and runtime wake order do not otherwise decide policy. Simulations construct isolated broker state and choose or replay the same explicit events, while the production entry point alone owns the shared process instance.
+> Ooze coordinates concurrent campaigns through one process-local admission broker whose arbitration
+> is a deterministic state machine. Broker commands are linearized into an explicit ordered trace;
+> contention waits and cannot itself become a campaign failure. Shared admissions follow stable ticket
+> order, and an earlier exclusive admission forms a barrier that later shared work cannot overtake.
+> Automatic admission starts at aggregate detected capacity `P` and has one irreversible fallback to
+> single-admission automatic after trustworthy capacity pressure; it has no intermediate numeric
+> controller. Production goroutine arrival may choose the linearization of overlapping calls, but real
+> time and runtime wake order do not otherwise decide policy. Simulations construct isolated broker
+> state and choose or replay the same explicit events, while the production entry point alone owns the
+> shared process instance.
