@@ -166,7 +166,7 @@ every linter runs at upstream defaults. The ones that shape this design:
 | Linter | Constraint | Consequence |
 | --- | --- | --- |
 | `funlen` | >60 lines or >40 statements fails | one monolithic `Advance` switch is not viable; per-event handlers are forced |
-| `cyclop` / `gocyclo` | complexity >10 fails | same |
+| `cyclop` / `gocyclo` | complexity >10 fails | same — and measured: a type switch's complexity is `arms + 1`, so a flat dispatch is capped at **9 variants** (10 arms reports 11, 15 arms reports 16). Two-level dispatch is forced for any sealed set larger than that |
 | `nestif` | nested-block complexity ≥4 fires | guard clauses over nested conditionals |
 | `exhaustruct` | every composite literal must set every field | favours constructor functions and interface-based sealed sums over tagged structs with unused "oneof" fields |
 | `exhaustive` | `switch` over a typed enum must cover every constant | sealed phase/state enums are checked for free |
