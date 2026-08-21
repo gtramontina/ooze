@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ooze managed admission — logic prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #20211f;
+      --muted: #666961;
+      --paper: #f7f5ef;
+      --panel: #fffef9;
+      --line: #d8d4c9;
+      --accent: #315f4b;
+      --accent-soft: #dfece5;
+      --warn: #8a4f24;
+      --warn-soft: #f5e6d8;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 760px; font-size: clamp(2rem, 5vw, 4rem); line-height: 1.02; letter-spacing: -0.045em; }
+    h2 { margin-bottom: 16px; font-size: 1.25rem; letter-spacing: -0.02em; }
+    h3 { margin-bottom: 6px; font-size: 0.95rem; }
+    p { color: var(--muted); }
+
+    .eyebrow {
+      margin-bottom: 14px;
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 760;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .intro { max-width: 850px; font-size: 1.05rem; }
+
+    .superseded {
+      margin-bottom: 32px;
+      padding: 20px 22px;
+      border: 2px solid var(--warn);
+      border-radius: 14px;
+      background: var(--warn-soft);
+      color: #693914;
+    }
+
+    .superseded strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #542b0f;
+      font-size: 1.05rem;
+    }
+
+    .superseded p { margin: 0; color: inherit; }
+
+    .question {
+      margin: 28px 0 30px;
+      padding: 20px 22px;
+      border-left: 4px solid var(--accent);
+      background: var(--panel);
+    }
+
+    .question strong { color: var(--ink); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      padding: 22px;
+    }
+
+    .state { grid-column: span 8; }
+    .actions { grid-column: span 4; }
+    .comparison { grid-column: span 12; }
+    .walkthroughs { grid-column: span 12; }
+
+    .state-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .datum {
+      min-height: 92px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #f1efe8;
+    }
+
+    .datum span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .datum strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 1.45rem;
+      line-height: 1.15;
+    }
+
+    .datum small { display: block; margin-top: 5px; color: var(--muted); }
+
+    .notice {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 9px;
+      background: var(--accent-soft);
+      color: #234535;
+    }
+
+    .notice.warn { background: var(--warn-soft); color: #693914; }
+
+    button, input { font: inherit; }
+
+    button {
+      width: 100%;
+      margin: 0 0 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    button:hover { border-color: var(--accent); }
+    button:disabled { cursor: not-allowed; opacity: 0.45; }
+    button.primary { border-color: var(--accent); background: var(--accent); color: white; }
+    button.warn { border-color: #d9aa83; color: var(--warn); }
+
+    label {
+      display: block;
+      margin: 12px 0 5px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+    }
+
+    input[type="number"] {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+    }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 11px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    tr.recommended td { background: var(--accent-soft); font-weight: 680; }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      align-items: end;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .controls button { width: auto; margin: 0; }
+
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .tabs button { width: auto; margin: 0; }
+    .tabs button.active { border-color: var(--accent); background: var(--accent-soft); color: #234535; }
+
+    .scenario {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 20px;
+    }
+
+    .steps { counter-reset: step; }
+    .steps button { position: relative; padding-left: 42px; }
+    .steps button::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 12px;
+      top: 9px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #ece9df;
+      text-align: center;
+      font-size: 0.75rem;
+      line-height: 20px;
+    }
+
+    .trace {
+      max-height: 230px;
+      margin-top: 16px;
+      padding: 0;
+      overflow: auto;
+      list-style: none;
+      border-top: 1px solid var(--line);
+    }
+
+    .trace li { padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.86rem; }
+    .trace li strong { color: var(--ink); }
+
+    .footnote { margin: 16px 0 0; font-size: 0.82rem; }
+
+    @media (max-width: 780px) {
+      .state, .actions, .comparison, .walkthroughs { grid-column: span 12; }
+      .state-grid { grid-template-columns: 1fr 1fr; }
+      .scenario, .controls { grid-template-columns: 1fr; }
+      .controls button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <aside class="superseded" role="note" aria-label="Superseded design notice">
+      <strong>Superseded exploration — not the selected design</strong>
+      <p>This prototype preserves the rejected <code>min(P, 2)</code> ramp-and-halve policy for design history. The selected policy starts automatic admission at fixed <code>P</code> and, only after validated evidence that Ooze-owned overlap contributed to pressure, irreversibly reduces automatic admission to <code>1</code> for the process runtime. It has no ramp, proportional backoff, or recovery probe.</p>
+    </aside>
+
+    <div class="eyebrow">Throwaway logic prototype · Wayfinder decision</div>
+    <h1>How cautiously should Ooze trust available capacity?</h1>
+    <p class="intro">This demo explores one candidate admission policy for automatic campaigns. It deliberately models only Ooze’s process-local admission decisions—not operating-system containment, deadlines, scoring, or queue mechanics.</p>
+
+    <div class="question">
+      <strong>Question under test:</strong> after the mandatory clean automatic baseline supplies the singleton observation, should shared admission start at <code>min(P, 2)</code>, grow by one only after a clean drained primary proves the current limit was fully used, and—after confirmed contention—halve once and stop growing for the life of this process runtime?
+    </div>
+
+    <div class="grid">
+      <section class="panel state">
+        <h2>Current policy state</h2>
+        <div class="state-grid" id="state-grid"></div>
+        <div class="notice" id="notice"></div>
+        <ol class="trace" id="trace"></ol>
+      </section>
+
+      <section class="panel actions">
+        <h2>Free play</h2>
+        <label for="capacity">Detected capacity P</label>
+        <input id="capacity" type="number" min="1" max="128" value="8">
+        <button class="primary" id="reset">Reset after a passing baseline</button>
+        <button id="clean">A primary drains cleanly while demand is saturated</button>
+        <button id="idle-clean">A primary drains cleanly without waiting demand</button>
+        <button class="warn" id="trip">A primary reaches its deadline</button>
+        <button id="confirm-normal">Exclusive confirmation finishes normally</button>
+        <button id="confirm-trip">Exclusive confirmation reaches the deadline too</button>
+        <button class="warn" id="resource-pressure">A launch reports typed resource pressure</button>
+        <label for="peak">Peak overlapping shared attempts</label>
+        <input id="peak" type="number" min="1" max="128" value="8">
+      </section>
+
+      <section class="panel comparison">
+        <h2>Healthy-path cost</h2>
+        <p>All attempts below take one equal time unit. The mandatory baseline is included. No ramp policy creates extra commands; it only leaves some capacity idle near the beginning.</p>
+        <div class="controls">
+          <div>
+            <label for="compare-capacity">Detected capacity P</label>
+            <input id="compare-capacity" type="number" min="1" max="128" value="8">
+          </div>
+          <div>
+            <label for="mutants">Number of mutants</label>
+            <input id="mutants" type="number" min="0" max="100000" value="100">
+          </div>
+          <button id="compare">Recalculate</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Policy</th><th>Commands</th><th>Time units</th><th>vs full start</th></tr>
+          </thead>
+          <tbody id="comparison-body"></tbody>
+        </table>
+        <p class="footnote">This equal-duration model is intentionally pessimistic for mutation suites where many mutants fail quickly. It exposes startup under-utilisation; it does not claim to predict wall-clock time.</p>
+      </section>
+
+      <section class="panel walkthroughs">
+        <h2>Guided walkthroughs</h2>
+        <div class="tabs" id="tabs"></div>
+        <div class="scenario">
+          <div>
+            <h3 id="scenario-title"></h3>
+            <p id="scenario-description"></p>
+            <div class="notice" id="scenario-watch"></div>
+          </div>
+          <div class="steps" id="scenario-steps"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    // Pure policy module. The DOM shell below is disposable.
+    const AdmissionPolicy = (() => {
+      const clone = (value) => structuredClone(value);
+
+      function create(capacity) {
+        const P = Math.max(1, Math.trunc(capacity));
+        const firstSharedLimit = Math.min(P, 2);
+        return {
+          capacity: P,
+          limit: firstSharedLimit,
+          ceiling: P,
+          phase: firstSharedLimit === P ? "at-capacity" : "ramping",
+          generation: 0,
+          cleanEvidence: 0,
+          backoffs: 0,
+          confirmations: 0,
+          provisional: null,
+          lastChange: "The passing automatic baseline supplied singleton evidence; begin with the smallest concurrent probe.",
+          trace: [{ event: "Automatic baseline passed", result: `first shared limit ${firstSharedLimit} of ${P}` }],
+        };
+      }
+
+      function record(state, event, result) {
+        state.trace.unshift({ event, result });
+        state.trace = state.trace.slice(0, 12);
+        state.lastChange = result;
+        return state;
+      }
+
+      function cleanPrimaryDrained(current, saturated) {
+        const state = clone(current);
+        state.cleanEvidence += 1;
+        if (state.provisional) {
+          return record(state, "Clean primary drained", "Growth remains paused until the provisional observation is confirmed.");
+        }
+        if (state.phase === "backed-off") {
+          return record(state, "Clean primary drained", "The result is trustworthy, but a prior backoff keeps the ceiling fixed.");
+        }
+        if (!saturated) {
+          return record(state, "Clean primary drained", "No waiting demand: do not infer that a larger admission limit is useful or safe.");
+        }
+        if (state.limit >= state.ceiling) {
+          state.phase = "at-capacity";
+          return record(state, "Clean primary drained", "Already at the detected capacity ceiling.");
+        }
+        state.limit += 1;
+        state.generation += 1;
+        if (state.limit === state.ceiling) state.phase = "at-capacity";
+        return record(state, "Clean saturated primary drained", `Increase future shared admission to ${state.limit}; no command is repeated.`);
+      }
+
+      function deadlineTrip(current, peak) {
+        const state = clone(current);
+        if (state.provisional) {
+          return record(state, "Another primary reached its deadline", "It joins the existing confirmation wave; admission policy waits for authoritative evidence.");
+        }
+        state.provisional = {
+          kind: "deadline",
+          peak: clampPeak(peak, state.capacity),
+          generation: state.generation,
+        };
+        state.confirmations += 1;
+        return record(state, "Primary deadline", `Growth pauses. One fresh exclusive confirmation is required; current leases are not revoked.`);
+      }
+
+      function confirmationOrdinary(current) {
+        const state = clone(current);
+        if (!state.provisional) return record(state, "Confirmation finished", "Ignored: there is no provisional observation to resolve.");
+        const peak = state.provisional.peak;
+        state.provisional = null;
+        if (peak <= 1) {
+          return record(state, "Confirmation finished normally", "There was no overlapping Ooze attempt, so admission cannot be blamed or reduced below one.");
+        }
+        const reduced = Math.max(1, Math.ceil(peak / 2));
+        state.ceiling = Math.min(state.ceiling, reduced);
+        state.limit = Math.min(state.limit, state.ceiling);
+        state.phase = "backed-off";
+        state.backoffs += 1;
+        state.generation += 1;
+        return record(state, "Confirmation finished normally", `The deadline disappeared in isolation. Reduce future shared admission to ${state.ceiling} and do not re-ramp in this runtime.`);
+      }
+
+      function confirmationTrip(current) {
+        const state = clone(current);
+        if (!state.provisional) return record(state, "Confirmation reached its deadline", "Ignored: there is no provisional observation to resolve.");
+        state.provisional = null;
+        state.phase = state.limit === state.ceiling ? "at-capacity" : "ramping";
+        return record(state, "Confirmation reached its deadline", "The mutant reproduced while exclusive. Classify it as TimedOut; shared admission is unchanged.");
+      }
+
+      function directResourcePressure(current, peak) {
+        const state = clone(current);
+        const observed = clampPeak(peak, state.capacity);
+        const reduced = Math.max(1, Math.ceil(observed / 2));
+        state.ceiling = Math.min(state.ceiling, reduced);
+        state.limit = Math.min(state.limit, state.ceiling);
+        state.phase = "backed-off";
+        state.backoffs += 1;
+        state.generation += 1;
+        return record(state, "Typed resource pressure", `Abort the affected campaign without scoring; reduce future grants to ${state.ceiling}. Never retry the failed launch.`);
+      }
+
+      function clampPeak(value, capacity) {
+        return Math.max(1, Math.min(capacity, Math.trunc(value) || 1));
+      }
+
+      function simulateHealthy(capacity, mutants, initialLimit) {
+        const P = Math.max(1, Math.trunc(capacity));
+        const total = Math.max(0, Math.trunc(mutants));
+        if (total === 0) return { commands: 0, time: 0 };
+
+        let limit = Math.max(1, Math.min(P, Math.trunc(initialLimit)));
+        let launched = 0;
+        let completed = 0;
+        let now = 0;
+        const finishes = [];
+
+        const fill = () => {
+          while (finishes.length < limit && launched < total) {
+            finishes.push(now + 1);
+            launched += 1;
+          }
+          finishes.sort((a, b) => a - b);
+        };
+
+        fill();
+        while (completed < total) {
+          now = finishes.shift();
+          completed += 1;
+          const demandWaiting = launched < total;
+          const saturatedBeforeDrain = finishes.filter((time) => time >= now).length + 1 >= limit;
+          if (demandWaiting && saturatedBeforeDrain && limit < P && initialLimit < P) limit += 1;
+          fill();
+        }
+
+        return { commands: total + 1, time: now + 1 };
+      }
+
+      return {
+        create,
+        cleanPrimaryDrained,
+        deadlineTrip,
+        confirmationOrdinary,
+        confirmationTrip,
+        directResourcePressure,
+        simulateHealthy,
+      };
+    })();
+
+    const byId = (id) => document.getElementById(id);
+    let state = AdmissionPolicy.create(8);
+
+    function render() {
+      const provisional = state.provisional;
+      const cards = [
+        ["Detected capacity", state.capacity, "Hard upper ceiling P"],
+        ["Shared admission", state.limit, "Future grants; active leases are never revoked"],
+        ["Current ceiling", state.ceiling, state.phase === "backed-off" ? "Frozen after pressure" : "May still grow"],
+        ["Policy phase", labelPhase(state.phase), `Generation ${state.generation}`],
+        ["Clean evidence", state.cleanEvidence, "Drained shared primaries"],
+        ["Exceptional work", state.confirmations, "Exclusive confirmations requested"],
+      ];
+      byId("state-grid").innerHTML = cards.map(([label, value, note]) => `
+        <div class="datum"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>
+      `).join("");
+
+      const notice = byId("notice");
+      notice.className = `notice${provisional || state.phase === "backed-off" ? " warn" : ""}`;
+      notice.textContent = provisional
+        ? `Provisional deadline at peak overlap ${provisional.peak}. Growth is paused pending one exclusive confirmation.`
+        : state.lastChange;
+
+      byId("trace").innerHTML = state.trace.map((entry) => `<li><strong>${entry.event}:</strong> ${entry.result}</li>`).join("");
+      byId("confirm-normal").disabled = !provisional;
+      byId("confirm-trip").disabled = !provisional;
+    }
+
+    function labelPhase(phase) {
+      return ({ ramping: "Ramping", "at-capacity": "At ceiling", "backed-off": "Backed off" })[phase] || phase;
+    }
+
+    function numeric(id) { return Math.max(1, Number(byId(id).value) || 1); }
+
+    byId("reset").addEventListener("click", () => { state = AdmissionPolicy.create(numeric("capacity")); byId("peak").value = state.capacity; render(); });
+    byId("clean").addEventListener("click", () => { state = AdmissionPolicy.cleanPrimaryDrained(state, true); render(); });
+    byId("idle-clean").addEventListener("click", () => { state = AdmissionPolicy.cleanPrimaryDrained(state, false); render(); });
+    byId("trip").addEventListener("click", () => { state = AdmissionPolicy.deadlineTrip(state, numeric("peak")); render(); });
+    byId("confirm-normal").addEventListener("click", () => { state = AdmissionPolicy.confirmationOrdinary(state); render(); });
+    byId("confirm-trip").addEventListener("click", () => { state = AdmissionPolicy.confirmationTrip(state); render(); });
+    byId("resource-pressure").addEventListener("click", () => { state = AdmissionPolicy.directResourcePressure(state, numeric("peak")); render(); });
+
+    function renderComparison() {
+      const P = numeric("compare-capacity");
+      const mutants = Math.max(0, Number(byId("mutants").value) || 0);
+      const policies = [
+        ["Start at full P", P, false],
+        ["Start at two, then +1 (candidate)", Math.min(2, P), true],
+        ["Repeat singleton, then +1", 1, false],
+      ];
+      const ideal = AdmissionPolicy.simulateHealthy(P, mutants, P);
+      byId("comparison-body").innerHTML = policies.map(([name, initial, recommended]) => {
+        const result = AdmissionPolicy.simulateHealthy(P, mutants, initial);
+        const delta = ideal.time === 0 ? "—" : `${Math.round(((result.time / ideal.time) - 1) * 100)}%`;
+        return `<tr class="${recommended ? "recommended" : ""}"><td>${name}</td><td>${result.commands}</td><td>${result.time}</td><td>${delta}</td></tr>`;
+      }).join("");
+    }
+
+    byId("compare").addEventListener("click", renderComparison);
+
+    const scenarios = [
+      {
+        id: "healthy",
+        title: "Healthy capacity reaches its ceiling",
+        description: "Eight CPUs are available and demand stays saturated. Each clean drained primary permits one more future admission.",
+        watch: "Watch admission grow without executing any extra command. The only cost is temporary idle capacity.",
+        setup: () => AdmissionPolicy.create(8),
+        steps: [
+          ["First shared primary drains cleanly: 2 → 3", (s) => AdmissionPolicy.cleanPrimaryDrained(s, true)],
+          ["Another drains cleanly: 3 → 4", (s) => AdmissionPolicy.cleanPrimaryDrained(s, true)],
+          ["Continue clean evidence: 4 → 5", (s) => AdmissionPolicy.cleanPrimaryDrained(s, true)],
+          ["Continue until the detected ceiling", (s) => { while (s.limit < s.capacity) s = AdmissionPolicy.cleanPrimaryDrained(s, true); return s; }],
+        ],
+      },
+      {
+        id: "contention",
+        title: "A deadline disappears in isolation",
+        description: "The broker reached eight shared attempts. One primary reaches its deadline, but the fresh exclusive confirmation finishes normally.",
+        watch: "This is evidence correlated with Ooze-owned concurrency. One confirmation halves the ceiling; the policy does not probe upward again.",
+        setup: () => { let s = AdmissionPolicy.create(8); while (s.limit < 8) s = AdmissionPolicy.cleanPrimaryDrained(s, true); return s; },
+        steps: [
+          ["Primary reaches its deadline at peak overlap 8", (s) => AdmissionPolicy.deadlineTrip(s, 8)],
+          ["Exclusive confirmation finishes normally", (s) => AdmissionPolicy.confirmationOrdinary(s)],
+          ["Later primary drains cleanly", (s) => AdmissionPolicy.cleanPrimaryDrained(s, true)],
+        ],
+      },
+      {
+        id: "mutant",
+        title: "A genuinely slow mutant reproduces",
+        description: "A primary reaches its deadline under shared admission. Its fresh exclusive confirmation reaches the deadline too.",
+        watch: "The mutant becomes TimedOut. Ooze does not punish admission for a result that reproduced without any Ooze sibling.",
+        setup: () => { let s = AdmissionPolicy.create(8); while (s.limit < 8) s = AdmissionPolicy.cleanPrimaryDrained(s, true); return s; },
+        steps: [
+          ["Primary reaches its deadline at peak overlap 8", (s) => AdmissionPolicy.deadlineTrip(s, 8)],
+          ["Exclusive confirmation reaches its deadline too", (s) => AdmissionPolicy.confirmationTrip(s)],
+        ],
+      },
+      {
+        id: "launch",
+        title: "The operating system refuses a launch",
+        description: "A normalized resource-class launch failure arrives while four shared attempts overlap. The command never becomes mutation evidence.",
+        watch: "The affected campaign aborts without retrying the launch. Future admission backs off, while already-active leases are left to drain.",
+        setup: () => { let s = AdmissionPolicy.create(8); while (s.limit < 4) s = AdmissionPolicy.cleanPrimaryDrained(s, true); return s; },
+        steps: [
+          ["Launch reports typed resource pressure at overlap 4", (s) => AdmissionPolicy.directResourcePressure(s, 4)],
+          ["A healthy sibling later drains", (s) => AdmissionPolicy.cleanPrimaryDrained(s, true)],
+        ],
+      },
+    ];
+
+    let activeScenario = scenarios[0];
+    let scenarioStep = 0;
+
+    function selectScenario(scenario) {
+      activeScenario = scenario;
+      scenarioStep = 0;
+      state = scenario.setup();
+      byId("scenario-title").textContent = scenario.title;
+      byId("scenario-description").textContent = scenario.description;
+      byId("scenario-watch").textContent = scenario.watch;
+      renderTabs();
+      renderSteps();
+      render();
+    }
+
+    function renderTabs() {
+      byId("tabs").innerHTML = scenarios.map((scenario) => `<button class="${scenario.id === activeScenario.id ? "active" : ""}" data-scenario="${scenario.id}">${scenario.title}</button>`).join("");
+      byId("tabs").querySelectorAll("button").forEach((button) => button.addEventListener("click", () => selectScenario(scenarios.find((scenario) => scenario.id === button.dataset.scenario))));
+    }
+
+    function renderSteps() {
+      byId("scenario-steps").innerHTML = activeScenario.steps.map(([label], index) => `<button ${index === scenarioStep ? "" : "disabled"} data-step="${index}">${label}</button>`).join("");
+      byId("scenario-steps").querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
+        const index = Number(button.dataset.step);
+        state = activeScenario.steps[index][1](state);
+        scenarioStep += 1;
+        renderSteps();
+        render();
+      }));
+    }
+
+    renderComparison();
+    selectScenario(scenarios[0]);
+  </script>
+</body>
+</html>
