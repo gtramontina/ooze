@@ -328,7 +328,8 @@ future Ooze-owned outer overlap; it does not claim that one is a measured safe r
 The configured command remains opaque. Standard Go commands inherit useful safe defaults without
 user tuning. Explicit overrides and non-Go internal parallelism remain outside the portable quota.
 Typed, trustworthy infrastructure observations may activate the outer single-admission fallback.
-The process fuse remains a separately deferred decision; neither mechanism is evidence that Ooze can
+The process fuse is resolved as a profile-scoped descendant-count ceiling (see
+[#60](https://github.com/gtramontina/ooze/issues/60)); neither mechanism is evidence that Ooze can
 reserve all resources in the command subtree.
 
 A future optional native resource-domain adapter may be worthwhile only if users require stronger
@@ -349,4 +350,6 @@ system-wide Ooze daemon, and automatic container provisioning are overengineerin
 compatibility and lifecycle surfaces while still failing to enforce one total budget over every
 opaque command. Process-local admission, the one-CPU Go child profile, correct containment, and
 infrastructure-safe scoring are the smallest current design that truthfully addresses the observed
-failure. A portable fuse remains separate work.
+failure. A fuse is portable only under the automatic execution profile, where
+[#60](https://github.com/gtramontina/ooze/issues/60) measured a fiftyfold margin; under the serial
+profile the margin is 1.46x and no count observation is made.

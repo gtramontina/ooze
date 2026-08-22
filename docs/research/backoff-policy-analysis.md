@@ -268,7 +268,7 @@ throughput/risk policy: it keeps the logarithmic distinct-wave bound and the les
 bound in the favourable threshold case. It is still a heuristic, not inferred safe capacity.
 
 The automatic runaway fuse should not be assigned to either branch in this ticket. Its meaning is
-owned by the later fuse decision: a descendant/resource escape belongs with hard exhaustion; a
+owned by the fuse decision, now resolved: a descendant/resource escape belongs with hard exhaustion; a
 contained liveness expiry may belong with deadlines. Treating every future fuse as “soft” now would
 prejudge the observation #60 still needs to define.
 
@@ -501,7 +501,8 @@ Issue #58 adopts the least machinery supported by the analysis:
 6. express the idempotent transition as a pure function over normalized ordered events.
 
 No public strategy interface, worker-count option, timeout-confirmation toggle, pressure generation,
-or numeric controller is warranted. Fuse meaning remains deferred rather than guessed. Future
+or numeric controller is warranted. Fuse meaning is now resolved rather than guessed; see
+[#60](https://github.com/gtramontina/ooze/issues/60). Future
 focused selection and environment overrides can become resolved campaign inputs later; this runner
 does not add speculative hooks for them.
 

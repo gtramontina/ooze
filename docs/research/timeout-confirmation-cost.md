@@ -10,7 +10,7 @@ implementation specification._
 > deadline without recorded peer overlap becomes final after authoritative drainage. An ordinary
 > exclusive confirmation irreversibly changes future automatic admission from `P` to one,
 > while a repeated deadline is intrinsic and leaves admission unchanged. There is no confirmation
-> toggle. Process-fuse normalization and future `OOZE_*`/focused-selection work remain outside this
+> toggle. [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60) has since resolved the fuse: a fixed 64-descendant ceiling, counted by parent identity, guarding automatic attempts only. A trip is directly attributable killed-class `Runaway` after drainage, never confirmed and never capacity pressure, because the count is contention-independent under the `GOMAXPROCS=1` automatic profile. `Serial()` attempts carry no fuse. Future `OOZE_*`/focused-selection work remains outside this
 > runner decision.
 
 ## Executive answer

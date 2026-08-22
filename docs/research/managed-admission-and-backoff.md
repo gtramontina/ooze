@@ -15,8 +15,7 @@ fallback](https://github.com/gtramontina/ooze/issues/58), not an implementation 
 
 Only a primary deadline with recorded peer overlap enters exclusive confirmation. A deadline without
 recorded peer overlap becomes directly attributable after authoritative drainage. A repeated
-exclusive deadline is intrinsic and does not change admission. Process-fuse normalization remains
-deferred to the fuse decision.
+exclusive deadline is intrinsic and does not change admission. [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60) has since resolved the fuse: a fixed 64-descendant ceiling, counted by parent identity, guarding automatic attempts only. A trip is directly attributable killed-class `Runaway` after drainage, never confirmed and never capacity pressure, because the count is contention-independent under the `GOMAXPROCS=1` automatic profile. `Serial()` attempts carry no fuse.
 
 The source and experiment findings below remain valid design evidence. Sections describing a
 `min(P, 2)` bootstrap, additive ramp, pressure epochs, or `ceil(A/2)` preserve a rejected proposal
@@ -75,7 +74,8 @@ also comes from `GOMAXPROCS` ([`cmd/go` documentation](https://pkg.go.dev/cmd/go
 one-CPU automatic execution profile directly effective against the nested Go fan-out that a mere
 outer worker count misses. A configured non-Go command may ignore the environment value; that is
 why Ooze's outer admission boundary remains the only portable control it owns. The separately
-deferred fuse may later add supervision, but #58 assigns it no capacity meaning.
+resolved fuse adds supervision but no capacity meaning: #58 assigns a fuse trip none, and
+[#60](https://github.com/gtramontina/ooze/issues/60) confirms a trip is never capacity pressure.
 
 ## Mutation tools: useful warnings, no adaptive answer
 
@@ -160,7 +160,7 @@ platform sources above. It is not a claim that another mutation tool implements 
 | Ordinary test failure | No admission reduction | A failed assertion kills a mutant; it is not resource pressure. |
 | Exclusive baseline or confirmation deadline | No admission change | No Ooze-owned peer overlapped it, so shared admission is not the differentiator. |
 | Trustworthy hard resource exhaustion from shared automatic execution | Enter single-admission automatic; abort the affected campaign without retry | POSIX `EAGAIN` can mean a process/thread limit, while `ENOMEM` means insufficient creation resources; no child exists after a failed `fork` ([Linux `fork(2)`](https://man7.org/linux/man-pages/man2/fork.2.html)). The platform adapter must distinguish these from command-not-found or permission errors. |
-| Process-fuse observation | Deferred | [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60) must define and normalize the observation before it can affect admission or mutation evidence. |
+| Process-fuse observation | Resolved | [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60) defines it as an automatic-profile descendant count against a fixed ceiling, directly attributable and never capacity pressure. |
 | Elapsed-duration increase alone | No admission reduction | Mutants are heterogeneous, external load is uncontrolled, and a duration threshold would duplicate the deadline decision. |
 | Host load average or Linux PSI | Diagnostics only | PSI accurately quantifies CPU, memory, and I/O stalls and can be scoped to a cgroup, but it is Linux-specific and system PSI includes unrelated workloads ([Linux PSI documentation](https://docs.kernel.org/accounting/psi.html)). |
 

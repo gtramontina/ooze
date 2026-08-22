@@ -9,7 +9,7 @@ implementation specification._
 > single-admission automatic after trustworthy hard shared exhaustion or a deadline with recorded peer
 > overlap that disappears in exclusive confirmation. No ramp, half-step, recovery loop, or
 > confirmation toggle was adopted. A deadline without recorded peer overlap is classified directly
-> after authoritative drainage; process-fuse normalization and future `OOZE_*`/selection work remain
+> after authoritative drainage; future `OOZE_*`/selection work remains
 > outside this decision.
 
 ## Executive answer

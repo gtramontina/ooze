@@ -10,7 +10,7 @@ _Research date: 2026-08-21. This is a design input, not an implementation specif
 > deadline with recorded peer overlap disappears in exclusive confirmation. There is no
 > ramp, fractional backoff, recovery, or confirmation toggle. A deadline without recorded peer
 > overlap is classified directly after authoritative drainage;
-> process-fuse normalization remains deferred. This report preserves the comparative research while
+> [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60) has since resolved the fuse: a fixed 64-descendant ceiling, counted by parent identity, guarding automatic attempts only. A trip is directly attributable killed-class `Runaway` after drainage, never confirmed and never capacity pressure, because the count is contention-independent under the `GOMAXPROCS=1` automatic profile. `Serial()` attempts carry no fuse. This report preserves the comparative research while
 > using those resolved constraints below.
 
 ## Conclusion
@@ -360,8 +360,7 @@ These assertions belong in the pure state-machine tests (and can use the propose
 
 ## Explicitly deferred questions
 
-1. The automatic process-fuse observation and its normalization remain owned by the later fuse
-   decision; #58 does not treat an unspecified fuse trip as capacity pressure or mutation evidence.
+1. Resolved. [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60) has since resolved the fuse: a fixed 64-descendant ceiling, counted by parent identity, guarding automatic attempts only. A trip is directly attributable killed-class `Runaway` after drainage, never confirmed and never capacity pressure, because the count is contention-independent under the `GOMAXPROCS=1` automatic profile. `Serial()` attempts carry no fuse.
 2. Whether production failure diagnostics persist a complete replay trace or only a bounded tail can wait until the simulation format exists.
 3. Whether bounded exhaustive exploration adds enough value beyond seeded traces should be measured on the pure reducer before adopting a model-checking framework.
 4. Equal throughput between simultaneous campaigns is not currently a requirement. The required fairness property is no starvation behind later arrivals.
