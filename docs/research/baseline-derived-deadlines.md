@@ -185,3 +185,37 @@ derived deadline exceeds 10 minutes and `TimedOut` becomes unreachable for in-te
 
 `internal/cmdtestrunner/cmdtestrunner.go` treats any non-zero exit as a kill without inspecting
 output, so nothing currently distinguishes a genuine test failure from a `panic: test timed out`.
+
+## Changing the constants changes reported scores
+
+The constants are internal — [#52](https://github.com/gtramontina/ooze/issues/52) forbids
+exposing a multiplier — so adjusting one breaks no API. It does change results. The deadline
+decides which mutants land killed-class `TimedOut` and which are `Survived`, so tightening it
+raises the reported score and loosening it lowers it. Users gate CI on
+`WithMinimumThreshold`, so anyone sitting near their threshold sees a build flip on upgrade
+with nothing in the API to explain it.
+
+Adjustment is also asymmetric in risk. Raising a constant is safe: fewer false deadlines.
+Lowering one risks a false deadline, and a false deadline under overlap consumes the
+process-wide confirmation net described on
+[#74](https://github.com/gtramontina/ooze/issues/74), after which every later trip in that
+process scores unconfirmed. So the constants ratchet up more easily than down.
+
+**mutmut has the clean answer, for whenever Ooze caches mutant verdicts across runs.** It
+fingerprints the timeout configuration separately from everything else, so changing
+`timeout_multiplier` or `timeout_constant` invalidates **only** timeout-classified verdicts
+and keeps every other cached verdict intact — its own comment reads "Timeout config only
+reclassifies timeouts; keep every other verdict"
+([`__main__.py`](https://github.com/boxed/mutmut/blob/cd2f73da310c3fc90cffcb3e6c768cdeac14e18c/src/mutmut/__main__.py#L1096-L1098),
+[`configuration.py`](https://github.com/boxed/mutmut/blob/cd2f73da310c3fc90cffcb3e6c768cdeac14e18c/src/mutmut/configuration.py#L207-L208)).
+Ooze caches nothing today and result caching is outside the managed-execution destination, so
+this is a pointer rather than a requirement.
+
+Two consequences that are *not* deferred:
+
+- Whoever writes the release notes for this change should say that mutation scores may move,
+  and in which direction, rather than leaving users to discover it from a red build.
+- [#64](https://github.com/gtramontina/ooze/issues/64) should record the resolved deadline in
+  the trace. A stored trace replayed after a constant change otherwise produces different
+  outcomes with nothing to indicate why, which quietly weakens the replay guarantee
+  [#57](https://github.com/gtramontina/ooze/issues/57) asks for.
