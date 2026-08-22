@@ -3,6 +3,13 @@
 _Research date: 2026-08-22. Measurements and platform facts for issue
 [#60](https://github.com/gtramontina/ooze/issues/60)._
 
+> **Resolution note:** [Choose the automatic runaway fuse](https://github.com/gtramontina/ooze/issues/60)
+> resolved the conditional to **yes, under the automatic execution profile only**. Every measurement below
+> was taken at the *ambient* `GOMAXPROCS`, which is not the profile an automatic attempt runs under; the
+> "no threshold can work" conclusion holds for the serial profile and is superseded for the automatic one
+> by the follow-up measurements in the final section. No kernel process-creation ceiling is set on any
+> platform.
+
 > **Scope:** [#57](https://github.com/gtramontina/ooze/issues/57) and
 > [#63](https://github.com/gtramontina/ooze/issues/63) deliberately leave the fuse conditional —
 > "which fuse observations, **if any**". This note establishes whether a descendant-count signal can
@@ -118,3 +125,49 @@ creation, depth > 2, breadth > 1, `setsid` escapees, `CREATE_BREAKAWAY_FROM_JOB`
   cap is unprotected. Measured spawn rate of a trivial spawner was 1747 procs/s single-threaded.
 - `kinfo_proc p_comm` lags the exec'd image, so any name-based filtering misclassifies processes
   mid-exec. Observed directly: a process reporting `comm=go` whose argv was already `.../compile`.
+
+## Follow-up: the same questions under Ooze's own execution profile
+
+Every measurement above ran at the ambient `GOMAXPROCS` (14). That is the wrong profile.
+[#58](https://github.com/gtramontina/ooze/issues/58) gives every **automatic** attempt root
+`GOMAXPROCS=1`, and `go help build` documents that `-p` — "the number of programs, such as build
+commands or test binaries, that can be run in parallel" — **defaults to `GOMAXPROCS`**. Pinning it to 1
+removes the toolchain fan-out that made count uninformative. Re-measured with `GOMAXPROCS` set
+explicitly in the child environment, 38 runs, same 10 ms sampler:
+
+| Command, cold cache | `GOMAXPROCS=14` | `GOMAXPROCS=1` |
+| --- | --- | --- |
+| Ooze's own mutant command | 17 (x4 runs) | **4** (x4 runs) |
+| `gotestsum -- -race -cover -shuffle` | 42 / 52 / 67 | **4** |
+| `go test -cover ./...` | 27 | **3** |
+| N concurrent cold `go tool covdata`, N=14 | 101 / 138 / 101 | **28** (exactly 2N, zero variance) |
+| Runaway fixture, 200 sleeping children | 201 | **201** (profile-independent) |
+
+- **Automatic profile ceiling: 4 peak, 3 sustained-3s.** Margin to the runaway is **50x** on peak and
+  **67x** on sustained occupancy. Time above 100 descendants was 0 ms in all eight legitimate runs
+  against ~4,100 ms for the runaway.
+- **Serial profile ceiling: 78** without a user-side process pool, **138** with one. Margin **2.58x** /
+  **1.46x**. Only sustained occupancy retains usable separation (28 against 201, 7.2x).
+- **`GOMAXPROCS=1` eliminates the quadratic nesting outright.** N concurrent cold `covdata` produce
+  exactly `2N` descendants — one `go` plus exactly one `compile` child each — with zero variance across
+  repetitions, against 7.2–10.8 per `covdata` at `GOMAXPROCS=14`.
+- **The count is contention-independent under the automatic profile.** Peak was exactly 4 in every run,
+  cold and warm, across repetitions. This is what licenses direct attribution without confirmation: peers
+  cannot manufacture a fuse trip.
+- **`k · (p + p²)` is not defensible.** The quadratic term is empirically absent once `GOMAXPROCS` is
+  pinned: the formula gives 2 at `p=1` against a measured 4, and 210 at `p=14`, already above the runaway
+  it must catch. The smallest `k` with no false positive anywhere is 25, which at `p=14` is 5,250 and can
+  never fire.
+- **An explicit `-p` in the supervised command is the dominant lever** and is bounded by nothing Ooze
+  sets. Measured at `GOMAXPROCS=1`: `-p 8` → 10, `-p 14` → 29, `-p 32` → 50, fitting `peak ≈ 2p + 1`.
+- **`-parallel` has zero effect on descendant count**, confirming it is in-process test parallelism:
+  `-parallel 8` measured identically to no flag, and adding it on top of `-p 8` changed nothing. The
+  readme's documented `-parallel 3` example is therefore unaffected.
+
+### Process-group counting structurally undercounts
+
+Ooze's macOS supervisor enumerates with `sysctl kern.proc.pgrp` (`process_tree_darwin.go:335`), but its
+own children call `Setpgid` (`process_tree_darwin.go:187`, `process_tree_linux.go:121`) and thereby leave
+the watched group. Up to **26% of samples disagreed** with a parent-pid walk, and at one measured peak
+**2 of 4 live descendants were invisible to the group check**. A census must walk parent identity; group
+membership is a containment handle for signalling, not a count.

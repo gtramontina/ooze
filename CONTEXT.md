@@ -83,8 +83,8 @@ The runtime ownership created by an accepted start commitment. It resolves as a 
 _Avoid_: PID reservation, started process
 
 **Process fuse**:
-Ooze's automatic execution-domain guard against runaway descendant activity.
-_Avoid_: Process limit, runaway timeout
+Ooze's automatic guard against runaway descendant creation. It compares the count of an automatic attempt root's live descendants, walked by parent identity, against one fixed ceiling. It exists only under the automatic execution profile, where that count is contention-independent, so a trip is directly attributable after drainage and never capacity pressure. Serial attempts carry no fuse, and process-group membership is a containment handle rather than a census.
+_Avoid_: Process limit, runaway timeout, host load
 
 **Drained domain**:
 An execution domain authoritatively observed to contain no process that can execute or create descendants within the platform contract.
@@ -105,7 +105,7 @@ _Avoid_: Cleanup unconfirmed, leaked process
 ## Outcomes
 
 **Provisional trip**:
-The first primary-mutant deadline observation from an attempt with recorded peer overlap. It cannot affect the mutation score until exclusive confirmation; a deadline without recorded peer overlap becomes directly attributable after authoritative drainage.
+The first primary-mutant deadline observation from an attempt with recorded peer overlap. A deadline is the only observation that can be provisional, because a fuse trip is contention-independent and therefore directly attributable. It cannot affect the mutation score until exclusive confirmation; a deadline without recorded peer overlap becomes directly attributable after authoritative drainage.
 _Avoid_: Timeout result, runaway result
 
 **Attributable outcome**:
