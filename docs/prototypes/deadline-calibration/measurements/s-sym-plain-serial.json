@@ -1,0 +1,64 @@
+{
+  "label": "sym-plain-serial",
+  "profile": "serial",
+  "gomaxprocs": 14,
+  "peers": 1,
+  "cache_state": "shared",
+  "command": "go test -count=1 ./...",
+  "baseline_seconds": 11.237615584,
+  "baseline_cpu_seconds": 4.816039,
+  "attempts": [
+    {
+      "index": 0,
+      "wave": 0,
+      "mutated": "pkg1/pkg.go",
+      "seconds": 11.186289458,
+      "cpu_seconds": 4.8848009999999995,
+      "exit_code": 0,
+      "ratio_to_baseline": 0.9954326497808771
+    },
+    {
+      "index": 1,
+      "wave": 1,
+      "mutated": "pkg10/pkg.go",
+      "seconds": 11.331021292,
+      "cpu_seconds": 4.860112,
+      "exit_code": 0,
+      "ratio_to_baseline": 1.0083118796244455
+    },
+    {
+      "index": 2,
+      "wave": 2,
+      "mutated": "pkg11/pkg.go",
+      "seconds": 11.195881417,
+      "cpu_seconds": 4.963711,
+      "exit_code": 0,
+      "ratio_to_baseline": 0.9962862079870911
+    },
+    {
+      "index": 3,
+      "wave": 3,
+      "mutated": "pkg12/pkg.go",
+      "seconds": 11.164117,
+      "cpu_seconds": 4.8563410000000005,
+      "exit_code": 0,
+      "ratio_to_baseline": 0.9934595926110297
+    },
+    {
+      "index": 4,
+      "wave": 4,
+      "mutated": "pkg13/pkg.go",
+      "seconds": 11.1147395,
+      "cpu_seconds": 4.783678,
+      "exit_code": 0,
+      "ratio_to_baseline": 0.989065644479337
+    }
+  ],
+  "mutant_min_seconds": 11.1147395,
+  "mutant_median_seconds": 11.186289458,
+  "mutant_max_seconds": 11.331021292,
+  "ratio_median": 0.9954326497808771,
+  "ratio_max": 1.0083118796244455,
+  "wall_clock_total_seconds": 67.33660175,
+  "attempts_per_wall_second": 0.07425382139959268
+}

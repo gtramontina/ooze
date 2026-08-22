@@ -1,0 +1,145 @@
+{
+  "label": "sym-cpu-p14",
+  "profile": "automatic",
+  "gomaxprocs": 1,
+  "peers": 14,
+  "cache_state": "shared",
+  "command": "go test -count=1 ./...",
+  "baseline_seconds": 6.719446334,
+  "baseline_cpu_seconds": 2.2665699999999998,
+  "attempts": [
+    {
+      "index": 0,
+      "wave": 0,
+      "mutated": "pkg1/pkg.go",
+      "seconds": 59.560186333,
+      "cpu_seconds": 2.528231,
+      "exit_code": 0,
+      "ratio_to_baseline": 8.863853265949754
+    },
+    {
+      "index": 1,
+      "wave": 0,
+      "mutated": "pkg10/pkg.go",
+      "seconds": 59.915512583,
+      "cpu_seconds": 2.554914,
+      "exit_code": 0,
+      "ratio_to_baseline": 8.916733552857036
+    },
+    {
+      "index": 2,
+      "wave": 0,
+      "mutated": "pkg11/pkg.go",
+      "seconds": 63.873671083,
+      "cpu_seconds": 2.5616250000000003,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.505793767531562
+    },
+    {
+      "index": 3,
+      "wave": 0,
+      "mutated": "pkg12/pkg.go",
+      "seconds": 60.636822666,
+      "cpu_seconds": 2.543918,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.024080207201191
+    },
+    {
+      "index": 4,
+      "wave": 0,
+      "mutated": "pkg2/pkg.go",
+      "seconds": 62.780735375,
+      "cpu_seconds": 2.562328,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.34314112419251
+    },
+    {
+      "index": 5,
+      "wave": 0,
+      "mutated": "pkg3/pkg.go",
+      "seconds": 60.27168875,
+      "cpu_seconds": 2.532899,
+      "exit_code": 0,
+      "ratio_to_baseline": 8.969740325929658
+    },
+    {
+      "index": 6,
+      "wave": 0,
+      "mutated": "pkg4/pkg.go",
+      "seconds": 61.361361791,
+      "cpu_seconds": 2.579053,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.13190741334076
+    },
+    {
+      "index": 7,
+      "wave": 0,
+      "mutated": "pkg5/pkg.go",
+      "seconds": 62.074290375,
+      "cpu_seconds": 2.570064,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.238006718039815
+    },
+    {
+      "index": 8,
+      "wave": 0,
+      "mutated": "pkg6/pkg.go",
+      "seconds": 59.196985959,
+      "cpu_seconds": 2.575059,
+      "exit_code": 0,
+      "ratio_to_baseline": 8.809801137850714
+    },
+    {
+      "index": 9,
+      "wave": 0,
+      "mutated": "pkg7/pkg.go",
+      "seconds": 62.423676541,
+      "cpu_seconds": 2.560927,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.290002991041078
+    },
+    {
+      "index": 10,
+      "wave": 0,
+      "mutated": "pkg8/pkg.go",
+      "seconds": 61.710300375,
+      "cpu_seconds": 2.58153,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.183837076389693
+    },
+    {
+      "index": 11,
+      "wave": 0,
+      "mutated": "pkg9/pkg.go",
+      "seconds": 60.996461,
+      "cpu_seconds": 2.538354,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.077602226147938
+    },
+    {
+      "index": 12,
+      "wave": 0,
+      "mutated": "pkg1/pkg.go",
+      "seconds": 63.152879917,
+      "cpu_seconds": 2.5791399999999998,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.398524339341796
+    },
+    {
+      "index": 13,
+      "wave": 0,
+      "mutated": "pkg10/pkg.go",
+      "seconds": 63.526482291,
+      "cpu_seconds": 2.575303,
+      "exit_code": 0,
+      "ratio_to_baseline": 9.454124511652065
+    }
+  ],
+  "mutant_min_seconds": 59.196985959,
+  "mutant_median_seconds": 61.710300375,
+  "mutant_max_seconds": 63.873671083,
+  "ratio_median": 9.183837076389693,
+  "ratio_max": 9.505793767531562,
+  "wall_clock_total_seconds": 70.6871695,
+  "attempts_per_wall_second": 0.19805574475577215
+}
