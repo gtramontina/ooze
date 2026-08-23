@@ -51,4 +51,21 @@ func TestAdversarialProcessFixtures(t *testing.T) {
 	t.Run("does not return while a descendant that left the process group can write", func(t *testing.T) {
 		assertDoesNotReturnWhileDescendantCanWrite(t, true, descendantEscapesProcessGroup)
 	})
+
+	// This escapee is reachable when draining begins, and the drain itself is
+	// what makes it unreachable. It sits outside the supervised process group
+	// behind an intermediate that is inside it, so a census that enumerated live
+	// group members and walked from them would find it. The sweep kills group
+	// members, the intermediate among them, and the escapee is then orphaned and
+	// in no group the supervisor holds -- so the next census reports the domain
+	// empty and drainage is declared over a process that is still running.
+	//
+	// That distinguishes it from the escapee above, whose parent is the root and
+	// which is already unreachable by anything before the drain starts. This one
+	// is not a platform limit: the information needed to reach it exists, and the
+	// drain destroys it. Reproduced against the supervisor -- drainage reported
+	// while the escapee was alive, reparented to process 1.
+	t.Run("does not report drainage after its own sweep orphans an escapee", func(t *testing.T) {
+		assertDoesNotReturnWhileDescendantCanWrite(t, true, descendantEscapesBehindParent)
+	})
 }

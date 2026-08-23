@@ -2,6 +2,7 @@ package cmdtestrunner_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,7 @@ func helperBehaviours() map[string]func() {
 		"environment":       reportEnvironmentVariable,
 		"spawn-descendant":  spawnDescendant,
 		"relay-descendant":  relayDescendant,
+		"lingering-relay":   lingerAsLiveGroupMember,
 		"spawn-fanout":      spawnFanout,
 		"linger":            lingerUntilContained,
 		"delayed-write":     writeAfterParentExits,
@@ -171,6 +173,7 @@ const (
 	descendantEscapesNothing      = ""
 	descendantEscapesProcessGroup = "process-group"
 	descendantEscapesSession      = "session"
+	descendantEscapesBehindParent = "process-group-behind-a-live-parent"
 )
 
 // supervisedDescendant is a descendant of a running supervised command, already
@@ -343,6 +346,15 @@ func requireEscapeHappened(t *testing.T, escape string, rootProcessID, descendan
 		"process %d announced parent %d, but the kernel reports %d",
 		descendantProcessID, announcedParent, observedParent)
 
+	if escape == descendantEscapesBehindParent {
+		require.NotEqual(t, rootProcessID, announcedParent,
+			"this escapee must sit behind an intermediate rather than be a child of the supervised root")
+		require.NotEqual(t, 1, announcedParent,
+			"this escapee's parent must still be alive inside the supervised group, not already reaped away")
+
+		return
+	}
+
 	if escape != descendantEscapesSession {
 		require.Equal(t, rootProcessID, announcedParent,
 			"this descendant must remain a child of the supervised root: being reachable by a walk of parent "+
@@ -375,30 +387,9 @@ func spawnDescendant() {
 		os.Exit(2)
 	}
 
-	escape := os.Getenv(descendantEscapeEnvironmentVariable)
-
-	// A session escape needs a second fork: the relay creates the new session,
-	// spawns the writer into it, and exits, leaving the writer with no ancestor
-	// the supervisor can walk back to.
-	nextMode := "delayed-write"
-	if escape == descendantEscapesSession {
-		nextMode = "relay-descendant"
-	}
-
-	err = os.Setenv(helperProcessModeEnvironmentVariable, nextMode)
+	command, err := descendantCommandFor(executable, os.Getenv(descendantEscapeEnvironmentVariable))
 	if err != nil {
 		os.Exit(2)
-	}
-
-	command := exec.Command(executable) //nolint:noctx // Test helper has its own bounded lifecycle.
-	command.Env = os.Environ()
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	switch escape {
-	case descendantEscapesProcessGroup:
-		detachDescendantProcessGroup(command)
-	case descendantEscapesSession:
-		detachDescendantSession(command)
 	}
 	err = command.Start()
 	if err != nil {
@@ -419,6 +410,45 @@ func spawnDescendant() {
 // escapee. It is already the leader of a new session, so the writer it spawns
 // inherits that session, and relaying exits immediately so the writer is
 // reparented away from the supervised tree.
+// descendantCommandFor builds the command that carries out one escape: the role
+// the next process plays, and the containment handle it drops on the way in.
+//
+// Which handle is dropped is the whole difference between the escapes. A process
+// group leaves the census; a session leaves the census and every ancestry the
+// supervisor could walk. Dropping nothing, while lingering inside the group, is
+// how an escapee stays reachable right up to the moment the drain kills the
+// thing that was making it reachable.
+func descendantCommandFor(executable, escape string) (*exec.Cmd, error) {
+	role := "delayed-write"
+	switch escape {
+	case descendantEscapesSession:
+		// A session escape needs a second fork: the relay creates the new
+		// session, spawns the writer into it, and exits, leaving that writer
+		// with no ancestor the supervisor can walk back to.
+		role = "relay-descendant"
+	case descendantEscapesBehindParent:
+		role = "lingering-relay"
+	}
+
+	err := os.Setenv(helperProcessModeEnvironmentVariable, role)
+	if err != nil {
+		return nil, fmt.Errorf("select descendant role %q: %w", role, err)
+	}
+
+	command := exec.Command(executable) //nolint:noctx // Test helper has its own bounded lifecycle.
+	command.Env = os.Environ()
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	switch escape {
+	case descendantEscapesProcessGroup:
+		detachDescendantProcessGroup(command)
+	case descendantEscapesSession:
+		detachDescendantSession(command)
+	}
+
+	return command, nil
+}
+
 func relayDescendant() {
 	executable, err := os.Executable()
 	if err != nil {
@@ -513,6 +543,35 @@ func lingerUntilContained() {
 	time.Sleep(descendantLingerTimeout)
 
 	_ = os.WriteFile(descendantRetiredPrefix+strconv.Itoa(processID), nil, 0o600)
+	os.Exit(0)
+}
+
+// lingerAsLiveGroupMember spawns an escapee out of the supervised process group
+// and then stays alive inside it. It is the live in-group ancestor through which
+// that escapee can still be reached, and it is itself an ordinary member that a
+// drain sweep will kill.
+func lingerAsLiveGroupMember() {
+	executable, err := os.Executable()
+	if err != nil {
+		os.Exit(2)
+	}
+
+	err = os.Setenv(helperProcessModeEnvironmentVariable, "delayed-write")
+	if err != nil {
+		os.Exit(2)
+	}
+
+	command := exec.Command(executable) //nolint:noctx // Bounded by descendantLingerTimeout.
+	command.Env = os.Environ()
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	detachDescendantProcessGroup(command)
+	err = command.Start()
+	if err != nil {
+		os.Exit(2)
+	}
+
+	time.Sleep(descendantLingerTimeout)
 	os.Exit(0)
 }
 
