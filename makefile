@@ -20,6 +20,13 @@ test.mutation: $(pre-reqs)
 	@go test -timeout=30m -count=1 -v -tags=mutation
 .PHONY: test.mutation
 
+# Adversarial process fixtures. Held out of `test` because they reproduce
+# containment failures that are not all fixed yet; see the fixture comments for
+# which platforms contain each behaviour.
+test.adversarial: $(pre-reqs)
+	@gotestsum --format=testname -- -count=1 -timeout=120s -tags=adversarial ./internal/cmdtestrunner/...
+.PHONY: test.adversarial
+
 lint: $(pre-reqs)
 	@golangci-lint -v run
 .PHONY: lint

@@ -3,7 +3,11 @@
 package cmdtestrunner_test
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +15,54 @@ import (
 )
 
 const descendantSupervisionSupported = true
+
+// descendantIdentity reports the parent and session of a live process, read from
+// the kernel rather than from anything the process itself claimed.
+func descendantIdentity(processID int) (int, int, error) {
+	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", processID))
+	if err != nil {
+		return 0, 0, fmt.Errorf("inspect process %d: %w", processID, err)
+	}
+
+	session, err := unix.Getsid(processID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read session of process %d: %w", processID, err)
+	}
+
+	for line := range strings.Lines(string(status)) {
+		parent, found := strings.CutPrefix(strings.TrimSpace(line), "PPid:")
+		if !found {
+			continue
+		}
+
+		parentProcessID, convertErr := strconv.Atoi(strings.TrimSpace(parent))
+		if convertErr != nil {
+			return 0, session, fmt.Errorf("read parent of process %d: %w", processID, convertErr)
+		}
+
+		return parentProcessID, session, nil
+	}
+
+	return 0, session, nil
+}
+
+// descendantCanStillExecute reports whether the process remains able to run.
+// A killed but unreaped process is still in the process table, so a bare
+// kill(pid, 0) probe reports it as present and cannot tell it apart from a live
+// one. The fixture therefore asks the question the containment contract asks --
+// whether any process can still execute -- rather than whether a PID exists.
+func descendantCanStillExecute(processID int) (bool, error) {
+	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", processID))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("inspect process %d: %w", processID, err)
+	}
+
+	return !strings.Contains(string(status), "State:\tZ"), nil
+}
 
 func observeProcessExit(t *testing.T, processID int) (processExitObservation, error) {
 	t.Helper()

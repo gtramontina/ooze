@@ -3,6 +3,7 @@
 package cmdtestrunner_test
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -11,6 +12,56 @@ import (
 )
 
 const descendantSupervisionSupported = true
+
+// darwinZombieState is the P_stat value of a process that has exited but has
+// not been reaped. Such a process still occupies the process table.
+const darwinZombieState = 5
+
+// descendantIdentity reports the parent and session of a live process, read from
+// the kernel rather than from anything the process itself claimed.
+func descendantIdentity(processID int) (int, int, error) {
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.pid", processID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("inspect process %d: %w", processID, err)
+	}
+
+	session, err := unix.Getsid(processID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read session of process %d: %w", processID, err)
+	}
+
+	for _, process := range processes {
+		if int(process.Proc.P_pid) == processID {
+			return int(process.Eproc.Ppid), session, nil
+		}
+	}
+
+	return 0, session, nil
+}
+
+// descendantCanStillExecute reports whether the process remains able to run.
+// A killed but unreaped process is still in the process table, so a bare
+// kill(pid, 0) probe reports it as present and cannot tell it apart from a live
+// one. The fixture therefore asks the question the containment contract asks --
+// whether any process can still execute -- rather than whether a PID exists.
+func descendantCanStillExecute(processID int) (bool, error) {
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.pid", processID)
+	if err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("inspect process %d: %w", processID, err)
+	}
+
+	for _, process := range processes {
+		if int(process.Proc.P_pid) == processID && process.Proc.P_stat != darwinZombieState {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
 
 func observeProcessExit(t *testing.T, processID int) (processExitObservation, error) {
 	t.Helper()
