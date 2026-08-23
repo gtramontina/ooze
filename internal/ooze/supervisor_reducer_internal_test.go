@@ -156,10 +156,14 @@ func TestSupervisorReducerLaunchNilBoundaryRevokesAndLateCompletionRetainsCustod
 				kind:       test.completionKind,
 				failure:    test.failure,
 			}
-			next, lateActions := reduceSupervisor(unconfirmed, supervisorEvent{
+			lateEvent := supervisorEvent{
 				kind: supervisorLaunchCompleted, generation: test.generation,
 				at: completion.at, completion: &completion,
-			})
+			}
+			if test.completionKind == supervisorLaunchReleased {
+				lateEvent.drainBy = launchBy.Add(time.Second)
+			}
+			next, lateActions := reduceSupervisor(unconfirmed, lateEvent)
 			assertSupervisorActions(t, lateActions, test.wantActions...)
 			if lateActions[0].token <= boundaryActions[len(boundaryActions)-1].token {
 				t.Fatalf("late action token did not advance: boundary=%#v late=%#v", boundaryActions, lateActions)
