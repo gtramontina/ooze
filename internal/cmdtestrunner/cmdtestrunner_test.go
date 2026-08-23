@@ -24,46 +24,88 @@ const (
 	helperProcessTimeout                      = 30 * time.Second
 	testProcessTimeout                        = 10 * time.Second
 	fixtureCleanupTimeout                     = 5 * time.Second
+
+	// A wide spawner has to be bounded before it runs, not after: a trivial
+	// spawner was recorded on this project at 1747 processes per second. So the
+	// breadth is a fixed compile-time count, never derived at runtime; every
+	// descendant self-exits on its own timer even if nothing cleans up after it;
+	// and the fixture terminates each descendant it has verified.
+	//
+	// Sixteen is chosen to sit clear of the resolved 64-descendant ceiling for
+	// automatic attempts, so that a legitimately contained fan-out is never near
+	// the threshold a fuse would judge. No fuse exists in this package yet, so
+	// that is the reason for the number rather than a protection this fixture
+	// currently relies on.
+	descendantFanoutBreadth = 16
+	descendantLingerTimeout = 20 * time.Second
 )
 
 const (
-	descendantRootFile     = "descendant-root"
-	descendantReadyFile    = "descendant-ready"
-	descendantObservedFile = "descendant-observed"
-	descendantReleaseFile  = "descendant-release"
-	descendantWriteFile    = "descendant-write"
+	descendantRootFile      = "descendant-root"
+	descendantReadyFile     = "descendant-ready"
+	descendantFanoutFile    = "descendant-fanout"
+	descendantAlivePrefix   = "descendant-alive-"
+	descendantRetiredPrefix = "descendant-retired-"
+	descendantObservedFile  = "descendant-observed"
+	descendantReleaseFile   = "descendant-release"
+	descendantWriteFile     = "descendant-write"
 )
 
 type processExitObservation func()
 
 func TestMain(m *testing.M) {
-	switch os.Getenv(helperProcessModeEnvironmentVariable) {
-	case "fail":
-		_, _ = os.Stdout.WriteString("tests failed")
-		os.Exit(1)
-	case "pass":
-		_, _ = os.Stdout.WriteString("tests passed")
-		os.Exit(0)
-	case "working-directory":
-		_, err := os.Stat("working-directory-marker")
-		if err != nil {
-			os.Exit(2)
-		}
-
-		_, _ = os.Stdout.WriteString("marker found")
-		os.Exit(0)
-	case "environment":
-		_, _ = os.Stdout.WriteString(os.Getenv("TEST_VAR"))
-		os.Exit(0)
-	case "spawn-descendant":
-		spawnDescendant()
-	case "relay-descendant":
-		relayDescendant()
-	case "delayed-write":
-		writeAfterParentExits()
-	default:
+	behaviour, isHelper := helperBehaviours()[os.Getenv(helperProcessModeEnvironmentVariable)]
+	if !isHelper {
 		os.Exit(m.Run())
 	}
+
+	behaviour()
+	os.Exit(2) // Every behaviour exits on its own; arriving here is a defect.
+}
+
+// helperBehaviours are the roles this test binary can re-execute itself as.
+// Fixtures drive a supervised command by re-running this same binary rather than
+// compiling a helper, which keeps every fixture on one build. It also keeps them
+// clear of the build-cache artifact that bites anything compiling Go at a fresh
+// path: without -trimpath the absolute package directory enters the build action
+// ID, so a new workspace recompiles every non-GOROOT package.
+func helperBehaviours() map[string]func() {
+	return map[string]func(){
+		"fail":              reportFailingTests,
+		"pass":              reportPassingTests,
+		"working-directory": reportWorkingDirectoryMarker,
+		"environment":       reportEnvironmentVariable,
+		"spawn-descendant":  spawnDescendant,
+		"relay-descendant":  relayDescendant,
+		"spawn-fanout":      spawnFanout,
+		"linger":            lingerUntilContained,
+		"delayed-write":     writeAfterParentExits,
+	}
+}
+
+func reportFailingTests() {
+	_, _ = os.Stdout.WriteString("tests failed")
+	os.Exit(1)
+}
+
+func reportPassingTests() {
+	_, _ = os.Stdout.WriteString("tests passed")
+	os.Exit(0)
+}
+
+func reportWorkingDirectoryMarker() {
+	_, err := os.Stat("working-directory-marker")
+	if err != nil {
+		os.Exit(2)
+	}
+
+	_, _ = os.Stdout.WriteString("marker found")
+	os.Exit(0)
+}
+
+func reportEnvironmentVariable() {
+	_, _ = os.Stdout.WriteString(os.Getenv("TEST_VAR"))
+	os.Exit(0)
 }
 
 func TestCMDTestRunner(t *testing.T) {
@@ -397,6 +439,80 @@ func relayDescendant() {
 		os.Exit(2)
 	}
 
+	os.Exit(0)
+}
+
+// spawnFanout starts a fixed number of descendants at once, publishes their
+// process IDs so the fixture can bound and verify them without asking the
+// supervisor anything, and only then lets itself be released.
+func spawnFanout() {
+	executable, err := os.Executable()
+	if err != nil {
+		os.Exit(2)
+	}
+
+	err = os.Setenv(helperProcessModeEnvironmentVariable, "linger")
+	if err != nil {
+		os.Exit(2)
+	}
+
+	// The published set opens with this process's own ID, so the fixture can
+	// require that every descendant names it as their parent, rather than
+	// trusting that whatever IDs appear here were really created here.
+	processIDs := make([]string, 0, descendantFanoutBreadth+1)
+	processIDs = append(processIDs, strconv.Itoa(os.Getpid()))
+	for range descendantFanoutBreadth {
+		command := exec.Command(executable) //nolint:noctx // Bounded by descendantLingerTimeout.
+		command.Env = os.Environ()
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+		if command.Start() != nil {
+			os.Exit(2)
+		}
+
+		processIDs = append(processIDs, strconv.Itoa(command.Process.Pid))
+	}
+
+	err = os.WriteFile(descendantFanoutFile, []byte(strings.Join(processIDs, "\n")), 0o600)
+	if err != nil {
+		os.Exit(2)
+	}
+
+	if !waitForFile(descendantObservedFile) {
+		os.Exit(2)
+	}
+
+	os.Exit(0)
+}
+
+// lingerUntilContained holds a descendant alive long enough to be supervised and
+// releases its output handles, so the runner's output pipe is not what keeps the
+// execution domain open.
+//
+// It reports twice, and the fixture needs both. On entry it records that it
+// reached its own code and names its parent: a process that was forked but died
+// during runtime start-up never writes this, so the fixture cannot mistake a
+// doomed process for a live descendant. If its own timer ever expires it records
+// that too, before exiting, so a descendant that retired itself can never be
+// read as one the supervisor contained.
+func lingerUntilContained() {
+	if errors.Join(os.Stdout.Close(), os.Stderr.Close()) != nil {
+		os.Exit(2)
+	}
+
+	processID := os.Getpid()
+	err := os.WriteFile(
+		descendantAlivePrefix+strconv.Itoa(processID),
+		[]byte(strconv.Itoa(os.Getppid())),
+		0o600,
+	)
+	if err != nil {
+		os.Exit(2)
+	}
+
+	time.Sleep(descendantLingerTimeout)
+
+	_ = os.WriteFile(descendantRetiredPrefix+strconv.Itoa(processID), nil, 0o600)
 	os.Exit(0)
 }
 
