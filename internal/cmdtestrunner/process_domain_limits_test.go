@@ -31,9 +31,8 @@ func TestSupervisedDomainPlatformContract(t *testing.T) {
 	// On Linux the guardian arms PR_SET_CHILD_SUBREAPER before it starts the
 	// command, so the orphan reparents to the guardian rather than to process 1
 	// and is found by wait4 whatever session it moved to; there the same fixture
-	// requires containment. That side is read from the Linux implementation and
-	// has not been measured. Only a run on Linux establishes it, which belongs
-	// to the cross-platform acceptance gate rather than to this fixture.
+	// requires containment. That side is measured too, by running this package
+	// on Linux, where this fixture takes the containment branch and passes.
 	t.Run("a descendant double-forked into its own session", func(t *testing.T) {
 		if sessionEscapeDefeatsContainment {
 			assertSupervisionLeavesDescendantRunning(t, true, descendantEscapesSession)

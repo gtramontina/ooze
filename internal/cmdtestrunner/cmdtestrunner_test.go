@@ -578,7 +578,7 @@ func lingerAsLiveGroupMember() {
 func writeAfterParentExits() {
 	err := os.WriteFile(
 		descendantReadyFile,
-		[]byte(strconv.Itoa(os.Getpid())+" "+strconv.Itoa(os.Getppid())),
+		[]byte(strconv.Itoa(os.Getpid())+" "+strconv.Itoa(settledParentProcessID())),
 		0o600,
 	)
 	if err != nil {
@@ -600,6 +600,29 @@ func writeAfterParentExits() {
 	}
 
 	os.Exit(0)
+}
+
+// settledParentProcessID reports this process's parent once that answer has
+// stopped changing.
+//
+// A relay exits immediately after spawning this process, so the parent reported
+// here moves from the relay to whichever process adopts the orphan -- the
+// guardian on Linux, process 1 on macOS. Announcing mid-transition would name a
+// parent that no longer holds by the time the fixture reads the same fact from
+// the kernel, and the fixture would fail on the mismatch rather than on
+// anything it is testing.
+func settledParentProcessID() int {
+	parent := os.Getppid()
+	for range 100 {
+		time.Sleep(5 * time.Millisecond)
+		settled := os.Getppid()
+		if settled == parent {
+			return parent
+		}
+		parent = settled
+	}
+
+	return parent
 }
 
 func waitForFile(path string) bool {
