@@ -16,6 +16,11 @@ import (
 
 const descendantSupervisionSupported = true
 
+// Linux contains a session escape: the guardian arms PR_SET_CHILD_SUBREAPER
+// before starting the command, so an orphaned descendant reparents to the
+// guardian rather than to process 1, whatever session it moved to.
+const sessionEscapeDefeatsContainment = false
+
 // descendantIdentity reports the parent and session of a live process, read from
 // the kernel rather than from anything the process itself claimed.
 func descendantIdentity(processID int) (int, int, error) {

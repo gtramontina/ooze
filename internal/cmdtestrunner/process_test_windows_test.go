@@ -24,6 +24,8 @@ const (
 
 func detachDescendantProcessGroup(*exec.Cmd) {}
 
+func detachDescendantSession(*exec.Cmd) {}
+
 // descendantIdentity has no meaning on Windows, which has neither a parent-based
 // process hierarchy a supervisor can walk nor sessions of this kind. Escape
 // fixtures skip before reaching it.

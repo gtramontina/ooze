@@ -13,6 +13,12 @@ import (
 
 const descendantSupervisionSupported = true
 
+// A descendant that is double-forked into its own session leaves both the
+// process group the macOS supervisor censuses and any ancestry leading back to
+// the supervised root. No macOS primitive reaches it, so this is a documented
+// boundary of the platform contract rather than a defect.
+const sessionEscapeDefeatsContainment = true
+
 // darwinZombieState is the P_stat value of a process that has exited but has
 // not been reaped. Such a process still occupies the process table.
 const darwinZombieState = 5

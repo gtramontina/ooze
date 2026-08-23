@@ -25,6 +25,15 @@ func detachDescendantProcessGroup(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+// detachDescendantSession makes the descendant a session leader, which also
+// gives it a new process group. Paired with the relay's second fork, this
+// leaves the eventual writer in neither the supervised group nor any ancestry
+// leading back to the supervised root.
+func detachDescendantSession(command *exec.Cmd) {
+	//nolint:exhaustruct // Other process attributes retain OS defaults.
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
+
 // terminateDescendant kills the process and waits, against the fixture's own
 // budget, until it can no longer execute. Fixtures own their teardown rather
 // than relying on the supervisor they exercise: an escapee is by definition one

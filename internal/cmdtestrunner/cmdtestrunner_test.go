@@ -57,6 +57,8 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "spawn-descendant":
 		spawnDescendant()
+	case "relay-descendant":
+		relayDescendant()
 	case "delayed-write":
 		writeAfterParentExits()
 	default:
@@ -126,6 +128,7 @@ func TestCMDTestRunner(t *testing.T) {
 const (
 	descendantEscapesNothing      = ""
 	descendantEscapesProcessGroup = "process-group"
+	descendantEscapesSession      = "session"
 )
 
 // supervisedDescendant is a descendant of a running supervised command, already
@@ -177,7 +180,7 @@ func superviseDescendant(t *testing.T, closesOutput bool, escape string) supervi
 	rootProcessID := awaitAnnouncedIdentity(t, filepath.Join(dir, descendantRootFile), 1)[0]
 	announced := awaitAnnouncedIdentity(t, filepath.Join(dir, descendantReadyFile), 2)
 	descendantProcessID = announced[0]
-	requireEscapeHappened(t, rootProcessID, descendantProcessID, announced[1])
+	requireEscapeHappened(t, escape, rootProcessID, descendantProcessID, announced[1])
 
 	awaitExit, err := observeProcessExit(t, descendantProcessID)
 	require.NoError(t, err)
@@ -209,6 +212,28 @@ func assertDoesNotReturnWhileDescendantCanWrite(t *testing.T, closesOutput bool,
 	assert.Equal(t, result.Err[string](""), output)
 	descendant.awaitExit()
 	assert.NoFileExists(t, filepath.Join(descendant.directory, descendantWriteFile))
+}
+
+// assertSupervisionLeavesDescendantRunning records a boundary of the platform
+// contract, not a defect to be fixed. Where the operating system offers no
+// primitive that reaches the descendant, the honest fixture is one that states
+// where containment stops and fails if that ever silently changes.
+func assertSupervisionLeavesDescendantRunning(t *testing.T, closesOutput bool, escape string) {
+	t.Helper()
+	descendant := superviseDescendant(t, closesOutput, escape)
+
+	select {
+	case output := <-descendant.output:
+		assert.Equal(t, result.Err[string](""), output)
+	case <-time.After(testProcessTimeout):
+		require.FailNow(t, "Test did not return after its supervised root exited")
+	}
+
+	canExecute, err := descendantCanStillExecute(descendant.processID)
+	require.NoError(t, err)
+	assert.True(t, canExecute,
+		"this platform is documented as unable to reach such a descendant; "+
+			"if it now does, the platform contract has changed and must be updated deliberately")
 }
 
 // awaitAnnouncedIdentity waits for a process to announce, from inside itself,
@@ -259,24 +284,40 @@ func readAnnouncedIdentity(path string, fields int) []int {
 	return values
 }
 
-// requireEscapeHappened checks that the descendant really is a child of the
-// supervised root, rather than inferring its relationship from the outcome. A
-// descendant that is reachable by a walk of parent identity from a live root is
-// one a census can count, which is what separates a fixable census defect from a
-// limit of the platform.
-func requireEscapeHappened(t *testing.T, rootProcessID, descendantProcessID, announcedParent int) {
+// requireEscapeHappened checks that the descendant really performed the escape
+// the fixture asked for, rather than inferring it from the outcome. Without it, a
+// session escape that silently degraded into a mere process-group escape would
+// still look correct -- and those two carry opposite dispositions, one a census
+// defect to be fixed and the other a platform limit to be recorded.
+func requireEscapeHappened(t *testing.T, escape string, rootProcessID, descendantProcessID, announcedParent int) {
 	t.Helper()
 
 	// Ties the announcement to a real process: the kernel must agree about the
 	// parent the announcing process claimed, so a fabricated process ID cannot
 	// stand in for a descendant that was never created.
-	observedParent, _, err := descendantIdentity(descendantProcessID)
+	observedParent, observedSession, err := descendantIdentity(descendantProcessID)
 	require.NoError(t, err)
 	require.Equal(t, announcedParent, observedParent,
 		"process %d announced parent %d, but the kernel reports %d",
 		descendantProcessID, announcedParent, observedParent)
-	require.Equal(t, rootProcessID, announcedParent,
-		"descendant %d is not a child of the supervised root", descendantProcessID)
+
+	if escape != descendantEscapesSession {
+		require.Equal(t, rootProcessID, announcedParent,
+			"this descendant must remain a child of the supervised root: being reachable by a walk of parent "+
+				"identity from a live root is what separates a fixable census defect from a platform limit")
+
+		return
+	}
+
+	require.NotEqual(t, rootProcessID, announcedParent,
+		"a session escapee must not be a child of the supervised root: leaving the parent walk as well as the "+
+			"process group is what makes it a platform limit rather than a defect")
+
+	_, fixtureSession, err := descendantIdentity(os.Getpid())
+	require.NoError(t, err)
+	require.NotEqual(t, fixtureSession, observedSession,
+		"the descendant never left this process's session, so it performed no session escape; a "+
+			"process-group escape alone is a different case, recorded as a defect elsewhere")
 }
 
 func spawnDescendant() {
@@ -294,7 +335,15 @@ func spawnDescendant() {
 
 	escape := os.Getenv(descendantEscapeEnvironmentVariable)
 
-	err = os.Setenv(helperProcessModeEnvironmentVariable, "delayed-write")
+	// A session escape needs a second fork: the relay creates the new session,
+	// spawns the writer into it, and exits, leaving the writer with no ancestor
+	// the supervisor can walk back to.
+	nextMode := "delayed-write"
+	if escape == descendantEscapesSession {
+		nextMode = "relay-descendant"
+	}
+
+	err = os.Setenv(helperProcessModeEnvironmentVariable, nextMode)
 	if err != nil {
 		os.Exit(2)
 	}
@@ -303,8 +352,11 @@ func spawnDescendant() {
 	command.Env = os.Environ()
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
-	if escape == descendantEscapesProcessGroup {
+	switch escape {
+	case descendantEscapesProcessGroup:
 		detachDescendantProcessGroup(command)
+	case descendantEscapesSession:
+		detachDescendantSession(command)
 	}
 	err = command.Start()
 	if err != nil {
@@ -315,6 +367,33 @@ func spawnDescendant() {
 		os.Exit(2)
 	}
 	if !waitForFile(descendantObservedFile) {
+		os.Exit(2)
+	}
+
+	os.Exit(0)
+}
+
+// relayDescendant performs the second of the two forks that detach a session
+// escapee. It is already the leader of a new session, so the writer it spawns
+// inherits that session, and relaying exits immediately so the writer is
+// reparented away from the supervised tree.
+func relayDescendant() {
+	executable, err := os.Executable()
+	if err != nil {
+		os.Exit(2)
+	}
+
+	err = os.Setenv(helperProcessModeEnvironmentVariable, "delayed-write")
+	if err != nil {
+		os.Exit(2)
+	}
+
+	command := exec.Command(executable) //nolint:noctx // Test helper has its own bounded lifecycle.
+	command.Env = os.Environ()
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	err = command.Start()
+	if err != nil {
 		os.Exit(2)
 	}
 

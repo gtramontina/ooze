@@ -9,9 +9,14 @@ import (
 
 const descendantSupervisionSupported = false
 
-const descendantCanEscapeSupervision = false
+const (
+	descendantCanEscapeSupervision  = false
+	sessionEscapeDefeatsContainment = false
+)
 
 func detachDescendantProcessGroup(*exec.Cmd) {}
+
+func detachDescendantSession(*exec.Cmd) {}
 
 func descendantCanStillExecute(int) (bool, error) { return false, nil }
 
