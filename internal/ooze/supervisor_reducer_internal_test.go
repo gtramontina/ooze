@@ -14,30 +14,38 @@ func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
 		failure        LaunchFailure
 		completion     time.Time
 		boundary       bool
-		wantAction     supervisorActionKind
+		wantActions    []supervisorActionKind
 		wantPhase      supervisorAttemptPhase
 	}{
 		{
 			name: "not released before", completionKind: supervisorLaunchProvenNotReleased,
-			failure:    LaunchFailed,
-			completion: launchBy.Add(-time.Nanosecond), wantAction: supervisorPublishNotReleased,
-			wantPhase: supervisorLaunchClosedNotReleased,
+			failure:     LaunchFailed,
+			completion:  launchBy.Add(-time.Nanosecond),
+			wantActions: []supervisorActionKind{supervisorPublishNotReleased},
+			wantPhase:   supervisorLaunchClosedNotReleased,
 		},
 		{
 			name: "owned before", completionKind: supervisorLaunchReleased,
-			completion: launchBy.Add(-time.Nanosecond), wantAction: supervisorPublishOwned,
-			wantPhase: supervisorLaunchOwned,
+			completion: launchBy.Add(-time.Nanosecond),
+			wantActions: []supervisorActionKind{
+				supervisorPublishOwned, supervisorWaitRoot, supervisorSampleRunning,
+			},
+			wantPhase: supervisorRunning,
 		},
 		{
 			name: "not released at equality", completionKind: supervisorLaunchProvenNotReleased,
 			failure:    LaunchFailed,
-			completion: launchBy, boundary: true, wantAction: supervisorPublishNotReleased,
-			wantPhase: supervisorLaunchClosedNotReleased,
+			completion: launchBy, boundary: true,
+			wantActions: []supervisorActionKind{supervisorPublishNotReleased},
+			wantPhase:   supervisorLaunchClosedNotReleased,
 		},
 		{
 			name: "owned at equality", completionKind: supervisorLaunchReleased,
-			completion: launchBy, boundary: true, wantAction: supervisorPublishOwned,
-			wantPhase: supervisorLaunchOwned,
+			completion: launchBy, boundary: true,
+			wantActions: []supervisorActionKind{
+				supervisorPublishOwned, supervisorWaitRoot, supervisorSampleRunning,
+			},
+			wantPhase: supervisorRunning,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -61,7 +69,7 @@ func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
 			}
 
 			next, actions := reduceSupervisor(state, event)
-			assertSupervisorActions(t, actions, test.wantAction)
+			assertSupervisorActions(t, actions, test.wantActions...)
 			if actions[0].generation != 11 || actions[0].token <= launch.token ||
 				actions[0].launchKind != test.completionKind || actions[0].launchFailure != test.failure {
 				t.Fatalf("classified launch action = %#v, launch token %d", actions[0], launch.token)
@@ -69,6 +77,12 @@ func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
 			attempt := supervisorAttemptByGeneration(t, next, 11)
 			if attempt.phase != test.wantPhase {
 				t.Fatalf("launch phase = %d, want %d", attempt.phase, test.wantPhase)
+			}
+			if test.completionKind == supervisorLaunchReleased &&
+				(!attempt.startedAt.Equal(test.completion) ||
+					!attempt.deadlineAt.Equal(test.completion.Add(20*time.Second)) ||
+					attempt.waitAction != actions[1].token || attempt.sampleAction != actions[2].token) {
+				t.Fatalf("released completion did not atomically enter running: %#v actions=%#v", attempt, actions)
 			}
 		})
 	}
@@ -242,7 +256,8 @@ func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersis
 		at:         emergencyAt.Add(-time.Nanosecond),
 		kind:       supervisorLaunchReleased,
 	}
-	state, _ = reduceSupervisor(state, supervisorEvent{
+	var ownedActions []supervisorAction
+	state, ownedActions = reduceSupervisor(state, supervisorEvent{
 		kind: supervisorLaunchCompleted, generation: 53,
 		at: ownedCompletion.at, completion: &ownedCompletion,
 	})
@@ -270,7 +285,10 @@ func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersis
 		emergencySnapshots: []supervisorEmergencySnapshot{
 			{generation: 51},
 			{generation: 52, completion: &releasedSnapshot},
-			{generation: 53},
+			{generation: 53, running: &supervisorRunningBundle{
+				generation: 53, waitAction: ownedActions[1].token, sampleAction: ownedActions[2].token,
+				drainBy: drainBy,
+			}},
 		},
 	}
 
@@ -433,12 +451,30 @@ func appendReducerLaunch(
 	launchBy time.Time,
 ) (supervisorState, supervisorAction) {
 	t.Helper()
+
+	return appendReducerLaunchWithFacts(
+		t, state, generation, attempt, AutomaticProfile, 20*time.Second, launchBy,
+	)
+}
+
+func appendReducerLaunchWithFacts(
+	t *testing.T,
+	state supervisorState,
+	generation attemptGeneration,
+	attempt attemptIdentity,
+	profile Profile,
+	commandDeadline time.Duration,
+	launchBy time.Time,
+) (supervisorState, supervisorAction) {
+	t.Helper()
 	state, actions := reduceSupervisor(state, supervisorEvent{
-		kind:       supervisorProspectiveRegistered,
-		generation: generation,
-		attempt:    attempt,
-		at:         launchBy.Add(-time.Second),
-		launchBy:   launchBy,
+		kind:            supervisorProspectiveRegistered,
+		generation:      generation,
+		attempt:         attempt,
+		at:              launchBy.Add(-time.Second),
+		launchBy:        launchBy,
+		profile:         profile,
+		commandDeadline: commandDeadline,
 	})
 	assertSupervisorActions(t, actions, supervisorLaunchNative)
 	if actions[0].generation != generation || actions[0].token == 0 {
@@ -446,7 +482,8 @@ func appendReducerLaunch(
 	}
 	registered := supervisorAttemptByGeneration(t, state, generation)
 	if registered.attempt != attempt || registered.launchAction != actions[0].token ||
-		registered.phase != supervisorLaunchEstablishing {
+		registered.phase != supervisorLaunchEstablishing || registered.profile != profile ||
+		registered.commandDeadline != commandDeadline {
 		t.Fatalf("registered launch = %#v action=%#v", registered, actions[0])
 	}
 
