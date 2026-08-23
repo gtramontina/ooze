@@ -337,6 +337,15 @@ func readAnnouncedIdentity(path string, fields int) []int {
 func requireEscapeHappened(t *testing.T, escape string, rootProcessID, descendantProcessID, announcedParent int) {
 	t.Helper()
 
+	if !descendantParentIsObservable {
+		// There is no parent-identity census here to corroborate an
+		// announcement against. Windows supervises by job-object accounting,
+		// and a parent reported there is neither authoritative nor stable, so
+		// asserting one would be asserting nothing. Escape fixtures skip on
+		// such platforms, so the requirements below have no subject either.
+		return
+	}
+
 	// Ties the announcement to a real process: the kernel must agree about the
 	// parent the announcing process claimed, so a fabricated process ID cannot
 	// stand in for a descendant that was never created.

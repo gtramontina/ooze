@@ -12,6 +12,7 @@ const descendantSupervisionSupported = false
 const (
 	descendantCanEscapeSupervision  = false
 	sessionEscapeDefeatsContainment = false
+	descendantParentIsObservable    = false
 )
 
 func detachDescendantProcessGroup(*exec.Cmd) {}

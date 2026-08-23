@@ -18,6 +18,10 @@ import (
 // so rather than reporting a pass.
 const descendantCanEscapeSupervision = true
 
+// descendantParentIsObservable reports whether this operating system exposes a
+// parent-identity census a fixture can hold an announcement to.
+const descendantParentIsObservable = true
+
 // detachDescendantProcessGroup makes the descendant its own process-group
 // leader, so it leaves the process group the supervisor censuses.
 func detachDescendantProcessGroup(command *exec.Cmd) {
