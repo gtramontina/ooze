@@ -83,7 +83,7 @@ The runtime ownership created by an accepted start commitment. It resolves as a 
 _Avoid_: PID reservation, started process
 
 **Process fuse**:
-Ooze's automatic guard against runaway descendant creation. It compares the count of an automatic attempt root's live descendants, walked by parent identity, against one fixed ceiling. It exists only under the automatic execution profile, where that count is contention-independent, so a trip is directly attributable after drainage and never capacity pressure. Serial attempts carry no fuse, and process-group membership is a containment handle rather than a census.
+Ooze's automatic guard against runaway descendant creation. It compares the count of an automatic attempt root's live descendants, walked by parent identity, against one fixed ceiling. It exists only under the automatic execution profile, where that count is contention-independent, so a trip is directly attributable after drainage and never capacity pressure. Serial attempts carry no fuse. Process-group membership is a signalling containment handle, not the live-root fuse census; drainage may use live group membership as a platform-native identity seed, but group emptiness alone never proves that the execution domain is drained.
 _Avoid_: Process limit, runaway timeout, host load
 
 **Drained domain**:
