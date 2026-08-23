@@ -24,10 +24,16 @@ func TestSupervisedDomainPlatformContract(t *testing.T) {
 	// case, which is the regression that would matter once that defect is fixed.
 	//
 	// On macOS nothing reaches such a descendant, and the fixture requires that
-	// it is still able to run once the runner has returned. On Linux the guardian
-	// arms PR_SET_CHILD_SUBREAPER before it starts the command, so the orphan
-	// reparents to the guardian rather than to process 1 and is found by wait4
-	// whatever session it moved to; there the same fixture requires containment.
+	// it is still able to run once the runner has returned. That side is
+	// measured: the runner returns and the descendant is still running, with a
+	// parent of 1 and a session of its own.
+	//
+	// On Linux the guardian arms PR_SET_CHILD_SUBREAPER before it starts the
+	// command, so the orphan reparents to the guardian rather than to process 1
+	// and is found by wait4 whatever session it moved to; there the same fixture
+	// requires containment. That side is read from the Linux implementation and
+	// has not been measured. Only a run on Linux establishes it, which belongs
+	// to the cross-platform acceptance gate rather than to this fixture.
 	t.Run("a descendant double-forked into its own session", func(t *testing.T) {
 		if sessionEscapeDefeatsContainment {
 			assertSupervisionLeavesDescendantRunning(t, true, descendantEscapesSession)

@@ -38,7 +38,10 @@ import (
 //     the boolean is right for the wrong reason in more than one row below.
 //   - walkFromRoot is parent identity seeded from the attempt root. This is the
 //     instrument the resolved fuse decision requires, and it is characterized
-//     rather than exercised here, since no production census walks yet.
+//     rather than exercised here, since no production census walks yet. Every
+//     cell below is measured on this platform; nothing here is carried over from
+//     another platform's behaviour, and nothing here establishes another
+//     platform's, because the instruments themselves differ.
 //   - walkFromLiveGroupMembers is the same walk seeded from every live member of
 //     the domain's process group, plus those members. It is a candidate drain
 //     instrument, and the last row is the only place it earns its complexity.
