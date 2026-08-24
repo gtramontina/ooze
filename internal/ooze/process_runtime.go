@@ -227,6 +227,7 @@ type observationResult struct {
 	cancelledWaiting, compensatedGrants             []admissionRequestToken
 	settlementAcknowledged, confirmationProvisional bool
 	pressureTransitioned, runtimeClosureInProgress  bool
+	confirmationObserved, confirmationQueueDrained  bool
 	fatalEpoch                                      fatalEpochID
 }
 
@@ -697,6 +698,8 @@ func (r processRuntime) observeConfirmation(
 	result := observationResult{generation: generation, settlementAcknowledged: true}
 	result.deliveries = deliveries
 	result.pressureTransitioned = transitioned
+	result.confirmationObserved = true
+	result.confirmationQueueDrained = queueDrained
 
 	return r, result
 }

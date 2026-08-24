@@ -80,13 +80,12 @@ type campaignEffect struct {
 	workspace  string
 	attempt    attemptIdentity
 	mutant     mutantIdentity
-	deadline   time.Duration
-	profile    Profile
 	request    admissionRequest
 	grant      admissionGrant
 	generation attemptGeneration
 	binding    barrierBinding
 	terminal   campaignTerminalCandidate
+	spec       Spec
 }
 
 type campaignTraceRecord struct {
@@ -243,8 +242,21 @@ type startCommittedEvent struct {
 type attemptLaunchEvent struct {
 	attempt    attemptIdentity
 	generation attemptGeneration
-	result     LaunchResult
+	result     campaignLaunchObservation
 	receipt    observationResult
+}
+type campaignLaunchKind uint8
+
+const (
+	campaignLaunchOwned campaignLaunchKind = iota + 1
+	campaignLaunchNotReleased
+	campaignLaunchUnconfirmed
+)
+
+type campaignLaunchObservation struct {
+	kind     campaignLaunchKind
+	failure  LaunchFailure
+	residual Residual
 }
 type attemptTerminalEvent struct {
 	attempt                  attemptIdentity
@@ -675,7 +687,6 @@ func (state campaignState) onResourceSettlementFailed(
 	state.obligations = slices.Delete(state.obligations, index, index+1)
 	state.phase = campaignDraining
 	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
-	state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
 	if event.kind == campaignResourceWorkspace {
 		attemptAt := slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool {
 			return attempt.workspace == event.identity && attempt.stage == campaignAttemptSettled
@@ -685,15 +696,15 @@ func (state campaignState) onResourceSettlementFailed(
 		}
 		state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
 		if len(state.attempts) == 0 {
-			state.candidate = campaignTerminalCandidate{}
-
 			return state.releaseSnapshot(campaignTerminalAborted)
 		}
 
-		return state, nil
+		return state.emitAll(state.abortOutstandingAttempts(""))
 	}
 	if event.kind == campaignResourceSnapshot && len(state.obligations) == 1 &&
 		state.obligations[0].kind == campaignResourceRegistration {
+		state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
+
 		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
 	}
 
@@ -884,7 +895,7 @@ func (state campaignState) onAdmissionRejected(
 		event.result.decision == admissionAccepted {
 		campaignInvariant("reject admission", "admission rejection is invalid")
 	}
-	if event.result.decision < admissionRejectedClosed || event.result.decision > admissionRejectedSharedLimit {
+	if event.result.decision != admissionRejectedClosed && event.result.decision != admissionRejectedGateClosed {
 		campaignInvariant("reject admission", "admission rejection decision is invalid")
 	}
 	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, 0)
@@ -901,9 +912,8 @@ func (state campaignState) onAdmissionRejected(
 		state.drain = campaignDrainIntent{
 			kind: campaignDrainRuntimeEmergency, cause: event.cause, epoch: event.result.fatalEpoch,
 		}
-	} else {
-		state.phase = campaignDraining
-		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	} else if state.drain.kind != campaignDrainConfirm {
+		campaignInvariant("reject admission", "gate rejection arrived outside confirmation closure")
 	}
 	effects := state.abortOutstandingAttempts(event.attempt)
 	effects = append(effects, campaignEffect{
@@ -1004,11 +1014,16 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 		campaignInvariant("start committed", "attempt deadline is unresolved")
 	}
 	state.commands++
+	spec := Spec{
+		Attempt: string(event.attempt), Command: slices.Clone(state.definition.command),
+		Dir: state.attempts[attemptAt].workspace, Env: slices.Clone(state.definition.env),
+		Profile: state.definition.profile, Deadline: deadline,
+	}
 
 	return state.emit(campaignEffect{
 		kind: campaignEffectLaunchAttempt, attempt: event.attempt, generation: event.result.generation,
 		snapshot: state.snapshot, workspace: state.attempts[attemptAt].workspace,
-		deadline: deadline, profile: state.definition.profile,
+		spec: spec,
 	})
 }
 
@@ -1018,10 +1033,10 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 		event.generation != state.attempts[attemptAt].generation || event.receipt.generation != event.generation {
 		campaignInvariant("observe launch", "launch observation is invalid")
 	}
-	switch result := event.result.(type) {
-	case Owned:
-		if result.Attempt == nil && event.receipt.runtimeClosureInProgress {
-			campaignInvariant("observe launch", "owned launch is closing")
+	switch event.result.kind {
+	case campaignLaunchOwned:
+		if event.result.failure != 0 || event.result.residual != 0 {
+			campaignInvariant("observe launch", "owned launch carries unrelated evidence")
 		}
 		state.attempts[attemptAt].stage = campaignAttemptOwned
 		if state.drain.kind == campaignDrainAbort {
@@ -1031,8 +1046,9 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 		}
 
 		return state, nil
-	case NotReleased:
-		if (result.Kind != LaunchFailed && result.Kind != LaunchResourceExhausted) ||
+	case campaignLaunchNotReleased:
+		if (event.result.failure != LaunchFailed && event.result.failure != LaunchResourceExhausted) ||
+			event.result.residual != 0 ||
 			!event.receipt.settlementAcknowledged || event.receipt.runtimeClosureInProgress {
 			campaignInvariant("observe launch", "proven no-release observation is invalid")
 		}
@@ -1048,8 +1064,9 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 		})
 
 		return state.emitAll(effects)
-	case LaunchUnconfirmed:
-		if result.Residual != ProspectiveUnresolved || !event.receipt.runtimeClosureInProgress ||
+	case campaignLaunchUnconfirmed:
+		if event.result.residual != ProspectiveUnresolved || event.result.failure != 0 ||
+			!event.receipt.runtimeClosureInProgress ||
 			event.receipt.fatalEpoch == 0 {
 			campaignInvariant("observe launch", "unconfirmed launch observation is invalid")
 		}
@@ -1075,6 +1092,9 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			event.receipt.fatalEpoch == 0 || event.receipt.settlementAcknowledged {
 			campaignInvariant("observe drain unconfirmed", "fatal seed is invalid")
 		}
+		if terminalDeadline(event.terminal) != state.attemptDeadline(state.attempts[attemptAt]) {
+			campaignInvariant("observe drain unconfirmed", "attempt deadline is not campaign-authorized")
+		}
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{
 			kind: campaignDrainRuntimeEmergency, cause: "execution-domain drainage unconfirmed",
@@ -1089,6 +1109,9 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		campaignInvariant("observe terminal", "attempt terminal is invalid")
 	}
 	attempt := &state.attempts[attemptAt]
+	if terminalDeadline(event.terminal) != state.attemptDeadline(*attempt) {
+		campaignInvariant("observe terminal", "attempt deadline is not campaign-authorized")
+	}
 	var transitionEffects []campaignEffect
 	switch attempt.kind {
 	case campaignAttemptBaseline:
@@ -1155,6 +1178,13 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			campaignInvariant("observe confirmation terminal", "confirmation mutant is invalid")
 		}
 		resolvedConfirmation := true
+		_, settledConfirmation := event.terminal.(Settled)
+		_, trippedConfirmation := event.terminal.(Tripped)
+		if (settledConfirmation || trippedConfirmation) &&
+			(!event.receipt.confirmationObserved ||
+				event.receipt.confirmationQueueDrained != (len(state.drain.provisionals) == 1)) {
+			campaignInvariant("observe confirmation terminal", "confirmation runtime authority is missing")
+		}
 		switch terminal := event.terminal.(type) {
 		case Settled:
 			if terminal.Exit.Passed() {
@@ -1164,6 +1194,8 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			}
 		case Tripped:
 			switch terminal.Trip.(type) {
+			case FuseTrip:
+				state.mutants[mutantAt].result = mutantRunaway
 			case AutomaticDeadlineTrip, SerialDeadlineTrip:
 				state.mutants[mutantAt].result = mutantTimedOut
 			default:
@@ -1194,6 +1226,31 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	})
 
 	return state.emitAll(effects)
+}
+
+func (state campaignState) attemptDeadline(attempt campaignAttempt) time.Duration {
+	if attempt.kind == campaignAttemptBaseline {
+		return state.definition.baselineDeadline
+	}
+
+	return state.mutationDeadline
+}
+
+func terminalDeadline(terminal Terminal) time.Duration {
+	switch observed := terminal.(type) {
+	case Settled:
+		return observed.Deadline
+	case Tripped:
+		return observed.Deadline
+	case Stopped:
+		return observed.Deadline
+	case Infrastructure:
+		return observed.Deadline
+	case DrainUnconfirmed:
+		return observed.Deadline
+	default:
+		return 0
+	}
 }
 
 func (state campaignState) abortOutstandingAttempts(except attemptIdentity) []campaignEffect {
@@ -1497,11 +1554,13 @@ func campaignEventSummary(event campaignEvent) string {
 			strconv.FormatUint(uint64(observed.result.generation), 10)
 	case attemptLaunchEvent:
 		summary += " attempt=" + string(observed.attempt) + " generation=" +
-			strconv.FormatUint(uint64(observed.generation), 10)
+			strconv.FormatUint(uint64(observed.generation), 10) + " receipt=" +
+			campaignReceiptSummary(observed.receipt)
 	case attemptTerminalEvent:
 		summary += " attempt=" + string(observed.attempt) + " generation=" +
 			strconv.FormatUint(uint64(observed.generation), 10) + " resolved-deadline=" +
-			observed.resolvedMutationDeadline.String() + " terminal=" + campaignTerminalSummary(observed.terminal)
+			observed.resolvedMutationDeadline.String() + " terminal=" + campaignTerminalSummary(observed.terminal) +
+			" receipt=" + campaignReceiptSummary(observed.receipt)
 	case confirmationBarrierBoundEvent:
 		summary += " attempt=" + string(observed.attempt)
 	case grantReturnAcknowledgedEvent:
@@ -1546,6 +1605,31 @@ func campaignTerminalSummary(terminal Terminal) string {
 	default:
 		return "nil-or-unknown"
 	}
+}
+
+func campaignReceiptSummary(receipt observationResult) string {
+	summary := "generation=" + strconv.FormatUint(uint64(receipt.generation), 10) +
+		"/settled=" + strconv.FormatBool(receipt.settlementAcknowledged) +
+		"/provisional=" + strconv.FormatBool(receipt.confirmationProvisional) +
+		"/pressure=" + strconv.FormatBool(receipt.pressureTransitioned) +
+		"/confirmation-observed=" + strconv.FormatBool(receipt.confirmationObserved) +
+		"/confirmation-queue-drained=" + strconv.FormatBool(receipt.confirmationQueueDrained) +
+		"/closing=" + strconv.FormatBool(receipt.runtimeClosureInProgress) +
+		"/epoch=" + strconv.FormatUint(uint64(receipt.fatalEpoch), 10)
+	appendRequests := func(label string, requests []admissionRequestToken) {
+		summary += "/" + label + "="
+		for index, request := range requests {
+			if index != 0 {
+				summary += ","
+			}
+			summary += string(request.attempt) + ":" + strconv.Itoa(int(request.class))
+		}
+	}
+	appendRequests("deliveries", receipt.deliveries)
+	appendRequests("cancelled", receipt.cancelledWaiting)
+	appendRequests("compensated", receipt.compensatedGrants)
+
+	return summary
 }
 
 func (state campaignState) stableIdentitySnapshot(event campaignEvent) []string {
