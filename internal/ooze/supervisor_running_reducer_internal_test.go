@@ -373,6 +373,16 @@ func TestSupervisorReducerRunningRejectsMalformedOwnershipFacts(t *testing.T) {
 		})
 	})
 
+	t.Run("ordinary exit recheck carries launch action token", func(t *testing.T) {
+		fixture := newRunningReducerFixture(t, AutomaticProfile)
+		launchAction := supervisorAttemptByGeneration(t, fixture.state, fixture.generation).launchAction
+		assertSupervisorInvariant(t, func() {
+			fixture.reduceBundle(t, fixture.deadlineAt, nil, supervisorExitRecheck{
+				performed: true, at: fixture.deadlineAt, action: launchAction,
+			})
+		})
+	})
+
 	t.Run("fuse fact carries exit status", func(t *testing.T) {
 		fixture := newRunningReducerFixture(t, AutomaticProfile)
 		fact := supervisorRunningFact{
@@ -699,7 +709,7 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 		}
 	})
 
-	t.Run("empty snapshot starts emergency drain without inventing intent", func(t *testing.T) {
+	t.Run("empty snapshot latches private runtime emergency intent", func(t *testing.T) {
 		fixture := newRunningReducerFixture(t, AutomaticProfile)
 		emergencyAt := fixture.startedAt.Add(5 * time.Second)
 		drainBy := emergencyAt.Add(5 * time.Second)
@@ -709,17 +719,86 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 				generation: fixture.generation,
 				running: &supervisorRunningBundle{
 					generation: fixture.generation, sampleAction: fixture.sampleAction,
-					waitAction: fixture.waitAction, drainBy: emergencyAt.Add(10 * time.Second),
+					waitAction: fixture.waitAction,
 				},
 			}},
 		})
 		assertSupervisorActions(t, actions, supervisorForceOwned)
 		attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-		if attempt.phase != supervisorEmergencyDraining || attempt.intent.latched ||
-			attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
-			t.Fatalf("emergency manufactured ordinary intent: %#v", attempt)
+		wantIntent := supervisorRunningIntent{
+			latched: true, kind: supervisorIntentRuntimeEmergency,
+			at: emergencyAt, drainBy: drainBy,
+			duration: emergencyAt.Sub(fixture.startedAt),
+		}
+		if attempt.phase != supervisorEmergencyDraining || !reflect.DeepEqual(attempt.intent, wantIntent) ||
+			attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
+			!reflect.DeepEqual(actions[0].intent, wantIntent) ||
+			!attempt.drain.effectiveDrainBy.Equal(drainBy) || !actions[0].drainBy.Equal(drainBy) {
+			t.Fatalf("runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+		}
+
+		lateFact := supervisorRunningFact{
+			generation: fixture.generation, action: fixture.sampleAction,
+			kind: supervisorRunningFuseObserved, at: emergencyAt.Add(time.Second),
+			rootLive: true, live: 100,
+		}
+		sealed, lateActions := reduceSupervisor(next, supervisorEvent{
+			kind: supervisorRunningObserved, generation: fixture.generation,
+			at: lateFact.at, drainBy: drainBy,
+			running: &supervisorRunningBundle{
+				generation: fixture.generation, sampleAction: fixture.sampleAction,
+				waitAction: fixture.waitAction, facts: []supervisorRunningFact{lateFact},
+			},
+		})
+		if len(lateActions) != 0 || !reflect.DeepEqual(sealed, next) {
+			t.Fatalf("valid late fact changed runtime-emergency intent: before=%#v after=%#v actions=%#v", next, sealed, lateActions)
 		}
 	})
+
+	for _, test := range []struct {
+		name string
+		kind supervisorRunningFactKind
+	}{
+		{name: "stop", kind: supervisorRunningStopRequested},
+		{name: "observation failure", kind: supervisorRunningObservationFailed},
+	} {
+		t.Run("ordinary equality wins "+test.name, func(t *testing.T) {
+			fixture := newRunningReducerFixture(t, AutomaticProfile)
+			emergencyAt := fixture.startedAt.Add(5 * time.Second)
+			emergencyDrainBy := emergencyAt.Add(5 * time.Second)
+			localDrainBy := emergencyAt.Add(10 * time.Second)
+			fact := supervisorRunningFact{
+				generation: fixture.generation, kind: test.kind, at: emergencyAt,
+			}
+			want := supervisorIntentStop
+			if test.kind == supervisorRunningStopRequested {
+				fact.stop = StopRequest{At: emergencyAt, DrainBy: localDrainBy}
+			} else {
+				fact.action = fixture.sampleAction
+				fact.source = supervisorObservationRunning
+				fact.diagnostic = 77
+				want = supervisorIntentObservationFailure
+			}
+			next, actions := reduceSupervisor(fixture.state, supervisorEvent{
+				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
+				emergencySnapshots: []supervisorEmergencySnapshot{{
+					generation: fixture.generation,
+					running: &supervisorRunningBundle{
+						generation: fixture.generation, sampleAction: fixture.sampleAction,
+						waitAction: fixture.waitAction, drainBy: localDrainBy,
+						facts: []supervisorRunningFact{fact},
+					},
+				}},
+			})
+			assertSupervisorActions(t, actions, supervisorForceOwned)
+			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
+			if attempt.intent.kind != want || !attempt.intent.at.Equal(emergencyAt) ||
+				attempt.intent.kind == supervisorIntentRuntimeEmergency ||
+				!reflect.DeepEqual(actions[0].intent, attempt.intent) {
+				t.Fatalf("ordinary equality lost to runtime fallback: %#v actions=%#v", attempt, actions)
+			}
+		})
+	}
 
 	t.Run("already latched intent is preserved", func(t *testing.T) {
 		fixture := newRunningReducerFixture(t, AutomaticProfile)
@@ -760,6 +839,32 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 			!next.emergency.drainBy.Equal(drainBy) {
 			t.Fatalf("emergency rewrote accepted intent: before=%#v after=%#v", before, after)
 		}
+	})
+
+	t.Run("already latched intent cannot postdate emergency", func(t *testing.T) {
+		fixture := newRunningReducerFixture(t, AutomaticProfile)
+		intentAt := fixture.startedAt.Add(2 * time.Second)
+		fact := supervisorRunningFact{
+			generation: fixture.generation, action: fixture.sampleAction,
+			kind: supervisorRunningFuseObserved, at: intentAt, rootLive: true, live: 65,
+		}
+		latched, _ := fixture.reduceBundle(
+			t, intentAt, []supervisorRunningFact{fact}, supervisorExitRecheck{},
+		)
+		emergencyAt := intentAt.Add(-time.Nanosecond)
+		assertSupervisorInvariant(t, func() {
+			reduceSupervisor(latched, supervisorEvent{
+				kind: supervisorEmergencyStarted, at: emergencyAt,
+				drainBy: emergencyAt.Add(time.Second),
+				emergencySnapshots: []supervisorEmergencySnapshot{{
+					generation: fixture.generation,
+					running: &supervisorRunningBundle{
+						generation: fixture.generation, sampleAction: fixture.sampleAction,
+						waitAction: fixture.waitAction, drainBy: fixture.drainBy,
+					},
+				}},
+			})
+		})
 	})
 }
 

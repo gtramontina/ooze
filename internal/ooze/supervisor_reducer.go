@@ -88,6 +88,7 @@ const (
 	supervisorIntentObservationFailure
 	supervisorIntentDeadline
 	supervisorIntentStop
+	supervisorIntentRuntimeEmergency
 )
 
 type supervisorObservationSource uint8
@@ -137,6 +138,7 @@ type supervisorExitRecheck struct {
 	at        time.Time
 	code      int
 	signal    int
+	action    supervisorActionToken
 }
 
 type supervisorRunningFact struct {
@@ -370,7 +372,7 @@ func reduceLaunchCompletion(
 		}
 		state.attempts[index].lastEventAt = event.at
 
-		return state.completeLaunch(index, completion, false, false, event.at, time.Time{})
+		return state.completeLaunch(index, completion, event.at, time.Time{})
 	case supervisorLaunchReportedUnconfirmed:
 		if event.at.Before(attempt.revokedAt) {
 			invariant(supervisorReducerOperation, "late completion predates release revocation")
@@ -392,7 +394,7 @@ func reduceLaunchCompletion(
 			invariant(supervisorReducerOperation, "not-released launch completion supplied a drain bound")
 		}
 
-		return state.completeLaunch(index, completion, true, false, actionAt, drainBy)
+		return state.completeLaunch(index, completion, actionAt, drainBy)
 	default:
 		invariant(supervisorReducerOperation, "launch completion was duplicated after closure")
 
@@ -420,7 +422,7 @@ func reduceLaunchBoundary(
 		}
 		state.attempts[index].lastEventAt = event.at
 
-		return state.completeLaunch(index, completion, false, false, completion.at, time.Time{})
+		return state.completeLaunch(index, completion, completion.at, time.Time{})
 	}
 
 	return state.revokeProspective(index, event.at, time.Time{})
@@ -452,13 +454,13 @@ func reduceLaunchEmergency(
 		snapshotIndex++
 		switch attempt.phase {
 		case supervisorLaunchEstablishing:
-			if snapshot.running != nil {
-				invariant(supervisorReducerOperation, "establishing emergency snapshot contains running facts")
-			}
 			if event.at.After(attempt.launchBy) || event.at.Before(attempt.lastEventAt) {
 				invariant(supervisorReducerOperation, "emergency launch snapshot is outside its interval")
 			}
 			if snapshot.completion == nil {
+				if snapshot.running != nil {
+					invariant(supervisorReducerOperation, "unresolved emergency launch snapshot contains running facts")
+				}
 				var emitted []supervisorAction
 				state, emitted = state.revokeProspective(index, event.at, event.drainBy)
 				actions = append(actions, emitted...)
@@ -469,14 +471,27 @@ func reduceLaunchEmergency(
 			if completion.at.After(event.at) || completion.at.Before(attempt.lastEventAt) {
 				invariant(supervisorReducerOperation, "emergency completion is outside its serialized interval")
 			}
+			if (completion.kind == supervisorLaunchReleased) != (snapshot.running != nil) {
+				invariant(supervisorReducerOperation, "emergency launch completion lacks its matching running snapshot")
+			}
 			state.attempts[index].lastEventAt = event.at
 			var emitted []supervisorAction
-			state, emitted = state.completeLaunch(index, completion, false, true, event.at, event.drainBy)
+			if completion.kind == supervisorLaunchReleased {
+				state, emitted = state.completeEmergencyReleasedLaunch(
+					index, completion, event.at, event.drainBy, *snapshot.running,
+				)
+			} else {
+				state, emitted = state.completeLaunch(index, completion, event.at, event.drainBy)
+			}
 			actions = append(actions, emitted...)
 		case supervisorLaunchReportedUnconfirmed:
 			if snapshot.running != nil {
 				invariant(supervisorReducerOperation, "prospective emergency snapshot contains running facts")
 			}
+			if event.at.Before(attempt.lastEventAt) {
+				invariant(supervisorReducerOperation, "prospective emergency snapshot moved backward")
+			}
+			state.attempts[index].lastEventAt = event.at
 			if snapshot.completion == nil {
 				continue
 			}
@@ -485,10 +500,10 @@ func reduceLaunchEmergency(
 				invariant(supervisorReducerOperation, "emergency late completion is outside its interval")
 			}
 			var emitted []supervisorAction
-			state, emitted = state.completeLaunch(index, completion, true, false, event.at, event.drainBy)
+			state, emitted = state.completeLaunch(index, completion, event.at, event.drainBy)
 			actions = append(actions, emitted...)
 		case supervisorLaunchOwned:
-			if snapshot.completion != nil || snapshot.running != nil {
+			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) {
 				invariant(supervisorReducerOperation, "owned emergency snapshot contains launch completion")
 			}
 			state.attempts[index].phase = supervisorEmergencyDraining
@@ -505,21 +520,18 @@ func reduceLaunchEmergency(
 			}
 			state.attempts[index].lastEventAt = event.at
 		case supervisorRunning:
-			if snapshot.completion != nil || snapshot.running == nil || snapshot.running.drainBy.IsZero() {
+			if snapshot.completion != nil || snapshot.running == nil || event.at.Before(attempt.lastEventAt) {
 				invariant(supervisorReducerOperation, "running emergency snapshot is incomplete")
 			}
-			var selected bool
-			state, selected = reduceRunningSnapshot(
-				state, index, event.at, snapshot.running.drainBy, *snapshot.running,
+			var effectiveDrainBy time.Time
+			state, effectiveDrainBy = reduceEmergencyRunningSnapshot(
+				state, index, event.at, event.drainBy, *snapshot.running,
 			)
-			state.attempts[index].phase = supervisorEmergencyDraining
 			action := state.newAction(supervisorForceOwned, index, event.at, event.drainBy, nil)
-			if selected {
-				action.intent = state.attempts[index].intent
-			}
+			action.intent = state.attempts[index].intent
 			state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
 			state.attempts[index].drain = supervisorDrainState{
-				effectiveDrainBy: earlierTime(snapshot.running.drainBy, event.drainBy),
+				effectiveDrainBy: effectiveDrainBy,
 				forced:           true,
 			}
 			action.drainBy = state.attempts[index].drain.effectiveDrainBy
@@ -529,6 +541,7 @@ func reduceLaunchEmergency(
 				invariant(supervisorReducerOperation, "latched emergency snapshot is incomplete")
 			}
 			validateRunningBundleCorrelation(attempt, snapshot.running)
+			validateSealedRunningBundle(attempt, event.at, *snapshot.running)
 			state.attempts[index].phase = supervisorEmergencyDraining
 			if attempt.pendingDrain.token == 0 || attempt.pendingDrain.kind == 0 {
 				invariant(supervisorReducerOperation, "latched intent has no correlated drain action")
@@ -884,7 +897,7 @@ func validateSealedRunningBundle(
 	}
 	recheck := bundle.exitRecheck
 	if !recheck.performed || recheck.at.Before(attempt.startedAt) || recheck.at.After(through) ||
-		(!recheck.observed && (recheck.code != 0 || recheck.signal != 0)) {
+		recheck.action != 0 || (!recheck.observed && (recheck.code != 0 || recheck.signal != 0)) {
 		invariant(supervisorReducerOperation, "sealed running bundle carries an invalid exit recheck")
 	}
 }
@@ -898,8 +911,8 @@ func reduceRunningSnapshot(
 ) (supervisorState, bool) {
 	attempt := state.attempts[index]
 	validateRunningBundleCorrelation(attempt, &bundle)
-	if through.Before(attempt.startedAt) || drainBy.IsZero() {
-		invariant(supervisorReducerOperation, "running snapshot interval or local drain bound is invalid")
+	if through.Before(attempt.startedAt) {
+		invariant(supervisorReducerOperation, "running snapshot interval is invalid")
 	}
 
 	candidates := make([]supervisorIntentCandidate, 0, len(bundle.facts)+2)
@@ -912,7 +925,7 @@ func reduceRunningSnapshot(
 	deadlineReached := !through.Before(attempt.deadlineAt)
 	if deadlineReached {
 		recheck := bundle.exitRecheck
-		if !recheck.performed || !recheck.at.Equal(attempt.deadlineAt) {
+		if !recheck.performed || !recheck.at.Equal(attempt.deadlineAt) || recheck.action != 0 {
 			invariant(supervisorReducerOperation, "deadline boundary lacks its explicit exit recheck")
 		}
 		if !recheck.observed && (recheck.code != 0 || recheck.signal != 0) {
@@ -939,6 +952,9 @@ func reduceRunningSnapshot(
 		state.attempts[index].runningPeak = peak
 
 		return state, false
+	}
+	if drainBy.IsZero() {
+		invariant(supervisorReducerOperation, "selected running intent lacks a local drain bound")
 	}
 	if selected.kind != supervisorIntentStop && !drainBy.After(selected.at) {
 		invariant(supervisorReducerOperation, "local drain bound does not follow the selected intent")
@@ -973,6 +989,48 @@ func reduceRunningSnapshot(
 	return state, true
 }
 
+func reduceEmergencyRunningSnapshot(
+	state supervisorState,
+	index int,
+	at time.Time,
+	drainBy time.Time,
+	bundle supervisorRunningBundle,
+) (supervisorState, time.Time) {
+	var selected bool
+	state, selected = reduceRunningSnapshot(state, index, at, bundle.drainBy, bundle)
+	effectiveDrainBy := drainBy
+	if selected {
+		effectiveDrainBy = earlierTime(state.attempts[index].intent.drainBy, drainBy)
+	} else {
+		attempt := state.attempts[index]
+		if attempt.intent != (supervisorRunningIntent{}) {
+			invariant(supervisorReducerOperation, "runtime emergency intent is duplicated")
+		}
+		state.attempts[index].intent = runtimeEmergencyIntent(attempt, at, drainBy)
+	}
+	state.attempts[index].phase = supervisorEmergencyDraining
+
+	return state, effectiveDrainBy
+}
+
+func runtimeEmergencyIntent(
+	attempt supervisorAttemptState,
+	at time.Time,
+	drainBy time.Time,
+) supervisorRunningIntent {
+	if attempt.startedAt.IsZero() || at.Before(attempt.startedAt) || !drainBy.After(at) {
+		invariant(supervisorReducerOperation, "runtime emergency intent chronology or bound is invalid")
+	}
+
+	return supervisorRunningIntent{
+		latched:  true,
+		kind:     supervisorIntentRuntimeEmergency,
+		at:       at,
+		drainBy:  drainBy,
+		duration: at.Sub(attempt.startedAt),
+	}
+}
+
 func validateRunningBundleCorrelation(attempt supervisorAttemptState, bundle *supervisorRunningBundle) {
 	if bundle == nil || bundle.generation != attempt.generation ||
 		bundle.waitAction != attempt.waitAction || bundle.sampleAction != attempt.sampleAction {
@@ -990,7 +1048,8 @@ func validateRunningFact(
 	}
 	switch fact.kind {
 	case supervisorRunningFuseObserved:
-		if attempt.profile != AutomaticProfile || fact.action != attempt.sampleAction ||
+		if attempt.profile != AutomaticProfile || attempt.sampleAction == 0 ||
+			fact.action != attempt.sampleAction ||
 			!fact.rootLive || fact.live == 0 || fact.liveNegative || fact.live > maximumSupervisorCount() ||
 			!fact.stop.At.IsZero() || !fact.stop.DrainBy.IsZero() || fact.exitCode != 0 ||
 			fact.exitSignal != 0 || fact.source != 0 || fact.diagnostic != 0 {
@@ -1005,7 +1064,8 @@ func validateRunningFact(
 			count: supervisorObservedCount{present: true, value: int(fact.live)},
 		}, true
 	case supervisorRunningRootExited:
-		if fact.action != attempt.waitAction || fact.rootLive || fact.live != 0 || fact.liveNegative ||
+		if attempt.waitAction == 0 || fact.action != attempt.waitAction ||
+			fact.rootLive || fact.live != 0 || fact.liveNegative ||
 			!fact.stop.At.IsZero() || !fact.stop.DrainBy.IsZero() ||
 			fact.source != 0 || fact.diagnostic != 0 {
 			invariant(supervisorReducerOperation, "root exit fact correlation is invalid")
@@ -1156,7 +1216,7 @@ func runningPeakThrough(
 
 func exitRecheckZero(recheck supervisorExitRecheck) bool {
 	return !recheck.performed && !recheck.observed && recheck.at.IsZero() &&
-		recheck.code == 0 && recheck.signal == 0
+		recheck.code == 0 && recheck.signal == 0 && recheck.action == 0
 }
 
 const supervisorFuseCeiling uint64 = 64
@@ -1166,11 +1226,14 @@ func maximumSupervisorCount() uint64 { return uint64(^uint(0) >> 1) }
 func (state supervisorState) completeLaunch(
 	index int,
 	completion supervisorLaunchCompletion,
-	late bool,
-	force bool,
 	at time.Time,
 	drainBy time.Time,
 ) (supervisorState, []supervisorAction) {
+	priorPhase := state.attempts[index].phase
+	late := priorPhase == supervisorLaunchReportedUnconfirmed
+	if priorPhase != supervisorLaunchEstablishing && !late {
+		invariant(supervisorReducerOperation, "launch completion phase is invalid")
+	}
 	switch completion.kind {
 	case supervisorLaunchProvenNotReleased:
 		state.attempts[index].phase = supervisorLaunchClosedNotReleased
@@ -1182,27 +1245,13 @@ func (state supervisorState) completeLaunch(
 
 		return state, []supervisorAction{action}
 	case supervisorLaunchReleased:
-		kind := supervisorPublishOwned
 		if late {
-			kind = supervisorAdoptOwned
-			force = true
-		}
-		if force {
 			if drainBy.IsZero() {
 				invariant(supervisorReducerOperation, "forced launch ownership lacks a drain bound")
 			}
 			state.attempts[index].phase = supervisorLaunchOwned
-			actions := []supervisorAction{state.newAction(kind, index, at, drainBy, &completion)}
-			actions = append(actions, state.newAction(supervisorForceOwned, index, at, drainBy, &completion))
-			state.attempts[index].pendingDrain = supervisorPendingAction{
-				kind: actions[1].kind, token: actions[1].token,
-			}
-			state.attempts[index].drain = supervisorDrainState{
-				effectiveDrainBy: drainBy,
-				forced:           true,
-			}
 
-			return state, actions
+			return state.forceLaunchOwnership(index, at, drainBy, completion)
 		}
 
 		state.attempts[index].phase = supervisorRunning
@@ -1224,6 +1273,114 @@ func (state supervisorState) completeLaunch(
 
 		return supervisorState{}, nil
 	}
+}
+
+func (state supervisorState) completeEmergencyReleasedLaunch(
+	index int,
+	completion supervisorLaunchCompletion,
+	at time.Time,
+	emergencyDrainBy time.Time,
+	snapshot supervisorRunningBundle,
+) (supervisorState, []supervisorAction) {
+	attempt := state.attempts[index]
+	state.attempts[index].startedAt = completion.at
+	state.attempts[index].deadlineAt = completion.at.Add(attempt.commandDeadline)
+	intent, effectiveDrainBy := selectEmergencyReleasedIntent(
+		state.attempts[index], at, emergencyDrainBy, snapshot,
+	)
+	state.attempts[index].intent = intent
+	state.attempts[index].phase = supervisorEmergencyDraining
+
+	return state.forceLaunchOwnership(index, at, effectiveDrainBy, completion)
+}
+
+func selectEmergencyReleasedIntent(
+	attempt supervisorAttemptState,
+	at time.Time,
+	emergencyDrainBy time.Time,
+	snapshot supervisorRunningBundle,
+) (supervisorRunningIntent, time.Time) {
+	recheck := snapshot.exitRecheck
+	if snapshot.generation != attempt.generation || snapshot.waitAction != 0 ||
+		snapshot.sampleAction != 0 || len(snapshot.facts) != 0 || !recheck.performed ||
+		recheck.action == 0 || recheck.action != attempt.launchAction ||
+		attempt.startedAt.IsZero() || !attempt.deadlineAt.Equal(attempt.startedAt.Add(attempt.commandDeadline)) ||
+		!attempt.deadlineAt.After(attempt.startedAt) {
+		invariant(supervisorReducerOperation, "emergency released snapshot shape or deadline is invalid")
+	}
+	if recheck.observed {
+		if recheck.at.Before(attempt.startedAt) || recheck.at.After(at) {
+			invariant(supervisorReducerOperation, "observed emergency root completion is outside its interval")
+		}
+	} else if !recheck.at.Equal(at) || recheck.code != 0 || recheck.signal != 0 {
+		invariant(supervisorReducerOperation, "unobserved emergency root snapshot does not prove absence through the cut")
+	}
+
+	intent := runtimeEmergencyIntent(attempt, at, emergencyDrainBy)
+	if recheck.observed && !recheck.at.After(attempt.deadlineAt) {
+		intent.kind = supervisorIntentRootExit
+		intent.at = recheck.at
+		intent.drainBy = snapshot.drainBy
+		intent.duration = recheck.at.Sub(attempt.startedAt)
+		intent.exitCode = recheck.code
+		intent.exitSignal = recheck.signal
+	} else if !at.Before(attempt.deadlineAt) {
+		intent.kind = supervisorIntentDeadline
+		intent.at = attempt.deadlineAt
+		intent.drainBy = snapshot.drainBy
+		intent.duration = attempt.commandDeadline
+	}
+	if intent.kind == supervisorIntentRuntimeEmergency {
+		if !snapshot.drainBy.IsZero() {
+			invariant(supervisorReducerOperation, "runtime emergency fallback supplied a local drain bound")
+		}
+
+		return intent, emergencyDrainBy
+	}
+	if !snapshot.drainBy.After(intent.at) {
+		invariant(supervisorReducerOperation, "emergency root or deadline intent lacks a positive local drain bound")
+	}
+
+	return intent, earlierTime(snapshot.drainBy, emergencyDrainBy)
+}
+
+func (state supervisorState) forceLaunchOwnership(
+	index int,
+	at time.Time,
+	drainBy time.Time,
+	completion supervisorLaunchCompletion,
+) (supervisorState, []supervisorAction) {
+	attempt := state.attempts[index]
+	if completion.kind != supervisorLaunchReleased || completion.failure != 0 || drainBy.IsZero() {
+		invariant(supervisorReducerOperation, "forced launch ownership lacks released completion or bound")
+	}
+	publishKind := supervisorPublishOwned
+	intent := attempt.intent
+	switch attempt.phase {
+	case supervisorLaunchOwned:
+		publishKind = supervisorAdoptOwned
+		if intent != (supervisorRunningIntent{}) {
+			invariant(supervisorReducerOperation, "late adopted launch carries a caller terminal intent")
+		}
+	case supervisorEmergencyDraining:
+		if !intent.latched {
+			invariant(supervisorReducerOperation, "caller-owned emergency launch lacks a terminal intent")
+		}
+	default:
+		invariant(supervisorReducerOperation, "forced launch ownership phase is invalid")
+	}
+	publish := state.newAction(publishKind, index, at, drainBy, &completion)
+	force := state.newAction(supervisorForceOwned, index, at, drainBy, &completion)
+	force.intent = intent
+	state.attempts[index].pendingDrain = supervisorPendingAction{
+		kind: force.kind, token: force.token,
+	}
+	state.attempts[index].drain = supervisorDrainState{
+		effectiveDrainBy: drainBy,
+		forced:           true,
+	}
+
+	return state, []supervisorAction{publish, force}
 }
 
 func (state supervisorState) revokeProspective(

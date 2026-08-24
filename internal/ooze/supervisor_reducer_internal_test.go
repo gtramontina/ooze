@@ -201,12 +201,6 @@ func TestSupervisorReducerLaunchEmergencyUsesSerializedCompletionOrNil(t *testin
 			wantActions: []supervisorActionKind{supervisorPublishNotReleased},
 			wantPhase:   supervisorLaunchClosedNotReleased,
 		},
-		{
-			name: "released snapshot returns ownership and forces", generation: 33,
-			hasCompletion: true, completionKind: supervisorLaunchReleased,
-			wantActions: []supervisorActionKind{supervisorPublishOwned, supervisorForceOwned},
-			wantPhase:   supervisorLaunchOwned,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			state, launch := registeredReducerLaunch(t, test.generation, "attempt-emergency", launchBy)
@@ -240,6 +234,401 @@ func TestSupervisorReducerLaunchEmergencyUsesSerializedCompletionOrNil(t *testin
 			}
 		})
 	}
+}
+
+func TestSupervisorReducerLaunchEmergencyReleasedSnapshotSelectsOwnedIntentThroughCut(t *testing.T) {
+	launchBy := time.Unix(325, 0)
+	emergencyAt := launchBy.Add(-100 * time.Millisecond)
+	emergencyDrainBy := emergencyAt.Add(5 * time.Second)
+	releasedAt := emergencyAt.Add(-500 * time.Millisecond)
+	for _, test := range []struct {
+		name            string
+		commandDeadline time.Duration
+		rootOffset      time.Duration
+		exitObserved    bool
+		exitCode        int
+		wantKind        supervisorRunningIntentKind
+	}{
+		{
+			name: "runtime emergency fallback", commandDeadline: 20 * time.Second,
+			wantKind: supervisorIntentRuntimeEmergency,
+		},
+		{
+			name: "root completion before deadline beats fallback", commandDeadline: 20 * time.Second,
+			rootOffset:   100 * time.Millisecond,
+			exitObserved: true, exitCode: 23, wantKind: supervisorIntentRootExit,
+		},
+		{
+			name: "root completion at deadline wins equality", commandDeadline: 200 * time.Millisecond,
+			rootOffset:   200 * time.Millisecond,
+			exitObserved: true, exitCode: 29, wantKind: supervisorIntentRootExit,
+		},
+		{
+			name: "root completion after deadline loses to deadline", commandDeadline: 200 * time.Millisecond,
+			rootOffset:   400 * time.Millisecond,
+			exitObserved: true, exitCode: 31, wantKind: supervisorIntentDeadline,
+		},
+		{
+			name: "unobserved at deadline selects deadline", commandDeadline: emergencyAt.Sub(releasedAt),
+			wantKind: supervisorIntentDeadline,
+		},
+		{
+			name: "unobserved after deadline selects deadline", commandDeadline: 200 * time.Millisecond,
+			wantKind: supervisorIntentDeadline,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const generation = attemptGeneration(34)
+			state, launch := appendReducerLaunchWithFacts(
+				t, supervisorState{}, generation, "attempt-emergency-owned",
+				AutomaticProfile, test.commandDeadline, launchBy,
+			)
+			completion := supervisorLaunchCompletion{
+				generation: generation, action: launch.token,
+				at: releasedAt, kind: supervisorLaunchReleased,
+			}
+			running := &supervisorRunningBundle{generation: generation}
+			if test.wantKind != supervisorIntentRuntimeEmergency {
+				running.drainBy = emergencyAt.Add(10 * time.Second)
+			}
+			running.exitRecheck = supervisorExitRecheck{
+				performed: true, observed: test.exitObserved,
+				at: emergencyAt, action: launch.token,
+			}
+			if test.exitObserved {
+				running.exitRecheck.at = releasedAt.Add(test.rootOffset)
+				running.exitRecheck.code = test.exitCode
+			}
+			next, actions := reduceSupervisorMustAccept(t, state, supervisorEvent{
+				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
+				emergencySnapshots: []supervisorEmergencySnapshot{{
+					generation: generation, completion: &completion, running: running,
+				}},
+			})
+			assertSupervisorActions(t, actions, supervisorPublishOwned, supervisorForceOwned)
+			attempt := supervisorAttemptByGeneration(t, next, generation)
+			wantIntent := supervisorRunningIntent{
+				latched: true, kind: test.wantKind,
+				at: emergencyAt, drainBy: emergencyDrainBy,
+				duration: emergencyAt.Sub(releasedAt),
+			}
+			if test.wantKind == supervisorIntentRootExit {
+				wantIntent.at = releasedAt.Add(test.rootOffset)
+				wantIntent.drainBy = running.drainBy
+				wantIntent.duration = test.rootOffset
+				wantIntent.exitCode = test.exitCode
+			} else if test.wantKind == supervisorIntentDeadline {
+				wantIntent.at = releasedAt.Add(test.commandDeadline)
+				wantIntent.drainBy = running.drainBy
+				wantIntent.duration = test.commandDeadline
+			}
+			if attempt.phase != supervisorEmergencyDraining || !attempt.startedAt.Equal(releasedAt) ||
+				!attempt.deadlineAt.Equal(releasedAt.Add(test.commandDeadline)) ||
+				!reflect.DeepEqual(attempt.intent, wantIntent) ||
+				!reflect.DeepEqual(actions[1].intent, wantIntent) ||
+				attempt.pendingDrain != (supervisorPendingAction{kind: actions[1].kind, token: actions[1].token}) ||
+				!attempt.drain.effectiveDrainBy.Equal(emergencyDrainBy) ||
+				!actions[1].drainBy.Equal(emergencyDrainBy) {
+				t.Fatalf("serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			}
+		})
+	}
+}
+
+func TestSupervisorReducerLaunchEmergencyReleasedSnapshotRequiresDedicatedSelectorShape(t *testing.T) {
+	launchBy := time.Unix(340, 0)
+	emergencyAt := launchBy.Add(-100 * time.Millisecond)
+	releasedAt := emergencyAt.Add(-500 * time.Millisecond)
+	factAt := releasedAt.Add(100 * time.Millisecond)
+	const generation = attemptGeneration(35)
+	reduceMalformed := func(
+		t *testing.T,
+		mutate func(*supervisorRunningBundle, supervisorActionToken, supervisorActionToken),
+	) {
+		t.Helper()
+		state, staleLaunch := appendReducerLaunchWithFacts(
+			t, supervisorState{}, generation-1, "attempt-emergency-stale-token",
+			AutomaticProfile, 20*time.Second, launchBy,
+		)
+		staleCompletion := supervisorLaunchCompletion{
+			generation: generation - 1, action: staleLaunch.token,
+			at: releasedAt, kind: supervisorLaunchProvenNotReleased, failure: LaunchFailed,
+		}
+		state, _ = reduceSupervisor(state, supervisorEvent{
+			kind: supervisorLaunchCompleted, generation: generation - 1,
+			at: staleCompletion.at, completion: &staleCompletion,
+		})
+		state, launch := appendReducerLaunchWithFacts(
+			t, state, generation, "attempt-emergency-unowned-fact",
+			AutomaticProfile, 20*time.Second, launchBy,
+		)
+		completion := supervisorLaunchCompletion{
+			generation: generation, action: launch.token,
+			at: releasedAt, kind: supervisorLaunchReleased,
+		}
+		running := supervisorRunningBundle{
+			generation: generation,
+			exitRecheck: supervisorExitRecheck{
+				performed: true, at: emergencyAt, action: launch.token,
+			},
+		}
+		mutate(&running, launch.token, staleLaunch.token)
+		assertSupervisorInvariant(t, func() {
+			reduceSupervisor(state, supervisorEvent{
+				kind: supervisorEmergencyStarted, at: emergencyAt,
+				drainBy: emergencyAt.Add(5 * time.Second),
+				emergencySnapshots: []supervisorEmergencySnapshot{{
+					generation: generation, completion: &completion, running: &running,
+				}},
+			})
+		})
+	}
+
+	t.Run("missing root completion snapshot", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.exitRecheck = supervisorExitRecheck{}
+		})
+	})
+	t.Run("unobserved snapshot is not stamped at emergency cut", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.exitRecheck.at = emergencyAt.Add(-time.Nanosecond)
+		})
+	})
+	t.Run("unobserved snapshot carries status", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.exitRecheck.code = 1
+		})
+	})
+	t.Run("observed root completion predates release", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, exact, _ supervisorActionToken) {
+			running.exitRecheck = supervisorExitRecheck{
+				performed: true, observed: true, at: releasedAt.Add(-time.Nanosecond),
+				code: 53, action: exact,
+			}
+			running.drainBy = emergencyAt.Add(10 * time.Second)
+		})
+	})
+	t.Run("observed root completion follows emergency cut", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, exact, _ supervisorActionToken) {
+			running.exitRecheck = supervisorExitRecheck{
+				performed: true, observed: true, at: emergencyAt.Add(time.Nanosecond),
+				code: 59, action: exact,
+			}
+			running.drainBy = emergencyAt.Add(10 * time.Second)
+		})
+	})
+	t.Run("zero launch action token", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.exitRecheck.action = 0
+		})
+	})
+	t.Run("wrong launch action token", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, exact, _ supervisorActionToken) {
+			running.exitRecheck.action = exact + 100
+		})
+	})
+	t.Run("stale cross-attempt launch action token", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, stale supervisorActionToken) {
+			running.exitRecheck.action = stale
+		})
+	})
+	t.Run("nonzero wait action", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.waitAction = 41
+		})
+	})
+	t.Run("nonzero sample action", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.sampleAction = 43
+		})
+	})
+	t.Run("fallback local drain bound", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+			running.drainBy = emergencyAt.Add(10 * time.Second)
+		})
+	})
+	t.Run("selected root lacks local drain bound", func(t *testing.T) {
+		reduceMalformed(t, func(running *supervisorRunningBundle, exact, _ supervisorActionToken) {
+			running.exitRecheck = supervisorExitRecheck{
+				performed: true, observed: true, at: factAt, code: 47, action: exact,
+			}
+		})
+	})
+
+	for _, test := range []struct {
+		name string
+		fact supervisorRunningFact
+	}{
+		{
+			name: "zero-token fuse",
+			fact: supervisorRunningFact{
+				kind: supervisorRunningFuseObserved, at: factAt, rootLive: true, live: 65,
+			},
+		},
+		{
+			name: "zero-token root exit",
+			fact: supervisorRunningFact{kind: supervisorRunningRootExited, at: factAt, exitCode: 31},
+		},
+		{
+			name: "pre-ownership stop",
+			fact: supervisorRunningFact{
+				kind: supervisorRunningStopRequested, at: factAt,
+				stop: StopRequest{At: factAt, DrainBy: emergencyAt.Add(10 * time.Second)},
+			},
+		},
+		{
+			name: "zero-token observation failure",
+			fact: supervisorRunningFact{
+				kind: supervisorRunningObservationFailed, at: factAt,
+				source: supervisorObservationRunning, diagnostic: 37,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fact := test.fact
+			fact.generation = generation
+			reduceMalformed(t, func(running *supervisorRunningBundle, _, _ supervisorActionToken) {
+				running.facts = []supervisorRunningFact{fact}
+			})
+		})
+	}
+}
+
+func TestSupervisorReducerLaunchEmergencyPreOwnedCutDoesNotAuthorizeRunningFacts(t *testing.T) {
+	launchBy := time.Unix(345, 0)
+	emergencyAt := launchBy.Add(-100 * time.Millisecond)
+	releasedAt := emergencyAt.Add(-500 * time.Millisecond)
+	const generation = attemptGeneration(36)
+	state, launch := appendReducerLaunchWithFacts(
+		t, supervisorState{}, generation, "attempt-emergency-no-running-actions",
+		AutomaticProfile, 20*time.Second, launchBy,
+	)
+	completion := supervisorLaunchCompletion{
+		generation: generation, action: launch.token,
+		at: releasedAt, kind: supervisorLaunchReleased,
+	}
+	sealed, _ := reduceSupervisor(state, supervisorEvent{
+		kind: supervisorEmergencyStarted, at: emergencyAt,
+		drainBy: emergencyAt.Add(5 * time.Second),
+		emergencySnapshots: []supervisorEmergencySnapshot{{
+			generation: generation, completion: &completion,
+			running: &supervisorRunningBundle{
+				generation: generation,
+				exitRecheck: supervisorExitRecheck{
+					performed: true, at: emergencyAt, action: launch.token,
+				},
+			},
+		}},
+	})
+	attempt := supervisorAttemptByGeneration(t, sealed, generation)
+	if attempt.waitAction != 0 || attempt.sampleAction != 0 {
+		t.Fatalf("pre-Owned emergency invented running actions: %#v", attempt)
+	}
+
+	for _, test := range []struct {
+		name string
+		fact supervisorRunningFact
+	}{
+		{
+			name: "zero-token fuse",
+			fact: supervisorRunningFact{
+				generation: generation, kind: supervisorRunningFuseObserved,
+				at: emergencyAt.Add(time.Nanosecond), rootLive: true, live: 65,
+			},
+		},
+		{
+			name: "zero-token root exit",
+			fact: supervisorRunningFact{
+				generation: generation, kind: supervisorRunningRootExited,
+				at: emergencyAt.Add(time.Nanosecond), exitCode: 61,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertSupervisorInvariant(t, func() {
+				reduceSupervisor(sealed, supervisorEvent{
+					kind: supervisorRunningObserved, generation: generation,
+					at: test.fact.at, drainBy: emergencyAt.Add(5 * time.Second),
+					running: &supervisorRunningBundle{
+						generation: generation, facts: []supervisorRunningFact{test.fact},
+					},
+				})
+			})
+		})
+	}
+}
+
+func TestSupervisorReducerLaunchUnconfirmedEmergencyEstablishesMonotonicFloor(t *testing.T) {
+	launchBy := time.Unix(348, 0)
+	emergencyAt := launchBy.Add(time.Second)
+	drainBy := emergencyAt.Add(5 * time.Second)
+	completionAt := launchBy.Add(500 * time.Millisecond)
+	const generation = attemptGeneration(37)
+	newUnconfirmed := func(t *testing.T) (supervisorState, supervisorAction) {
+		t.Helper()
+		state, launch := appendReducerLaunch(
+			t, supervisorState{}, generation, "attempt-unconfirmed-emergency-floor", launchBy,
+		)
+		state, _ = reduceSupervisor(state, supervisorEvent{
+			kind: supervisorLaunchBoundary, generation: generation, at: launchBy,
+		})
+
+		return state, launch
+	}
+
+	t.Run("nil completion floors a later launch completion", func(t *testing.T) {
+		state, launch := newUnconfirmed(t)
+		floored, _ := reduceSupervisor(state, supervisorEvent{
+			kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: drainBy,
+			emergencySnapshots: []supervisorEmergencySnapshot{{generation: generation}},
+		})
+		attempt := supervisorAttemptByGeneration(t, floored, generation)
+		if !attempt.lastEventAt.Equal(emergencyAt) {
+			t.Errorf("nil-completion emergency floor = %s, want %s", attempt.lastEventAt, emergencyAt)
+		}
+		completion := supervisorLaunchCompletion{
+			generation: generation, action: launch.token,
+			at: completionAt, kind: supervisorLaunchReleased,
+		}
+		assertSupervisorInvariant(t, func() {
+			reduceSupervisor(floored, supervisorEvent{
+				kind: supervisorLaunchCompleted, generation: generation,
+				at: completion.at, completion: &completion,
+			})
+		})
+	})
+
+	t.Run("released completion floors its force completion", func(t *testing.T) {
+		state, launch := newUnconfirmed(t)
+		completion := supervisorLaunchCompletion{
+			generation: generation, action: launch.token,
+			at: completionAt, kind: supervisorLaunchReleased,
+		}
+		floored, actions := reduceSupervisor(state, supervisorEvent{
+			kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: drainBy,
+			emergencySnapshots: []supervisorEmergencySnapshot{{
+				generation: generation, completion: &completion,
+			}},
+		})
+		assertSupervisorActions(t, actions, supervisorAdoptOwned, supervisorForceOwned)
+		attempt := supervisorAttemptByGeneration(t, floored, generation)
+		if !attempt.lastEventAt.Equal(emergencyAt) {
+			t.Errorf("released-completion emergency floor = %s, want %s", attempt.lastEventAt, emergencyAt)
+		}
+		forceCompletion := supervisorDrainCompletion{
+			generation: generation,
+			action: supervisorPendingAction{
+				kind: actions[1].kind, token: actions[1].token,
+			},
+			at: emergencyAt.Add(-time.Nanosecond), kind: supervisorDrainForceCompleted,
+		}
+		assertSupervisorInvariant(t, func() {
+			reduceSupervisor(floored, supervisorEvent{
+				kind: supervisorDrainCompleted, generation: generation,
+				at: forceCompletion.at, drain: &forceCompletion,
+			})
+		})
+	})
 }
 
 func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersistsEpoch(t *testing.T) {
@@ -288,7 +677,12 @@ func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersis
 		drainBy: drainBy,
 		emergencySnapshots: []supervisorEmergencySnapshot{
 			{generation: 51},
-			{generation: 52, completion: &releasedSnapshot},
+			{generation: 52, completion: &releasedSnapshot, running: &supervisorRunningBundle{
+				generation: 52,
+				exitRecheck: supervisorExitRecheck{
+					performed: true, at: emergencyAt, action: launchActions[1].token,
+				},
+			}},
 			{generation: 53, running: &supervisorRunningBundle{
 				generation: 53, waitAction: ownedActions[1].token, sampleAction: ownedActions[2].token,
 				drainBy: drainBy,
@@ -335,7 +729,9 @@ func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersis
 			t.Fatalf("late adoption lost emergency request: %#v", lateActions)
 		}
 	}
-	if supervisorAttemptByGeneration(t, adopted, 51).phase != supervisorLaunchOwned {
+	adoptedAttempt := supervisorAttemptByGeneration(t, adopted, 51)
+	if adoptedAttempt.phase != supervisorLaunchOwned ||
+		adoptedAttempt.intent != (supervisorRunningIntent{}) || adoptedAttempt.intent.duration < 0 {
 		t.Fatalf("late release was not adopted: %#v", adopted)
 	}
 
@@ -541,6 +937,21 @@ func assertSupervisorInvariant(t *testing.T, action func()) {
 		}
 	}()
 	action()
+}
+
+func reduceSupervisorMustAccept(
+	t *testing.T,
+	state supervisorState,
+	event supervisorEvent,
+) (next supervisorState, actions []supervisorAction) {
+	t.Helper()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("reducer unexpectedly rejected valid evidence: %v", recovered)
+		}
+	}()
+
+	return reduceSupervisor(state, event)
 }
 
 func assertReducerDataOnly(t *testing.T, dataType reflect.Type, visiting map[reflect.Type]bool, path string) {
