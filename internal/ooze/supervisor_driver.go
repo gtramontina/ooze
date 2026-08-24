@@ -595,13 +595,18 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			driver.correlateWaitCompletion(event, waitAction, sampleAction)
 			select {
 			case at := <-samples:
-				if !at.After(event.at) && at.Before(deadlineAt) {
-					facts := driver.runningSampleFacts(waitAction, sampleAction, at)
-					if at.Equal(event.at) {
-						event.running.facts = append(event.running.facts, facts...)
-					} else if driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
+				if at.Before(deadlineAt) {
+					if at.After(event.at) {
+						driver.applyMonitorEvent(*event)
+
 						return
 					}
+					driver.applyReadyWaitAndSample(
+						event, waitAction, sampleAction, at,
+						driver.runningSampleFacts(waitAction, sampleAction, at),
+					)
+
+					return
 				}
 			default:
 			}
@@ -638,17 +643,7 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			select {
 			case event := <-waited:
 				driver.correlateWaitCompletion(event, waitAction, sampleAction)
-				switch {
-				case event.at.Equal(at):
-					event.running.facts = append(event.running.facts, facts...)
-					driver.applyMonitorEvent(*event)
-				case event.at.Before(at):
-					driver.applyMonitorEvent(*event)
-				default:
-					if !driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
-						driver.applyMonitorEvent(*event)
-					}
-				}
+				driver.applyReadyWaitAndSample(event, waitAction, sampleAction, at, facts)
 
 				return
 			default:
@@ -656,6 +651,26 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			if driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
 				return
 			}
+		}
+	}
+}
+
+func (driver *supervisorDriver) applyReadyWaitAndSample(
+	event *supervisorEvent,
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	sampleAt time.Time,
+	sampleFacts []supervisorRunningFact,
+) {
+	switch {
+	case event.at.Equal(sampleAt):
+		event.running.facts = append(event.running.facts, sampleFacts...)
+		driver.applyMonitorEvent(*event)
+	case event.at.Before(sampleAt):
+		driver.applyMonitorEvent(*event)
+	default:
+		if !driver.applyRunningSampleFacts(waitAction, sampleAction, sampleAt, sampleFacts) {
+			driver.applyMonitorEvent(*event)
 		}
 	}
 }
