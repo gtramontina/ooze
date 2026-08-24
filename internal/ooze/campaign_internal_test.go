@@ -232,6 +232,70 @@ func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 	}
 }
 
+func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
+	deadline := harness.state.mutationDeadline
+	trip := func() Tripped {
+		return Tripped{
+			Trip:          AutomaticDeadlineTrip{},
+			ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired},
+		}
+	}
+	firstEffects := harness.settleAttempt(t, first, trip(), 0)
+	secondEffects := harness.settleAttempt(t, second, trip(), 0)
+	assertCampaignEffects(t, firstEffects, campaignEffectReleaseWorkspace)
+	assertCampaignEffects(t, secondEffects, campaignEffectReleaseWorkspace)
+	if harness.state.phase != campaignDraining || harness.state.drain.kind != campaignDrainConfirm ||
+		!reflect.DeepEqual(harness.state.drain.provisionals, []mutantIdentity{"mutant-a", "mutant-b"}) {
+		t.Fatalf("confirmation drain=%#v", harness.state.drain)
+	}
+
+	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
+	effects := harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-b"})
+	assertCampaignEffects(t, effects, campaignEffectMaterializeWorkspace)
+	if effects[0].mutant != "mutant-a" || harness.state.phase != campaignConfirming {
+		t.Fatalf("first confirmation=%#v phase=%v", effects[0], harness.state.phase)
+	}
+	confirmationA := harness.launchConfirmation(t, effects[0], "workspace-confirm-a")
+	effects = harness.settleConfirmation(t, confirmationA, Settled{
+		Exit:          ExitStatus{},
+		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	effects = harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-confirm-a",
+	})
+	assertCampaignEffects(t, effects, campaignEffectMaterializeWorkspace)
+	if effects[0].mutant != "mutant-b" {
+		t.Fatalf("second confirmation=%#v", effects[0])
+	}
+	confirmationB := harness.launchConfirmation(t, effects[0], "workspace-confirm-b")
+	effects = harness.settleConfirmation(t, confirmationB, Tripped{
+		Trip:          AutomaticDeadlineTrip{},
+		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired},
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	effects = harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-confirm-b",
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
+	if harness.state.commandCount() != 5 || harness.runtime.mode != singleAdmission {
+		t.Fatalf("command count/mode=%d/%v", harness.state.commandCount(), harness.runtime.mode)
+	}
+
+	harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
+	var committed terminalResult
+	harness.runtime, committed = harness.runtime.commitTerminal(harness.state.runtimeToken)
+	harness.advance(terminalCommittedEvent{result: committed})
+	completed := harness.state.outcome.(completedOutcome)
+	want := []mutantResult{{mutant: "mutant-a", kind: mutantSurvived}, {mutant: "mutant-b", kind: mutantTimedOut}}
+	if !reflect.DeepEqual(completed.mutants, want) {
+		t.Fatalf("confirmation outcome=%#v, want %#v", completed.mutants, want)
+	}
+}
+
 type campaignHarness struct {
 	state     campaignState
 	runtime   processRuntime
@@ -349,6 +413,63 @@ func (harness *campaignHarness) settleAttempt(
 	return harness.advance(attemptTerminalEvent{
 		attempt: attempt.attempt, generation: attempt.generation, terminal: terminal,
 		receipt: receipt, resolvedMutationDeadline: resolved,
+	})
+}
+
+func (harness *campaignHarness) launchConfirmation(
+	t *testing.T,
+	effect campaignEffect,
+	workspace string,
+) launchedCampaignAttempt {
+	t.Helper()
+	effects := harness.advance(workspaceMaterializedEvent{
+		attempt: effect.attempt, workspace: workspace, snapshot: effect.snapshot,
+	})
+	if effects[0].kind == campaignEffectBindConfirmationBarrier {
+		var bound barrierResult
+		harness.runtime, bound = harness.runtime.sealAndBindConfirmationBarrier(effects[0].binding)
+		effects = harness.advance(confirmationBarrierBoundEvent{attempt: effect.attempt, result: bound})
+	} else {
+		var admitted admissionResult
+		harness.runtime, admitted = harness.runtime.requestAdmission(effects[0].request)
+		effects = harness.advance(admissionGrantedEvent{attempt: effect.attempt, grant: admitted.deliveries[0]})
+	}
+	var started startCommittedResult
+	harness.runtime, started = harness.runtime.startCommitted(effects[0].grant)
+	effects = harness.advance(startCommittedEvent{attempt: effect.attempt, grant: effects[0].grant, result: started})
+	var receipt observationResult
+	harness.runtime, receipt = harness.runtime.observeAttempt(started.generation, launchOwned{})
+	harness.advance(attemptLaunchEvent{
+		attempt: effect.attempt, generation: started.generation, result: Owned{}, receipt: receipt,
+	})
+
+	return launchedCampaignAttempt{attempt: effect.attempt, generation: started.generation}
+}
+
+func (harness *campaignHarness) settleConfirmation(
+	t *testing.T,
+	attempt launchedCampaignAttempt,
+	terminal Terminal,
+) []campaignEffect {
+	t.Helper()
+	queueDrained := len(harness.state.drain.provisionals) == 1
+	outcome := confirmationPressureAccepted
+	if _, repeated := terminal.(Tripped); repeated {
+		outcome = confirmationRejected
+	}
+	var receipt observationResult
+	if queueDrained {
+		harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, confirmationQueueDrained{
+			outcome: outcome,
+		})
+	} else {
+		harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, confirmationContinues{
+			outcome: outcome,
+		})
+	}
+
+	return harness.advance(attemptTerminalEvent{
+		attempt: attempt.attempt, generation: attempt.generation, terminal: terminal, receipt: receipt,
 	})
 }
 

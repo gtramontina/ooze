@@ -79,11 +79,13 @@ type campaignEffect struct {
 	snapshot   snapshotIdentity
 	workspace  string
 	attempt    attemptIdentity
+	mutant     mutantIdentity
 	deadline   time.Duration
 	profile    Profile
 	request    admissionRequest
 	grant      admissionGrant
 	generation attemptGeneration
+	binding    barrierBinding
 	terminal   campaignTerminalCandidate
 }
 
@@ -93,23 +95,24 @@ type campaignTraceRecord struct {
 }
 
 type campaignState struct {
-	definition       campaignDefinition
-	phase            campaignPhase
-	runtimeToken     campaignToken
-	snapshot         snapshotIdentity
-	catalogue        []mutantIdentity
-	catalogueKnown   bool
-	mutants          []campaignMutant
-	attempts         []campaignAttempt
-	obligations      []campaignObligation
-	trace            []campaignTraceRecord
-	outcome          campaignOutcome
-	candidate        campaignTerminalCandidate
-	nextEffect       campaignEffectID
-	commands         int
-	nextAttempt      uint64
-	mutationDeadline time.Duration
-	drain            campaignDrainIntent
+	definition               campaignDefinition
+	phase                    campaignPhase
+	runtimeToken             campaignToken
+	snapshot                 snapshotIdentity
+	catalogue                []mutantIdentity
+	catalogueKnown           bool
+	mutants                  []campaignMutant
+	attempts                 []campaignAttempt
+	obligations              []campaignObligation
+	trace                    []campaignTraceRecord
+	outcome                  campaignOutcome
+	candidate                campaignTerminalCandidate
+	nextEffect               campaignEffectID
+	commands                 int
+	nextAttempt              uint64
+	mutationDeadline         time.Duration
+	drain                    campaignDrainIntent
+	confirmationBarrierBound bool
 }
 
 type campaignDrainIntentKind uint8
@@ -159,9 +162,10 @@ type campaignAttempt struct {
 }
 
 type campaignMutant struct {
-	identity       mutantIdentity
-	result         mutantResultKind
-	primaryStarted bool
+	identity            mutantIdentity
+	result              mutantResultKind
+	primaryStarted      bool
+	confirmationStarted bool
 }
 
 type campaignEventPayload interface {
@@ -212,17 +216,22 @@ type attemptTerminalEvent struct {
 	receipt                  observationResult
 	resolvedMutationDeadline time.Duration
 }
+type confirmationBarrierBoundEvent struct {
+	attempt attemptIdentity
+	result  barrierResult
+}
 
-func (campaignRegisteredEvent) campaignEventPayload()    {}
-func (snapshotEstablishedEvent) campaignEventPayload()   {}
-func (catalogueDiscoveredEvent) campaignEventPayload()   {}
-func (resourceSettledEvent) campaignEventPayload()       {}
-func (terminalCommittedEvent) campaignEventPayload()     {}
-func (workspaceMaterializedEvent) campaignEventPayload() {}
-func (admissionGrantedEvent) campaignEventPayload()      {}
-func (startCommittedEvent) campaignEventPayload()        {}
-func (attemptLaunchEvent) campaignEventPayload()         {}
-func (attemptTerminalEvent) campaignEventPayload()       {}
+func (campaignRegisteredEvent) campaignEventPayload()       {}
+func (snapshotEstablishedEvent) campaignEventPayload()      {}
+func (catalogueDiscoveredEvent) campaignEventPayload()      {}
+func (resourceSettledEvent) campaignEventPayload()          {}
+func (terminalCommittedEvent) campaignEventPayload()        {}
+func (workspaceMaterializedEvent) campaignEventPayload()    {}
+func (admissionGrantedEvent) campaignEventPayload()         {}
+func (startCommittedEvent) campaignEventPayload()           {}
+func (attemptLaunchEvent) campaignEventPayload()            {}
+func (attemptTerminalEvent) campaignEventPayload()          {}
+func (confirmationBarrierBoundEvent) campaignEventPayload() {}
 
 func (campaignRegisteredEvent) campaignEventName() string    { return "campaign registered" }
 func (snapshotEstablishedEvent) campaignEventName() string   { return "snapshot established" }
@@ -234,6 +243,9 @@ func (admissionGrantedEvent) campaignEventName() string      { return "admission
 func (startCommittedEvent) campaignEventName() string        { return "start committed" }
 func (attemptLaunchEvent) campaignEventName() string         { return "attempt launched" }
 func (attemptTerminalEvent) campaignEventName() string       { return "attempt terminal" }
+func (confirmationBarrierBoundEvent) campaignEventName() string {
+	return "confirmation barrier bound"
+}
 
 type campaignTerminalKind uint8
 
@@ -322,6 +334,8 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 		return state.onAttemptLaunch(observed)
 	case attemptTerminalEvent:
 		return state.onAttemptTerminal(observed)
+	case confirmationBarrierBoundEvent:
+		return state.onConfirmationBarrierBound(observed)
 	default:
 		campaignInvariant("advance", "event kind is unknown")
 	}
@@ -412,11 +426,28 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 
 			return state.materializePrimaryBatch()
 		}
+		if kind == campaignAttemptConfirmation {
+			if len(state.drain.provisionals) != 0 {
+				return state.materializeConfirmation()
+			}
+			if state.allMutantsResolved() && len(state.attempts) == 0 {
+				state.phase = campaignDraining
+				state.drain = campaignDrainIntent{kind: campaignDrainComplete}
+
+				return state.releaseSnapshot(campaignTerminalCompleted)
+			}
+			state.phase = campaignRunning
+
+			return state.materializePrimaryBatch()
+		}
 		if state.allMutantsResolved() && len(state.attempts) == 0 {
 			state.phase = campaignDraining
 			state.drain = campaignDrainIntent{kind: campaignDrainComplete}
 
 			return state.releaseSnapshot(campaignTerminalCompleted)
+		}
+		if state.drain.kind == campaignDrainConfirm && len(state.attempts) == 0 {
+			return state.materializeConfirmation()
 		}
 
 		return state.materializePrimaryBatch()
@@ -472,10 +503,21 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 	class := sharedAdmission
 	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
 		class = exclusiveAdmission
-	} else if state.definition.profile == SerialProfile {
-		class = serialPrimaryAdmission
 	} else if state.attempts[attemptAt].kind == campaignAttemptConfirmation {
 		class = confirmationAdmission
+	} else if state.definition.profile == SerialProfile {
+		class = serialPrimaryAdmission
+	}
+	if state.attempts[attemptAt].kind == campaignAttemptConfirmation && !state.confirmationBarrierBound {
+		state.obligations = append(state.obligations, campaignObligation{
+			kind: campaignResourceAdmission, identity: string(event.attempt), attempt: event.attempt,
+		})
+		binding := barrierBinding{campaign: state.runtimeToken, attempt: event.attempt}
+
+		return state.emit(campaignEffect{
+			kind: campaignEffectBindConfirmationBarrier, attempt: event.attempt,
+			mutant: state.attempts[attemptAt].mutant, binding: binding,
+		})
 	}
 	request := admissionRequest{campaign: state.runtimeToken, attempt: event.attempt, class: class}
 	state.attempts[attemptAt].request = request
@@ -492,15 +534,36 @@ func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (camp
 		event.grant != state.attempts[attemptAt].request {
 		campaignInvariant("grant admission", "grant is stale or wrong")
 	}
+
+	return state.acceptGrant(attemptAt, event.grant)
+}
+
+func (state campaignState) acceptGrant(attemptAt int, grant admissionGrant) (campaignState, []campaignEffect) {
 	state.attempts[attemptAt].stage = campaignAttemptGranted
-	state.attempts[attemptAt].grant = event.grant
+	state.attempts[attemptAt].grant = grant
 	state.obligations = append(state.obligations, campaignObligation{
-		kind: campaignResourcePendingStart, identity: string(event.attempt), attempt: event.attempt,
+		kind: campaignResourcePendingStart, identity: string(grant.attempt), attempt: grant.attempt,
 	})
 
 	return state.emit(campaignEffect{
-		kind: campaignEffectRequestStartCommitment, attempt: event.attempt, grant: event.grant,
+		kind: campaignEffectRequestStartCommitment, attempt: grant.attempt, grant: grant,
 	})
+}
+
+func (state campaignState) onConfirmationBarrierBound(
+	event confirmationBarrierBoundEvent,
+) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || state.confirmationBarrierBound || state.attempts[attemptAt].kind != campaignAttemptConfirmation ||
+		state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting || event.result.decision != barrierBound ||
+		event.result.request.attempt != event.attempt || len(event.result.deliveries) != 1 ||
+		event.result.deliveries[0] != event.result.request {
+		campaignInvariant("bind confirmation barrier", "barrier binding is invalid")
+	}
+	state.confirmationBarrierBound = true
+	state.attempts[attemptAt].request = event.result.request
+
+	return state.acceptGrant(attemptAt, event.result.deliveries[0])
 }
 
 func (state campaignState) onStartCommitted(event startCommittedEvent) (campaignState, []campaignEffect) {
@@ -587,9 +650,12 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 				state.mutants[mutantAt].result = mutantRunaway
 			case AutomaticDeadlineTrip, SerialDeadlineTrip:
 				if event.receipt.confirmationProvisional {
-					campaignInvariant("observe primary terminal", "confirmation transition is not installed")
+					state.phase = campaignDraining
+					state.drain.kind = campaignDrainConfirm
+					state.drain.provisionals = state.insertProvisional(attempt.mutant)
+				} else {
+					state.mutants[mutantAt].result = mutantTimedOut
 				}
-				state.mutants[mutantAt].result = mutantTimedOut
 			default:
 				campaignInvariant("observe primary terminal", "trip kind is invalid")
 			}
@@ -599,8 +665,32 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		default:
 			campaignInvariant("observe primary terminal", "primary terminal kind is invalid")
 		}
+	} else if attempt.kind == campaignAttemptConfirmation {
+		mutantAt := state.mutantIndex(attempt.mutant)
+		if mutantAt < 0 || state.mutants[mutantAt].result != 0 || len(state.drain.provisionals) == 0 ||
+			state.drain.provisionals[0] != attempt.mutant {
+			campaignInvariant("observe confirmation terminal", "confirmation mutant is invalid")
+		}
+		switch terminal := event.terminal.(type) {
+		case Settled:
+			if terminal.Exit.Passed() {
+				state.mutants[mutantAt].result = mutantSurvived
+			} else {
+				state.mutants[mutantAt].result = mutantKilled
+			}
+		case Tripped:
+			switch terminal.Trip.(type) {
+			case AutomaticDeadlineTrip, SerialDeadlineTrip:
+				state.mutants[mutantAt].result = mutantTimedOut
+			default:
+				campaignInvariant("observe confirmation terminal", "confirmation trip is invalid")
+			}
+		default:
+			campaignInvariant("observe confirmation terminal", "confirmation terminal is invalid")
+		}
+		state.drain.provisionals = slices.Clone(state.drain.provisionals[1:])
 	} else {
-		campaignInvariant("observe terminal", "confirmation transition is not installed")
+		campaignInvariant("observe terminal", "attempt kind is invalid")
 	}
 	attempt.stage = campaignAttemptSettled
 	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, event.generation)
@@ -609,6 +699,35 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	return state.emit(campaignEffect{
 		kind: campaignEffectReleaseWorkspace, attempt: event.attempt, workspace: attempt.workspace,
 	})
+}
+
+func (state campaignState) insertProvisional(mutant mutantIdentity) []mutantIdentity {
+	if slices.Contains(state.drain.provisionals, mutant) {
+		campaignInvariant("queue provisional", "provisional mutant is duplicated")
+	}
+	queue := append(slices.Clone(state.drain.provisionals), mutant)
+	slices.SortFunc(queue, func(left, right mutantIdentity) int {
+		return state.mutantIndex(left) - state.mutantIndex(right)
+	})
+
+	return queue
+}
+
+func (state campaignState) materializeConfirmation() (campaignState, []campaignEffect) {
+	if len(state.drain.provisionals) == 0 {
+		campaignInvariant("materialize confirmation", "provisional queue is empty")
+	}
+	mutant := state.drain.provisionals[0]
+	mutantAt := state.mutantIndex(mutant)
+	if mutantAt < 0 || state.mutants[mutantAt].confirmationStarted {
+		campaignInvariant("materialize confirmation", "confirmation was already started")
+	}
+	state.mutants[mutantAt].confirmationStarted = true
+	state.phase = campaignConfirming
+	var effect campaignEffect
+	state, effect = state.materializeAttempt(campaignAttemptConfirmation, mutant)
+
+	return state, []campaignEffect{effect}
 }
 
 func (state campaignState) releaseSnapshot(candidate campaignTerminalKind) (campaignState, []campaignEffect) {
@@ -634,7 +753,7 @@ func (state campaignState) materializeAttempt(kind campaignAttemptKind, mutant m
 
 	return state, campaignEffect{
 		id: state.nextEffect, kind: campaignEffectMaterializeWorkspace,
-		snapshot: state.snapshot, attempt: attempt,
+		snapshot: state.snapshot, attempt: attempt, mutant: mutant,
 	}
 }
 
