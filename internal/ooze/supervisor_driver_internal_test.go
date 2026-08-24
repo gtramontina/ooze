@@ -814,8 +814,11 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	releasedAt := registeredAt.Add(time.Millisecond)
 	exitedAt := releasedAt.Add(time.Second)
 	drainBy := exitedAt.Add(5 * time.Second)
+	emergencyAt := drainBy.Add(2 * time.Nanosecond)
 	nextAt := registeredAt.Add(-time.Nanosecond)
 	observations := 0
+	captureEntered := make(chan struct{})
+	captureDone := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 95})
@@ -889,7 +892,9 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 					at: completion.at, drain: &completion,
 				}
 			case supervisorCaptureOutput:
-				nextAt = drainBy.Add(time.Nanosecond)
+				close(captureEntered)
+				<-captureDone
+				nextAt = emergencyAt.Add(time.Nanosecond)
 				completion := supervisorOutputCompletion{
 					generation: action.generation,
 					action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -923,16 +928,42 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	if !ok || owned.Attempt == nil {
 		t.Fatalf("launch = %#v, want Owned", result)
 	}
-	terminal := owned.Attempt.Wait()
+	terminalReady := make(chan Terminal, 1)
+	go func() { terminalReady <- owned.Attempt.Wait() }()
+	<-captureEntered
+	closure := shell.closeRuntime(runtimeFatalCause("emergency during residual output capture"))
+	if len(closure.residual) != 1 {
+		t.Fatalf("runtime closure = %#v, want one owned residual", closure)
+	}
+	settlementReady := make(chan SweepResult, 1)
+	go func() {
+		settlementReady <- supervisor.EmergencyDrain(EmergencyRequest{
+			At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
+		})
+	}()
+	deadline := time.After(time.Second)
+	for {
+		driver.mutex.Lock()
+		emergencyActive := driver.state.emergency.active
+		driver.mutex.Unlock()
+		if emergencyActive {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("emergency did not snapshot in-flight output capture")
+		default:
+			runtime.Gosched()
+		}
+	}
+	close(captureDone)
+	terminal := <-terminalReady
 	unconfirmed, ok := terminal.(DrainUnconfirmed)
 	if !ok || unconfirmed.Residual != OwnedUndrained || unconfirmed.Output.Bytes != "partial" ||
 		unconfirmed.Output.Final {
 		t.Fatalf("terminal = %#v, want partial DrainUnconfirmed", terminal)
 	}
-	emergencyAt := nextAt.Add(time.Nanosecond)
-	settlement := supervisor.EmergencyDrain(EmergencyRequest{
-		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
-	})
+	settlement := <-settlementReady
 	residuals, ok := settlement.(SweepUnconfirmed)
 	if !ok || !reflect.DeepEqual(residuals.Residuals(), []ResidualRef{{
 		Attempt: "driver-residual", Kind: OwnedUndrained,

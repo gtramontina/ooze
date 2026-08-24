@@ -792,7 +792,16 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 				waitAction:   state.waitAction,
 				sampleAction: state.sampleAction,
 			}
-		case supervisorAwaitingEmergencySettlement:
+		case supervisorIntentLatched:
+			snapshot.running = &supervisorRunningBundle{
+				generation:   state.generation,
+				waitAction:   state.waitAction,
+				sampleAction: state.sampleAction,
+			}
+		case supervisorLaunchOwned, supervisorCapturingOutput,
+			supervisorSealingStopAdmission, supervisorReleasingDomain,
+			supervisorTransferringResidualCustody, supervisorSettlingRuntime,
+			supervisorAwaitingEmergencySettlement:
 		default:
 			driver.mutex.Unlock()
 			invariant(supervisorDriverOperation, "attempt phase has no emergency snapshot")
