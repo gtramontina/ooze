@@ -22,7 +22,7 @@ func TestProcessRuntimeShellCompletesSealedConfirmationQueue(t *testing.T) {
 	grant := core.admissions[barrierAt].grant
 	core, started := core.startCommitted(grant)
 	core, _ = core.observeAttempt(started.generation, launchOwned{})
-	core, _ = core.observeAttempt(started.generation, attemptTripped{kind: deadlineTrip})
+	core, _ = core.observeAttempt(started.generation, automaticDeadlineTrip())
 	shell := &processRuntimeShell{core: core, emergency: make(chan struct{})}
 
 	result := shell.completeConfirmationQueue(grant.campaign)
@@ -127,7 +127,7 @@ func TestProcessRuntimeShellFatalClosureDoesNotEmitUnboundBarrierDelivery(t *tes
 	requestB := shell.requestAdmission(admissionRequest{campaign: campaignB.token, attempt: "b", class: sharedAdmission})
 	startedA := startOwned(shell, <-requestA.delivery)
 	_ = startOwned(shell, <-requestB.delivery)
-	shell.observeAttempt(startedA.generation, attemptTripped{kind: deadlineTrip})
+	shell.observeAttempt(startedA.generation, automaticDeadlineTrip())
 	if shell.snapshot().unboundBarrierIndex(campaignA.token) < 0 {
 		t.Fatalf("setup has no unbound barrier: %#v", shell.snapshot())
 	}
@@ -145,7 +145,7 @@ func TestProcessRuntimeShellBindsBarrierToBufferedOneShot(t *testing.T) {
 	requestB := shell.requestAdmission(admissionRequest{campaign: campaignB.token, attempt: "b", class: sharedAdmission})
 	startedA := startOwned(shell, <-requestA.delivery)
 	startedB := startOwned(shell, <-requestB.delivery)
-	shell.observeAttempt(startedA.generation, attemptTripped{kind: deadlineTrip})
+	shell.observeAttempt(startedA.generation, automaticDeadlineTrip())
 	shell.observeAttempt(startedB.generation, attemptSettled{})
 
 	confirmation := shell.sealAndBindConfirmationBarrier(barrierBinding{
@@ -607,7 +607,7 @@ func TestProcessRuntimeShellSerializesGateClosureAgainstStartCommit(t *testing.T
 		go func() {
 			defer wait.Done()
 			<-begin
-			shell.observeAttempt(generationA1, attemptTripped{kind: deadlineTrip})
+			shell.observeAttempt(generationA1, automaticDeadlineTrip())
 		}()
 		close(begin)
 		wait.Wait()
