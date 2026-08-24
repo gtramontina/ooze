@@ -14,6 +14,40 @@ import (
 
 const supervisorNativeOperation = "execute native supervisor action"
 
+type nativeLaunchOperation uint8
+
+const (
+	nativeLaunchInternalOutput nativeLaunchOperation = iota + 1
+	nativeLaunchLauncherStart
+	nativeLaunchContainmentPrepare
+	nativeLaunchRootTrackerCreate
+	nativeLaunchRootTrackerRegister
+	nativeLaunchTargetExec
+	nativeLaunchCleanup
+)
+
+type nativeLaunchStage uint8
+
+const (
+	nativeLaunchPreRelease nativeLaunchStage = iota + 1
+	nativeLaunchReleaseUnknown
+)
+
+type nativeLaunchFailureEvidence struct {
+	operation     nativeLaunchOperation
+	stage         nativeLaunchStage
+	err           error
+	closureProven bool
+}
+
+type nativeLaunchOperationError struct {
+	operation nativeLaunchOperation
+	err       error
+}
+
+func (failure nativeLaunchOperationError) Error() string { return failure.err.Error() }
+func (failure nativeLaunchOperationError) Unwrap() error { return failure.err }
+
 type supervisorNativeAttempt struct {
 	spec           Spec
 	command        *exec.Cmd
@@ -105,7 +139,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	if err != nil {
 		executor.mutex.Unlock()
 
-		return nativeNotReleasedEvent(action, time.Now(), LaunchFailed)
+		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+			nativeLaunchFailureEvidence{
+				operation: nativeLaunchInternalOutput, stage: nativeLaunchPreRelease,
+				err: err, closureProven: true,
+			},
+		))
 	}
 	command := exec.Command(attempt.spec.Command[0], attempt.spec.Command[1:]...) //nolint:gosec,noctx
 	command.Dir = attempt.spec.Dir
@@ -118,7 +157,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = os.Remove(output.Name())
 		executor.mutex.Unlock()
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(platformErr))
+		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+			nativeLaunchFailureEvidence{
+				operation: nativeLaunchFailureOperation(platformErr, nativeLaunchContainmentPrepare),
+				stage:     nativeLaunchPreRelease, err: platformErr, closureProven: true,
+			},
+		))
 	}
 	attempt.command = command
 	attempt.output = output
@@ -130,20 +174,31 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	err = command.Start()
 	at := time.Now()
 	if err != nil {
-		_ = closeNativeDomain(platform)
+		closeErr := closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(err))
+		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(
+			nativeLaunchFailureEvidence{
+				operation: nativeLaunchLauncherStart, stage: nativeLaunchPreRelease,
+				err: err, closureProven: closeErr == nil,
+			},
+		))
 	}
 	if err = confirmNativeCommandStopped(command, platform); err != nil {
-		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
-		_, _ = command.Process.Wait()
-		_ = closeNativeDomain(platform)
+		forceErr := forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		_, waitErr := command.Process.Wait()
+		closeErr := closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(err))
+		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+			nativeLaunchFailureEvidence{
+				operation: nativeLaunchFailureOperation(err, nativeLaunchContainmentPrepare),
+				stage:     nativeLaunchPreRelease, err: err,
+				closureProven: errors.Join(forceErr, nativeWaitFailure(waitErr), closeErr) == nil,
+			},
+		))
 	}
 	go executor.awaitRoot(attempt)
 	executor.mutex.Lock()
@@ -169,7 +224,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(err))
+		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+			nativeLaunchFailureEvidence{
+				operation: nativeLaunchFailureOperation(err, nativeLaunchCleanup),
+				stage:     nativeLaunchReleaseUnknown, err: err, closureProven: false,
+			},
+		))
 	}
 	completion := supervisorLaunchCompletion{
 		generation: action.generation, action: action.token,
@@ -205,13 +265,22 @@ func nativeNotReleasedEvent(action supervisorAction, at time.Time, failure Launc
 	}
 }
 
-func classifyNativeLaunchFailure(err error) LaunchFailure {
-	if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.ENOMEM) ||
-		errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) {
+func classifyNativeLaunchFailure(evidence nativeLaunchFailureEvidence) LaunchFailure {
+	if evidence.err != nil && evidence.stage == nativeLaunchPreRelease && evidence.closureProven &&
+		nativeLaunchResourceExhausted(evidence.operation, evidence.err) {
 		return LaunchResourceExhausted
 	}
 
 	return LaunchFailed
+}
+
+func nativeLaunchFailureOperation(err error, fallback nativeLaunchOperation) nativeLaunchOperation {
+	var operationError nativeLaunchOperationError
+	if errors.As(err, &operationError) {
+		return operationError.operation
+	}
+
+	return fallback
 }
 
 func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *supervisorEvent {

@@ -44,6 +44,20 @@ func releaseNativeCommand(command *exec.Cmd, _ nativePlatformState) error {
 	return nil
 }
 
+func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
+	switch operation {
+	case nativeLaunchInternalOutput:
+		return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
+	case nativeLaunchLauncherStart:
+		return errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.ENOMEM) ||
+			errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
+	case nativeLaunchTargetExec:
+		return errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.ENOMEM)
+	default:
+		return false
+	}
+}
+
 func waitNativeRootExit(nativePlatformState) error { return nil }
 
 func nativeDomainEmpty(_ nativePlatformState, processID int) (bool, error) {

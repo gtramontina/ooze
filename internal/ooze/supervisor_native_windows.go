@@ -60,6 +60,21 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 	return resumeNativeProcess(processID)
 }
 
+func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
+	switch operation {
+	case nativeLaunchInternalOutput, nativeLaunchLauncherStart, nativeLaunchContainmentPrepare:
+	default:
+		return false
+	}
+	for _, code := range []syscall.Errno{4, 8, 14, 89, 1450, 1455} {
+		if errors.Is(err, code) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func waitNativeRootExit(nativePlatformState) error { return nil }
 
 func confirmNativeCommandStopped(*exec.Cmd, nativePlatformState) error { return nil }

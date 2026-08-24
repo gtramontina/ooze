@@ -51,6 +51,48 @@ func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
 	}
 }
 
+func TestDarwinNativeLaunchResourceExhaustionRequiresExactPreReleaseEvidence(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation nativeLaunchOperation
+		err       error
+		stage     nativeLaunchStage
+		closed    bool
+		want      LaunchFailure
+	}{
+		{name: "descriptor limit", operation: nativeLaunchInternalOutput, err: syscall.EMFILE,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchResourceExhausted},
+		{name: "descriptor memory is not whitelisted", operation: nativeLaunchInternalOutput, err: syscall.ENOMEM,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchFailed},
+		{name: "launcher process limit", operation: nativeLaunchLauncherStart, err: syscall.EAGAIN,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchResourceExhausted},
+		{name: "kqueue descriptor limit", operation: nativeLaunchRootTrackerCreate, err: syscall.ENFILE,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchResourceExhausted},
+		{name: "note-exit only admits memory", operation: nativeLaunchRootTrackerRegister, err: syscall.EMFILE,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchFailed},
+		{name: "typed exec memory", operation: nativeLaunchTargetExec, err: syscall.ENOMEM,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchResourceExhausted},
+		{name: "typed exec process limit is not whitelisted", operation: nativeLaunchTargetExec, err: syscall.EAGAIN,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchFailed},
+		{name: "cleanup did not prove closure", operation: nativeLaunchLauncherStart, err: syscall.ENOMEM,
+			stage: nativeLaunchPreRelease, closed: false, want: LaunchFailed},
+		{name: "release is unknown", operation: nativeLaunchLauncherStart, err: syscall.ENOMEM,
+			stage: nativeLaunchReleaseUnknown, closed: true, want: LaunchFailed},
+		{name: "cleanup-only failure", operation: nativeLaunchCleanup, err: syscall.ENOMEM,
+			stage: nativeLaunchPreRelease, closed: true, want: LaunchFailed},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyNativeLaunchFailure(nativeLaunchFailureEvidence{
+				operation: test.operation, stage: test.stage, err: test.err, closureProven: test.closed,
+			})
+			if got != test.want {
+				t.Fatalf("classification = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T) {
 	role := os.Getenv(darwinEscapeFixtureRole)
 	if role != "" {

@@ -55,7 +55,10 @@ func confirmNativeCommandStopped(command *exec.Cmd, state nativePlatformState) e
 	}
 	queue, err := unix.Kqueue()
 	if err != nil {
-		return fmt.Errorf("create managed-attempt root tracking queue: %w", err)
+		return nativeLaunchOperationError{
+			operation: nativeLaunchRootTrackerCreate,
+			err:       fmt.Errorf("create managed-attempt root tracking queue: %w", err),
+		}
 	}
 	change := unix.Kevent_t{
 		Ident: uint64(command.Process.Pid), Filter: unix.EVFILT_PROC,
@@ -64,7 +67,10 @@ func confirmNativeCommandStopped(command *exec.Cmd, state nativePlatformState) e
 	if _, err = unix.Kevent(queue, []unix.Kevent_t{change}, nil, nil); err != nil {
 		_ = unix.Close(queue)
 
-		return fmt.Errorf("install managed-attempt root exit tracking: %w", err)
+		return nativeLaunchOperationError{
+			operation: nativeLaunchRootTrackerRegister,
+			err:       fmt.Errorf("install managed-attempt root exit tracking: %w", err),
+		}
 	}
 	state.domain.mutex.Lock()
 	state.domain.queue = queue
@@ -79,6 +85,23 @@ func releaseNativeCommand(command *exec.Cmd, _ nativePlatformState) error {
 	}
 
 	return nil
+}
+
+func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
+	switch operation {
+	case nativeLaunchInternalOutput:
+		return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
+	case nativeLaunchLauncherStart:
+		return errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.ENOMEM) ||
+			errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE)
+	case nativeLaunchRootTrackerCreate:
+		return errors.Is(err, syscall.ENOMEM) || errors.Is(err, syscall.EMFILE) ||
+			errors.Is(err, syscall.ENFILE)
+	case nativeLaunchRootTrackerRegister, nativeLaunchTargetExec:
+		return errors.Is(err, syscall.ENOMEM)
+	default:
+		return false
+	}
 }
 
 func waitNativeRootExit(state nativePlatformState) error {
