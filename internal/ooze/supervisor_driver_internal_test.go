@@ -2,9 +2,88 @@ package ooze
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
+
+func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityCompletion(t *testing.T) {
+	registeredAt := time.Unix(8_000, 0)
+	launchBy := registeredAt.Add(time.Second)
+	completionReturned := make(chan struct{})
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 89})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "driver-equality",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+
+	var driver *supervisorDriver
+	driver = newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now:     func() time.Time { return registeredAt },
+		launchBoundary: func(got time.Time) <-chan time.Time {
+			<-completionReturned
+			for {
+				driver.mutex.Lock()
+				published := len(driver.attempts) == 1
+				for _, attempt := range driver.attempts {
+					published = published && attempt.launchEvent != nil
+				}
+				driver.mutex.Unlock()
+				if published {
+					break
+				}
+				runtime.Gosched()
+			}
+			boundary := make(chan time.Time, 1)
+			boundary <- got
+
+			return boundary
+		},
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			completion := supervisorLaunchCompletion{
+				generation: action.generation,
+				action:     action.token,
+				at:         launchBy,
+				kind:       supervisorLaunchProvenNotReleased,
+				failure:    LaunchFailed,
+			}
+			close(completionReturned)
+
+			return &supervisorEvent{
+				kind: supervisorLaunchCompleted, generation: action.generation,
+				at: launchBy, completion: &completion,
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
+			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+
+			return prepared.start
+		},
+		driver,
+	)
+
+	result := supervisor.Launch(Spec{
+		Attempt: "driver-equality", Command: []string{"equal-start"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	notReleased, ok := result.(NotReleased)
+	if !ok || notReleased.Kind != LaunchFailed {
+		t.Fatalf("launch = %#v, want equality NotReleased", result)
+	}
+	if snapshot := shell.snapshot(); len(snapshot.admissions) != 0 {
+		t.Fatalf("equality completion retained prospective custody: %#v", snapshot)
+	}
+}
 
 func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotReleased(t *testing.T) {
 	registeredAt := time.Unix(9_000, 0)
