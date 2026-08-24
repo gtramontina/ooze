@@ -90,14 +90,12 @@ func newNativeSupervisorDriver(
 		return nil, ErrUnsupportedPlatform
 	}
 	executor := &supervisorNativeExecutor{
-		drainEpoch:  drainEpoch,
-		attempts:    make(map[attemptGeneration]*supervisorNativeAttempt),
-		outputs:     make(map[supervisorOutputRef]string),
-		diagnostics: make(map[supervisorDiagnosticRef]error),
-		createOutputFile: func() (*os.File, error) {
-			return os.CreateTemp("", "ooze-managed-output-*")
-		},
-		readOutputFile: readNativeOutput,
+		drainEpoch:       drainEpoch,
+		attempts:         make(map[attemptGeneration]*supervisorNativeAttempt),
+		outputs:          make(map[supervisorOutputRef]string),
+		diagnostics:      make(map[supervisorDiagnosticRef]error),
+		createOutputFile: createNativeOutputFile,
+		readOutputFile:   readNativeOutput,
 	}
 
 	return newSupervisorDriver(supervisorDriverConstruction{
@@ -150,9 +148,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	}
 	createOutputFile := executor.createOutputFile
 	if createOutputFile == nil {
-		createOutputFile = func() (*os.File, error) {
-			return os.CreateTemp("", "ooze-managed-output-*")
-		}
+		createOutputFile = createNativeOutputFile
 	}
 	output, err := createOutputFile()
 	if err != nil {
@@ -306,6 +302,10 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		kind: supervisorLaunchCompleted, generation: action.generation,
 		at: releasedAt, completion: &completion,
 	}
+}
+
+func createNativeOutputFile() (*os.File, error) {
+	return os.CreateTemp("", "ooze-managed-output-*")
 }
 
 func (executor *supervisorNativeExecutor) releaseUnconfirmed(
