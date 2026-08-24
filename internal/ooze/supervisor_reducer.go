@@ -1062,14 +1062,7 @@ func reduceDrainCompletion(
 		if completion.kind != supervisorDrainForceCompleted || !attempt.drain.forced {
 			invariant(supervisorReducerOperation, "force completion does not match the pending action")
 		}
-		if completion.waitDiagnostic != 0 &&
-			(completion.waitDiagnostic == completion.diagnostic || attempt.intent.diagnostics.wait != 0) {
-			invariant(supervisorReducerOperation, "force completion wait diagnostic is duplicated")
-		}
 	case supervisorObserveEmptiness:
-		if completion.waitDiagnostic != 0 {
-			invariant(supervisorReducerOperation, "emptiness observation carries a wait diagnostic")
-		}
 		switch completion.kind {
 		case supervisorDrainObservedEmpty, supervisorDrainObservedResidual:
 			if completion.diagnostic != 0 {
@@ -1085,11 +1078,17 @@ func reduceDrainCompletion(
 	default:
 		invariant(supervisorReducerOperation, "pending native action is not a drain completion")
 	}
+	if completion.waitDiagnostic != 0 && completion.waitDiagnostic == completion.diagnostic {
+		invariant(supervisorReducerOperation, "drain completion aliases independent diagnostics")
+	}
 
 	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
-	if completion.kind == supervisorDrainForceCompleted {
+	if completion.waitDiagnostic != 0 && attempt.intent.diagnostics.wait == 0 &&
+		attempt.drain.waitDiagnostic == 0 {
 		state.attempts[index].drain.waitDiagnostic = completion.waitDiagnostic
+	}
+	if completion.kind == supervisorDrainForceCompleted {
 		if completion.diagnostic != 0 {
 			state.attempts[index].drain.controlDiagnostic = completion.diagnostic
 		}

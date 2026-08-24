@@ -1591,10 +1591,16 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 	waitErr := errors.New("root tracking failed during termination")
 	terminationErr := errors.New("terminate execution domain")
 	waitReleased := make(chan struct{})
+	nativeWaitDone := make(chan struct{})
 	nativeExecutor := &supervisorNativeExecutor{
 		attempts: make(map[attemptGeneration]*supervisorNativeAttempt),
 		outputs:  make(map[supervisorOutputRef]string), diagnostics: make(map[supervisorDiagnosticRef]error),
 		forceDomain: func(nativePlatformState, int, time.Time) error { return terminationErr },
+		domainEmpty: func(nativePlatformState, int) (bool, error) {
+			close(nativeWaitDone)
+
+			return true, nil
+		},
 	}
 
 	shell := newProcessRuntimeShell(1)
@@ -1645,25 +1651,14 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 					},
 				}
 			case supervisorForceOwned:
-				waitDone := make(chan struct{})
-				close(waitDone)
 				nativeExecutor.attempts[action.generation] = &supervisorNativeAttempt{
 					command:  &exec.Cmd{Process: &os.Process{Pid: 123}},
-					waitDone: waitDone, trackingErr: waitErr,
+					waitDone: nativeWaitDone, trackingErr: waitErr,
 				}
 
 				return nativeExecutor.force(action)
 			case supervisorObserveEmptiness:
-				completion := supervisorDrainCompletion{
-					generation: action.generation,
-					action:     supervisorPendingAction{kind: action.kind, token: action.token},
-					at:         action.at.Add(time.Nanosecond), kind: supervisorDrainObservedEmpty,
-				}
-
-				return &supervisorEvent{
-					kind: supervisorDrainCompleted, generation: action.generation,
-					at: completion.at, drain: &completion,
-				}
+				return nativeExecutor.observeEmpty(action)
 			case supervisorCaptureOutput:
 				completion := supervisorOutputCompletion{
 					generation: action.generation,
