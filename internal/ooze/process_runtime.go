@@ -212,7 +212,11 @@ const (
 	fuseTrip
 )
 
-type attemptTripped struct{ kind attemptTripKind }
+type attemptTripped struct {
+	kind     attemptTripKind
+	profile  Profile
+	deadline time.Duration
+}
 
 func (launchOwned) attemptObservation()           {}
 func (launchNotReleased) attemptObservation()     {}
@@ -294,6 +298,7 @@ const (
 	barrierBound barrierDecision = iota + 1
 	barrierRejectedMissing
 	barrierRejectedClosureOutstanding
+	barrierRejectedExecutionMismatch
 )
 
 type barrierResult struct {
@@ -517,6 +522,10 @@ func (r processRuntime) observeOwnedTerminal(
 		if observed.kind != deadlineTrip && observed.kind != fuseTrip {
 			invariant(observeOperation, "trip kind is invalid")
 		}
+		if observed.kind == deadlineTrip &&
+			((observed.profile != AutomaticProfile && observed.profile != SerialProfile) || observed.deadline <= 0) {
+			invariant(observeOperation, "deadline trip execution facts are invalid")
+		}
 		tripKind = observed.kind
 	case attemptInfrastructure:
 		if observed.cause == "" {
@@ -545,7 +554,7 @@ func (r processRuntime) observeOwnedTerminal(
 		return r.observeConfirmation(generation, index, outcome)
 	}
 	if tripKind != 0 {
-		return r.observeTrip(generation, index, attemptTripped{kind: tripKind})
+		return r.observeTrip(generation, index, observation.(attemptTripped))
 	}
 
 	return r.releaseOwned(generation, index)
@@ -611,8 +620,14 @@ func (r processRuntime) observeTrip(generation attemptGeneration, index int, obs
 	result := observationResult{generation: generation, settlementAcknowledged: true}
 	if provisional {
 		result.confirmationProvisional = true
-		if r.unboundBarrierIndex(tripped.grant.campaign) < 0 {
-			r, result.cancelledWaiting, result.compensatedGrants = r.installBarrier(tripped.grant.campaign)
+		barrierAt := r.unboundBarrierIndex(tripped.grant.campaign)
+		if barrierAt < 0 {
+			r, result.cancelledWaiting, result.compensatedGrants = r.installBarrier(
+				tripped.grant.campaign, observed.profile, observed.deadline,
+			)
+		} else if r.admissions[barrierAt].grant.profile != observed.profile ||
+			r.admissions[barrierAt].grant.deadline != observed.deadline {
+			invariant(observeOperation, "provisional primary execution facts changed")
 		}
 		index = r.admissionIndexByGeneration(generation)
 	}
@@ -622,7 +637,11 @@ func (r processRuntime) observeTrip(generation attemptGeneration, index int, obs
 	return r, result
 }
 
-func (r processRuntime) installBarrier(campaign campaignToken) (processRuntime, []admissionRequestToken, []admissionRequestToken) {
+func (r processRuntime) installBarrier(
+	campaign campaignToken,
+	profile Profile,
+	deadline time.Duration,
+) (processRuntime, []admissionRequestToken, []admissionRequestToken) {
 	campaignAt := r.campaignIndex(campaign)
 	if campaignAt < 0 {
 		invariant("install confirmation barrier", "campaign disappeared")
@@ -647,7 +666,10 @@ func (r processRuntime) installBarrier(campaign campaignToken) (processRuntime, 
 		}
 	}
 	r.admissions = append(kept, admittedAttempt{ //nolint:gocritic // Replaces the filtered source slice.
-		grant: admissionAuthority{campaign: campaign, class: confirmationBarrierAdmission},
+		grant: admissionAuthority{
+			campaign: campaign, class: confirmationBarrierAdmission,
+			profile: profile, deadline: deadline,
+		},
 		stage: admissionWaiting,
 	})
 
@@ -731,6 +753,10 @@ func (r processRuntime) sealAndBindConfirmationBarrier(binding barrierBinding) (
 	validProfile := binding.profile == AutomaticProfile || binding.profile == SerialProfile
 	if !r.open() || binding.attempt == "" || !validProfile || binding.deadline <= 0 || index < 0 {
 		return r, barrierResult{decision: barrierRejectedMissing}
+	}
+	barrier := r.admissions[index].grant
+	if binding.profile != barrier.profile || binding.deadline != barrier.deadline {
+		return r, barrierResult{decision: barrierRejectedExecutionMismatch}
 	}
 	for _, admission := range r.admissions {
 		if admission.grant.campaign == binding.campaign && admission.committed() {

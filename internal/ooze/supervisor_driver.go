@@ -913,7 +913,9 @@ func terminalObservation(evidence supervisorTerminalEvidence) attemptObservation
 	case supervisorTerminalFuseTrip:
 		return attemptTripped{kind: fuseTrip}
 	case supervisorTerminalAutomaticDeadlineTrip, supervisorTerminalSerialDeadlineTrip:
-		return attemptTripped{kind: deadlineTrip}
+		return attemptTripped{
+			kind: deadlineTrip, profile: evidence.profile, deadline: evidence.commandDeadline,
+		}
 	case supervisorTerminalStopped:
 		return attemptStopped{}
 	case supervisorTerminalInfrastructureWait, supervisorTerminalInfrastructureRunning,
