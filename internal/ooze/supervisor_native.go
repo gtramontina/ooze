@@ -68,16 +68,17 @@ type supervisorNativeAttempt struct {
 }
 
 type supervisorNativeExecutor struct {
-	mutex          sync.Mutex
-	drainEpoch     time.Duration
-	attempts       map[attemptGeneration]*supervisorNativeAttempt
-	outputs        map[supervisorOutputRef]string
-	nextOutput     supervisorOutputRef
-	diagnostics    map[supervisorDiagnosticRef]error
-	nextDiagnostic supervisorDiagnosticRef
-	readOutputFile func(*os.File) (string, uint64, error)
-	forceDomain    func(nativePlatformState, int, time.Time) error
-	domainEmpty    func(nativePlatformState, int) (bool, error)
+	mutex            sync.Mutex
+	drainEpoch       time.Duration
+	attempts         map[attemptGeneration]*supervisorNativeAttempt
+	outputs          map[supervisorOutputRef]string
+	nextOutput       supervisorOutputRef
+	diagnostics      map[supervisorDiagnosticRef]error
+	nextDiagnostic   supervisorDiagnosticRef
+	createOutputFile func() (*os.File, error)
+	readOutputFile   func(*os.File) (string, uint64, error)
+	forceDomain      func(nativePlatformState, int, time.Time) error
+	domainEmpty      func(nativePlatformState, int) (bool, error)
 }
 
 func newNativeSupervisorDriver(
@@ -89,10 +90,13 @@ func newNativeSupervisorDriver(
 		return nil, ErrUnsupportedPlatform
 	}
 	executor := &supervisorNativeExecutor{
-		drainEpoch:     drainEpoch,
-		attempts:       make(map[attemptGeneration]*supervisorNativeAttempt),
-		outputs:        make(map[supervisorOutputRef]string),
-		diagnostics:    make(map[supervisorDiagnosticRef]error),
+		drainEpoch:  drainEpoch,
+		attempts:    make(map[attemptGeneration]*supervisorNativeAttempt),
+		outputs:     make(map[supervisorOutputRef]string),
+		diagnostics: make(map[supervisorDiagnosticRef]error),
+		createOutputFile: func() (*os.File, error) {
+			return os.CreateTemp("", "ooze-managed-output-*")
+		},
 		readOutputFile: readNativeOutput,
 	}
 
@@ -144,7 +148,13 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		executor.mutex.Unlock()
 		invariant(supervisorNativeOperation, "native launch was duplicated")
 	}
-	output, err := os.CreateTemp("", "ooze-managed-output-*")
+	createOutputFile := executor.createOutputFile
+	if createOutputFile == nil {
+		createOutputFile = func() (*os.File, error) {
+			return os.CreateTemp("", "ooze-managed-output-*")
+		}
+	}
+	output, err := createOutputFile()
 	if err != nil {
 		executor.mutex.Unlock()
 
