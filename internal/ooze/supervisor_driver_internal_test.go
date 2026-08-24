@@ -181,6 +181,174 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	}
 }
 
+func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *testing.T) {
+	registeredAt := time.Unix(9_500, 0)
+	launchBy := registeredAt.Add(time.Second)
+	boundary := make(chan time.Time, 1)
+	nativeDone := make(chan struct{})
+	nextAt := launchBy
+	registered := false
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 94})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "driver-late-release",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now: func() time.Time {
+			if !registered {
+				registered = true
+
+				return registeredAt
+			}
+			nextAt = nextAt.Add(time.Nanosecond)
+
+			return nextAt
+		},
+		launchBoundary: func(time.Time) <-chan time.Time {
+			return boundary
+		},
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				<-nativeDone
+				nextAt = nextAt.Add(time.Nanosecond)
+				completion := supervisorLaunchCompletion{
+					generation: action.generation,
+					action:     action.token,
+					at:         nextAt,
+					kind:       supervisorLaunchReleased,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: nextAt, completion: &completion,
+				}
+			case supervisorRevokeLaunchRelease:
+				return nil
+			case supervisorForceOwned:
+				nextAt = nextAt.Add(time.Nanosecond)
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action: supervisorPendingAction{
+						kind: action.kind, token: action.token,
+					},
+					at: nextAt, kind: supervisorDrainForceCompleted,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: nextAt, drain: &completion,
+				}
+			case supervisorObserveEmptiness:
+				nextAt = nextAt.Add(time.Nanosecond)
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action: supervisorPendingAction{
+						kind: action.kind, token: action.token,
+					},
+					at: nextAt, kind: supervisorDrainObservedEmpty,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: nextAt, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				nextAt = nextAt.Add(time.Nanosecond)
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action: supervisorPendingAction{
+						kind: action.kind, token: action.token,
+					},
+					at: nextAt, ref: 1,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: nextAt, output: &completion,
+				}
+			case supervisorReleaseDomain:
+				nextAt = nextAt.Add(time.Nanosecond)
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action: supervisorPendingAction{
+						kind: action.kind, token: action.token,
+					},
+					at: nextAt,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation,
+					at: nextAt, release: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
+			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+
+			return prepared.start
+		},
+		driver,
+	)
+
+	launched := make(chan LaunchResult, 1)
+	go func() {
+		launched <- supervisor.Launch(Spec{
+			Attempt: "driver-late-release", Command: []string{"late-release"}, Dir: "/tmp",
+			Profile: SerialProfile, Deadline: 10 * time.Second,
+		})
+	}()
+	boundary <- launchBy
+	result := <-launched
+	if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
+		t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", result)
+	}
+
+	close(nativeDone)
+	deadline := time.After(time.Second)
+	for {
+		driver.mutex.Lock()
+		phase := driver.state.attempts[0].phase
+		driver.mutex.Unlock()
+		if phase == supervisorAwaitingEmergencySettlement {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("late released attempt did not await emergency settlement: phase=%d runtime=%#v",
+				phase, shell.snapshot())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	emergencyAt := launchBy.Add(time.Second)
+	settlement := supervisor.EmergencyDrain(EmergencyRequest{
+		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
+	})
+	if _, ok := settlement.(SweepDrained); !ok {
+		t.Fatalf("late adoption emergency settlement = %#v, want SweepDrained", settlement)
+	}
+	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
+		len(snapshot.admissions) != 0 {
+		t.Fatalf("late adoption final runtime = %#v", snapshot)
+	}
+}
+
 func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testing.T) {
 	registeredAt := time.Unix(10_000, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)

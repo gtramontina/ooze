@@ -568,11 +568,13 @@ func (driver *supervisorDriver) sealStopAdmission(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
 	owned := attempt.owned
+	_, unconfirmed := attempt.launchResult.(LaunchUnconfirmed)
 	driver.mutex.Unlock()
-	if owned == nil {
+	if owned != nil {
+		owned.sealStopAdmission()
+	} else if !unconfirmed {
 		invariant(supervisorDriverOperation, "stop seal has no owned capability")
 	}
-	owned.sealStopAdmission()
 	at := driver.now()
 	completion := supervisorStopSealCompletion{
 		generation: action.generation,
@@ -662,6 +664,7 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 				waitAction:   state.waitAction,
 				sampleAction: state.sampleAction,
 			}
+		case supervisorAwaitingEmergencySettlement:
 		default:
 			driver.mutex.Unlock()
 			invariant(supervisorDriverOperation, "attempt phase has no emergency snapshot")
