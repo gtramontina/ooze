@@ -10,16 +10,18 @@ const supervisorDriverOperation = "drive supervisor"
 const nominalSupervisorFuseCadence = 50 * time.Millisecond
 
 type supervisorDriverConstruction struct {
-	runtime        *processRuntimeShell
-	now            func() time.Time
-	launchBoundary func(time.Time) <-chan time.Time
-	launchProgress time.Duration
-	drainEpoch     time.Duration
-	prepare        func(attemptGeneration, Spec)
-	execute        func(supervisorAction) *supervisorEvent
-	recheckRoot    func(attemptGeneration) (ExitStatus, time.Time, bool, error)
-	sampleRunning  func(attemptGeneration) (bool, uint64, error)
-	readOutput     func(supervisorOutputRef) string
+	runtime          *processRuntimeShell
+	now              func() time.Time
+	launchBoundary   func(time.Time) <-chan time.Time
+	launchProgress   time.Duration
+	drainEpoch       time.Duration
+	prepare          func(attemptGeneration, Spec)
+	execute          func(supervisorAction) *supervisorEvent
+	recheckRoot      func(attemptGeneration) (ExitStatus, time.Time, bool, error)
+	sampleRunning    func(attemptGeneration) (bool, uint64, error)
+	readOutput       func(supervisorOutputRef) string
+	readDiagnostic   func(supervisorDiagnosticRef) error
+	recordDiagnostic func(error) supervisorDiagnosticRef
 }
 
 type supervisorDrivenAttempt struct {
@@ -55,6 +57,8 @@ type supervisorDriver struct {
 	recheckRoot       func(attemptGeneration) (ExitStatus, time.Time, bool, error)
 	sampleRunning     func(attemptGeneration) (bool, uint64, error)
 	readOutput        func(supervisorOutputRef) string
+	readDiagnostic    func(supervisorDiagnosticRef) error
+	recordDiagnostic  func(error) supervisorDiagnosticRef
 	attempts          map[attemptGeneration]*supervisorDrivenAttempt
 	emergency         chan SweepResult
 	emergencyStarted  bool
@@ -81,9 +85,10 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
 		prepare: construction.prepare, execute: construction.execute,
 		recheckRoot: construction.recheckRoot, sampleRunning: construction.sampleRunning,
-		readOutput: construction.readOutput,
-		attempts:   make(map[attemptGeneration]*supervisorDrivenAttempt),
-		emergency:  make(chan SweepResult, 1),
+		readOutput: construction.readOutput, readDiagnostic: construction.readDiagnostic,
+		recordDiagnostic: construction.recordDiagnostic,
+		attempts:         make(map[attemptGeneration]*supervisorDrivenAttempt),
+		emergency:        make(chan SweepResult, 1),
 	}
 }
 
@@ -562,10 +567,13 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			rootLive, live, err := driver.sampleRunning(waitAction.generation)
 			var facts []supervisorRunningFact
 			if err != nil {
+				if driver.recordDiagnostic == nil {
+					invariant(supervisorDriverOperation, "running sampler diagnostic registry is absent")
+				}
 				facts = []supervisorRunningFact{{
 					generation: waitAction.generation, action: sampleAction.token,
 					kind: supervisorRunningObservationFailed, at: at,
-					source: supervisorObservationRunning, diagnostic: 1,
+					source: supervisorObservationRunning, diagnostic: driver.recordDiagnostic(err),
 				}}
 			} else if rootLive && live != 0 {
 				facts = []supervisorRunningFact{{
@@ -707,7 +715,7 @@ func terminalObservation(evidence supervisorTerminalEvidence) attemptObservation
 func (driver *supervisorDriver) deliverTerminal(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
-	terminal := publicTerminal(action.terminal, driver.readOutput)
+	terminal := publicTerminal(action.terminal, driver.readOutput, driver.readDiagnostic)
 	delivery := attempt.terminal
 	if attempt.terminalReady {
 		driver.mutex.Unlock()
@@ -877,7 +885,9 @@ func (driver *supervisorDriver) deliverEmergencySettlement(residuals []superviso
 func publicTerminal(
 	evidence supervisorTerminalEvidence,
 	readOutput func(supervisorOutputRef) string,
+	readDiagnostic func(supervisorDiagnosticRef) error,
 ) Terminal {
+	diagnostics := resolvePublicDiagnostics(evidence, readDiagnostic)
 	data := ExecutionData{
 		Deadline: evidence.commandDeadline, LaunchDuration: evidence.launchDuration,
 		CommandDuration: evidence.commandDuration,
@@ -886,6 +896,7 @@ func publicTerminal(
 			CompleteThroughCutoff: evidence.output.completeThroughCutoff,
 			Final:                 evidence.output.final,
 		},
+		Failures: diagnostics.failures,
 	}
 	if evidence.firedBound == supervisorCommandDeadlineFired {
 		data.BoundFired = CommandDeadlineFired
@@ -908,12 +919,85 @@ func publicTerminal(
 	case supervisorTerminalInfrastructureWait, supervisorTerminalInfrastructureRunning,
 		supervisorTerminalInfrastructureRelease, supervisorTerminalInfrastructureOutput,
 		supervisorTerminalInfrastructureControl:
-		return Infrastructure{Cause: infrastructureCause(evidence.kind), ExecutionData: data}
+		return Infrastructure{
+			Cause: infrastructureCause(evidence.kind), Err: diagnostics.primary(evidence.kind),
+			ExecutionData: data,
+		}
 	default:
 		invariant(supervisorDriverOperation, "terminal evidence kind is invalid")
 
 		return nil
 	}
+}
+
+type publicSupervisorDiagnostics struct {
+	failures FailureDiagnostics
+	wait     error
+	running  error
+	drain    error
+	control  error
+	output   error
+	release  error
+}
+
+func resolvePublicDiagnostics(
+	evidence supervisorTerminalEvidence,
+	read func(supervisorDiagnosticRef) error,
+) publicSupervisorDiagnostics {
+	resolve := func(ref supervisorDiagnosticRef) error {
+		if ref == 0 {
+			return nil
+		}
+		if read == nil {
+			invariant(supervisorDriverOperation, "terminal diagnostic registry is absent")
+		}
+		err := read(ref)
+		if err == nil {
+			invariant(supervisorDriverOperation, "terminal diagnostic reference resolved nil")
+		}
+
+		return err
+	}
+	result := publicSupervisorDiagnostics{
+		wait: resolve(evidence.diagnostics.wait), running: resolve(evidence.diagnostics.running),
+		drain: resolve(evidence.diagnostics.drain), control: resolve(evidence.diagnostics.control),
+		output: resolve(evidence.output.diagnostic), release: resolve(evidence.diagnostics.release),
+	}
+	message := func(err error) string {
+		if err == nil {
+			return ""
+		}
+
+		return err.Error()
+	}
+	result.failures = FailureDiagnostics{
+		Wait: message(result.wait), RunningCensus: message(result.running),
+		DrainCensus: message(result.drain), Termination: message(result.control),
+		Output: message(result.output), Release: message(result.release),
+	}
+
+	return result
+}
+
+func (diagnostics publicSupervisorDiagnostics) primary(kind supervisorTerminalKind) error {
+	var err error
+	switch kind {
+	case supervisorTerminalInfrastructureWait:
+		err = diagnostics.wait
+	case supervisorTerminalInfrastructureRunning:
+		err = diagnostics.running
+	case supervisorTerminalInfrastructureControl:
+		err = diagnostics.control
+	case supervisorTerminalInfrastructureOutput:
+		err = diagnostics.output
+	case supervisorTerminalInfrastructureRelease:
+		err = diagnostics.release
+	}
+	if err == nil {
+		invariant(supervisorDriverOperation, "infrastructure terminal lacks its primary diagnostic")
+	}
+
+	return err
 }
 
 func infrastructureCause(kind supervisorTerminalKind) Cause {

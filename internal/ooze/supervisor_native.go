@@ -28,11 +28,13 @@ type supervisorNativeAttempt struct {
 }
 
 type supervisorNativeExecutor struct {
-	mutex      sync.Mutex
-	drainEpoch time.Duration
-	attempts   map[attemptGeneration]*supervisorNativeAttempt
-	outputs    map[supervisorOutputRef]string
-	nextOutput supervisorOutputRef
+	mutex          sync.Mutex
+	drainEpoch     time.Duration
+	attempts       map[attemptGeneration]*supervisorNativeAttempt
+	outputs        map[supervisorOutputRef]string
+	nextOutput     supervisorOutputRef
+	diagnostics    map[supervisorDiagnosticRef]error
+	nextDiagnostic supervisorDiagnosticRef
 }
 
 func newNativeSupervisorDriver(
@@ -41,16 +43,18 @@ func newNativeSupervisorDriver(
 	drainEpoch time.Duration,
 ) *supervisorDriver {
 	executor := &supervisorNativeExecutor{
-		drainEpoch: drainEpoch,
-		attempts:   make(map[attemptGeneration]*supervisorNativeAttempt),
-		outputs:    make(map[supervisorOutputRef]string),
+		drainEpoch:  drainEpoch,
+		attempts:    make(map[attemptGeneration]*supervisorNativeAttempt),
+		outputs:     make(map[supervisorOutputRef]string),
+		diagnostics: make(map[supervisorDiagnosticRef]error),
 	}
 
 	return newSupervisorDriver(supervisorDriverConstruction{
 		runtime: runtime, now: time.Now, launchProgress: launchProgress, drainEpoch: drainEpoch,
 		prepare: executor.prepare, execute: executor.execute,
 		recheckRoot: executor.recheckRoot, sampleRunning: executor.sampleRunning,
-		readOutput: executor.readOutput,
+		readOutput: executor.readOutput, readDiagnostic: executor.readDiagnostic,
+		recordDiagnostic: executor.recordDiagnostic,
 	})
 }
 
@@ -200,6 +204,22 @@ func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *sup
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
 	executor.awaitRoot(attempt)
+	if err := nativeWaitFailure(attempt.waitErr); err != nil {
+		fact := supervisorRunningFact{
+			generation: action.generation, action: action.token,
+			kind: supervisorRunningObservationFailed, at: attempt.waitAt,
+			source: supervisorObservationWait, diagnostic: executor.recordDiagnostic(err),
+		}
+
+		return &supervisorEvent{
+			kind: supervisorRunningObserved, generation: action.generation,
+			at: attempt.waitAt, drainBy: attempt.waitAt.Add(executor.drainEpoch),
+			running: &supervisorRunningBundle{
+				generation: action.generation, waitAction: action.token,
+				facts: []supervisorRunningFact{fact},
+			},
+		}
+	}
 	fact := supervisorRunningFact{
 		generation: action.generation, action: action.token,
 		kind: supervisorRunningRootExited, at: attempt.waitAt,
@@ -214,6 +234,18 @@ func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *sup
 			facts: []supervisorRunningFact{fact},
 		},
 	}
+}
+
+func nativeWaitFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil
+	}
+
+	return fmt.Errorf("wait for managed-attempt root: %w", err)
 }
 
 func (executor *supervisorNativeExecutor) awaitRoot(attempt *supervisorNativeAttempt) {
@@ -254,7 +286,7 @@ func (executor *supervisorNativeExecutor) observeEmpty(action supervisorAction) 
 	diagnostic := supervisorDiagnosticRef(0)
 	if err != nil {
 		kind = supervisorDrainObservationFailed
-		diagnostic = 1
+		diagnostic = executor.recordDiagnostic(err)
 	} else if empty {
 		kind = supervisorDrainObservedEmpty
 	}
@@ -269,8 +301,8 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 	err := forceNativeDomain(attempt.platform, attempt.command.Process.Pid)
 	executor.awaitRoot(attempt)
 	diagnostic := supervisorDiagnosticRef(0)
-	if err != nil {
-		diagnostic = 1
+	if combined := errors.Join(err, nativeWaitFailure(attempt.waitErr)); combined != nil {
+		diagnostic = executor.recordDiagnostic(combined)
 	}
 
 	return nativeDrainEvent(action, time.Now(), supervisorDrainForceCompleted, diagnostic)
@@ -335,7 +367,7 @@ func (executor *supervisorNativeExecutor) captureOutput(action supervisorAction)
 	executor.mutex.Unlock()
 	diagnostic := supervisorDiagnosticRef(0)
 	if err != nil {
-		diagnostic = 1
+		diagnostic = executor.recordDiagnostic(err)
 	}
 	completion := supervisorOutputCompletion{
 		generation: action.generation,
@@ -370,7 +402,7 @@ func (executor *supervisorNativeExecutor) release(action supervisorAction) *supe
 	)
 	diagnostic := supervisorDiagnosticRef(0)
 	if err != nil {
-		diagnostic = 1
+		diagnostic = executor.recordDiagnostic(err)
 	}
 	at := time.Now()
 	completion := supervisorReleaseCompletion{
@@ -394,6 +426,33 @@ func (executor *supervisorNativeExecutor) readOutput(ref supervisorOutputRef) st
 	}
 
 	return output
+}
+
+func (executor *supervisorNativeExecutor) recordDiagnostic(err error) supervisorDiagnosticRef {
+	if err == nil {
+		invariant(supervisorNativeOperation, "cannot register a nil diagnostic")
+	}
+	executor.mutex.Lock()
+	defer executor.mutex.Unlock()
+	executor.nextDiagnostic++
+	if executor.nextDiagnostic == 0 {
+		invariant(supervisorNativeOperation, "diagnostic reference exhausted")
+	}
+	ref := executor.nextDiagnostic
+	executor.diagnostics[ref] = errors.New(err.Error())
+
+	return ref
+}
+
+func (executor *supervisorNativeExecutor) readDiagnostic(ref supervisorDiagnosticRef) error {
+	executor.mutex.Lock()
+	defer executor.mutex.Unlock()
+	err := executor.diagnostics[ref]
+	if ref == 0 || err == nil {
+		invariant(supervisorNativeOperation, "diagnostic reference is zero or unknown")
+	}
+
+	return err
 }
 
 func (executor *supervisorNativeExecutor) requireAttempt(

@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"errors"
 	"reflect"
 	"runtime"
 	"testing"
@@ -937,6 +938,139 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 		Attempt: "driver-residual", Kind: OwnedUndrained,
 	}}) {
 		t.Fatalf("emergency settlement = %#v, want exact owned residual", settlement)
+	}
+}
+
+func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) {
+	registeredAt := time.Unix(18_000, 0)
+	releasedAt := registeredAt.Add(time.Millisecond)
+	failedAt := releasedAt.Add(time.Second)
+	drainBy := failedAt.Add(5 * time.Second)
+	nextAt := registeredAt.Add(-time.Nanosecond)
+	waitErr := errors.New("root completion cell failed")
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 96})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "driver-wait-diagnostic", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now: func() time.Time {
+			nextAt = nextAt.Add(time.Nanosecond)
+
+			return nextAt
+		},
+		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token,
+					at: releasedAt, kind: supervisorLaunchReleased,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releasedAt, completion: &completion,
+				}
+			case supervisorWaitRoot:
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningObservationFailed, at: failedAt,
+					source: supervisorObservationWait, diagnostic: 11,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: failedAt, drainBy: drainBy,
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
+			case supervisorForceOwned:
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         failedAt.Add(time.Nanosecond), kind: supervisorDrainForceCompleted,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: completion.at, drain: &completion,
+				}
+			case supervisorObserveEmptiness:
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         failedAt.Add(2 * time.Nanosecond), kind: supervisorDrainObservedEmpty,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: completion.at, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         failedAt.Add(3 * time.Nanosecond), ref: 5,
+				}
+				nextAt = completion.at
+
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: completion.at, output: &completion,
+				}
+			case supervisorReleaseDomain:
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         failedAt.Add(5 * time.Nanosecond),
+				}
+
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation,
+					at: completion.at, release: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+		readDiagnostic: func(ref supervisorDiagnosticRef) error {
+			if ref != 11 {
+				t.Fatalf("diagnostic ref = %d, want 11", ref)
+			}
+
+			return waitErr
+		},
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+	result := supervisor.Launch(Spec{
+		Attempt: "driver-wait-diagnostic", Command: []string{"wait-failure"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	owned, ok := result.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", result)
+	}
+	terminal := owned.Attempt.Wait()
+	infrastructure, ok := terminal.(Infrastructure)
+	if !ok || infrastructure.Cause != WaitFailed || !errors.Is(infrastructure.Err, waitErr) ||
+		infrastructure.Failures.Wait != waitErr.Error() {
+		t.Fatalf("terminal = %#v, want immutable wait failure", terminal)
 	}
 }
 
