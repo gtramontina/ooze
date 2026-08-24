@@ -598,7 +598,7 @@ func (executor *supervisorNativeExecutor) captureOutput(action supervisorAction)
 		generation: action.generation,
 		action:     supervisorPendingAction{kind: action.kind, token: action.token},
 		at:         at, ref: ref, cutoff: cutoff, prefixLength: uint64(len(contents)),
-		diagnostic: diagnostic,
+		waitDiagnostic: executor.completedWaitDiagnostic(attempt), diagnostic: diagnostic,
 	}
 
 	return &supervisorEvent{

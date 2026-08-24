@@ -254,13 +254,14 @@ type supervisorDrainCompletion struct {
 }
 
 type supervisorOutputCompletion struct {
-	generation   attemptGeneration
-	action       supervisorPendingAction
-	at           time.Time
-	ref          supervisorOutputRef
-	cutoff       uint64
-	prefixLength uint64
-	diagnostic   supervisorDiagnosticRef
+	generation     attemptGeneration
+	action         supervisorPendingAction
+	at             time.Time
+	ref            supervisorOutputRef
+	cutoff         uint64
+	prefixLength   uint64
+	waitDiagnostic supervisorDiagnosticRef
+	diagnostic     supervisorDiagnosticRef
 }
 
 type supervisorStopSealCompletion struct {
@@ -1084,10 +1085,7 @@ func reduceDrainCompletion(
 
 	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
-	if completion.waitDiagnostic != 0 && attempt.intent.diagnostics.wait == 0 &&
-		attempt.drain.waitDiagnostic == 0 {
-		state.attempts[index].drain.waitDiagnostic = completion.waitDiagnostic
-	}
+	reconcileDrainWaitDiagnostic(&state.attempts[index], completion.waitDiagnostic)
 	if completion.kind == supervisorDrainForceCompleted {
 		if completion.diagnostic != 0 {
 			state.attempts[index].drain.controlDiagnostic = completion.diagnostic
@@ -1142,9 +1140,13 @@ func reduceOutputCompletion(
 		attempt.output != (supervisorOutputEvidence{}) {
 		invariant(supervisorReducerOperation, "output completion is outside immutable capture")
 	}
+	if completion.waitDiagnostic != 0 && completion.waitDiagnostic == completion.diagnostic {
+		invariant(supervisorReducerOperation, "output completion aliases independent diagnostics")
+	}
 
 	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
+	reconcileDrainWaitDiagnostic(&state.attempts[index], completion.waitDiagnostic)
 	state.attempts[index].output = supervisorOutputEvidence{
 		ref:                   completion.ref,
 		cutoff:                completion.cutoff,
@@ -1164,6 +1166,16 @@ func reduceOutputCompletion(
 	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 
 	return state, []supervisorAction{action}
+}
+
+func reconcileDrainWaitDiagnostic(
+	attempt *supervisorAttemptState,
+	diagnostic supervisorDiagnosticRef,
+) {
+	if diagnostic == 0 || attempt.intent.diagnostics.wait != 0 || attempt.drain.waitDiagnostic != 0 {
+		return
+	}
+	attempt.drain.waitDiagnostic = diagnostic
 }
 
 func reduceStopSealCompletion(

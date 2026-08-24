@@ -1449,13 +1449,14 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 	}
 }
 
-func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) {
+func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testing.T) {
 	registeredAt := time.Unix(18_000, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)
 	failedAt := releasedAt.Add(time.Second)
 	drainBy := failedAt.Add(5 * time.Second)
 	nextAt := registeredAt.Add(-time.Nanosecond)
 	waitErr := errors.New("root completion cell failed")
+	terminationErr := errors.New("terminate execution domain")
 
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 96})
@@ -1505,6 +1506,7 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 					generation: action.generation,
 					action:     supervisorPendingAction{kind: action.kind, token: action.token},
 					at:         failedAt.Add(time.Nanosecond), kind: supervisorDrainForceCompleted,
+					diagnostic: 12,
 				}
 
 				return &supervisorEvent{
@@ -1553,11 +1555,16 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 		readDiagnostic: func(ref supervisorDiagnosticRef) error {
-			if ref != 11 {
-				t.Fatalf("diagnostic ref = %d, want 11", ref)
+			switch ref {
+			case 11:
+				return waitErr
+			case 12:
+				return terminationErr
+			default:
+				t.Fatalf("diagnostic ref = %d, want 11 or 12", ref)
 			}
 
-			return waitErr
+			return nil
 		},
 	})
 	supervisor := newDrivenSupervisorForTest(
@@ -1576,17 +1583,19 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 	}
 	terminal := owned.Attempt.Wait()
 	infrastructure, ok := terminal.(Infrastructure)
-	if !ok || infrastructure.Cause != WaitFailed || !errors.Is(infrastructure.Err, waitErr) ||
-		infrastructure.Failures.Wait != waitErr.Error() {
-		t.Fatalf("terminal = %#v, want immutable wait failure", terminal)
+	if !ok || infrastructure.Cause != TerminationControlFailed ||
+		!errors.Is(infrastructure.Err, terminationErr) ||
+		infrastructure.Failures.Wait != waitErr.Error() ||
+		infrastructure.Failures.Termination != terminationErr.Error() {
+		t.Fatalf("terminal = %#v, want independent wait and primary termination failures", terminal)
 	}
 }
 
-func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testing.T) {
+func TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound(t *testing.T) {
 	registeredAt := time.Now().Add(-2 * time.Second)
 	releasedAt := registeredAt.Add(time.Millisecond)
 	stopAt := releasedAt.Add(time.Second)
-	drainBy := stopAt.Add(10 * time.Second)
+	drainBy := stopAt.Add(500 * time.Millisecond)
 	nextAt := registeredAt.Add(-time.Nanosecond)
 	waitErr := errors.New("root tracking failed during termination")
 	terminationErr := errors.New("terminate execution domain")
@@ -1595,12 +1604,8 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 	nativeExecutor := &supervisorNativeExecutor{
 		attempts: make(map[attemptGeneration]*supervisorNativeAttempt),
 		outputs:  make(map[supervisorOutputRef]string), diagnostics: make(map[supervisorDiagnosticRef]error),
-		forceDomain: func(nativePlatformState, int, time.Time) error { return terminationErr },
-		domainEmpty: func(nativePlatformState, int) (bool, error) {
-			close(nativeWaitDone)
-
-			return true, nil
-		},
+		forceDomain:    func(nativePlatformState, int, time.Time) error { return terminationErr },
+		readOutputFile: func(*os.File) (string, uint64, error) { return "", 0, nil },
 	}
 
 	shell := newProcessRuntimeShell(1)
@@ -1652,25 +1657,21 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 				}
 			case supervisorForceOwned:
 				nativeExecutor.attempts[action.generation] = &supervisorNativeAttempt{
-					command:  &exec.Cmd{Process: &os.Process{Pid: 123}},
-					waitDone: nativeWaitDone, trackingErr: waitErr,
+					command: &exec.Cmd{Process: &os.Process{Pid: 123}},
+					output:  &os.File{}, waitDone: nativeWaitDone, trackingErr: waitErr,
 				}
 
 				return nativeExecutor.force(action)
 			case supervisorObserveEmptiness:
-				return nativeExecutor.observeEmpty(action)
-			case supervisorCaptureOutput:
-				completion := supervisorOutputCompletion{
-					generation: action.generation,
-					action:     supervisorPendingAction{kind: action.kind, token: action.token},
-					at:         action.at.Add(time.Nanosecond), ref: 1,
-				}
-				nextAt = completion.at
+				t.Fatalf("expired force unexpectedly observed emptiness")
 
-				return &supervisorEvent{
-					kind: supervisorOutputCompleted, generation: action.generation,
-					at: completion.at, output: &completion,
-				}
+				return nil
+			case supervisorCaptureOutput:
+				close(nativeWaitDone)
+				event := nativeExecutor.captureOutput(action)
+				nextAt = event.at
+
+				return event
 			case supervisorReleaseDomain:
 				completion := supervisorReleaseCompletion{
 					generation: action.generation,
@@ -1689,7 +1690,7 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 				return nil
 			}
 		},
-		readOutput:     func(supervisorOutputRef) string { return "" },
+		readOutput:     nativeExecutor.readOutput,
 		readDiagnostic: nativeExecutor.readDiagnostic,
 	})
 	supervisor := newDrivenSupervisorForTest(
@@ -1709,12 +1710,10 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 	owned.Attempt.Stop(StopRequest{At: stopAt, DrainBy: drainBy})
 	terminal := owned.Attempt.Wait()
 	close(waitReleased)
-	infrastructure, ok := terminal.(Infrastructure)
-	if !ok || infrastructure.Cause != TerminationControlFailed ||
-		infrastructure.Err == nil || infrastructure.Err.Error() != terminationErr.Error() ||
-		infrastructure.Failures.Wait != waitErr.Error() ||
-		infrastructure.Failures.Termination != terminationErr.Error() {
-		t.Fatalf("terminal = %#v, want independent wait and primary termination failures", terminal)
+	unconfirmed, ok := terminal.(DrainUnconfirmed)
+	if !ok || unconfirmed.Failures.Wait != waitErr.Error() ||
+		unconfirmed.Failures.Termination != terminationErr.Error() {
+		t.Fatalf("terminal = %#v, want late wait and termination failures", terminal)
 	}
 }
 
