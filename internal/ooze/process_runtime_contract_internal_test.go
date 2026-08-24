@@ -351,6 +351,264 @@ func TestProcessRuntimeFatalClosurePreservesStableCorrelatedResidualCustody(t *t
 	}
 }
 
+func TestProcessRuntimeFatalClosingDefersEachValidOwnedTerminal(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		observation attemptObservation
+	}{
+		{name: "settled", observation: attemptSettled{}},
+		{name: "fuse trip", observation: attemptTripped{kind: fuseTrip}},
+		{name: "deadline trip", observation: attemptTripped{kind: deadlineTrip}},
+		{name: "stopped", observation: attemptStopped{}},
+		{name: "infrastructure", observation: attemptInfrastructure{cause: "wait failed"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, generation := fatalClosingRuntimeWithOwnedAttempt(t)
+			next, result := runtime.observeAttempt(generation, test.observation)
+			assertDeferredOwnedTerminal(t, next, generation, result)
+		})
+	}
+}
+
+func TestProcessRuntimeFatalClosingTerminalDeferralRejectsMalformedAndDuplicateObservations(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		observation attemptObservation
+	}{
+		{name: "trip kind", observation: attemptTripped{}},
+		{name: "infrastructure cause", observation: attemptInfrastructure{}},
+	} {
+		t.Run("malformed "+test.name, func(t *testing.T) {
+			runtime, generation := fatalClosingRuntimeWithOwnedAttempt(t)
+			unchanged := runtime
+			assertInvariantViolation(t, func() { runtime.observeAttempt(generation, test.observation) })
+			if !reflect.DeepEqual(runtime, unchanged) {
+				t.Fatalf("malformed terminal changed state: %#v", runtime)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name        string
+		observation attemptObservation
+	}{
+		{name: "same", observation: attemptStopped{}},
+		{name: "different", observation: attemptInfrastructure{cause: "later failure"}},
+	} {
+		t.Run(test.name+" duplicate", func(t *testing.T) {
+			runtime, generation := fatalClosingRuntimeWithOwnedAttempt(t)
+			runtime, _ = runtime.observeAttempt(generation, attemptStopped{})
+			unchanged := runtime
+			assertInvariantViolation(t, func() { runtime.observeAttempt(generation, test.observation) })
+			if !reflect.DeepEqual(runtime, unchanged) {
+				t.Fatalf("duplicate terminal changed state: %#v", runtime)
+			}
+		})
+	}
+}
+
+func TestProcessRuntimeTerminalDeferralRejectsInvalidCustodyStates(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T) (processRuntime, attemptGeneration)
+	}{
+		{
+			name: "prospective",
+			setup: func(t *testing.T) (processRuntime, attemptGeneration) {
+				t.Helper()
+				runtime, generation := runtimeWithOwnedOrProspectiveAttempt(t, sharedAdmission, false)
+				runtime, _ = runtime.closeRuntime(runtimeFatalCause("fatal test"))
+
+				return runtime, generation
+			},
+		},
+		{
+			name: "fatal seeded",
+			setup: func(t *testing.T) (processRuntime, attemptGeneration) {
+				t.Helper()
+				runtime, generation := runtimeWithOwnedOrProspectiveAttempt(t, sharedAdmission, false)
+				runtime, _ = runtime.observeAttempt(generation, launchUnconfirmed{})
+				runtime, _ = runtime.observeAttempt(generation, launchOwned{})
+				index := runtime.admissionIndexByGeneration(generation)
+				if index < 0 || runtime.lifecycle != runtimeFatalClosing ||
+					runtime.admissions[index].stage != admissionOwned ||
+					runtime.admissions[index].disposition != dispositionFatalSeeded {
+					t.Fatalf("late adopted fatal custody setup = %#v", runtime)
+				}
+
+				return runtime, generation
+			},
+		},
+		{
+			name: "transferred",
+			setup: func(t *testing.T) (processRuntime, attemptGeneration) {
+				t.Helper()
+				runtime, generation := runtimeWithOwnedOrProspectiveAttempt(t, sharedAdmission, true)
+				runtime, _ = runtime.observeAttempt(generation, drainUnconfirmed{})
+
+				return runtime, generation
+			},
+		},
+		{name: "settled", setup: fatalClosingRuntimeWithSettledCustody},
+		{
+			name: "closed drained",
+			setup: func(t *testing.T) (processRuntime, attemptGeneration) {
+				t.Helper()
+				runtime, generation := fatalClosingRuntimeWithOwnedAttempt(t)
+				runtime, _ = runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+					generation: generation, disposition: emergencyConfirmedDrained,
+				}}})
+
+				return runtime, generation
+			},
+		},
+		{
+			name: "closed unconfirmed",
+			setup: func(t *testing.T) (processRuntime, attemptGeneration) {
+				t.Helper()
+				runtime, generation := runtimeWithOwnedOrProspectiveAttempt(t, sharedAdmission, true)
+				runtime, _ = runtime.observeAttempt(generation, drainUnconfirmed{})
+				runtime, _ = runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+					generation: generation, disposition: emergencyCustodyTransferred,
+				}}})
+
+				return runtime, generation
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, generation := test.setup(t)
+			unchanged := runtime
+			assertInvariantViolation(t, func() { runtime.observeAttempt(generation, attemptSettled{}) })
+			if !reflect.DeepEqual(runtime, unchanged) {
+				t.Fatalf("invalid custody terminal changed state: %#v", runtime)
+			}
+		})
+	}
+}
+
+func TestProcessRuntimeEmergencyAloneAcknowledgesDeferredTerminalAsDrained(t *testing.T) {
+	t.Run("confirmed drained", func(t *testing.T) {
+		runtime, generation := fatalClosingRuntimeWithOwnedAttempt(t)
+		runtime, deferred := runtime.observeAttempt(generation, attemptSettled{})
+		runtime, settled := runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+			generation: generation, disposition: emergencyConfirmedDrained,
+		}}})
+		if deferred.settlementAcknowledged || !deferred.runtimeClosureInProgress ||
+			!reflect.DeepEqual(settled.acknowledged, []attemptGeneration{generation}) ||
+			len(settled.residual) != 0 || runtime.lifecycle != runtimeClosedDrained {
+			t.Fatalf("deferred/emergency settlement = %#v/%#v/%#v", deferred, settled, runtime)
+		}
+	})
+
+	t.Run("custody transfer", func(t *testing.T) {
+		runtime, generation := fatalClosingRuntimeWithOwnedAttempt(t)
+		runtime, _ = runtime.observeAttempt(generation, attemptSettled{})
+		unchanged := runtime
+		assertInvariantViolation(t, func() {
+			runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+				generation: generation, disposition: emergencyCustodyTransferred,
+			}}})
+		})
+		if !reflect.DeepEqual(runtime, unchanged) {
+			t.Fatalf("deferred transfer changed state: %#v", runtime)
+		}
+	})
+}
+
+func TestProcessRuntimeDeferredTerminalWaitsForKnownGrantReturnBeforeFinalClosure(t *testing.T) {
+	runtime := newProcessRuntime(2)
+	runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
+	runtime, owned := runtime.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "owned", class: sharedAdmission,
+	})
+	runtime, granted := runtime.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "return pending", class: sharedAdmission,
+	})
+	runtime, started := runtime.startCommitted(owned.deliveries[0])
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, closed := runtime.closeRuntime(runtimeFatalCause("fatal test"))
+	if !reflect.DeepEqual(closed.compensatedGrants, []admissionRequestToken{granted.request}) {
+		t.Fatalf("closure compensation=%#v", closed)
+	}
+	runtime, deferred := runtime.observeAttempt(started.generation, attemptSettled{})
+	assertDeferredOwnedTerminal(t, runtime, started.generation, deferred)
+
+	runtime, settled := runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+		generation: started.generation, disposition: emergencyConfirmedDrained,
+	}}})
+	if runtime.lifecycle != runtimeFatalClosing ||
+		!reflect.DeepEqual(settled.acknowledged, []attemptGeneration{started.generation}) ||
+		len(settled.residual) != 0 {
+		t.Fatalf("settlement finalized before grant return: %#v/%#v", runtime, settled)
+	}
+
+	runtime, returned := runtime.acknowledgeGrantReturn(granted.deliveries[0])
+	if returned.decision != admissionReturnedAfterClosure || runtime.lifecycle != runtimeClosedDrained {
+		t.Fatalf("grant return did not finalize drained closure: %#v/%#v", returned, runtime)
+	}
+	unchanged := runtime
+	assertInvariantViolation(t, func() { runtime.acknowledgeGrantReturn(granted.deliveries[0]) })
+	if !reflect.DeepEqual(runtime, unchanged) {
+		t.Fatalf("duplicate return changed closed runtime: %#v", runtime)
+	}
+}
+
+func assertDeferredOwnedTerminal(
+	t *testing.T,
+	runtime processRuntime,
+	generation attemptGeneration,
+	result observationResult,
+) {
+	t.Helper()
+	index := runtime.admissionIndexByGeneration(generation)
+	if index < 0 || runtime.admissions[index].disposition != dispositionTerminalDeferred {
+		t.Fatalf("deferred terminal state = %#v", runtime)
+	}
+	want := observationResult{generation: generation, runtimeClosureInProgress: true}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("deferred terminal receipt = %#v, want %#v", result, want)
+	}
+}
+
+func fatalClosingRuntimeWithOwnedAttempt(t *testing.T) (processRuntime, attemptGeneration) {
+	t.Helper()
+	runtime, generation := runtimeWithOwnedOrProspectiveAttempt(t, sharedAdmission, true)
+	runtime, _ = runtime.closeRuntime(runtimeFatalCause("fatal test"))
+	if runtime.lifecycle != runtimeFatalClosing {
+		t.Fatalf("owned setup did not enter fatal closing: %#v", runtime)
+	}
+
+	return runtime, generation
+}
+
+func fatalClosingRuntimeWithSettledCustody(t *testing.T) (processRuntime, attemptGeneration) {
+	t.Helper()
+	runtime := newProcessRuntime(2)
+	runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
+	runtime, owned := runtime.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "owned", class: sharedAdmission,
+	})
+	runtime, blocker := runtime.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "return blocker", class: sharedAdmission,
+	})
+	runtime, started := runtime.startCommitted(owned.deliveries[0])
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, _ = runtime.observeAttempt(started.generation, drainUnconfirmed{})
+	runtime, _ = runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+		generation: started.generation, disposition: emergencyCustodyTransferred,
+	}}})
+	index := runtime.admissionIndexByGeneration(started.generation)
+	if runtime.lifecycle != runtimeFatalClosing || len(blocker.deliveries) != 1 || index < 0 ||
+		runtime.admissions[index].stage != admissionOwned ||
+		runtime.admissions[index].disposition != dispositionCustodySettled {
+		t.Fatalf("settled custody setup = %#v/%#v", runtime, blocker)
+	}
+
+	return runtime, started.generation
+}
+
 func TestProcessRuntimeDrainUnconfirmedNeverLooksLikeRelease(t *testing.T) {
 	runtime := newProcessRuntime(1)
 	runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})

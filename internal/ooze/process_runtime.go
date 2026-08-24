@@ -123,6 +123,7 @@ const (
 	dispositionReturnedAfterGate
 	dispositionReturnedAfterClosure
 	dispositionFatalSeeded
+	dispositionTerminalDeferred
 	dispositionCustodyTransferred
 	dispositionCustodySettled
 )
@@ -444,17 +445,13 @@ func (r processRuntime) observeAttempt(generation attemptGeneration, observation
 	case launchNotReleased:
 		return next.observeNotReleased(generation, index, observed)
 	case attemptSettled:
-		return next.releaseOwned(generation, index)
+		return next.observeOwnedTerminal(generation, index, observed)
 	case attemptTripped:
-		return next.observeTrip(generation, index, observed)
+		return next.observeOwnedTerminal(generation, index, observed)
 	case attemptStopped:
-		return next.releaseOwned(generation, index)
+		return next.observeOwnedTerminal(generation, index, observed)
 	case attemptInfrastructure:
-		if observed.cause == "" {
-			invariant(observeOperation, "infrastructure cause is empty")
-		}
-
-		return next.releaseOwned(generation, index)
+		return next.observeOwnedTerminal(generation, index, observed)
 	case launchUnconfirmed:
 		return next.observeLaunchUnconfirmed(generation, index)
 	case drainUnconfirmed:
@@ -468,6 +465,43 @@ func (r processRuntime) observeAttempt(generation attemptGeneration, observation
 	}
 
 	return processRuntime{}, observationResult{}
+}
+
+func (r processRuntime) observeOwnedTerminal(
+	generation attemptGeneration,
+	index int,
+	observation attemptObservation,
+) (processRuntime, observationResult) {
+	var tripKind attemptTripKind
+	switch observed := observation.(type) {
+	case attemptSettled, attemptStopped:
+	case attemptTripped:
+		if observed.kind != deadlineTrip && observed.kind != fuseTrip {
+			invariant(observeOperation, "trip kind is invalid")
+		}
+		tripKind = observed.kind
+	case attemptInfrastructure:
+		if observed.cause == "" {
+			invariant(observeOperation, "infrastructure cause is empty")
+		}
+	default:
+		invariant(observeOperation, "owned terminal observation is invalid")
+	}
+	admission := r.admissions[index]
+	if admission.stage != admissionOwned || admission.disposition != dispositionNone ||
+		(r.lifecycle != runtimeOpen && r.lifecycle != runtimeFatalClosing) {
+		invariant(observeOperation, "terminal is not a live undecided owned attempt")
+	}
+	if r.lifecycle == runtimeFatalClosing {
+		r.admissions[index].disposition = dispositionTerminalDeferred
+
+		return r, observationResult{generation: generation, runtimeClosureInProgress: true}
+	}
+	if tripKind != 0 {
+		return r.observeTrip(generation, index, attemptTripped{kind: tripKind})
+	}
+
+	return r.releaseOwned(generation, index)
 }
 
 func (r processRuntime) observeOwned(generation attemptGeneration, index int) (processRuntime, observationResult) {
@@ -724,6 +758,10 @@ func (r processRuntime) settleEmergency(sweep emergencySweep) (processRuntime, e
 		}
 		if next.admissions[index].disposition == dispositionCustodySettled {
 			invariant(settleEmergencyOperation, "generation was already settled")
+		}
+		if next.admissions[index].disposition == dispositionTerminalDeferred &&
+			resolution.disposition != emergencyConfirmedDrained {
+			invariant(settleEmergencyOperation, "deferred terminal cannot transfer custody")
 		}
 		if next.admissions[index].disposition == dispositionCustodyTransferred &&
 			resolution.disposition != emergencyCustodyTransferred {

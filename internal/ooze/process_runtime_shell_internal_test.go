@@ -774,6 +774,55 @@ func TestProcessRuntimeShellSerializesTerminalCommitAgainstFatalClose(t *testing
 	}
 }
 
+func TestProcessRuntimeShellSerializesOwnedTerminalAgainstFatalClose(t *testing.T) {
+	const samples = 100
+	for sample := range samples {
+		shell := newProcessRuntimeShell(1)
+		campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(sample + 1)})
+		requested := shell.requestAdmission(admissionRequest{
+			campaign: campaign.token, attempt: "terminal race", class: sharedAdmission,
+		})
+		started := startOwned(shell, <-requested.delivery)
+		begin := make(chan struct{})
+		var wait sync.WaitGroup
+		wait.Add(2)
+		var result observationResult
+		var terminalPanic any
+		go func() {
+			defer wait.Done()
+			defer func() { terminalPanic = recover() }()
+			<-begin
+			result = shell.observeAttempt(started.generation, attemptSettled{})
+		}()
+		go func() {
+			defer wait.Done()
+			<-begin
+			shell.closeRuntime(runtimeFatalCause("owned terminal race"))
+		}()
+		close(begin)
+		wait.Wait()
+
+		if terminalPanic != nil {
+			t.Fatalf("sample %d: owned terminal panicked: %v", sample, terminalPanic)
+		}
+		if result.generation != started.generation || result.confirmationProvisional ||
+			result.pressureTransitioned || len(result.deliveries) != 0 ||
+			len(result.cancelledWaiting) != 0 || len(result.compensatedGrants) != 0 {
+			t.Fatalf("sample %d: terminal receipt=%#v", sample, result)
+		}
+		snapshot := shell.snapshot()
+		index := snapshot.admissionIndexByGeneration(started.generation)
+		if result.settlementAcknowledged {
+			if result.runtimeClosureInProgress || index >= 0 {
+				t.Fatalf("sample %d: open terminal path=%#v/%#v", sample, result, snapshot)
+			}
+		} else if !result.runtimeClosureInProgress || index < 0 ||
+			snapshot.admissions[index].disposition != dispositionTerminalDeferred {
+			t.Fatalf("sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
+		}
+	}
+}
+
 func TestProcessRuntimeShellSerializesFatalCloseAgainstStartCommit(t *testing.T) {
 	const samples = 100
 	for sample := range samples {
