@@ -72,6 +72,20 @@ _Avoid_: Host load, slow test, killed mutant
 The process runtime's accepted authorization for one prepared attempt generation to begin external execution. It creates an execution-domain obligation before launch, so later admission closure cannot reinterpret that attempt as unstarted.
 _Avoid_: Started callback, launch acknowledgement
 
+## Simulation
+
+**Deterministic simulation**:
+An evaluation scenario whose immutable definition and accepted fact order fully determine every campaign, process-runtime, broker, and supervised-attempt decision.
+_Avoid_: Fake engine, model implementation
+
+**Simulation trace**:
+An immutable simulation definition plus a stable ordered sequence of normalized facts sufficient to replay every decision. Effects, wakeups, and fuzz choices are not trace authority.
+_Avoid_: Event log, fuzz corpus, transcript
+
+**Fuzz choice stream**:
+Ephemeral bytes that select from the deterministic simulation's currently enabled moves during discovery. It may be retained as provenance but is never the replay authority.
+_Avoid_: Simulation trace, replay seed
+
 ## Supervision
 
 **Execution domain**:
