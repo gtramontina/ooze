@@ -4,6 +4,7 @@ package ooze
 import (
 	"slices"
 	"strconv"
+	"time"
 )
 
 const (
@@ -67,6 +68,8 @@ type admissionAuthority struct {
 	campaign campaignToken
 	attempt  attemptIdentity
 	class    admissionClass
+	profile  Profile
+	deadline time.Duration
 	delivery chan admissionAuthority
 }
 
@@ -183,9 +186,12 @@ const (
 type attemptObservation interface{ attemptObservation() }
 
 type (
-	launchOwned           struct{}
-	launchNotReleased     struct{ reason launchNotReleasedReason }
-	attemptSettled        struct{}
+	launchOwned       struct{}
+	launchNotReleased struct{ reason launchNotReleasedReason }
+	attemptSettled    struct {
+		profile  Profile
+		deadline time.Duration
+	}
 	launchUnconfirmed     struct{}
 	drainUnconfirmed      struct{}
 	attemptStopped        struct{}
@@ -277,6 +283,8 @@ type terminalResult struct {
 type barrierBinding struct {
 	campaign campaignToken
 	attempt  attemptIdentity
+	profile  Profile
+	deadline time.Duration
 	delivery chan admissionGrant
 }
 
@@ -348,6 +356,10 @@ func (r processRuntime) requestAdmission(request admissionRequest) (processRunti
 	token := request
 	if request.attempt == "" || request.class < sharedAdmission || request.class > confirmationAdmission {
 		invariant("request admission", "invalid request")
+	}
+	if request.class == confirmationAdmission &&
+		((request.profile != AutomaticProfile && request.profile != SerialProfile) || request.deadline <= 0) {
+		invariant("request admission", "confirmation execution facts are invalid")
 	}
 	if !r.open() {
 		return r, admissionResult{
@@ -525,7 +537,8 @@ func (r processRuntime) observeOwnedTerminal(
 	}
 	if admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission {
 		outcome := confirmationRejected
-		if _, settled := observation.(attemptSettled); settled {
+		if settled, ordinary := observation.(attemptSettled); ordinary &&
+			settled.profile == admission.grant.profile && settled.deadline == admission.grant.deadline {
 			outcome = confirmationPressureAccepted
 		}
 
@@ -715,7 +728,8 @@ func (r processRuntime) observeConfirmation(
 
 func (r processRuntime) sealAndBindConfirmationBarrier(binding barrierBinding) (processRuntime, barrierResult) {
 	index := r.unboundBarrierIndex(binding.campaign)
-	if !r.open() || binding.attempt == "" || index < 0 {
+	validProfile := binding.profile == AutomaticProfile || binding.profile == SerialProfile
+	if !r.open() || binding.attempt == "" || !validProfile || binding.deadline <= 0 || index < 0 {
 		return r, barrierResult{decision: barrierRejectedMissing}
 	}
 	for _, admission := range r.admissions {
@@ -726,6 +740,7 @@ func (r processRuntime) sealAndBindConfirmationBarrier(binding barrierBinding) (
 	next := r.clone()
 	request := admissionAuthority{
 		campaign: binding.campaign, attempt: binding.attempt, class: confirmationBarrierAdmission,
+		profile: binding.profile, deadline: binding.deadline,
 		delivery: binding.delivery,
 	}
 	next.admissions[index].grant = request

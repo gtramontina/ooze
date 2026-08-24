@@ -258,6 +258,9 @@ type ExecutionData struct {
 	BoundFired      BoundFired
 	Output          OutputSnapshot
 	Failures        FailureDiagnostics
+
+	profile                 Profile
+	confirmationProvisional bool
 }
 
 // BoundFired identifies the command bound that selected terminal intent.

@@ -177,6 +177,7 @@ func newForcedRuntimeTransferReceiptFixture(
 	)
 	wantTerminal := supervisorTerminalEvidence{
 		kind:            supervisorTerminalDrainUnconfirmed,
+		profile:         AutomaticProfile,
 		commandDeadline: 20 * time.Second,
 		launchDuration:  time.Second - time.Nanosecond,
 		commandDuration: 20 * time.Second,
@@ -231,6 +232,7 @@ func newRootRuntimeTransferReceiptFixture(t *testing.T) runtimeTransferReceiptFi
 	)
 	wantTerminal := supervisorTerminalEvidence{
 		kind:            supervisorTerminalDrainUnconfirmed,
+		profile:         AutomaticProfile,
 		commandDeadline: 20 * time.Second,
 		launchDuration:  time.Second - time.Nanosecond,
 		commandDuration: time.Second,

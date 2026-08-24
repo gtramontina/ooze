@@ -681,6 +681,7 @@ func appendEmergencyCallerResidual(
 	state, transfer := completeEmergencyOutputPipeline(t, state, generation, actions[0], false)
 	wantTerminal := supervisorTerminalEvidence{
 		kind:            supervisorTerminalDrainUnconfirmed,
+		profile:         AutomaticProfile,
 		commandDeadline: 20 * time.Second,
 		launchDuration:  time.Second - time.Nanosecond,
 		commandDuration: time.Second,

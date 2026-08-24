@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 func (s *processRuntimeShell) snapshot() processRuntime {
@@ -150,6 +151,7 @@ func TestProcessRuntimeShellBindsBarrierToBufferedOneShot(t *testing.T) {
 	confirmation := shell.sealAndBindConfirmationBarrier(barrierBinding{
 		campaign: campaignA.token,
 		attempt:  confirmationAttempt,
+		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if confirmation.decision != barrierBound || cap(confirmation.delivery) != 1 || len(confirmation.delivery) != 1 {
 		t.Fatalf("confirmation await=%#v cap/len=%d/%d", confirmation, cap(confirmation.delivery), len(confirmation.delivery))
