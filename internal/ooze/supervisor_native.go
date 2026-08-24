@@ -43,8 +43,10 @@ type nativeLaunchFailureEvidence struct {
 }
 
 type nativeLaunchOperationError struct {
-	operation nativeLaunchOperation
-	err       error
+	operation     nativeLaunchOperation
+	stage         nativeLaunchStage
+	closureProven bool
+	err           error
 }
 
 func (failure nativeLaunchOperationError) Error() string { return failure.err.Error() }
@@ -203,11 +205,17 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 			},
 		), errors.Join(err, cleanupErr))
 	}
-	go executor.awaitRoot(attempt)
+	rootWaitStarted := nativeRootWaitBeforeRelease()
+	if rootWaitStarted {
+		go executor.awaitRoot(attempt)
+	}
 	executor.mutex.Lock()
 	if attempt.releaseRevoked {
 		executor.mutex.Unlock()
 		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		if !rootWaitStarted {
+			go executor.awaitRoot(attempt)
+		}
 		<-attempt.waitDone
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
@@ -222,17 +230,28 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	executor.mutex.Unlock()
 	if err != nil {
 		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		if !rootWaitStarted {
+			go executor.awaitRoot(attempt)
+		}
 		<-attempt.waitDone
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(
-			nativeLaunchFailureEvidence{
-				operation: nativeLaunchFailureOperation(err, nativeLaunchCleanup),
-				stage:     nativeLaunchReleaseUnknown, err: err, closureProven: false,
-			},
-		), err)
+		evidence := nativeLaunchFailureEvidence{
+			operation: nativeLaunchFailureOperation(err, nativeLaunchCleanup),
+			stage: nativeLaunchReleaseUnknown, err: err, closureProven: false,
+		}
+		var operationError nativeLaunchOperationError
+		if errors.As(err, &operationError) && operationError.stage != 0 {
+			evidence.stage = operationError.stage
+			evidence.closureProven = operationError.closureProven
+		}
+
+		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(evidence), err)
+	}
+	if !rootWaitStarted {
+		go executor.awaitRoot(attempt)
 	}
 	completion := supervisorLaunchCompletion{
 		generation: action.generation, action: action.token,
@@ -347,9 +366,8 @@ func nativeWaitFailure(err error) error {
 func (executor *supervisorNativeExecutor) awaitRoot(attempt *supervisorNativeAttempt) {
 	attempt.waitOnce.Do(func() {
 		attempt.trackingErr = waitNativeRootExit(attempt.platform)
-		attempt.waitErr = attempt.command.Wait()
+		attempt.exit, attempt.waitErr = nativeRootCompletion(attempt.platform, attempt.command)
 		attempt.waitAt = time.Now()
-		attempt.exit = nativeExitStatus(attempt.waitErr)
 		close(attempt.waitDone)
 	})
 }

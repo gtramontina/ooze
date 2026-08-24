@@ -104,6 +104,14 @@ func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) b
 	}
 }
 
+func nativeRootWaitBeforeRelease() bool { return true }
+
+func nativeRootCompletion(_ nativePlatformState, command *exec.Cmd) (ExitStatus, error) {
+	err := command.Wait()
+
+	return nativeExitStatus(err), err
+}
+
 func waitNativeRootExit(state nativePlatformState) error {
 	state.domain.mutex.Lock()
 	queue := state.domain.queue

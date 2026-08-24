@@ -75,6 +75,14 @@ func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) b
 	return false
 }
 
+func nativeRootWaitBeforeRelease() bool { return true }
+
+func nativeRootCompletion(_ nativePlatformState, command *exec.Cmd) (ExitStatus, error) {
+	err := command.Wait()
+
+	return nativeExitStatus(err), err
+}
+
 func waitNativeRootExit(nativePlatformState) error { return nil }
 
 func confirmNativeCommandStopped(*exec.Cmd, nativePlatformState) error { return nil }
