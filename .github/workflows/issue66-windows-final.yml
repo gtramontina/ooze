@@ -1,0 +1,21 @@
+name: Issue 66 Windows fixture verification
+
+on:
+  push:
+    branches: [ issue66-windows-final-8a37771 ]
+
+jobs:
+  fixtures:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.6
+      - name: Repeat bounded process fixtures
+        shell: pwsh
+        run: >-
+          go test -race -count=10 -timeout=10m -shuffle=on
+          -run '^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob)$'
+          ./internal/cmdtestrunner ./internal/ooze
