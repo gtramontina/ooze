@@ -17,7 +17,7 @@ type supervisorDriverConstruction struct {
 	drainEpoch     time.Duration
 	prepare        func(attemptGeneration, Spec)
 	execute        func(supervisorAction) *supervisorEvent
-	recheckRoot    func(attemptGeneration) (ExitStatus, bool, error)
+	recheckRoot    func(attemptGeneration) (ExitStatus, time.Time, bool, error)
 	sampleRunning  func(attemptGeneration) (bool, uint64, error)
 	readOutput     func(supervisorOutputRef) string
 }
@@ -52,7 +52,7 @@ type supervisorDriver struct {
 	drainEpoch        time.Duration
 	prepare           func(attemptGeneration, Spec)
 	execute           func(supervisorAction) *supervisorEvent
-	recheckRoot       func(attemptGeneration) (ExitStatus, bool, error)
+	recheckRoot       func(attemptGeneration) (ExitStatus, time.Time, bool, error)
 	sampleRunning     func(attemptGeneration) (bool, uint64, error)
 	readOutput        func(supervisorOutputRef) string
 	attempts          map[attemptGeneration]*supervisorDrivenAttempt
@@ -377,7 +377,17 @@ func (driver *supervisorDriver) run(action supervisorAction) {
 		driver.settleRuntime(action)
 	case supervisorDeliverTerminal:
 		driver.deliverTerminal(action)
-	case supervisorSettleEmergency, supervisorDeliverEmergencySettlement:
+	case supervisorSettleEmergency:
+		driver.mutex.Lock()
+		if driver.emergencyReturns != 0 {
+			driver.emergencyDeferred = append(driver.emergencyDeferred, action)
+			driver.mutex.Unlock()
+
+			return
+		}
+		driver.mutex.Unlock()
+		driver.executeEmergency(action)
+	case supervisorDeliverEmergencySettlement:
 		driver.executeEmergency(action)
 	case supervisorLaunchNative, supervisorObserveEmptiness, supervisorForceOwned,
 		supervisorCaptureOutput, supervisorReleaseDomain:
@@ -522,12 +532,13 @@ func (driver *supervisorDriver) waitThroughDeadline(
 
 			return
 		case <-timer.C:
-			status, observed, err := driver.recheckRoot(waitAction.generation)
+			status, completedAt, observed, err := driver.recheckRoot(waitAction.generation)
 			if err != nil {
 				invariant(supervisorDriverOperation, "deadline root recheck failed")
 			}
 			recheck := supervisorExitRecheck{performed: true, observed: observed, at: deadlineAt}
 			if observed {
+				recheck.at = completedAt
 				recheck.code = status.Code
 				recheck.signal = status.Signal
 			}
@@ -708,8 +719,36 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
 				!attempt.launchEvent.at.After(request.At) {
 				if attempt.launchEvent.completion.kind == supervisorLaunchReleased {
-					driver.mutex.Unlock()
-					invariant(supervisorDriverOperation, "released prospective emergency snapshot lacks root provenance")
+					if driver.recheckRoot == nil {
+						driver.mutex.Unlock()
+						invariant(supervisorDriverOperation, "released prospective emergency lacks a root completion cell")
+					}
+					status, completedAt, observed, err := driver.recheckRoot(state.generation)
+					if err != nil {
+						driver.mutex.Unlock()
+						invariant(supervisorDriverOperation, "released prospective root snapshot failed")
+					}
+					recheckAt := request.At
+					if observed {
+						recheckAt = completedAt
+					}
+					snapshot.running = &supervisorRunningBundle{
+						generation: state.generation,
+						exitRecheck: supervisorExitRecheck{
+							performed: true, observed: observed, at: recheckAt,
+							action: state.launchAction, code: status.Code, signal: status.Signal,
+						},
+					}
+					deadlineAt := attempt.launchEvent.completion.at.Add(state.commandDeadline)
+					selectedAt := time.Time{}
+					if observed && !completedAt.After(deadlineAt) {
+						selectedAt = completedAt
+					} else if !request.At.Before(deadlineAt) {
+						selectedAt = deadlineAt
+					}
+					if !selectedAt.IsZero() {
+						snapshot.running.drainBy = selectedAt.Add(driver.drainEpoch)
+					}
 				}
 				snapshot.completion = attempt.launchEvent.completion
 			}

@@ -126,11 +126,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 
 		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(err))
 	}
+	go executor.awaitRoot(attempt)
 	executor.mutex.Lock()
 	if attempt.releaseRevoked {
 		executor.mutex.Unlock()
 		_ = forceNativeDomain(platform, command.Process.Pid)
-		_, _ = command.Process.Wait()
+		<-attempt.waitDone
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
@@ -144,7 +145,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	executor.mutex.Unlock()
 	if err != nil {
 		_ = forceNativeDomain(platform, command.Process.Pid)
-		_, _ = command.Process.Wait()
+		<-attempt.waitDone
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
@@ -198,12 +199,7 @@ func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *sup
 	executor.mutex.Lock()
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
-	attempt.waitOnce.Do(func() {
-		attempt.waitErr = attempt.command.Wait()
-		attempt.waitAt = time.Now()
-		attempt.exit = nativeExitStatus(attempt.waitErr)
-		close(attempt.waitDone)
-	})
+	executor.awaitRoot(attempt)
 	fact := supervisorRunningFact{
 		generation: action.generation, action: action.token,
 		kind: supervisorRunningRootExited, at: attempt.waitAt,
@@ -218,6 +214,15 @@ func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *sup
 			facts: []supervisorRunningFact{fact},
 		},
 	}
+}
+
+func (executor *supervisorNativeExecutor) awaitRoot(attempt *supervisorNativeAttempt) {
+	attempt.waitOnce.Do(func() {
+		attempt.waitErr = attempt.command.Wait()
+		attempt.waitAt = time.Now()
+		attempt.exit = nativeExitStatus(attempt.waitErr)
+		close(attempt.waitDone)
+	})
 }
 
 func nativeExitStatus(err error) ExitStatus {
@@ -262,12 +267,7 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
 	err := forceNativeDomain(attempt.platform, attempt.command.Process.Pid)
-	attempt.waitOnce.Do(func() {
-		attempt.waitErr = attempt.command.Wait()
-		attempt.waitAt = time.Now()
-		attempt.exit = nativeExitStatus(attempt.waitErr)
-		close(attempt.waitDone)
-	})
+	executor.awaitRoot(attempt)
 	diagnostic := supervisorDiagnosticRef(0)
 	if err != nil {
 		diagnostic = 1
@@ -278,15 +278,15 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 
 func (executor *supervisorNativeExecutor) recheckRoot(
 	generation attemptGeneration,
-) (ExitStatus, bool, error) {
+) (ExitStatus, time.Time, bool, error) {
 	executor.mutex.Lock()
 	attempt := executor.requireAttempt(generation)
 	executor.mutex.Unlock()
 	select {
 	case <-attempt.waitDone:
-		return attempt.exit, true, nil
+		return attempt.exit, attempt.waitAt, true, nil
 	default:
-		return ExitStatus{}, false, nil
+		return ExitStatus{}, time.Time{}, false, nil
 	}
 }
 
