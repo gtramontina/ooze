@@ -17,25 +17,28 @@ type supervisorDriverConstruction struct {
 }
 
 type supervisorDrivenAttempt struct {
-	spec         Spec
-	owned        *OwnedAttempt
-	launchResult LaunchResult
-	waitAction   supervisorAction
-	sampleAction supervisorAction
-	waitStarted  bool
-	terminal     chan Terminal
+	spec          Spec
+	owned         *OwnedAttempt
+	launchResult  LaunchResult
+	waitAction    supervisorAction
+	sampleAction  supervisorAction
+	waitStarted   bool
+	terminalReady bool
+	terminal      chan Terminal
 }
 
 type supervisorDriver struct {
-	mutex          sync.Mutex
-	state          supervisorState
-	runtime        *processRuntimeShell
-	now            func() time.Time
-	launchProgress time.Duration
-	drainEpoch     time.Duration
-	execute        func(supervisorAction) *supervisorEvent
-	readOutput     func(supervisorOutputRef) string
-	attempts       map[attemptGeneration]*supervisorDrivenAttempt
+	mutex            sync.Mutex
+	state            supervisorState
+	runtime          *processRuntimeShell
+	now              func() time.Time
+	launchProgress   time.Duration
+	drainEpoch       time.Duration
+	execute          func(supervisorAction) *supervisorEvent
+	readOutput       func(supervisorOutputRef) string
+	attempts         map[attemptGeneration]*supervisorDrivenAttempt
+	emergency        chan SweepResult
+	emergencyStarted bool
 }
 
 func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorDriver {
@@ -48,8 +51,22 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		runtime: construction.runtime, now: construction.now,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
 		execute: construction.execute, readOutput: construction.readOutput,
-		attempts: make(map[attemptGeneration]*supervisorDrivenAttempt),
+		attempts:  make(map[attemptGeneration]*supervisorDrivenAttempt),
+		emergency: make(chan SweepResult, 1),
 	}
+}
+
+func newDrivenSupervisorForTest(
+	installStart func(attemptIdentity, *pendingStartCell) installedStart,
+	driver *supervisorDriver,
+) *Supervisor {
+	if driver == nil {
+		panic("driven supervisor requires a driver")
+	}
+	supervisor := newSupervisorForTest(installStart, driver.launch)
+	supervisor.emergencyDrain = driver.emergencyDrain
+
+	return supervisor
 }
 
 func (driver *supervisorDriver) launch(generation attemptGeneration, spec Spec) LaunchResult {
@@ -106,6 +123,8 @@ func (driver *supervisorDriver) run(action supervisorAction) {
 		driver.settleRuntime(action)
 	case supervisorDeliverTerminal:
 		driver.deliverTerminal(action)
+	case supervisorSettleEmergency, supervisorDeliverEmergencySettlement:
+		driver.executeEmergency(action)
 	case supervisorLaunchNative, supervisorObserveEmptiness, supervisorForceOwned,
 		supervisorCaptureOutput, supervisorReleaseDomain:
 		driver.executeAction(action)
@@ -175,8 +194,11 @@ func (driver *supervisorDriver) wait(generation attemptGeneration) Terminal {
 	attempt.waitStarted = true
 	waitAction := attempt.waitAction
 	terminal := attempt.terminal
+	terminalReady := attempt.terminalReady
 	driver.mutex.Unlock()
-	driver.executeAction(waitAction)
+	if !terminalReady {
+		driver.executeAction(waitAction)
+	}
 
 	return <-terminal
 }
@@ -268,8 +290,75 @@ func (driver *supervisorDriver) deliverTerminal(action supervisorAction) {
 	attempt := driver.requireAttempt(action.generation)
 	terminal := publicTerminal(action.terminal, driver.readOutput)
 	delivery := attempt.terminal
+	if attempt.terminalReady {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "terminal delivery was duplicated")
+	}
+	attempt.terminalReady = true
 	driver.mutex.Unlock()
 	delivery <- terminal
+}
+
+func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
+	driver.mutex.Lock()
+	if driver.emergencyStarted {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "emergency drain was duplicated")
+	}
+	driver.emergencyStarted = true
+	snapshots := make([]supervisorEmergencySnapshot, 0, len(driver.state.attempts))
+	for _, state := range driver.state.attempts {
+		if state.phase == supervisorLaunchClosedNotReleased {
+			continue
+		}
+		snapshot := supervisorEmergencySnapshot{generation: state.generation}
+		switch state.phase {
+		case supervisorRunning:
+			snapshot.running = &supervisorRunningBundle{
+				generation:   state.generation,
+				waitAction:   state.waitAction,
+				sampleAction: state.sampleAction,
+			}
+		default:
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "attempt phase has no emergency snapshot")
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	driver.mutex.Unlock()
+	driver.apply(supervisorEvent{
+		kind: supervisorEmergencyStarted, at: request.At, drainBy: request.DrainBy,
+		emergencySnapshots: snapshots,
+	})
+
+	return <-driver.emergency
+}
+
+func (driver *supervisorDriver) executeEmergency(action supervisorAction) {
+	driver.mutex.Lock()
+	state := cloneSupervisorState(driver.state)
+	driver.mutex.Unlock()
+	executor := supervisorEmergencyExecutor{
+		settleEmergency:            driver.runtime.settleEmergency,
+		deliverEmergencySettlement: driver.deliverEmergencySettlement,
+	}
+	event := executor.execute(state, action)
+	if event != nil {
+		driver.apply(*event)
+	}
+}
+
+func (driver *supervisorDriver) deliverEmergencySettlement(residuals []supervisorEmergencyResidual) {
+	if len(residuals) == 0 {
+		driver.emergency <- SweepDrained{}
+
+		return
+	}
+	public := make([]ResidualRef, len(residuals))
+	for index, residual := range residuals {
+		public[index] = ResidualRef{Attempt: string(residual.attempt), Kind: OwnedUndrained}
+	}
+	driver.emergency <- SweepUnconfirmed{residuals: public}
 }
 
 func publicTerminal(

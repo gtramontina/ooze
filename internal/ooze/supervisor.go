@@ -104,8 +104,9 @@ type supervisorConstruction struct {
 
 // Supervisor is the concrete entry point for managed command execution.
 type Supervisor struct {
-	installStart func(attemptIdentity, *pendingStartCell) installedStart
-	launchNative func(attemptGeneration, Spec) LaunchResult
+	installStart   func(attemptIdentity, *pendingStartCell) installedStart
+	launchNative   func(attemptGeneration, Spec) LaunchResult
+	emergencyDrain func(EmergencyRequest) SweepResult
 }
 
 func constructSupervisor(construction supervisorConstruction) (*Supervisor, error) {
@@ -156,6 +157,18 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 	return result
 }
 
+// EmergencyDrain runs one exact runtime-wide emergency settlement.
+func (s *Supervisor) EmergencyDrain(request EmergencyRequest) SweepResult {
+	if err := request.validate(); err != nil {
+		panic(err)
+	}
+	if s.emergencyDrain == nil {
+		panic("supervisor emergency drain plumbing is absent")
+	}
+
+	return s.emergencyDrain(request)
+}
+
 func brokerLaunchObservation(result LaunchResult) attemptObservation {
 	switch result := result.(type) {
 	case Owned:
@@ -189,6 +202,39 @@ type StopRequest struct {
 	At      time.Time
 	DrainBy time.Time
 }
+
+// EmergencyRequest fixes the logical emergency cut and its drainage bound.
+type EmergencyRequest struct {
+	At      time.Time
+	DrainBy time.Time
+}
+
+func (request EmergencyRequest) validate() error {
+	return StopRequest(request).validate()
+}
+
+// SweepResult is the stable settlement of one emergency epoch.
+type SweepResult interface{ sweepResult() }
+
+// SweepDrained reports that the emergency epoch retained no residual custody.
+type SweepDrained struct{}
+
+// ResidualRef identifies one stable ordered emergency residual.
+type ResidualRef struct {
+	Attempt string
+	Kind    Residual
+}
+
+// SweepUnconfirmed reports immutable ordered residual custody.
+type SweepUnconfirmed struct{ residuals []ResidualRef }
+
+// Residuals returns a defensive copy of the ordered residual inventory.
+func (settlement SweepUnconfirmed) Residuals() []ResidualRef {
+	return append([]ResidualRef(nil), settlement.residuals...)
+}
+
+func (SweepDrained) sweepResult()     {}
+func (SweepUnconfirmed) sweepResult() {}
 
 var errInvalidStopRequest = errors.New("stop request requires an instant and a later drain deadline")
 
