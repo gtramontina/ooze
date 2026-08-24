@@ -70,6 +70,12 @@ type supervisorTerminalKind uint8
 
 const (
 	supervisorTerminalSettled supervisorTerminalKind = iota + 1
+	supervisorTerminalFuseTrip
+	supervisorTerminalAutomaticDeadlineTrip
+	supervisorTerminalSerialDeadlineTrip
+	supervisorTerminalStopped
+	supervisorTerminalInfrastructureWait
+	supervisorTerminalInfrastructureRunning
 	supervisorTerminalInfrastructureRelease
 	supervisorTerminalInfrastructureOutput
 	supervisorTerminalInfrastructureControl
@@ -77,7 +83,10 @@ const (
 
 type supervisorFiredBound uint8
 
-const supervisorNoCommandBound supervisorFiredBound = iota
+const (
+	supervisorNoCommandBound supervisorFiredBound = iota
+	supervisorCommandDeadlineFired
+)
 
 type supervisorDrainCompletionKind uint8
 
@@ -909,8 +918,8 @@ func reduceReleaseCompletion(
 		return state.completeLateAdoptedRelease(index)
 	}
 
-	validateRootExitReleaseProvenance(attempt)
-	evidence := normalizeRootExitTerminalEvidence(state.attempts[index])
+	validateTerminalReleaseProvenance(attempt, state.emergency)
+	evidence := normalizeTerminalEvidence(state.attempts[index])
 
 	return state.beginRuntimeSettlement(index, completion.at, evidence)
 }
@@ -969,11 +978,20 @@ func requireReleaseCompletion(
 func validateProvenEmptyReleaseCustody(attempt supervisorAttemptState) {
 	if attempt.phase != supervisorReleasingDomain ||
 		attempt.drain.decision != supervisorDrainProvenEmpty ||
-		attempt.output.ref == 0 || !attempt.output.final ||
-		attempt.output.prefixLength > attempt.output.cutoff ||
-		attempt.output.completeThroughCutoff != (attempt.output.diagnostic == 0) ||
-		(attempt.output.diagnostic == 0 && attempt.output.prefixLength != attempt.output.cutoff) ||
 		attempt.terminal != (supervisorTerminalEvidence{}) {
+		invariant(supervisorReducerOperation, "release completion is outside proven-empty output custody")
+	}
+	validateProvenEmptyOutputCustody(attempt.output)
+	if !attempt.drain.forced &&
+		(attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
+		invariant(supervisorReducerOperation, "unforced drain carries impossible diagnostics")
+	}
+}
+
+func validateProvenEmptyOutputCustody(output supervisorOutputEvidence) {
+	if output.ref == 0 || !output.final || output.prefixLength > output.cutoff ||
+		output.completeThroughCutoff != (output.diagnostic == 0) ||
+		(output.diagnostic == 0 && output.prefixLength != output.cutoff) {
 		invariant(supervisorReducerOperation, "release completion is outside proven-empty output custody")
 	}
 }
@@ -991,29 +1009,164 @@ func (state supervisorState) completeLateAdoptedRelease(
 	return state, nil
 }
 
-func validateRootExitReleaseProvenance(attempt supervisorAttemptState) {
-	if attempt.registeredAt.IsZero() || attempt.startedAt.IsZero() ||
-		attempt.startedAt.Before(attempt.registeredAt) || attempt.commandDeadline <= 0 ||
-		!attempt.deadlineAt.Equal(attempt.startedAt.Add(attempt.commandDeadline)) ||
-		attempt.intent.at.Before(attempt.startedAt) || attempt.intent.at.After(attempt.deadlineAt) {
-		invariant(supervisorReducerOperation, "release completion lacks immutable root-exit provenance")
-	}
-	wantIntent := attempt.intent
-	wantIntent.latched = true
-	wantIntent.kind = supervisorIntentRootExit
-	wantIntent.duration = attempt.intent.at.Sub(attempt.startedAt)
-	wantIntent.count = supervisorObservedCount{}
-	wantIntent.stop = StopRequest{}
-	wantIntent.observationSource = 0
+func validateTerminalReleaseProvenance(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) {
+	validateTerminalReleaseTiming(attempt)
+	wantIntent := canonicalTerminalReleaseIntent(attempt, emergency)
 	if attempt.intent != wantIntent {
-		invariant(supervisorReducerOperation, "release completion lacks immutable root-exit provenance")
+		invariant(supervisorReducerOperation, "release completion terminal intent shape is invalid")
 	}
 }
 
-func normalizeRootExitTerminalEvidence(
+func validateTerminalReleaseTiming(attempt supervisorAttemptState) {
+	validateTerminalRegistrationTiming(attempt)
+	validateTerminalIntentTiming(attempt)
+}
+
+func validateTerminalRegistrationTiming(attempt supervisorAttemptState) {
+	if attempt.registeredAt.IsZero() || attempt.startedAt.IsZero() ||
+		attempt.startedAt.Before(attempt.registeredAt) || attempt.commandDeadline <= 0 ||
+		!attempt.deadlineAt.Equal(attempt.startedAt.Add(attempt.commandDeadline)) ||
+		(attempt.profile != AutomaticProfile && attempt.profile != SerialProfile) {
+		invariant(supervisorReducerOperation, "release completion lacks immutable terminal provenance")
+	}
+}
+
+func validateTerminalIntentTiming(attempt supervisorAttemptState) {
+	if !attempt.intent.latched || attempt.intent.at.Before(attempt.startedAt) ||
+		attempt.intent.at.After(attempt.deadlineAt) ||
+		attempt.intent.duration != attempt.intent.at.Sub(attempt.startedAt) ||
+		!attempt.intent.drainBy.After(attempt.intent.at) {
+		invariant(supervisorReducerOperation, "release completion lacks immutable terminal intent timing")
+	}
+}
+
+func canonicalTerminalReleaseIntent(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) supervisorRunningIntent {
+	validateTerminalProfileDiagnostics(attempt)
+	want := supervisorRunningIntent{
+		latched: true, kind: attempt.intent.kind, at: attempt.intent.at,
+		drainBy: attempt.intent.drainBy, duration: attempt.intent.duration,
+		diagnostics: attempt.intent.diagnostics,
+	}
+	switch attempt.intent.kind {
+	case supervisorIntentRootExit:
+		want.exitCode = attempt.intent.exitCode
+		want.exitSignal = attempt.intent.exitSignal
+	case supervisorIntentFuse:
+		validateFuseTerminalProvenance(attempt)
+		want.count = attempt.intent.count
+	case supervisorIntentDeadline:
+		validateDeadlineTerminalProvenance(attempt)
+		want.count = attempt.intent.count
+	case supervisorIntentStop:
+		validateStopTerminalProvenance(attempt)
+		want.stop = attempt.intent.stop
+	case supervisorIntentRuntimeEmergency:
+		validateRuntimeEmergencyTerminalProvenance(attempt, emergency)
+	case supervisorIntentObservationFailure:
+		validateObservationFailureTerminalProvenance(attempt)
+		want.observationSource = attempt.intent.observationSource
+	default:
+		invariant(supervisorReducerOperation, "release completion terminal intent kind is invalid")
+	}
+
+	return want
+}
+
+func validateTerminalProfileDiagnostics(attempt supervisorAttemptState) {
+	if attempt.profile == SerialProfile && attempt.intent.diagnostics.running != 0 {
+		invariant(supervisorReducerOperation, "release completion profile diagnostics are invalid")
+	}
+}
+
+func validateFuseTerminalProvenance(attempt supervisorAttemptState) {
+	if attempt.profile != AutomaticProfile || !attempt.intent.count.present ||
+		attempt.intent.count.value <= int(supervisorFuseCeiling) {
+		invariant(supervisorReducerOperation, "release completion fuse provenance is invalid")
+	}
+}
+
+func validateDeadlineTerminalProvenance(attempt supervisorAttemptState) {
+	if !attempt.intent.at.Equal(attempt.deadlineAt) ||
+		attempt.intent.diagnostics != (supervisorObservationDiagnostics{}) {
+		invariant(supervisorReducerOperation, "release completion deadline provenance is invalid")
+	}
+	switch attempt.profile {
+	case AutomaticProfile:
+		validateAutomaticDeadlineCount(attempt.intent.count, attempt.runningPeak)
+	case SerialProfile:
+		validateSerialDeadlineCount(attempt.intent.count, attempt.runningPeak)
+	default:
+		invariant(supervisorReducerOperation, "release completion deadline profile is invalid")
+	}
+}
+
+func validateAutomaticDeadlineCount(count supervisorObservedCount, peak supervisorObservedCount) {
+	if count != peak || !canonicalAutomaticDeadlineCount(count) {
+		invariant(supervisorReducerOperation, "release completion automatic deadline count is invalid")
+	}
+}
+
+func canonicalAutomaticDeadlineCount(count supervisorObservedCount) bool {
+	if !count.present {
+		return count.value == 0
+	}
+
+	return count.value > 0 && count.value <= int(supervisorFuseCeiling)
+}
+
+func validateSerialDeadlineCount(count supervisorObservedCount, peak supervisorObservedCount) {
+	if count != (supervisorObservedCount{}) || peak != (supervisorObservedCount{}) {
+		invariant(supervisorReducerOperation, "release completion serial deadline count is invalid")
+	}
+}
+
+func validateStopTerminalProvenance(attempt supervisorAttemptState) {
+	if attempt.intent.stop.validate() != nil || !attempt.intent.stop.At.Equal(attempt.intent.at) ||
+		!attempt.intent.stop.DrainBy.Equal(attempt.intent.drainBy) ||
+		!attempt.intent.at.Before(attempt.deadlineAt) ||
+		attempt.intent.diagnostics != (supervisorObservationDiagnostics{}) {
+		invariant(supervisorReducerOperation, "release completion stop provenance is invalid")
+	}
+}
+
+func validateRuntimeEmergencyTerminalProvenance(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) {
+	if !emergency.active || !attempt.intent.at.Equal(emergency.at) ||
+		!attempt.intent.drainBy.Equal(emergency.drainBy) ||
+		!attempt.intent.at.Before(attempt.deadlineAt) ||
+		attempt.intent.diagnostics != (supervisorObservationDiagnostics{}) {
+		invariant(supervisorReducerOperation, "release completion runtime emergency provenance is invalid")
+	}
+}
+
+func validateObservationFailureTerminalProvenance(attempt supervisorAttemptState) {
+	diagnostics := attempt.intent.diagnostics
+	switch attempt.intent.observationSource {
+	case supervisorObservationWait:
+		if diagnostics.wait == 0 {
+			invariant(supervisorReducerOperation, "release completion wait failure provenance is invalid")
+		}
+	case supervisorObservationRunning:
+		if attempt.profile != AutomaticProfile || diagnostics.running == 0 || diagnostics.wait != 0 {
+			invariant(supervisorReducerOperation, "release completion running failure provenance is invalid")
+		}
+	default:
+		invariant(supervisorReducerOperation, "release completion observation source is invalid")
+	}
+}
+
+func normalizeTerminalEvidence(
 	attempt supervisorAttemptState,
 ) supervisorTerminalEvidence {
-	terminalKind := supervisorTerminalSettled
+	terminalKind, firedBound, count, exitCode, exitSignal := normalizeTerminalIntent(attempt)
 	switch {
 	case attempt.drain.controlDiagnostic != 0:
 		terminalKind = supervisorTerminalInfrastructureControl
@@ -1028,10 +1181,10 @@ func normalizeRootExitTerminalEvidence(
 		commandDeadline: attempt.commandDeadline,
 		launchDuration:  attempt.startedAt.Sub(attempt.registeredAt),
 		commandDuration: attempt.intent.duration,
-		firedBound:      supervisorNoCommandBound,
-		exitCode:        attempt.intent.exitCode,
-		exitSignal:      attempt.intent.exitSignal,
-		count:           supervisorObservedCount{},
+		firedBound:      firedBound,
+		exitCode:        exitCode,
+		exitSignal:      exitSignal,
+		count:           count,
 		output:          attempt.output,
 		diagnostics: supervisorTerminalDiagnostics{
 			wait:    attempt.intent.diagnostics.wait,
@@ -1040,6 +1193,38 @@ func normalizeRootExitTerminalEvidence(
 			control: attempt.drain.controlDiagnostic,
 			release: attempt.releaseDiagnostic,
 		},
+	}
+}
+
+func normalizeTerminalIntent(
+	attempt supervisorAttemptState,
+) (supervisorTerminalKind, supervisorFiredBound, supervisorObservedCount, int, int) {
+	switch attempt.intent.kind {
+	case supervisorIntentRootExit:
+		return supervisorTerminalSettled, supervisorNoCommandBound, supervisorObservedCount{},
+			attempt.intent.exitCode, attempt.intent.exitSignal
+	case supervisorIntentFuse:
+		return supervisorTerminalFuseTrip, supervisorNoCommandBound, attempt.intent.count, 0, 0
+	case supervisorIntentDeadline:
+		kind := supervisorTerminalAutomaticDeadlineTrip
+		if attempt.profile == SerialProfile {
+			kind = supervisorTerminalSerialDeadlineTrip
+		}
+
+		return kind, supervisorCommandDeadlineFired, attempt.intent.count, 0, 0
+	case supervisorIntentStop, supervisorIntentRuntimeEmergency:
+		return supervisorTerminalStopped, supervisorNoCommandBound, supervisorObservedCount{}, 0, 0
+	case supervisorIntentObservationFailure:
+		kind := supervisorTerminalInfrastructureWait
+		if attempt.intent.observationSource == supervisorObservationRunning {
+			kind = supervisorTerminalInfrastructureRunning
+		}
+
+		return kind, supervisorNoCommandBound, supervisorObservedCount{}, 0, 0
+	default:
+		invariant(supervisorReducerOperation, "terminal normalization intent kind is invalid")
+
+		return 0, 0, supervisorObservedCount{}, 0, 0
 	}
 }
 
