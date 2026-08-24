@@ -1925,7 +1925,7 @@ func TestSupervisorDriverEqualAutomaticFuseRetainsWaitFailureDiagnostic(t *testi
 
 func TestSupervisorDriverRetainsEarlierAutomaticPeakWhenDeadlineIsAlsoReady(t *testing.T) {
 	for iteration := range 100 {
-		terminal := runReadyAutomaticDeadlinePeak(t, iteration)
+		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration)
 		tripped, ok := terminal.(Tripped)
 		if !ok {
 			t.Fatalf("iteration %d terminal = %#v, want automatic deadline", iteration, terminal)
@@ -1937,7 +1937,7 @@ func TestSupervisorDriverRetainsEarlierAutomaticPeakWhenDeadlineIsAlsoReady(t *t
 	}
 }
 
-func runReadyAutomaticDeadlinePeak(t *testing.T, iteration int) Terminal {
+func automaticDeadlineTerminalWithReadyPeak(t *testing.T, iteration int) Terminal {
 	t.Helper()
 	registeredAt := time.Unix(29_000+int64(iteration)*100, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)
