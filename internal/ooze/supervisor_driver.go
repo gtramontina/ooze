@@ -592,19 +592,16 @@ func (driver *supervisorDriver) waitThroughDeadline(
 	for {
 		select {
 		case event := <-waited:
-			if event == nil || event.running == nil ||
-				event.generation != waitAction.generation ||
-				event.running.generation != waitAction.generation ||
-				event.running.waitAction != waitAction.token ||
-				event.running.sampleAction != 0 {
-				invariant(supervisorDriverOperation, "root wait returned a malformed completion")
-			}
-			event.running.sampleAction = sampleAction.token
+			driver.correlateWaitCompletion(event, waitAction, sampleAction)
 			select {
 			case at := <-samples:
-				if !at.After(event.at) && at.Before(deadlineAt) &&
-					driver.applyRunningSample(waitAction, sampleAction, at) {
-					return
+				if !at.After(event.at) && at.Before(deadlineAt) {
+					facts := driver.runningSampleFacts(waitAction, sampleAction, at)
+					if at.Equal(event.at) {
+						event.running.facts = append(event.running.facts, facts...)
+					} else if driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
+						return
+					}
 				}
 			default:
 			}
@@ -637,18 +634,52 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			if !at.Before(deadlineAt) {
 				continue
 			}
-			if driver.applyRunningSample(waitAction, sampleAction, at) {
+			facts := driver.runningSampleFacts(waitAction, sampleAction, at)
+			select {
+			case event := <-waited:
+				driver.correlateWaitCompletion(event, waitAction, sampleAction)
+				switch {
+				case event.at.Equal(at):
+					event.running.facts = append(event.running.facts, facts...)
+					driver.applyMonitorEvent(*event)
+				case event.at.Before(at):
+					driver.applyMonitorEvent(*event)
+				default:
+					if !driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
+						driver.applyMonitorEvent(*event)
+					}
+				}
+
+				return
+			default:
+			}
+			if driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
 				return
 			}
 		}
 	}
 }
 
-func (driver *supervisorDriver) applyRunningSample(
+func (driver *supervisorDriver) correlateWaitCompletion(
+	event *supervisorEvent,
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+) {
+	if event == nil || event.running == nil ||
+		event.generation != waitAction.generation ||
+		event.running.generation != waitAction.generation ||
+		event.running.waitAction != waitAction.token ||
+		event.running.sampleAction != 0 {
+		invariant(supervisorDriverOperation, "root wait returned a malformed completion")
+	}
+	event.running.sampleAction = sampleAction.token
+}
+
+func (driver *supervisorDriver) runningSampleFacts(
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
 	at time.Time,
-) bool {
+) []supervisorRunningFact {
 	rootLive, live, err := driver.sampleRunning(waitAction.generation)
 	var facts []supervisorRunningFact
 	if err != nil {
@@ -667,6 +698,16 @@ func (driver *supervisorDriver) applyRunningSample(
 			rootLive: true, live: live,
 		}}
 	}
+
+	return facts
+}
+
+func (driver *supervisorDriver) applyRunningSampleFacts(
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	at time.Time,
+	facts []supervisorRunningFact,
+) bool {
 	if len(facts) == 0 {
 		return false
 	}

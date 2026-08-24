@@ -1582,7 +1582,7 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 
 func TestSupervisorDriverDueAutomaticFuseBeatsLaterWaitFailureRegardlessOfReadiness(t *testing.T) {
 	for iteration := range 100 {
-		terminal := runDueAutomaticFuseWaitFailureRace(t, iteration)
+		terminal, _ := runDueAutomaticFuseWaitFailureRace(t, iteration, time.Nanosecond)
 		tripped, ok := terminal.(Tripped)
 		if !ok {
 			t.Fatalf("iteration %d terminal = %#v, want due FuseTrip instead of WaitFailed", iteration, terminal)
@@ -1594,12 +1594,30 @@ func TestSupervisorDriverDueAutomaticFuseBeatsLaterWaitFailureRegardlessOfReadin
 	}
 }
 
-func runDueAutomaticFuseWaitFailureRace(t *testing.T, iteration int) Terminal {
+func TestSupervisorDriverEqualAutomaticFuseRetainsWaitFailureDiagnostic(t *testing.T) {
+	terminal, waitErr := runDueAutomaticFuseWaitFailureRace(t, 0, 0)
+	tripped, ok := terminal.(Tripped)
+	if !ok {
+		t.Fatalf("equal-time terminal = %#v, want FuseTrip", terminal)
+	}
+	if fuse, ok := tripped.Trip.(FuseTrip); !ok || fuse.Live != 65 {
+		t.Fatalf("equal-time fuse evidence = %#v, want exact count", tripped.Trip)
+	}
+	if tripped.Failures.Wait != waitErr.Error() {
+		t.Fatalf("equal-time wait diagnostic = %q, want %q", tripped.Failures.Wait, waitErr)
+	}
+}
+
+func runDueAutomaticFuseWaitFailureRace(
+	t *testing.T,
+	iteration int,
+	waitOffset time.Duration,
+) (Terminal, error) {
 	t.Helper()
 	registeredAt := time.Unix(19_000+int64(iteration)*100, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)
 	sampleAt := releasedAt.Add(time.Second)
-	waitFailedAt := sampleAt.Add(time.Nanosecond)
+	waitFailedAt := sampleAt.Add(waitOffset)
 	nextAt := registeredAt.Add(-time.Nanosecond)
 	waitErr := errors.New("Darwin root tracking failed after automatic sample became due")
 	waitReturned := make(chan struct{})
@@ -1730,7 +1748,7 @@ func runDueAutomaticFuseWaitFailureRace(t *testing.T, iteration int) Terminal {
 		t.Fatalf("launch = %#v, want Owned", result)
 	}
 
-	return owned.Attempt.Wait()
+	return owned.Attempt.Wait(), waitErr
 }
 
 func TestPublicTerminalPreservesEveryIndependentInfrastructureDiagnostic(t *testing.T) {
