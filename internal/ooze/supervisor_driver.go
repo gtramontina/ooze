@@ -1203,6 +1203,9 @@ func (diagnostics publicSupervisorDiagnostics) primary(kind supervisorTerminalKi
 		err = diagnostics.wait
 	case supervisorTerminalInfrastructureRunning:
 		err = diagnostics.running
+		if err == nil {
+			err = diagnostics.drain
+		}
 	case supervisorTerminalInfrastructureControl:
 		err = diagnostics.control
 	case supervisorTerminalInfrastructureOutput:

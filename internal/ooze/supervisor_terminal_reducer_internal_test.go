@@ -14,7 +14,10 @@ func TestSupervisorReducerTerminalReleaseStoresEvidenceBeforeRuntimeSettlement(t
 		releaseDiagnostic supervisorDiagnosticRef
 		wantKind          supervisorTerminalKind
 	}{
-		{name: "clean release settles", wantKind: supervisorTerminalSettled},
+		{
+			name:     "drain census failure becomes infrastructure",
+			wantKind: supervisorTerminalInfrastructureRunning,
+		},
 		{
 			name: "release failure becomes infrastructure", releaseDiagnostic: 404,
 			wantKind: supervisorTerminalInfrastructureRelease,

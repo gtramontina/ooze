@@ -1700,6 +1700,8 @@ func normalizeTerminalEvidence(
 		terminalKind = supervisorTerminalInfrastructureRelease
 	case attempt.drain.waitDiagnostic != 0:
 		terminalKind = supervisorTerminalInfrastructureWait
+	case attempt.drain.observationDiagnostic != 0:
+		terminalKind = supervisorTerminalInfrastructureRunning
 	}
 
 	return supervisorTerminalEvidence{

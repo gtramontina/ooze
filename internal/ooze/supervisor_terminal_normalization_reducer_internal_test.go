@@ -88,6 +88,95 @@ func TestSupervisorReducerTerminalNormalization(t *testing.T) {
 	}
 }
 
+func TestSupervisorReducerDrainCensusNormalizationPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		attempt supervisorAttemptState
+		want    supervisorTerminalKind
+	}{
+		{
+			name: "drain census promotes confirmed terminal",
+			attempt: supervisorAttemptState{
+				intent: supervisorRunningIntent{kind: supervisorIntentRootExit},
+				drain:  supervisorDrainState{observationDiagnostic: 303},
+			},
+			want: supervisorTerminalInfrastructureRunning,
+		},
+		{
+			name: "late wait precedes drain census",
+			attempt: supervisorAttemptState{
+				intent: supervisorRunningIntent{kind: supervisorIntentRootExit},
+				drain: supervisorDrainState{
+					waitDiagnostic: 101, observationDiagnostic: 303,
+				},
+			},
+			want: supervisorTerminalInfrastructureWait,
+		},
+		{
+			name: "release precedes wait and drain census",
+			attempt: supervisorAttemptState{
+				intent: supervisorRunningIntent{kind: supervisorIntentRootExit},
+				drain: supervisorDrainState{
+					waitDiagnostic: 101, observationDiagnostic: 303,
+				},
+				releaseDiagnostic: 404,
+			},
+			want: supervisorTerminalInfrastructureRelease,
+		},
+		{
+			name: "output precedes release wait and drain census",
+			attempt: supervisorAttemptState{
+				intent: supervisorRunningIntent{kind: supervisorIntentRootExit},
+				drain: supervisorDrainState{
+					waitDiagnostic: 101, observationDiagnostic: 303,
+				},
+				output:            supervisorOutputEvidence{diagnostic: 505},
+				releaseDiagnostic: 404,
+			},
+			want: supervisorTerminalInfrastructureOutput,
+		},
+		{
+			name: "control precedes every later diagnostic",
+			attempt: supervisorAttemptState{
+				intent: supervisorRunningIntent{kind: supervisorIntentRootExit},
+				drain: supervisorDrainState{
+					waitDiagnostic: 101, observationDiagnostic: 303, controlDiagnostic: 606,
+				},
+				output:            supervisorOutputEvidence{diagnostic: 505},
+				releaseDiagnostic: 404,
+			},
+			want: supervisorTerminalInfrastructureControl,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := normalizeTerminalEvidence(test.attempt)
+			if evidence.kind != test.want ||
+				evidence.diagnostics.wait != test.attempt.drain.waitDiagnostic ||
+				evidence.diagnostics.drain != test.attempt.drain.observationDiagnostic ||
+				evidence.diagnostics.control != test.attempt.drain.controlDiagnostic ||
+				evidence.output.diagnostic != test.attempt.output.diagnostic ||
+				evidence.diagnostics.release != test.attempt.releaseDiagnostic {
+				t.Fatalf("normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
+			}
+		})
+	}
+
+	attempt := supervisorAttemptState{
+		intent: supervisorRunningIntent{kind: supervisorIntentRootExit},
+		drain: supervisorDrainState{
+			waitDiagnostic: 101, observationDiagnostic: 303, controlDiagnostic: 606,
+		},
+		output:            supervisorOutputEvidence{diagnostic: 505},
+		releaseDiagnostic: 404,
+	}
+	evidence := normalizeDrainUnconfirmedTerminalEvidence(attempt)
+	if evidence.kind != supervisorTerminalDrainUnconfirmed || evidence.diagnostics.wait != 101 ||
+		evidence.diagnostics.drain != 303 || evidence.diagnostics.control != 606 ||
+		evidence.output.diagnostic != 505 || evidence.diagnostics.release != 404 {
+		t.Fatalf("unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
+	}
+}
+
 func terminalNormalizationSpecs() []terminalNormalizationSpec {
 	return []terminalNormalizationSpec{
 		{
