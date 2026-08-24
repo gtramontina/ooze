@@ -269,7 +269,7 @@ func underRuntimeLock[T any](shell *processRuntimeShell, operation string, apply
 			if !ok {
 				violation = runtimeInvariantViolation{operation: operation, reason: "unexpected panic"}
 			}
-			if shell.core.lifecycle <= runtimeFatalClosing {
+			if shell.core.lifecycle <= runtimeFatalSettledClosing {
 				shell.closeCore(runtimeFatalCause(violation.reason))
 			}
 			shell.broadcastEmergency(wasOpen)

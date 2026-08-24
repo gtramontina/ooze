@@ -538,7 +538,7 @@ func TestProcessRuntimeDeferredTerminalWaitsForKnownGrantReturnBeforeFinalClosur
 	runtime, settled := runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
 		generation: started.generation, disposition: emergencyConfirmedDrained,
 	}}})
-	if runtime.lifecycle != runtimeFatalClosing ||
+	if runtime.lifecycle != runtimeFatalSettledClosing ||
 		!reflect.DeepEqual(settled.acknowledged, []attemptGeneration{started.generation}) ||
 		len(settled.residual) != 0 {
 		t.Fatalf("settlement finalized before grant return: %#v/%#v", runtime, settled)
@@ -600,7 +600,7 @@ func fatalClosingRuntimeWithSettledCustody(t *testing.T) (processRuntime, attemp
 		generation: started.generation, disposition: emergencyCustodyTransferred,
 	}}})
 	index := runtime.admissionIndexByGeneration(started.generation)
-	if runtime.lifecycle != runtimeFatalClosing || len(blocker.deliveries) != 1 || index < 0 ||
+	if runtime.lifecycle != runtimeFatalSettledClosing || len(blocker.deliveries) != 1 || index < 0 ||
 		runtime.admissions[index].stage != admissionOwned ||
 		runtime.admissions[index].disposition != dispositionCustodySettled {
 		t.Fatalf("settled custody setup = %#v/%#v", runtime, blocker)
@@ -923,7 +923,7 @@ func TestProcessRuntimeFinalClosureWaitsForCompensatedGrantReturn(t *testing.T) 
 				runtime, _ = runtime.settleEmergency(sweep)
 			} else {
 				runtime, _ = runtime.settleEmergency(sweep)
-				if runtime.lifecycle != runtimeFatalClosing {
+				if runtime.lifecycle != runtimeFatalSettledClosing {
 					t.Fatalf("emergency finalized before grant return: %#v", runtime)
 				}
 				unchanged := runtime
@@ -1170,7 +1170,7 @@ func TestProcessRuntimeNoReleaseCannotDeleteSettledEmergencyCustody(t *testing.T
 	runtime, _ = runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
 		generation: started.generation, disposition: emergencyCustodyTransferred,
 	}}})
-	if runtime.lifecycle != runtimeFatalClosing {
+	if runtime.lifecycle != runtimeFatalSettledClosing {
 		t.Fatalf("pending return did not hold fatal closing: %#v", runtime)
 	}
 	unchanged := runtime
@@ -1190,14 +1190,124 @@ func TestProcessRuntimeNoReleaseCannotDeleteSettledEmergencyCustody(t *testing.T
 	}
 }
 
-func TestProcessRuntimeLateProvenNoReleaseFinalizesFatalClosure(t *testing.T) {
+func TestProcessRuntimeLateProvenNoReleaseWaitsForExactEmptySettlement(t *testing.T) {
 	runtime, generation := runtimeWithOwnedOrProspectiveAttempt(t, sharedAdmission, false)
 	runtime, _ = runtime.observeAttempt(generation, launchUnconfirmed{})
-	runtime, settled := runtime.observeAttempt(generation, launchNotReleased{reason: launchFailed})
-	if !settled.settlementAcknowledged || runtime.lifecycle != runtimeClosedDrained ||
-		len(runtime.residualCustody()) != 0 {
-		t.Fatalf("late no-release settlement/state=%#v/%#v", settled, runtime)
+	runtime, noRelease := runtime.observeAttempt(generation, launchNotReleased{reason: launchFailed})
+	wantNoRelease := observationResult{
+		generation: generation, settlementAcknowledged: true, runtimeClosureInProgress: true,
 	}
+	if !reflect.DeepEqual(noRelease, wantNoRelease) || runtime.lifecycle != runtimeFatalClosing ||
+		runtime.admissionIndexByGeneration(generation) >= 0 || len(runtime.admissions) != 0 ||
+		len(runtime.residualCustody()) != 0 {
+		t.Fatalf("late no-release settlement/state=%#v/%#v", noRelease, runtime)
+	}
+	runtime, settled := runtime.settleEmergency(emergencySweep{})
+	if runtime.lifecycle != runtimeClosedDrained ||
+		len(settled.acknowledged) != 0 || len(settled.residual) != 0 {
+		t.Fatalf("empty emergency settlement/state=%#v/%#v", settled, runtime)
+	}
+	unchanged := runtime.clone()
+	assertInvariantViolation(t, func() { runtime.settleEmergency(emergencySweep{}) })
+	if !reflect.DeepEqual(runtime, unchanged) {
+		t.Fatalf("duplicate closed empty settlement changed state: %#v", runtime)
+	}
+}
+
+func TestProcessRuntimeEmptySettlementLinearizesAgainstKnownGrantReturn(t *testing.T) {
+	for _, returnFirst := range []bool{true, false} {
+		name := "settlement before return"
+		if returnFirst {
+			name = "return before settlement"
+		}
+		t.Run(name, func(t *testing.T) {
+			runtime, granted := fatalProspectiveAwaitingGrantReturn(t)
+			var returned admissionResult
+			var settled emergencySettlement
+			if returnFirst {
+				runtime, returned = runtime.acknowledgeGrantReturn(granted.deliveries[0])
+				if runtime.lifecycle != runtimeFatalClosing {
+					t.Fatalf("grant return finalized unsettled empty epoch: %#v", runtime)
+				}
+				runtime, settled = runtime.settleEmergency(emergencySweep{})
+			} else {
+				beforeSettlement := runtime
+				runtime, settled = runtime.settleEmergency(emergencySweep{})
+				wantSettled := beforeSettlement.clone()
+				wantSettled.lifecycle = runtimeFatalSettledClosing
+				if !reflect.DeepEqual(runtime, wantSettled) {
+					t.Fatalf("empty settlement state = %#v, want %#v", runtime, wantSettled)
+				}
+				beforeRepeatedFatal := runtime.clone()
+				laterCause := runtimeFatalCause("later fatal ingress")
+				var repeatedFatal runtimeClosure
+				runtime, repeatedFatal = runtime.closeRuntime(laterCause)
+				wantRepeatedFatal := beforeRepeatedFatal.clone()
+				wantRepeatedFatal.fatalCauses = append(wantRepeatedFatal.fatalCauses, laterCause)
+				if !reflect.DeepEqual(runtime, wantRepeatedFatal) ||
+					runtime.lifecycle != runtimeFatalSettledClosing ||
+					!reflect.DeepEqual(runtime.admissions, beforeRepeatedFatal.admissions) ||
+					len(runtime.residualCustody()) != 0 || len(repeatedFatal.residual) != 0 ||
+					len(repeatedFatal.cancelledWaiting) != 0 || len(repeatedFatal.compensatedGrants) != 0 {
+					t.Fatalf(
+						"repeated fatal reset settled closing: state=%#v closure=%#v want=%#v",
+						runtime, repeatedFatal, wantRepeatedFatal,
+					)
+				}
+				unchanged := runtime
+				assertInvariantViolation(t, func() {
+					runtime.settleEmergency(emergencySweep{})
+				})
+				if !reflect.DeepEqual(runtime, unchanged) {
+					t.Fatalf("duplicate empty settlement changed state: %#v", runtime)
+				}
+				runtime, returned = runtime.acknowledgeGrantReturn(granted.deliveries[0])
+			}
+			if returned.decision != admissionReturnedAfterClosure ||
+				runtime.lifecycle != runtimeClosedDrained || len(runtime.residualCustody()) != 0 ||
+				len(settled.acknowledged) != 0 || len(settled.residual) != 0 {
+				t.Fatalf("empty settlement/return final state=%#v/%#v/%#v", settled, returned, runtime)
+			}
+		})
+	}
+}
+
+func fatalProspectiveAwaitingGrantReturn(
+	t *testing.T,
+) (processRuntime, admissionResult) {
+	t.Helper()
+	runtime := newProcessRuntime(2)
+	runtime, campaignA := runtime.registerCampaign(campaignProvenance{lineage: 31})
+	runtime, campaignB := runtime.registerCampaign(campaignProvenance{lineage: 32})
+	runtime, prospective := runtime.requestAdmission(admissionRequest{
+		campaign: campaignA.token, attempt: "prospective", class: sharedAdmission,
+	})
+	runtime, granted := runtime.requestAdmission(admissionRequest{
+		campaign: campaignB.token, attempt: "return pending", class: sharedAdmission,
+	})
+	runtime, started := runtime.startCommitted(prospective.deliveries[0])
+	runtime, closed := runtime.closeRuntime(runtimeFatalCause("fatal empty epoch"))
+	if !reflect.DeepEqual(closed.compensatedGrants, []admissionRequestToken{granted.request}) {
+		t.Fatalf("empty epoch compensation=%#v", closed)
+	}
+	runtime, noRelease := runtime.observeAttempt(
+		started.generation,
+		launchNotReleased{reason: launchFailed},
+	)
+	wantNoRelease := observationResult{
+		generation: started.generation, settlementAcknowledged: true,
+		runtimeClosureInProgress: true,
+	}
+	if !reflect.DeepEqual(noRelease, wantNoRelease) || runtime.lifecycle != runtimeFatalClosing ||
+		runtime.admissionIndexByGeneration(started.generation) >= 0 ||
+		len(runtime.admissions) != 1 || runtime.admissions[0].grant != granted.deliveries[0] ||
+		runtime.admissions[0].stage != admissionGranted ||
+		runtime.admissions[0].disposition != dispositionReturnedAfterClosure ||
+		len(runtime.residualCustody()) != 0 {
+		t.Fatalf("empty epoch no-release state=%#v/%#v", noRelease, runtime)
+	}
+
+	return runtime, granted
 }
 
 func (r processRuntime) grantedConfirmationIndex() int {

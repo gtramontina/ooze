@@ -140,6 +140,7 @@ type runtimeLifecycle uint8
 const (
 	runtimeOpen runtimeLifecycle = iota + 1
 	runtimeFatalClosing
+	runtimeFatalSettledClosing
 	runtimeClosedDrained
 	runtimeClosedUnconfirmed
 )
@@ -774,13 +775,14 @@ func (r processRuntime) settleEmergency(sweep emergencySweep) (processRuntime, e
 			next.admissions[index].disposition = dispositionCustodySettled
 		}
 	}
+	next.lifecycle = runtimeFatalSettledClosing
 	next = next.finalizeFatalClosure()
 
 	return next, emergencySettlement{acknowledged: acknowledged, residual: next.residualCustody()}
 }
 
 func (r processRuntime) finalizeFatalClosure() processRuntime {
-	if r.lifecycle != runtimeFatalClosing {
+	if r.lifecycle != runtimeFatalSettledClosing {
 		return r
 	}
 	for _, admission := range r.admissions {

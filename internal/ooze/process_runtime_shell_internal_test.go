@@ -285,8 +285,13 @@ func TestStartInstallationRejectsCrossPairedGrantBeforeCellMutation(t *testing.T
 		if returned := shell.acknowledgeGrantReturn(grantB); returned.decision != admissionReturnedAfterClosure {
 			t.Fatalf("reverse=%t grant B return=%#v", reverse, returned)
 		}
-		if snapshot = shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained {
-			t.Fatalf("reverse=%t peer returns did not finish closure: %#v", reverse, snapshot)
+		if snapshot = shell.snapshot(); snapshot.lifecycle != runtimeFatalClosing || len(snapshot.admissions) != 0 {
+			t.Fatalf("reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
+		}
+		settled := shell.settleEmergency(emergencySweep{})
+		if snapshot = shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
+			len(settled.acknowledged) != 0 || len(settled.residual) != 0 {
+			t.Fatalf("reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
 		}
 	}
 }
@@ -358,7 +363,7 @@ func TestInstalledStartFailuresRecordOneExactCausePerGeneration(t *testing.T) {
 		)),
 	}
 	snapshot := shell.snapshot()
-	if snapshot.lifecycle != runtimeFatalClosing || !reflect.DeepEqual(snapshot.fatalCauses, want) {
+	if snapshot.lifecycle != runtimeFatalSettledClosing || !reflect.DeepEqual(snapshot.fatalCauses, want) {
 		t.Fatalf("launch invariant causes=%#v, want %#v", snapshot, want)
 	}
 	if returned := shell.acknowledgeGrantReturn(pendingGrant); returned.decision != admissionReturnedAfterClosure {
@@ -394,7 +399,7 @@ func TestInstalledStartZeroedCopyUsesAuthoritativeCellGeneration(t *testing.T) {
 		"launch invariant: start or launch is zero generation=%d", prepared.result.generation,
 	))}
 	snapshot := shell.snapshot()
-	if launchCalls != 0 || snapshot.lifecycle != runtimeFatalClosing ||
+	if launchCalls != 0 || snapshot.lifecycle != runtimeFatalSettledClosing ||
 		!reflect.DeepEqual(snapshot.fatalCauses, want) {
 		t.Fatalf("zeroed copy calls/state=%d/%#v, want causes %#v", launchCalls, snapshot, want)
 	}
@@ -942,6 +947,67 @@ func TestProcessRuntimeShellSerializesGrantReturnAgainstEmergencySettlement(t *t
 		if returned.decision != admissionReturnedAfterClosure ||
 			snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
 			t.Fatalf("sample %d return/final state=%#v/%#v", sample, returned, snapshot)
+		}
+	}
+}
+
+func TestProcessRuntimeShellSerializesGrantReturnAgainstExactEmptySettlement(t *testing.T) {
+	const samples = 100
+	for sample := range samples {
+		shell := newProcessRuntimeShell(2)
+		campaignA := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(sample*2 + 101)})
+		campaignB := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(sample*2 + 102)})
+		prospective := shell.requestAdmission(admissionRequest{
+			campaign: campaignA.token, attempt: "prospective", class: sharedAdmission,
+		})
+		granted := shell.requestAdmission(admissionRequest{
+			campaign: campaignB.token, attempt: "granted", class: sharedAdmission,
+		})
+		grant := <-granted.delivery
+		prepared := shell.startCommitted(
+			<-prospective.delivery,
+			startInstallation{grant: prospective.request, cell: &pendingStartCell{}},
+		)
+		if prepared.result.decision != startCommittedAccepted {
+			t.Fatalf("sample %d prospective start=%#v", sample, prepared.result)
+		}
+		shell.closeRuntime(runtimeFatalCause("empty settlement race"))
+		noRelease := shell.observeAttempt(
+			prepared.result.generation,
+			launchNotReleased{reason: launchFailed},
+		)
+		if !noRelease.settlementAcknowledged || !noRelease.runtimeClosureInProgress ||
+			shell.snapshot().lifecycle != runtimeFatalClosing {
+			t.Fatalf("sample %d no-release state=%#v/%#v", sample, noRelease, shell.snapshot())
+		}
+
+		begin := make(chan struct{})
+		var returned admissionResult
+		var settled emergencySettlement
+		var returnPanic, settlementPanic any
+		var wait sync.WaitGroup
+		wait.Go(func() {
+			defer func() { returnPanic = recover() }()
+			<-begin
+			returned = shell.acknowledgeGrantReturn(grant)
+		})
+		wait.Go(func() {
+			defer func() { settlementPanic = recover() }()
+			<-begin
+			settled = shell.settleEmergency(emergencySweep{})
+		})
+		close(begin)
+		wait.Wait()
+		snapshot := shell.snapshot()
+		if returnPanic != nil || settlementPanic != nil ||
+			returned.decision != admissionReturnedAfterClosure ||
+			len(settled.acknowledged) != 0 || len(settled.residual) != 0 ||
+			snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 ||
+			len(snapshot.residualCustody()) != 0 {
+			t.Fatalf(
+				"sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v",
+				sample, returned, settled, returnPanic, settlementPanic, snapshot,
+			)
 		}
 	}
 }
