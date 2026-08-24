@@ -12,6 +12,7 @@ type supervisorDriverConstruction struct {
 	now            func() time.Time
 	launchProgress time.Duration
 	drainEpoch     time.Duration
+	prepare        func(attemptGeneration, Spec)
 	execute        func(supervisorAction) *supervisorEvent
 	readOutput     func(supervisorOutputRef) string
 }
@@ -34,6 +35,7 @@ type supervisorDriver struct {
 	now              func() time.Time
 	launchProgress   time.Duration
 	drainEpoch       time.Duration
+	prepare          func(attemptGeneration, Spec)
 	execute          func(supervisorAction) *supervisorEvent
 	readOutput       func(supervisorOutputRef) string
 	attempts         map[attemptGeneration]*supervisorDrivenAttempt
@@ -50,7 +52,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 	return &supervisorDriver{
 		runtime: construction.runtime, now: construction.now,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
-		execute: construction.execute, readOutput: construction.readOutput,
+		prepare: construction.prepare, execute: construction.execute, readOutput: construction.readOutput,
 		attempts:  make(map[attemptGeneration]*supervisorDrivenAttempt),
 		emergency: make(chan SweepResult, 1),
 	}
@@ -106,6 +108,9 @@ func (driver *supervisorDriver) stageLaunch(
 		spec: spec, terminal: make(chan Terminal, 1),
 	}
 	driver.mutex.Unlock()
+	if driver.prepare != nil {
+		driver.prepare(generation, spec)
+	}
 	actions := driver.reduce(supervisorEvent{
 		kind: supervisorProspectiveRegistered, generation: generation,
 		attempt: attemptIdentity(spec.Attempt), at: registeredAt,
