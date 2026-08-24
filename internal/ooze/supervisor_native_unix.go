@@ -28,6 +28,8 @@ const (
 	linuxNativeInfrastructureExit  = 125
 )
 
+func nativeSupervisorSupported() bool { return true }
+
 type linuxNativeConfiguration struct {
 	Path string
 	Args []string
@@ -48,7 +50,8 @@ type linuxNativeExitStatus struct {
 }
 
 type linuxNativeGuardian struct {
-	mutex sync.Mutex
+	mutex        sync.Mutex
+	decoderMutex sync.Mutex
 
 	command       *exec.Cmd
 	configuration *os.File
@@ -215,8 +218,8 @@ func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) b
 func nativeRootWaitBeforeRelease() bool { return false }
 
 func waitNativeRootExit(state nativePlatformState) error {
-	state.guardian.mutex.Lock()
-	defer state.guardian.mutex.Unlock()
+	state.guardian.decoderMutex.Lock()
+	defer state.guardian.decoderMutex.Unlock()
 	var status linuxNativeExitStatus
 	if err := state.guardian.decoder.Decode(&status); err != nil {
 		return fmt.Errorf("read Linux guardian target exit status: %w", err)
@@ -224,7 +227,9 @@ func waitNativeRootExit(state nativePlatformState) error {
 	if status.Message != "" {
 		return errors.New(status.Message)
 	}
+	state.guardian.mutex.Lock()
 	state.guardian.targetExit = ExitStatus{Code: status.Code, Signal: status.Signal}
+	state.guardian.mutex.Unlock()
 
 	return nil
 }
@@ -248,6 +253,21 @@ func nativeDomainEmpty(state nativePlatformState, _ int) (bool, error) {
 func forceNativeDomain(state nativePlatformState, _ int, drainBy time.Time) error {
 	if drainBy.IsZero() {
 		return errors.New("linux managed-attempt force lacks an absolute drain bound")
+	}
+	state.guardian.mutex.Lock()
+	targetPID := state.guardian.targetPID
+	guardianPID := state.guardian.command.Process.Pid
+	state.guardian.mutex.Unlock()
+	if targetPID <= 0 {
+		err := syscall.Kill(guardianPID, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("terminate stopped Linux guardian %d before release: %w", guardianPID, err)
+		}
+
+		return nil
 	}
 	for {
 		children, err := linuxGuardianChildProcessIDs(state.guardian.command.Process.Pid)

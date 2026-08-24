@@ -13,7 +13,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const windowsJobQueryMaximumAttempts = 32
+const (
+	windowsJobQueryMaximumAttempts = 32
+	windowsStillActive             = 259
+)
+
+func nativeSupervisorSupported() bool { return true }
 
 type nativePlatformState struct {
 	job    windows.Handle
@@ -22,6 +27,12 @@ type nativePlatformState struct {
 
 type windowsNativeState struct {
 	releaseCleanup error
+	root           windows.Handle
+	rootUntracked  bool
+}
+
+func nativeExitStatusFromError(exitErr *exec.ExitError) ExitStatus {
+	return ExitStatus{Code: exitErr.ExitCode()}
 }
 
 func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
@@ -51,26 +62,24 @@ func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) (time.Time, error) {
 	processID := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit.
 	process, err := windows.OpenProcess(
-		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
+		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
 		false,
 		processID,
 	)
 	if err != nil {
+		state.shared.rootUntracked = true
 		return time.Time{}, nativeLaunchOperationError{
 			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
 			err: fmt.Errorf("open suspended process %d: %w", processID, err),
 		}
 	}
+	state.shared.root = process
 	assignErr := windows.AssignProcessToJobObject(state.job, process)
-	closeErr := windows.CloseHandle(process)
 	if assignErr != nil {
 		return time.Time{}, nativeLaunchOperationError{
 			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
-			err: errors.Join(fmt.Errorf("assign process %d to job: %w", processID, assignErr), closeErr),
+			err: fmt.Errorf("assign process %d to job: %w", processID, assignErr),
 		}
-	}
-	if closeErr != nil {
-		state.shared.releaseCleanup = closeErr
 	}
 
 	released, resumeErr := resumeNativeProcess(processID)
@@ -162,17 +171,42 @@ func nativeDomainEmpty(state nativePlatformState, _ int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if state.shared.rootUntracked {
+		return false, nil
+	}
+	if state.shared.root != 0 {
+		var exitCode uint32
+		if err = windows.GetExitCodeProcess(state.shared.root, &exitCode); err != nil {
+			return false, fmt.Errorf("inspect suspended managed-attempt root: %w", err)
+		}
+		if exitCode == windowsStillActive {
+			return false, nil
+		}
+	}
 
 	return len(processes) == 0, nil
 }
 
-func forceNativeDomain(state nativePlatformState, _ int, _ time.Time) error {
-	err := windows.TerminateJobObject(state.job, 1)
-	if err != nil {
-		return fmt.Errorf("terminate managed-attempt job: %w", err)
+func forceNativeDomain(state nativePlatformState, root int, _ time.Time) error {
+	var rootErr error
+	if state.shared.rootUntracked {
+		rootErr = errors.New("suspended managed-attempt root identity is unavailable")
+	} else if state.shared.root != 0 {
+		var exitCode uint32
+		rootErr = windows.GetExitCodeProcess(state.shared.root, &exitCode)
+		if rootErr == nil && exitCode == windowsStillActive {
+			rootErr = windows.TerminateProcess(state.shared.root, 1)
+		}
+		if rootErr != nil {
+			rootErr = fmt.Errorf("terminate exact suspended managed-attempt root %d: %w", root, rootErr)
+		}
+	}
+	jobErr := windows.TerminateJobObject(state.job, 1)
+	if jobErr != nil {
+		jobErr = fmt.Errorf("terminate managed-attempt job: %w", jobErr)
 	}
 
-	return nil
+	return errors.Join(rootErr, jobErr)
 }
 
 func closeNativeDomain(state nativePlatformState) error {
@@ -180,7 +214,13 @@ func closeNativeDomain(state nativePlatformState) error {
 		return nil
 	}
 
-	return errors.Join(state.shared.releaseCleanup, windows.CloseHandle(state.job))
+	var rootErr error
+	if state.shared.root != 0 {
+		rootErr = windows.CloseHandle(state.shared.root)
+		state.shared.root = 0
+	}
+
+	return errors.Join(state.shared.releaseCleanup, rootErr, windows.CloseHandle(state.job))
 }
 
 func nativeDescendantCount(state nativePlatformState, root int) (bool, uint64, error) {

@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+func newNativeSupervisorDriverForTest(
+	t *testing.T,
+	runtime *processRuntimeShell,
+	launchProgress time.Duration,
+	drainEpoch time.Duration,
+) *supervisorDriver {
+	t.Helper()
+	driver, err := newNativeSupervisorDriver(runtime, launchProgress, drainEpoch)
+	if err != nil {
+		t.Fatalf("construct native supervisor driver: %v", err)
+	}
+
+	return driver
+}
+
 func TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic(t *testing.T) {
 	readErr := errors.New("read merged output prefix")
 	executor := &supervisorNativeExecutor{

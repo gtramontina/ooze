@@ -44,6 +44,19 @@ const (
 type darwinProcessTracker struct {
 	queue        int
 	processGroup int
+	tracked      map[darwinTrackedIdentity]struct{}
+}
+
+type darwinTrackedIdentity struct {
+	pid       int32
+	startSec  int64
+	startUsec int32
+}
+
+type darwinTrackedProcess struct {
+	identity darwinTrackedIdentity
+	parent   int32
+	group    int32
 }
 
 type darwinLauncherPipes struct {
@@ -286,6 +299,7 @@ func newDarwinProcessTracker(processID int) (*darwinProcessTracker, error) {
 	return &darwinProcessTracker{
 		queue:        queue,
 		processGroup: processID,
+		tracked:      make(map[darwinTrackedIdentity]struct{}),
 	}, nil
 }
 
@@ -311,18 +325,52 @@ func (t *darwinProcessTracker) waitForRootExit() error {
 
 func (t *darwinProcessTracker) terminateAndWait() error {
 	deadline := time.Now().Add(darwinProcessTerminationTimeout)
+	processes, err := darwinTrackedProcessCensus()
+	if err != nil {
+		return err
+	}
+	captured := reachableDarwinTrackedProcesses(processes, int32(t.processGroup), t.tracked)
+	trackDarwinProcesses(t.tracked, captured)
+	if err = signalDarwinTrackedGroup(t.processGroup, syscall.SIGSTOP); err != nil {
+		return err
+	}
 	for {
-		hasExecutableProcesses, err := darwinProcessGroupHasExecutableProcesses(t.processGroup)
+		for identity := range captured {
+			if err = signalDarwinTrackedIdentity(identity, syscall.SIGSTOP); err != nil {
+				return err
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w after %s", errDarwinProcessTerminationTimeout, darwinProcessTerminationTimeout)
+		}
+		processes, err = darwinTrackedProcessCensus()
 		if err != nil {
 			return err
 		}
-		if !hasExecutableProcesses {
-			return nil
+		next := reachableDarwinTrackedProcesses(processes, int32(t.processGroup), captured)
+		trackDarwinProcesses(t.tracked, next)
+		if sameDarwinTrackedSet(next, captured) {
+			captured = next
+			break
 		}
+		captured = next
+	}
 
-		err = syscall.Kill(-t.processGroup, syscall.SIGKILL)
-		if err != nil && !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("terminate Darwin process tree %d: %w", t.processGroup, err)
+	if err = signalDarwinTrackedGroup(t.processGroup, syscall.SIGKILL); err != nil {
+		return err
+	}
+	for identity := range captured {
+		if err = signalDarwinTrackedIdentity(identity, syscall.SIGKILL); err != nil {
+			return err
+		}
+	}
+	for {
+		processes, err = darwinTrackedProcessCensus()
+		if err != nil {
+			return err
+		}
+		if !darwinTrackedDomainLive(processes, int32(t.processGroup), t.tracked) {
+			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("%w after %s", errDarwinProcessTerminationTimeout, darwinProcessTerminationTimeout)
@@ -331,22 +379,161 @@ func (t *darwinProcessTracker) terminateAndWait() error {
 	}
 }
 
+func darwinTrackedProcessCensus() ([]darwinTrackedProcess, error) {
+	all, err := unix.SysctlKinfoProcSlice("kern.proc.all", 0)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Darwin process identities: %w", err)
+	}
+	processes := make([]darwinTrackedProcess, 0, len(all))
+	for _, process := range all {
+		if process.Proc.P_stat == darwinZombieProcessState {
+			continue
+		}
+		processes = append(processes, darwinTrackedProcess{
+			identity: darwinTrackedIdentity{
+				pid: process.Proc.P_pid, startSec: process.Proc.P_starttime.Sec,
+				startUsec: process.Proc.P_starttime.Usec,
+			},
+			parent: process.Eproc.Ppid, group: process.Eproc.Pgid,
+		})
+	}
+
+	return processes, nil
+}
+
 func darwinProcessGroupHasExecutableProcesses(processGroup int) (bool, error) {
 	processes, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", processGroup)
 	if err != nil {
 		return false, fmt.Errorf("inspect Darwin process group %d: %w", processGroup, err)
 	}
-
 	for _, process := range processes {
-		if int(process.Proc.P_pid) == processGroup {
-			continue
-		}
-		if process.Proc.P_stat != darwinZombieProcessState {
+		if int(process.Proc.P_pid) != processGroup && process.Proc.P_stat != darwinZombieProcessState {
 			return true, nil
 		}
 	}
 
 	return false, nil
+}
+
+func reachableDarwinTrackedProcesses(
+	processes []darwinTrackedProcess,
+	processGroup int32,
+	prior map[darwinTrackedIdentity]struct{},
+) map[darwinTrackedIdentity]struct{} {
+	reached := make(map[darwinTrackedIdentity]struct{}, len(prior)+len(processes))
+	parents := make(map[int32]struct{}, len(prior)+len(processes))
+	for identity := range prior {
+		reached[identity] = struct{}{}
+		if _, live := findDarwinTrackedProcess(processes, identity); live {
+			parents[identity.pid] = struct{}{}
+		}
+	}
+	for _, process := range processes {
+		if process.group == processGroup {
+			reached[process.identity] = struct{}{}
+			parents[process.identity.pid] = struct{}{}
+		}
+	}
+	for {
+		added := false
+		for _, process := range processes {
+			if _, parentReached := parents[process.parent]; !parentReached {
+				continue
+			}
+			if _, present := reached[process.identity]; present {
+				continue
+			}
+			reached[process.identity] = struct{}{}
+			parents[process.identity.pid] = struct{}{}
+			added = true
+		}
+		if !added {
+			return reached
+		}
+	}
+}
+
+func trackDarwinProcesses(
+	tracked map[darwinTrackedIdentity]struct{},
+	captured map[darwinTrackedIdentity]struct{},
+) {
+	for identity := range captured {
+		tracked[identity] = struct{}{}
+	}
+}
+
+func sameDarwinTrackedSet(left, right map[darwinTrackedIdentity]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for identity := range left {
+		if _, present := right[identity]; !present {
+			return false
+		}
+	}
+
+	return true
+}
+
+func findDarwinTrackedProcess(
+	processes []darwinTrackedProcess,
+	identity darwinTrackedIdentity,
+) (darwinTrackedProcess, bool) {
+	for _, process := range processes {
+		if process.identity == identity {
+			return process, true
+		}
+	}
+
+	return darwinTrackedProcess{}, false
+}
+
+func signalDarwinTrackedGroup(processGroup int, signal syscall.Signal) error {
+	err := syscall.Kill(-processGroup, signal)
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.EPERM) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("signal Darwin process group %d with %s: %w", processGroup, signal, err)
+	}
+
+	return nil
+}
+
+func signalDarwinTrackedIdentity(identity darwinTrackedIdentity, signal syscall.Signal) error {
+	processes, err := darwinTrackedProcessCensus()
+	if err != nil {
+		return err
+	}
+	if _, present := findDarwinTrackedProcess(processes, identity); !present {
+		return nil
+	}
+	err = syscall.Kill(int(identity.pid), signal)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("signal Darwin process identity %d with %s: %w", identity.pid, signal, err)
+	}
+
+	return nil
+}
+
+func darwinTrackedDomainLive(
+	processes []darwinTrackedProcess,
+	processGroup int32,
+	tracked map[darwinTrackedIdentity]struct{},
+) bool {
+	for _, process := range processes {
+		if process.group == processGroup {
+			return true
+		}
+		if _, present := tracked[process.identity]; present {
+			return true
+		}
+	}
+
+	return false
 }
 
 func stopAndWaitDarwinLauncher(command *exec.Cmd) error {

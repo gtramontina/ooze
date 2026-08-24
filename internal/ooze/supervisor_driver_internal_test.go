@@ -489,6 +489,130 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 	}
 }
 
+func TestSupervisorLaunchBoundaryUsesTheAbsoluteLaunchBy(t *testing.T) {
+	launchBy := time.Now().Add(20 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
+	started := time.Now()
+	<-waitForSupervisorLaunchBoundary(launchBy)
+	if elapsed := time.Since(started); elapsed > 20*time.Millisecond {
+		t.Fatalf("expired absolute launch boundary waited %v", elapsed)
+	}
+}
+
+func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
+	registeredAt := time.Unix(8_500, 0)
+	releasedAt := registeredAt.Add(time.Millisecond)
+	exitedAt := releasedAt.Add(time.Second)
+	drainBy := exitedAt.Add(5 * time.Second)
+	nextAt := drainBy
+	registered := false
+	monitorStarted := make(chan struct{})
+	allowExit := make(chan struct{})
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 101})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "driver-monitor-before-wait", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell, now: func() time.Time {
+			if !registered {
+				registered = true
+				return registeredAt
+			}
+			nextAt = nextAt.Add(time.Nanosecond)
+			return nextAt
+		},
+		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token, at: releasedAt,
+					kind: supervisorLaunchReleased,
+				}
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releasedAt, completion: &completion,
+				}
+			case supervisorWaitRoot:
+				close(monitorStarted)
+				<-allowExit
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningRootExited, at: exitedAt,
+				}
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: exitedAt, drainBy: drainBy,
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
+			case supervisorObserveEmptiness:
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         drainBy, kind: supervisorDrainObservedEmpty,
+				}
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: drainBy, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         drainBy, ref: 1,
+				}
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: drainBy, output: &completion,
+				}
+			case supervisorReleaseDomain:
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: drainBy,
+				}
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation,
+					at: drainBy, release: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+	result := supervisor.Launch(Spec{
+		Attempt: "driver-monitor-before-wait", Command: []string{"managed"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	owned, ok := result.(Owned)
+	if !ok {
+		t.Fatalf("launch = %#v, want Owned", result)
+	}
+	select {
+	case <-monitorStarted:
+	case <-time.After(time.Second):
+		t.Fatal("owned root monitoring did not start before Wait")
+	}
+	close(allowExit)
+	if terminal := owned.Attempt.Wait(); terminal == nil {
+		t.Fatal("owned attempt returned no terminal after autonomous monitor completion")
+	}
+}
+
 func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotReleased(t *testing.T) {
 	registeredAt := time.Unix(9_000, 0)
 	launchBy := registeredAt.Add(time.Second)
@@ -609,6 +733,7 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 
 			return nextAt
 		},
+		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
 		launchProgress: time.Second, drainEpoch: 5 * time.Second,
 		execute: func(action supervisorAction) *supervisorEvent {
 			nextAt = nextAt.Add(time.Nanosecond)
@@ -884,8 +1009,10 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 
 			return nextAt
 		},
-		launchProgress: time.Second,
-		drainEpoch:     5 * time.Second,
+		launchBoundary:  func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		commandBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		launchProgress:  time.Second,
+		drainEpoch:      5 * time.Second,
 		execute: func(action supervisorAction) *supervisorEvent {
 			executed = append(executed, action.kind)
 			switch action.kind {
@@ -1379,6 +1506,8 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	emergencyAt := releasedAt.Add(2 * time.Second)
 	drainBy := emergencyAt.Add(5 * time.Second)
 	nextAt := registeredAt.Add(-time.Nanosecond)
+	waitEntered := make(chan struct{})
+	waitReleased := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 92})
@@ -1397,8 +1526,10 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 
 			return nextAt
 		},
-		launchProgress: time.Second,
-		drainEpoch:     5 * time.Second,
+		launchBoundary:  func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		commandBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		launchProgress:  time.Second,
+		drainEpoch:      5 * time.Second,
 		execute: func(action supervisorAction) *supervisorEvent {
 			executed = append(executed, action.kind)
 			switch action.kind {
@@ -1412,7 +1543,23 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 					kind: supervisorLaunchCompleted, generation: action.generation,
 					at: releasedAt, completion: &completion,
 				}
+			case supervisorWaitRoot:
+				close(waitEntered)
+				<-waitReleased
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningRootExited, at: emergencyAt,
+				}
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: emergencyAt, drainBy: drainBy,
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
 			case supervisorForceOwned:
+				close(waitReleased)
 				nextAt = emergencyAt.Add(time.Nanosecond)
 				completion := supervisorDrainCompletion{
 					generation: action.generation,
@@ -1491,6 +1638,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	if !ok || owned.Attempt == nil {
 		t.Fatalf("launch = %#v, want Owned", result)
 	}
+	<-waitEntered
 	closure := shell.closeRuntime(runtimeFatalCause("test emergency"))
 	if len(closure.residual) != 1 || closure.residual[0].generation == 0 {
 		t.Fatalf("runtime closure = %#v", closure)
@@ -1511,6 +1659,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	}
 	wantActions := []supervisorActionKind{
 		supervisorLaunchNative,
+		supervisorWaitRoot,
 		supervisorForceOwned,
 		supervisorObserveEmptiness,
 		supervisorCaptureOutput,

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -83,7 +82,10 @@ func newNativeSupervisorDriver(
 	runtime *processRuntimeShell,
 	launchProgress time.Duration,
 	drainEpoch time.Duration,
-) *supervisorDriver {
+) (*supervisorDriver, error) {
+	if !nativeSupervisorSupported() {
+		return nil, ErrUnsupportedPlatform
+	}
 	executor := &supervisorNativeExecutor{
 		drainEpoch:     drainEpoch,
 		attempts:       make(map[attemptGeneration]*supervisorNativeAttempt),
@@ -98,7 +100,7 @@ func newNativeSupervisorDriver(
 		recheckRoot: executor.recheckRoot, sampleRunning: executor.sampleRunning,
 		readOutput: executor.readOutput, readDiagnostic: executor.readDiagnostic,
 		recordDiagnostic: executor.recordDiagnostic,
-	})
+	}), nil
 }
 
 func (executor *supervisorNativeExecutor) prepare(generation attemptGeneration, spec Spec) {
@@ -192,6 +194,9 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	}
 	if err = confirmNativeCommandStopped(command, platform); err != nil {
 		forceErr := forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		if forceErr != nil {
+			return executor.releaseUnconfirmed(action, errors.Join(err, forceErr))
+		}
 		_, waitErr := command.Process.Wait()
 		closeErr := closeNativeDomain(platform)
 		_ = output.Close()
@@ -213,16 +218,24 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	executor.mutex.Lock()
 	if attempt.releaseRevoked {
 		executor.mutex.Unlock()
-		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		forceErr := forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		if forceErr != nil {
+			return executor.releaseUnconfirmed(
+				action, errors.Join(errNativeLaunchReleaseRevoked, forceErr),
+			)
+		}
 		if !rootWaitStarted {
 			go executor.awaitRoot(attempt)
 		}
 		<-attempt.waitDone
-		_ = closeNativeDomain(platform)
-		_ = output.Close()
-		_ = os.Remove(output.Name())
+		cleanupErr := errors.Join(
+			attempt.trackingErr, nativeWaitFailure(attempt.waitErr), closeNativeDomain(platform),
+			output.Close(), os.Remove(output.Name()),
+		)
 
-		return executor.notReleased(action, time.Now(), LaunchFailed, errNativeLaunchReleaseRevoked)
+		return executor.notReleased(
+			action, time.Now(), LaunchFailed, errors.Join(errNativeLaunchReleaseRevoked, cleanupErr),
+		)
 	}
 	releasedAt, err := releaseNativeCommand(command, platform)
 	if err == nil {
@@ -245,6 +258,9 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		forceErr := forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
 		if !rootWaitStarted {
 			go executor.awaitRoot(attempt)
+		}
+		if forceErr != nil {
+			return executor.releaseUnconfirmed(action, errors.Join(err, forceErr))
 		}
 		<-attempt.waitDone
 		closeErr := closeNativeDomain(platform)
@@ -277,6 +293,22 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	return &supervisorEvent{
 		kind: supervisorLaunchCompleted, generation: action.generation,
 		at: releasedAt, completion: &completion,
+	}
+}
+
+func (executor *supervisorNativeExecutor) releaseUnconfirmed(
+	action supervisorAction,
+	err error,
+) *supervisorEvent {
+	at := time.Now()
+	completion := supervisorLaunchCompletion{
+		generation: action.generation, action: action.token, at: at,
+		kind: supervisorLaunchReleaseUnconfirmed, diagnostic: executor.recordDiagnostic(err),
+	}
+
+	return &supervisorEvent{
+		kind: supervisorLaunchCompleted, generation: action.generation,
+		at: at, drainBy: at.Add(executor.drainEpoch), completion: &completion,
 	}
 }
 
@@ -411,15 +443,7 @@ func nativeExitStatus(err error) ExitStatus {
 	if !errors.As(err, &exitErr) {
 		return ExitStatus{}
 	}
-	status, ok := exitErr.Sys().(syscall.WaitStatus)
-	if !ok {
-		return ExitStatus{Code: exitErr.ExitCode()}
-	}
-	if status.Signaled() {
-		return ExitStatus{Signal: int(status.Signal())}
-	}
-
-	return ExitStatus{Code: status.ExitStatus()}
+	return nativeExitStatusFromError(exitErr)
 }
 
 func (executor *supervisorNativeExecutor) observeEmpty(action supervisorAction) *supervisorEvent {
@@ -445,9 +469,15 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
 	err := forceNativeDomain(attempt.platform, attempt.command.Process.Pid, action.drainBy)
-	executor.awaitRoot(attempt)
+	if err == nil {
+		executor.awaitRoot(attempt)
+	}
 	diagnostic := supervisorDiagnosticRef(0)
-	if combined := errors.Join(err, attempt.trackingErr, nativeWaitFailure(attempt.waitErr)); combined != nil {
+	combined := err
+	if err == nil {
+		combined = errors.Join(attempt.trackingErr, nativeWaitFailure(attempt.waitErr))
+	}
+	if combined != nil {
 		diagnostic = executor.recordDiagnostic(combined)
 	}
 

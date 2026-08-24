@@ -15,6 +15,8 @@ import (
 
 const darwinZombieProcessState = 5
 
+func nativeSupervisorSupported() bool { return true }
+
 type nativePlatformState struct{ domain *darwinNativeDomain }
 
 type darwinNativeDomain struct {
@@ -166,6 +168,7 @@ func forceNativeDomain(state nativePlatformState, processGroup int, drainBy time
 		return err
 	}
 	captured := darwinReachableDomain(processes, int32(processGroup), state.domain.tracked)
+	trackDarwinIdentities(state.domain.tracked, captured)
 	if err = signalDarwinProcessGroup(processGroup, syscall.SIGSTOP); err != nil {
 		return err
 	}
@@ -186,6 +189,7 @@ func forceNativeDomain(state nativePlatformState, processGroup int, drainBy time
 			return err
 		}
 		next := darwinReachableDomain(processes, int32(processGroup), captured)
+		trackDarwinIdentities(state.domain.tracked, next)
 		if sameDarwinIdentitySet(next, captured) {
 			captured = next
 
@@ -203,10 +207,18 @@ func forceNativeDomain(state nativePlatformState, processGroup int, drainBy time
 				return err
 			}
 		}
-		state.domain.tracked[identity] = struct{}{}
 	}
 
 	return nil
+}
+
+func trackDarwinIdentities(
+	tracked map[darwinProcessIdentity]struct{},
+	captured map[darwinProcessIdentity]struct{},
+) {
+	for identity := range captured {
+		tracked[identity] = struct{}{}
+	}
 }
 
 func closeNativeDomain(state nativePlatformState) error {
@@ -290,7 +302,9 @@ func darwinReachableDomain(
 	parents := make(map[int32]struct{}, len(prior)+len(processes))
 	for identity := range prior {
 		reached[identity] = struct{}{}
-		parents[identity.pid] = struct{}{}
+		if _, live := darwinFindIdentity(processes, identity); live {
+			parents[identity.pid] = struct{}{}
+		}
 	}
 	for _, process := range processes {
 		if process.group == processGroup {

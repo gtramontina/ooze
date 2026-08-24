@@ -101,7 +101,7 @@ func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) 
 		campaign: campaign.token, attempt: "darwin-not-released", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
@@ -141,7 +141,7 @@ func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T
 		class:    serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
@@ -271,7 +271,7 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 		class:    serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			if attempt != grant.attempt {
@@ -319,7 +319,7 @@ func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T
 		class:    serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
@@ -364,7 +364,7 @@ func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 		class:    sharedAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
@@ -405,7 +405,7 @@ func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 		class:    serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
@@ -447,7 +447,7 @@ func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
 		class:    serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
@@ -471,5 +471,31 @@ func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
 	stopped, ok := terminal.(Stopped)
 	if !ok || stopped.BoundFired != NoBoundFired || stopped.CommandDuration <= 0 {
 		t.Fatalf("stop terminal = %#v, want Stopped", terminal)
+	}
+}
+
+func TestDarwinCapturedIdentitiesRemainTrackedBeforeControl(t *testing.T) {
+	first := darwinProcessIdentity{pid: 41, startSec: 7, startUsec: 11}
+	second := darwinProcessIdentity{pid: 42, startSec: 8, startUsec: 12}
+	tracked := map[darwinProcessIdentity]struct{}{first: {}}
+	trackDarwinIdentities(tracked, map[darwinProcessIdentity]struct{}{second: {}})
+	if _, ok := tracked[first]; !ok {
+		t.Fatal("existing Darwin identity was discarded")
+	}
+	if _, ok := tracked[second]; !ok {
+		t.Fatal("new Darwin identity was not retained before control")
+	}
+}
+
+func TestDarwinStaleTrackedIdentityDoesNotSeedPidReusedDescendants(t *testing.T) {
+	stale := darwinProcessIdentity{pid: 41, startSec: 7, startUsec: 11}
+	reused := darwinProcessIdentity{pid: 41, startSec: 8, startUsec: 12}
+	unrelated := darwinProcessIdentity{pid: 42, startSec: 9, startUsec: 13}
+	reached := darwinReachableDomain([]darwinProcessSnapshot{
+		{identity: reused, parent: 1, group: 99},
+		{identity: unrelated, parent: 41, group: 99},
+	}, 77, map[darwinProcessIdentity]struct{}{stale: {}})
+	if _, ok := reached[unrelated]; ok {
+		t.Fatal("PID reuse allowed a stale tracked identity to capture an unrelated descendant")
 	}
 }

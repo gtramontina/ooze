@@ -13,6 +13,7 @@ type supervisorDriverConstruction struct {
 	runtime          *processRuntimeShell
 	now              func() time.Time
 	launchBoundary   func(time.Time) <-chan time.Time
+	commandBoundary  func(time.Time) <-chan time.Time
 	launchProgress   time.Duration
 	drainEpoch       time.Duration
 	prepare          func(attemptGeneration, Spec)
@@ -31,6 +32,7 @@ type supervisorDrivenAttempt struct {
 	waitAction      supervisorAction
 	sampleAction    supervisorAction
 	waitStarted     bool
+	monitorStarted  bool
 	terminalReady   bool
 	terminal        chan Terminal
 	launchBy        time.Time
@@ -50,6 +52,7 @@ type supervisorDriver struct {
 	runtime           *processRuntimeShell
 	now               func() time.Time
 	launchBoundary    func(time.Time) <-chan time.Time
+	commandBoundary   func(time.Time) <-chan time.Time
 	launchProgress    time.Duration
 	drainEpoch        time.Duration
 	prepare           func(attemptGeneration, Spec)
@@ -74,14 +77,16 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 
 	launchBoundary := construction.launchBoundary
 	if launchBoundary == nil {
-		launchBoundary = func(time.Time) <-chan time.Time {
-			return time.After(construction.launchProgress)
-		}
+		launchBoundary = waitForSupervisorLaunchBoundary
+	}
+	commandBoundary := construction.commandBoundary
+	if commandBoundary == nil {
+		commandBoundary = waitForSupervisorLaunchBoundary
 	}
 
 	return &supervisorDriver{
 		runtime: construction.runtime, now: construction.now,
-		launchBoundary: launchBoundary,
+		launchBoundary: launchBoundary, commandBoundary: commandBoundary,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
 		prepare: construction.prepare, execute: construction.execute,
 		recheckRoot: construction.recheckRoot, sampleRunning: construction.sampleRunning,
@@ -90,6 +95,10 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		attempts:         make(map[attemptGeneration]*supervisorDrivenAttempt),
 		emergency:        make(chan SweepResult, 1),
 	}
+}
+
+func waitForSupervisorLaunchBoundary(launchBy time.Time) <-chan time.Time {
+	return time.After(time.Until(launchBy))
 }
 
 func newDrivenSupervisorForTest(
@@ -225,6 +234,7 @@ func (driver *supervisorDriver) finishLaunchReturn(
 	for _, action := range actions {
 		driver.run(action)
 	}
+	driver.startEligibleMonitors()
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(generation)
 	published := attempt.launchResult
@@ -361,6 +371,7 @@ func (driver *supervisorDriver) apply(event supervisorEvent) {
 	for _, action := range actions {
 		driver.run(action)
 	}
+	driver.startEligibleMonitors()
 }
 
 func (driver *supervisorDriver) run(action supervisorAction) {
@@ -480,49 +491,71 @@ func (driver *supervisorDriver) publishNotReleased(action supervisorAction) {
 
 func (driver *supervisorDriver) rememberMonitor(action supervisorAction, sample bool) {
 	driver.mutex.Lock()
-	defer driver.mutex.Unlock()
 	attempt := driver.requireAttempt(action.generation)
 	if sample {
 		if attempt.sampleAction.token != 0 {
+			driver.mutex.Unlock()
 			invariant(supervisorDriverOperation, "running sampler action was duplicated")
 		}
 		attempt.sampleAction = action
+	} else {
+		if attempt.waitAction.token != 0 {
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "root waiter action was duplicated")
+		}
+		attempt.waitAction = action
+	}
+	driver.mutex.Unlock()
+}
+
+func (driver *supervisorDriver) startEligibleMonitors() {
+	type monitorStart struct {
+		wait, sample supervisorAction
+		deadline     time.Time
+	}
+	driver.mutex.Lock()
+	starts := make([]monitorStart, 0, len(driver.attempts))
+	for generation, attempt := range driver.attempts {
+		ready := attempt.waitAction.token != 0 &&
+			(attempt.spec.Profile == SerialProfile || attempt.sampleAction.token != 0)
+		if !ready || attempt.monitorStarted {
+			continue
+		}
+		attempt.monitorStarted = true
+		state := driver.state.attempts[driver.state.requireAttempt(generation)]
+		starts = append(starts, monitorStart{
+			wait: attempt.waitAction, sample: attempt.sampleAction, deadline: state.deadlineAt,
+		})
+	}
+	driver.mutex.Unlock()
+	for _, start := range starts {
+		go driver.monitor(start.wait, start.sample, start.deadline)
+	}
+}
+
+func (driver *supervisorDriver) monitor(
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	deadlineAt time.Time,
+) {
+	if driver.recheckRoot == nil {
+		driver.executeAction(waitAction)
 
 		return
 	}
-	if attempt.waitAction.token != 0 {
-		invariant(supervisorDriverOperation, "root waiter action was duplicated")
-	}
-	attempt.waitAction = action
+	driver.waitThroughDeadline(waitAction, sampleAction, deadlineAt)
 }
 
 func (driver *supervisorDriver) wait(generation attemptGeneration) Terminal {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(generation)
-	if attempt.waitStarted || attempt.waitAction.token == 0 {
+	if attempt.waitStarted || !attempt.monitorStarted {
 		driver.mutex.Unlock()
-		invariant(supervisorDriverOperation, "owned wait action is absent or duplicated")
+		invariant(supervisorDriverOperation, "owned monitor is absent or wait was duplicated")
 	}
 	attempt.waitStarted = true
-	waitAction := attempt.waitAction
 	terminal := attempt.terminal
-	terminalReady := attempt.terminalReady
-	var deadlineAt time.Time
-	monitorRequired := false
-	if !terminalReady {
-		state := driver.state.attempts[driver.state.requireAttempt(generation)]
-		deadlineAt = state.deadlineAt
-		monitorRequired = state.phase == supervisorRunning
-	}
-	sampleAction := attempt.sampleAction
 	driver.mutex.Unlock()
-	if !terminalReady && monitorRequired {
-		if driver.recheckRoot == nil {
-			driver.executeAction(waitAction)
-		} else {
-			driver.waitThroughDeadline(waitAction, sampleAction, deadlineAt)
-		}
-	}
 
 	return <-terminal
 }
@@ -534,8 +567,7 @@ func (driver *supervisorDriver) waitThroughDeadline(
 ) {
 	waited := make(chan *supervisorEvent, 1)
 	go func() { waited <- driver.execute(waitAction) }()
-	timer := time.NewTimer(time.Until(deadlineAt))
-	defer timer.Stop()
+	deadline := driver.commandBoundary(deadlineAt)
 	var samples <-chan time.Time
 	var ticker *time.Ticker
 	if sampleAction.token != 0 {
@@ -552,10 +584,10 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			if event == nil {
 				invariant(supervisorDriverOperation, "root wait returned no completion")
 			}
-			driver.apply(*event)
+			driver.applyMonitorEvent(*event)
 
 			return
-		case <-timer.C:
+		case <-deadline:
 			status, completedAt, observed, err := driver.recheckRoot(waitAction.generation)
 			if err != nil {
 				invariant(supervisorDriverOperation, "deadline root recheck failed")
@@ -566,7 +598,7 @@ func (driver *supervisorDriver) waitThroughDeadline(
 				recheck.code = status.Code
 				recheck.signal = status.Signal
 			}
-			driver.apply(supervisorEvent{
+			driver.applyMonitorEvent(supervisorEvent{
 				kind: supervisorRunningObserved, generation: waitAction.generation,
 				at: deadlineAt, drainBy: deadlineAt.Add(driver.drainEpoch),
 				running: &supervisorRunningBundle{
@@ -602,7 +634,7 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			if len(facts) == 0 {
 				continue
 			}
-			driver.apply(supervisorEvent{
+			driver.applyMonitorEvent(supervisorEvent{
 				kind: supervisorRunningObserved, generation: waitAction.generation,
 				at: at, drainBy: at.Add(driver.drainEpoch),
 				running: &supervisorRunningBundle{
@@ -619,6 +651,29 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			}
 		}
 	}
+}
+
+func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
+	driver.mutex.Lock()
+	index := driver.state.attemptIndex(event.generation)
+	if index < 0 {
+		driver.mutex.Unlock()
+		return
+	}
+	attempt := driver.state.attempts[index]
+	accept := attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
+		attempt.phase == supervisorEmergencyDraining
+	if !accept || event.at.Before(attempt.lastEventAt) {
+		driver.mutex.Unlock()
+		return
+	}
+	next, actions := reduceSupervisor(driver.state, event)
+	driver.state = next
+	driver.mutex.Unlock()
+	for _, action := range actions {
+		driver.run(action)
+	}
+	driver.startEligibleMonitors()
 }
 
 func (driver *supervisorDriver) stop(generation attemptGeneration, request StopRequest) {

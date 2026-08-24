@@ -337,12 +337,13 @@ func TestSupervisorReducerLaunchEmergencyReleasedSnapshotSelectsOwnedIntentThrou
 				at: emergencyAt, drainBy: emergencyDrainBy,
 				duration: emergencyAt.Sub(releasedAt),
 			}
-			if test.wantKind == supervisorIntentRootExit {
+			switch test.wantKind {
+			case supervisorIntentRootExit:
 				wantIntent.at = releasedAt.Add(test.rootOffset)
 				wantIntent.drainBy = running.drainBy
 				wantIntent.duration = test.rootOffset
 				wantIntent.exitCode = test.exitCode
-			} else if test.wantKind == supervisorIntentDeadline {
+			case supervisorIntentDeadline:
 				wantIntent.at = releasedAt.Add(test.commandDeadline)
 				wantIntent.drainBy = running.drainBy
 				wantIntent.duration = test.commandDeadline

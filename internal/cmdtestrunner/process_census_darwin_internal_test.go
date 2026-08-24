@@ -149,6 +149,19 @@ func assertCensusInstruments(
 		state, map[bool]string{true: "reach", false: "miss"}[seenFromGroup], shapeProcessID, because)
 }
 
+func TestStaleDarwinTrackedIdentityDoesNotSeedPidReusedDescendants(t *testing.T) {
+	stale := darwinTrackedIdentity{pid: 41, startSec: 7, startUsec: 11}
+	reused := darwinTrackedIdentity{pid: 41, startSec: 8, startUsec: 12}
+	unrelated := darwinTrackedIdentity{pid: 42, startSec: 9, startUsec: 13}
+	reached := reachableDarwinTrackedProcesses([]darwinTrackedProcess{
+		{identity: reused, parent: 1, group: 99},
+		{identity: unrelated, parent: 41, group: 99},
+	}, 77, map[darwinTrackedIdentity]struct{}{stale: {}})
+	if _, ok := reached[unrelated]; ok {
+		t.Fatal("PID reuse allowed a stale tracked identity to capture an unrelated descendant")
+	}
+}
+
 // descendantsOf returns every transitive descendant of the seeds, by parent
 // identity. The seeds themselves are not included.
 func descendantsOf(all []unix.KinfoProc, seeds []int) map[int]bool {

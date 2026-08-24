@@ -72,6 +72,39 @@ func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 	}
 }
 
+func TestLinuxRevokedPreReleaseGuardianCleanupIsBounded(t *testing.T) {
+	executor := &supervisorNativeExecutor{
+		drainEpoch:     2 * time.Second,
+		attempts:       make(map[attemptGeneration]*supervisorNativeAttempt),
+		outputs:        make(map[supervisorOutputRef]string),
+		diagnostics:    make(map[supervisorDiagnosticRef]error),
+		readOutputFile: readNativeOutput,
+	}
+	generation := attemptGeneration(1)
+	executor.prepare(generation, Spec{
+		Attempt: "linux-revoked-pre-release", Command: []string{"/bin/sh", "-c", "sleep 10"},
+		Dir: t.TempDir(), Env: os.Environ(), Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	executor.mutex.Lock()
+	executor.requireAttempt(generation).releaseRevoked = true
+	executor.mutex.Unlock()
+	completed := make(chan *supervisorEvent, 1)
+	go func() {
+		completed <- executor.launch(supervisorAction{
+			kind: supervisorLaunchNative, generation: generation, token: 1,
+		})
+	}()
+	select {
+	case event := <-completed:
+		if event == nil || event.completion == nil ||
+			event.completion.kind != supervisorLaunchProvenNotReleased {
+			t.Fatalf("revoked Linux launch completion = %#v, want proven not released", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("revoked stopped Linux guardian cleanup did not resolve")
+	}
+}
+
 func TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian(t *testing.T) {
 	role := os.Getenv(linuxEscapeFixtureRole)
 	if role != "" {
@@ -136,7 +169,7 @@ func newLinuxNativeSupervisorForTest(
 		campaign: campaign.token, attempt: attemptIdentity(attempt), class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
