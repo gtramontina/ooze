@@ -57,9 +57,7 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		executor.mutex.Lock()
 		defer executor.mutex.Unlock()
 		for _, nativeAttempt := range executor.attempts {
-			if nativeAttempt.output != nil {
-				_ = nativeAttempt.output.Close()
-			}
+			cleanupNativeFixtureOutput(t, nativeAttempt.output)
 			_ = closeNativeDomain(nativeAttempt.platform)
 		}
 	})
@@ -117,6 +115,20 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		At: now, DrainBy: now.Add(time.Second),
 	}).(SweepUnconfirmed); !ok {
 		t.Fatal("expired local custody was rewritten instead of remaining an emergency residual")
+	}
+}
+
+func cleanupNativeFixtureOutput(t *testing.T, output *os.File) {
+	t.Helper()
+	if output == nil {
+		return
+	}
+	path := output.Name()
+	if err := output.Close(); err != nil {
+		t.Errorf("close retained native fixture output %q: %v", path, err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("remove retained native fixture output %q: %v", path, err)
 	}
 }
 

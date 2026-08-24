@@ -100,7 +100,7 @@ func TestWindowsNativeSupervisorDrainsChildInNestedJob(t *testing.T) {
 		t.Fatalf("nested-job identities root=%q child=%q errors=(%v, %v)",
 			identities[0], identities[1], rootErr, childErr)
 	}
-	t.Cleanup(func() { terminateWindowsFixtureProcess(child) })
+	retainWindowsFixtureProcess(t, child)
 
 	before := len(awaitWindowsFixtureFile(t, markerPath, 2*time.Second))
 	time.Sleep(50 * time.Millisecond)
@@ -267,16 +267,38 @@ func awaitWindowsFixtureFile(t *testing.T, path string, timeout time.Duration) [
 	}
 }
 
-func terminateWindowsFixtureProcess(processID int) {
-	if processID <= 0 {
-		return
-	}
-	process, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(processID)) //nolint:gosec
+func retainWindowsFixtureProcess(t *testing.T, processID int) {
+	t.Helper()
+	process, err := windows.OpenProcess(
+		windows.SYNCHRONIZE|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
+		false,
+		uint32(processID), //nolint:gosec // Windows process IDs are 32-bit values.
+	)
 	if err != nil {
-		return
+		t.Fatalf("retain nested-job child %d: %v", processID, err)
 	}
-	defer func() { _ = windows.CloseHandle(process) }()
-	_ = windows.TerminateProcess(process, 1)
+	t.Cleanup(func() {
+		defer func() {
+			if closeErr := windows.CloseHandle(process); closeErr != nil {
+				t.Errorf("close retained nested-job child %d: %v", processID, closeErr)
+			}
+		}()
+
+		var exitCode uint32
+		if queryErr := windows.GetExitCodeProcess(process, &exitCode); queryErr != nil {
+			t.Errorf("query retained nested-job child %d: %v", processID, queryErr)
+			return
+		}
+		var terminateErr error
+		if exitCode == windowsStillActive {
+			terminateErr = windows.TerminateProcess(process, 1)
+		}
+		result, waitErr := windows.WaitForSingleObject(process, 2_000)
+		if waitErr != nil || result != windows.WAIT_OBJECT_0 {
+			t.Errorf("drain retained nested-job child %d: terminate=%v wait=(%d, %v)",
+				processID, terminateErr, result, waitErr)
+		}
+	})
 }
 
 func windowsJobFixtureEnvironment(role string, additions ...string) []string {
