@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"errors"
 	"reflect"
 	"strconv"
 	"testing"
@@ -170,6 +171,22 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 	}
 }
 
+func TestCampaignRejectsBaselineDeadlineThatDoesNotMatchRecordedPolicy(t *testing.T) {
+	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 2)
+	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
+	defer func() {
+		violation, ok := recover().(runtimeInvariantViolation)
+		if !ok || violation.operation != "campaign observe terminal" {
+			t.Fatalf("recovered=%#v", violation)
+		}
+	}()
+	harness.settleAttempt(t, baseline, Settled{
+		Exit: ExitStatus{}, ExecutionData: ExecutionData{
+			Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second,
+		},
+	}, time.Nanosecond)
+}
+
 func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
 	if len(primaryEffects) != 2 {
@@ -230,6 +247,182 @@ func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 	harness.advance(terminalCommittedEvent{result: committed})
 	if _, ok := harness.state.outcome.(abortedOutcome); !ok || harness.state.commandCount() != 1 {
 		t.Fatalf("baseline failure outcome/count=%#v/%d", harness.state.outcome, harness.state.commandCount())
+	}
+}
+
+func TestCampaignPrimaryInfrastructureAbortStopsCommittedPeersWithoutRetry(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
+	effects := harness.settleAttempt(t, first, Infrastructure{
+		Cause: CensusFailed, Err: errors.New("census failed"),
+		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	}, 0)
+	assertCampaignEffects(t, effects, campaignEffectStopAttempt, campaignEffectReleaseWorkspace)
+	if effects[0].attempt != second.attempt || harness.state.drain.kind != campaignDrainAbort {
+		t.Fatalf("abort stop/drain=%#v/%#v", effects[0], harness.state.drain)
+	}
+	effects = harness.settleAttempt(t, second, Stopped{
+		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	}, 0)
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
+	effects = harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-b"})
+	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
+	if harness.state.commandCount() != 3 {
+		t.Fatalf("abort duplicated command: count=%d", harness.state.commandCount())
+	}
+}
+
+func TestCampaignBaselineProvenNotReleasedAbortsWithoutASecondLaunch(t *testing.T) {
+	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 1)
+	effect := harness.effects[0]
+	effects := harness.advance(workspaceMaterializedEvent{
+		attempt: effect.attempt, workspace: "workspace-baseline", snapshot: effect.snapshot,
+	})
+	var admitted admissionResult
+	harness.runtime, admitted = harness.runtime.requestAdmission(effects[0].request)
+	effects = harness.advance(admissionGrantedEvent{attempt: effect.attempt, grant: admitted.deliveries[0]})
+	grant := effects[0].grant
+	var started startCommittedResult
+	harness.runtime, started = harness.runtime.startCommitted(grant)
+	harness.advance(startCommittedEvent{attempt: effect.attempt, grant: grant, result: started})
+	var receipt observationResult
+	harness.runtime, receipt = harness.runtime.observeAttempt(started.generation, launchNotReleased{reason: launchFailed})
+	effects = harness.advance(attemptLaunchEvent{
+		attempt: effect.attempt, generation: started.generation,
+		result: NotReleased{Kind: LaunchFailed, Err: errors.New("exec failed")}, receipt: receipt,
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	if harness.state.drain.kind != campaignDrainAbort || harness.state.commandCount() != 1 {
+		t.Fatalf("launch failure drain/count=%#v/%d", harness.state.drain, harness.state.commandCount())
+	}
+	effects = harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-baseline",
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
+}
+
+func TestCampaignRejectedStartAfterConfirmationGateReturnsTheGrant(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(
+		t, []mutantIdentity{"mutant-a", "mutant-b", "mutant-c"}, 3,
+	)
+	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	_ = harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
+	effects := harness.advance(workspaceMaterializedEvent{
+		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
+	})
+	var admitted admissionResult
+	harness.runtime, admitted = harness.runtime.requestAdmission(effects[0].request)
+	effects = harness.advance(admissionGrantedEvent{attempt: primaryEffects[2].attempt, grant: admitted.deliveries[0]})
+	grant := effects[0].grant
+
+	deadline := harness.state.mutationDeadline
+	effects = harness.settleAttempt(t, first, Tripped{
+		Trip: AutomaticDeadlineTrip{}, ExecutionData: ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		},
+	}, 0)
+	assertCampaignEffects(t, effects, campaignEffectReturnAdmission, campaignEffectReleaseWorkspace)
+	var rejected startCommittedResult
+	harness.runtime, rejected = harness.runtime.startCommitted(grant)
+	if rejected.decision != startCommittedRejectedGrant {
+		t.Fatalf("start decision=%v, want compensated-grant rejection", rejected.decision)
+	}
+	effects = harness.advance(startCommittedEvent{attempt: primaryEffects[2].attempt, grant: grant, result: rejected})
+	if len(effects) != 0 {
+		t.Fatalf("rejected start duplicated compensation: %#v", effects)
+	}
+}
+
+func TestCampaignConfirmationInfrastructureAbortsUnscored(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	primary := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	peer := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
+	deadline := harness.state.mutationDeadline
+	harness.settleAttempt(t, primary, Tripped{
+		Trip: AutomaticDeadlineTrip{}, ExecutionData: ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		},
+	}, 0)
+	harness.settleAttempt(t, peer, Settled{
+		Exit: ExitStatus{}, ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	}, 0)
+	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
+	effects := harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-b"})
+	confirmation := harness.launchConfirmation(t, effects[0], "workspace-confirm")
+	effects = harness.settleAttempt(t, confirmation, Infrastructure{
+		Cause: CensusFailed, Err: errors.New("census failed"),
+		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	}, 0)
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	if harness.state.drain.kind != campaignDrainAbort {
+		t.Fatalf("confirmation infrastructure drain=%#v", harness.state.drain)
+	}
+}
+
+func TestCampaignConfirmedDrainedFatalEpochForcesAbort(t *testing.T) {
+	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 1)
+	effect := harness.effects[0]
+	effects := harness.advance(workspaceMaterializedEvent{
+		attempt: effect.attempt, workspace: "workspace-baseline", snapshot: effect.snapshot,
+	})
+	var admitted admissionResult
+	harness.runtime, admitted = harness.runtime.requestAdmission(effects[0].request)
+	effects = harness.advance(admissionGrantedEvent{attempt: effect.attempt, grant: admitted.deliveries[0]})
+	grant := effects[0].grant
+	var started startCommittedResult
+	harness.runtime, started = harness.runtime.startCommitted(grant)
+	harness.advance(startCommittedEvent{attempt: effect.attempt, grant: grant, result: started})
+	var receipt observationResult
+	harness.runtime, receipt = harness.runtime.observeAttempt(started.generation, launchUnconfirmed{})
+	harness.advance(attemptLaunchEvent{
+		attempt: effect.attempt, generation: started.generation,
+		result: LaunchUnconfirmed{Residual: ProspectiveUnresolved}, receipt: receipt,
+	})
+	var settlement emergencySettlement
+	harness.runtime, settlement = harness.runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+		generation: started.generation, disposition: emergencyConfirmedDrained,
+	}}})
+	effects = harness.advance(runtimeEmergencySettledEvent{epoch: receipt.fatalEpoch, settlement: settlement})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	effects = harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-baseline"})
+	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
+	effects = harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
+	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
+	var forced terminalResult
+	harness.runtime, forced = harness.runtime.authorizeForcedAbort(harness.state.runtimeToken, receipt.fatalEpoch)
+	harness.advance(terminalCommittedEvent{result: forced})
+	if _, ok := harness.state.outcome.(abortedOutcome); !ok || len(harness.state.obligations) != 0 {
+		t.Fatalf("forced outcome/obligations=%#v/%#v", harness.state.outcome, harness.state.obligations)
+	}
+}
+
+func TestCampaignPreparationFailuresAbortWithoutCommands(t *testing.T) {
+	definition := campaignDefinition{
+		identity: "campaign-a", lineage: 11, command: []string{"test"}, profile: AutomaticProfile, peers: 1,
+	}
+	state, _ := beginCampaign(definition)
+	state, effects := advanceCampaign(state, campaignEvent{id: 1, payload: campaignRegisteredEvent{
+		registration: campaignRegistration{decision: campaignRejectedRecursive},
+	}})
+	if len(effects) != 0 || state.commandCount() != 0 {
+		t.Fatalf("registration rejection state/effects=%#v/%#v", state, effects)
+	}
+	if _, ok := state.outcome.(abortedOutcome); !ok {
+		t.Fatalf("registration rejection outcome=%#v", state.outcome)
+	}
+
+	state, _ = beginCampaign(definition)
+	runtime := newProcessRuntime(1)
+	_, registered := runtime.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	state, _ = advanceCampaign(state, campaignEvent{id: 1, payload: campaignRegisteredEvent{registration: registered}})
+	state, effects = advanceCampaign(state, campaignEvent{id: 2, payload: campaignPreparationFailedEvent{
+		stage: campaignPreparingSnapshot, cause: "snapshot failed",
+	}})
+	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
+	if state.commandCount() != 0 || state.drain.kind != campaignDrainAbort {
+		t.Fatalf("snapshot failure state=%#v", state)
 	}
 }
 
@@ -435,6 +628,11 @@ func TestCampaignMalformedEventEmergencyCleansRuntimeAndRepanicsOriginalViolatio
 	if !ok || violation.operation != "campaign establish snapshot" ||
 		violation.reason != "snapshot observation is invalid" {
 		t.Fatalf("recovered=%#v", recovered)
+	}
+	if violation.phase != uint8(campaignPreparing) || violation.rejectedEvent == "" ||
+		len(violation.stableIdentities) == 0 || len(violation.obligationSnapshot) == 0 ||
+		len(violation.traceTail) == 0 {
+		t.Fatalf("invariant diagnostic is incomplete: %#v", violation)
 	}
 	if runtime.lifecycle != runtimeClosedDrained || runtime.fatalEpoch == 0 || len(runtime.fatalCauses) != 1 {
 		t.Fatalf("runtime after invariant=%#v", runtime)
