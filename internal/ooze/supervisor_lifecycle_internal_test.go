@@ -261,13 +261,14 @@ func TestSupervisorOwnedAttemptWaitIsIdempotentAndStopIsConcurrent(t *testing.T)
 	releaseWait := make(chan struct{})
 	stopped := make(chan StopRequest, 1)
 	waits := 0
-	attempt := newOwnedAttempt(
+	var attempt *OwnedAttempt
+	attempt = newOwnedAttempt(
 		func(request StopRequest) { stopped <- request },
-		func(sealStop func()) Terminal {
+		func() Terminal {
 			waits++
 			close(waitEntered)
 			<-releaseWait
-			sealStop()
+			attempt.sealStopAdmission()
 
 			return Stopped{}
 		},
@@ -302,10 +303,12 @@ func TestSupervisorOwnedAttemptWaitIsIdempotentAndStopIsConcurrent(t *testing.T)
 }
 
 func newOwnedAttemptForTest() *OwnedAttempt {
-	return newOwnedAttempt(func(StopRequest) {}, func(sealStop func()) Terminal {
-		sealStop()
+	attempt := newOwnedAttempt(func(StopRequest) {}, func() Terminal {
 		return Stopped{}
 	})
+	attempt.sealStopAdmission()
+
+	return attempt
 }
 
 func assertPanicsWith(t *testing.T, target error, action func()) {

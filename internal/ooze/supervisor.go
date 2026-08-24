@@ -200,18 +200,127 @@ func (r StopRequest) validate() error {
 	return nil
 }
 
+// ExecutionData is the evidence common to every owned terminal.
+type ExecutionData struct {
+	Deadline        time.Duration
+	LaunchDuration  time.Duration
+	CommandDuration time.Duration
+	BoundFired      BoundFired
+	Output          OutputSnapshot
+	Failures        FailureDiagnostics
+}
+
+// BoundFired identifies the command bound that selected terminal intent.
+type BoundFired uint8
+
+const (
+	// NoBoundFired means an observed fact selected terminal intent.
+	NoBoundFired BoundFired = iota
+	// CommandDeadlineFired means the resolved command deadline selected intent.
+	CommandDeadlineFired
+)
+
+// OutputSnapshot is one immutable prefix of the private merged-output file.
+type OutputSnapshot struct {
+	Bytes                 string
+	Cutoff                uint64
+	CompleteThroughCutoff bool
+	Final                 bool
+}
+
+// FailureDiagnostics retains independent supervision failures.
+type FailureDiagnostics struct {
+	Wait          string
+	RunningCensus string
+	DrainCensus   string
+	Termination   string
+	Output        string
+	Release       string
+}
+
+// ExitStatus is the native root's normalized exit evidence.
+type ExitStatus struct {
+	Code   int
+	Signal int
+}
+
+// Passed reports an ordinary zero exit.
+func (status ExitStatus) Passed() bool { return status.Code == 0 && status.Signal == 0 }
+
 // Terminal is the immutable result returned by an owned attempt.
 type Terminal interface{ terminal() }
 
-// Stopped reports that Stop supplied the earliest running intent.
-type Stopped struct{}
+// Settled reports an ordinary root exit after authoritative drainage.
+type Settled struct {
+	Exit ExitStatus
+	ExecutionData
+}
 
-func (Stopped) terminal() {}
+// Trip distinguishes fuse and deadline terminal evidence.
+type Trip interface{ trip() }
+
+// FuseTrip records the live descendant count that crossed the fuse.
+type FuseTrip struct{ Live int }
+
+// ObservedCount preserves whether an automatic running count was observed.
+type ObservedCount struct {
+	Value   int
+	Present bool
+}
+
+// AutomaticDeadlineTrip records the observed running peak, if any.
+type AutomaticDeadlineTrip struct{ Peak ObservedCount }
+
+// SerialDeadlineTrip carries no fabricated count.
+type SerialDeadlineTrip struct{}
+
+func (FuseTrip) trip()              {}
+func (AutomaticDeadlineTrip) trip() {}
+func (SerialDeadlineTrip) trip()    {}
+
+// Tripped reports a process-fuse or command-deadline trip.
+type Tripped struct {
+	Trip Trip
+	ExecutionData
+}
+
+// Stopped reports that Stop supplied the earliest running intent.
+type Stopped struct{ ExecutionData }
+
+// Cause identifies the stable presentation cause of infrastructure failure.
+type Cause uint8
+
+const (
+	CensusFailed Cause = iota + 1
+	WaitFailed
+	TerminationControlFailed
+	OutputCaptureFailed
+	ReleaseFailed
+)
+
+// Infrastructure reports a supervision failure after authoritative drainage.
+type Infrastructure struct {
+	Cause Cause
+	Err   error
+	ExecutionData
+}
+
+// DrainUnconfirmed reports retained owned custody without an emptiness proof.
+type DrainUnconfirmed struct {
+	Residual Residual
+	ExecutionData
+}
+
+func (Settled) terminal()          {}
+func (Tripped) terminal()          {}
+func (Stopped) terminal()          {}
+func (Infrastructure) terminal()   {}
+func (DrainUnconfirmed) terminal() {}
 
 // OwnedAttempt is the opaque capability for one released, contained attempt.
 type OwnedAttempt struct {
 	stop func(StopRequest)
-	wait func(func()) Terminal
+	wait func() Terminal
 
 	stateMu       sync.Mutex
 	stateChanged  *sync.Cond
@@ -222,7 +331,7 @@ type OwnedAttempt struct {
 	terminal Terminal
 }
 
-func newOwnedAttempt(stop func(StopRequest), wait func(func()) Terminal) *OwnedAttempt {
+func newOwnedAttempt(stop func(StopRequest), wait func() Terminal) *OwnedAttempt {
 	if stop == nil || wait == nil {
 		panic("owned attempt requires stop and wait plumbing")
 	}
@@ -258,22 +367,13 @@ func (a *OwnedAttempt) Stop(request StopRequest) {
 // Wait joins supervision and returns the same immutable terminal to every caller.
 func (a *OwnedAttempt) Wait() Terminal {
 	a.waitOnce.Do(func() {
-		sealed := false
-		terminal := a.wait(func() {
-			a.stateMu.Lock()
-			defer a.stateMu.Unlock()
-			if a.stopSealed {
-				panic("owned attempt stop admission sealed twice")
-			}
-			a.stopSealed = true
-			for a.stopsInFlight != 0 {
-				a.stateChanged.Wait()
-			}
-			sealed = true
-		})
+		terminal := a.wait()
 		if terminal == nil {
 			panic("owned attempt wait returned no terminal")
 		}
+		a.stateMu.Lock()
+		sealed := a.stopSealed
+		a.stateMu.Unlock()
 		if !sealed {
 			panic("owned attempt wait returned before sealing stop admission")
 		}
@@ -281,4 +381,16 @@ func (a *OwnedAttempt) Wait() Terminal {
 	})
 
 	return a.terminal
+}
+
+func (a *OwnedAttempt) sealStopAdmission() {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if a.stopSealed {
+		panic("owned attempt stop admission sealed twice")
+	}
+	a.stopSealed = true
+	for a.stopsInFlight != 0 {
+		a.stateChanged.Wait()
+	}
 }
