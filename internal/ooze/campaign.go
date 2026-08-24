@@ -109,6 +109,23 @@ type campaignState struct {
 	commands         int
 	nextAttempt      uint64
 	mutationDeadline time.Duration
+	drain            campaignDrainIntent
+}
+
+type campaignDrainIntentKind uint8
+
+const (
+	campaignDrainConfirm campaignDrainIntentKind = iota + 1
+	campaignDrainComplete
+	campaignDrainAbort
+	campaignDrainRuntimeEmergency
+)
+
+type campaignDrainIntent struct {
+	kind         campaignDrainIntentKind
+	provisionals []mutantIdentity
+	cause        string
+	epoch        uint64
 }
 
 type campaignAttemptKind uint8
@@ -388,12 +405,23 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 		kind := state.attempts[attemptAt].kind
 		state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
 		if kind == campaignAttemptBaseline {
+			if state.drain.kind == campaignDrainAbort {
+				return state.releaseSnapshot(campaignTerminalAborted)
+			}
 			state.phase = campaignRunning
 
 			return state.materializePrimaryBatch()
 		}
+		if state.allMutantsResolved() && len(state.attempts) == 0 {
+			state.phase = campaignDraining
+			state.drain = campaignDrainIntent{kind: campaignDrainComplete}
+
+			return state.releaseSnapshot(campaignTerminalCompleted)
+		}
+
+		return state.materializePrimaryBatch()
 	}
-	if state.candidate.kind == campaignTerminalNoMutants && event.kind == campaignResourceSnapshot &&
+	if state.candidate.kind != 0 && event.kind == campaignResourceSnapshot &&
 		len(state.obligations) == 1 && state.obligations[0].kind == campaignResourceRegistration {
 		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
 	}
@@ -411,9 +439,16 @@ func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (ca
 	case campaignTerminalNoMutants:
 		state.outcome = noMutantsOutcome{}
 	case campaignTerminalCompleted:
-		state.outcome = completedOutcome{}
+		results := make([]mutantResult, len(state.mutants))
+		for index, mutant := range state.mutants {
+			if mutant.result == 0 {
+				campaignInvariant("commit terminal", "completed mutant is unattributed")
+			}
+			results[index] = mutantResult{mutant: mutant.identity, kind: mutant.result}
+		}
+		state.outcome = completedOutcome{mutants: results}
 	case campaignTerminalAborted:
-		state.outcome = abortedOutcome{}
+		state.outcome = abortedOutcome{cause: state.drain.cause}
 	default:
 		campaignInvariant("commit terminal", "terminal candidate is invalid")
 	}
@@ -524,15 +559,49 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		campaignInvariant("observe terminal", "attempt terminal is invalid")
 	}
 	attempt := &state.attempts[attemptAt]
-	if attempt.kind != campaignAttemptBaseline {
-		campaignInvariant("observe terminal", "primary terminal transition is not installed")
+	if attempt.kind == campaignAttemptBaseline {
+		settled, passed := event.terminal.(Settled)
+		passed = passed && settled.Exit.Passed() && settled.Deadline == state.definition.baselineDeadline &&
+			settled.CommandDuration > 0 && event.resolvedMutationDeadline > 0
+		if passed {
+			state.mutationDeadline = event.resolvedMutationDeadline
+		} else {
+			state.phase = campaignDraining
+			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "baseline did not pass"}
+		}
+	} else if attempt.kind == campaignAttemptPrimary {
+		mutantAt := state.mutantIndex(attempt.mutant)
+		if mutantAt < 0 || state.mutants[mutantAt].result != 0 {
+			campaignInvariant("observe primary terminal", "primary mutant is stale or already attributed")
+		}
+		switch terminal := event.terminal.(type) {
+		case Settled:
+			if terminal.Exit.Passed() {
+				state.mutants[mutantAt].result = mutantSurvived
+			} else {
+				state.mutants[mutantAt].result = mutantKilled
+			}
+		case Tripped:
+			switch terminal.Trip.(type) {
+			case FuseTrip:
+				state.mutants[mutantAt].result = mutantRunaway
+			case AutomaticDeadlineTrip, SerialDeadlineTrip:
+				if event.receipt.confirmationProvisional {
+					campaignInvariant("observe primary terminal", "confirmation transition is not installed")
+				}
+				state.mutants[mutantAt].result = mutantTimedOut
+			default:
+				campaignInvariant("observe primary terminal", "trip kind is invalid")
+			}
+		case Stopped, Infrastructure:
+			state.phase = campaignDraining
+			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary infrastructure uncertainty"}
+		default:
+			campaignInvariant("observe primary terminal", "primary terminal kind is invalid")
+		}
+	} else {
+		campaignInvariant("observe terminal", "confirmation transition is not installed")
 	}
-	settled, ok := event.terminal.(Settled)
-	if !ok || !settled.Exit.Passed() || settled.Deadline != state.definition.baselineDeadline ||
-		settled.CommandDuration <= 0 || event.resolvedMutationDeadline <= 0 {
-		campaignInvariant("observe baseline terminal", "passing baseline evidence is invalid")
-	}
-	state.mutationDeadline = event.resolvedMutationDeadline
 	attempt.stage = campaignAttemptSettled
 	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, event.generation)
 	state.removeAttemptObligation(campaignResourceExecutionDomain, event.attempt, event.generation)
@@ -540,6 +609,16 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	return state.emit(campaignEffect{
 		kind: campaignEffectReleaseWorkspace, attempt: event.attempt, workspace: attempt.workspace,
 	})
+}
+
+func (state campaignState) releaseSnapshot(candidate campaignTerminalKind) (campaignState, []campaignEffect) {
+	if state.snapshot == "" || state.obligationIndex(campaignResourceSnapshot, string(state.snapshot)) < 0 ||
+		state.candidate.kind != 0 {
+		campaignInvariant("release snapshot", "snapshot release is invalid")
+	}
+	state.candidate = campaignTerminalCandidate{kind: candidate}
+
+	return state.emit(campaignEffect{kind: campaignEffectReleaseSnapshot, snapshot: state.snapshot})
 }
 
 func (state campaignState) materializeAttempt(kind campaignAttemptKind, mutant mutantIdentity) (campaignState, campaignEffect) {
@@ -564,9 +643,19 @@ func (state campaignState) materializePrimaryBatch() (campaignState, []campaignE
 	if state.definition.profile == SerialProfile {
 		limit = 1
 	}
-	effects := make([]campaignEffect, 0, limit)
+	active := 0
+	for _, attempt := range state.attempts {
+		if attempt.kind == campaignAttemptPrimary && attempt.stage != campaignAttemptSettled {
+			active++
+		}
+	}
+	available := limit - active
+	if available <= 0 {
+		return state, nil
+	}
+	effects := make([]campaignEffect, 0, available)
 	for index := range state.mutants {
-		if len(effects) == limit {
+		if len(effects) == available {
 			break
 		}
 		if state.mutants[index].primaryStarted || state.mutants[index].result != 0 {
@@ -579,6 +668,16 @@ func (state campaignState) materializePrimaryBatch() (campaignState, []campaignE
 	}
 
 	return state, effects
+}
+
+func (state campaignState) mutantIndex(identity mutantIdentity) int {
+	return slices.IndexFunc(state.mutants, func(mutant campaignMutant) bool { return mutant.identity == identity })
+}
+
+func (state campaignState) allMutantsResolved() bool {
+	return len(state.mutants) != 0 && !slices.ContainsFunc(state.mutants, func(mutant campaignMutant) bool {
+		return mutant.result == 0
+	})
 }
 
 func (state campaignState) attemptIndex(identity attemptIdentity) int {
@@ -619,6 +718,7 @@ func (state campaignState) clone() campaignState {
 	state.catalogue = slices.Clone(state.catalogue)
 	state.mutants = slices.Clone(state.mutants)
 	state.attempts = slices.Clone(state.attempts)
+	state.drain.provisionals = slices.Clone(state.drain.provisionals)
 	state.obligations = slices.Clone(state.obligations)
 	state.trace = slices.Clone(state.trace)
 
