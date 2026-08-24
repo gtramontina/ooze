@@ -18,9 +18,10 @@ const descendantSupervisionSupported = true
 // membership is inherited and cannot be shed without JOB_OBJECT_LIMIT_BREAKAWAY_OK,
 // which the supervisor does not set. Breakaway is its own fixture.
 const (
-	descendantCanEscapeSupervision  = false
-	sessionEscapeDefeatsContainment = false
-	descendantParentIsObservable    = false
+	descendantCanEscapeSupervision                 = false
+	directRootProcessGroupEscapeDefeatsContainment = false
+	sessionEscapeDefeatsContainment                = false
+	descendantParentIsObservable                   = false
 )
 
 func detachDescendantProcessGroup(*exec.Cmd) {}
