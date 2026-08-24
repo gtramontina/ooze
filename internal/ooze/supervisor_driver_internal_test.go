@@ -1591,11 +1591,36 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 	}
 }
 
+func TestSupervisorDriverPromotesForceTimeWaitFailureToInfrastructure(t *testing.T) {
+	terminal, waitErr, _ := runSupervisorDriverLateWaitFailure(t, false)
+	infrastructure, ok := terminal.(Infrastructure)
+	if !ok || infrastructure.Cause != WaitFailed || infrastructure.Err == nil ||
+		infrastructure.Err.Error() != waitErr.Error() || infrastructure.Failures.Wait != waitErr.Error() {
+		t.Fatalf("terminal = %#v, want force-time wait infrastructure", terminal)
+	}
+}
+
 func TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound(t *testing.T) {
+	terminal, waitErr, terminationErr := runSupervisorDriverLateWaitFailure(t, true)
+	unconfirmed, ok := terminal.(DrainUnconfirmed)
+	if !ok || unconfirmed.Failures.Wait != waitErr.Error() ||
+		unconfirmed.Failures.Termination != terminationErr.Error() {
+		t.Fatalf("terminal = %#v, want late wait and termination failures", terminal)
+	}
+}
+
+func runSupervisorDriverLateWaitFailure(
+	t *testing.T,
+	afterDrainBound bool,
+) (Terminal, error, error) {
+	t.Helper()
 	registeredAt := time.Now().Add(-2 * time.Second)
 	releasedAt := registeredAt.Add(time.Millisecond)
 	stopAt := releasedAt.Add(time.Second)
 	drainBy := stopAt.Add(500 * time.Millisecond)
+	if !afterDrainBound {
+		drainBy = stopAt.Add(10 * time.Second)
+	}
 	nextAt := registeredAt.Add(-time.Nanosecond)
 	waitErr := errors.New("root tracking failed during termination")
 	terminationErr := errors.New("terminate execution domain")
@@ -1604,7 +1629,14 @@ func TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound(t *testi
 	nativeExecutor := &supervisorNativeExecutor{
 		attempts: make(map[attemptGeneration]*supervisorNativeAttempt),
 		outputs:  make(map[supervisorOutputRef]string), diagnostics: make(map[supervisorDiagnosticRef]error),
-		forceDomain:    func(nativePlatformState, int, time.Time) error { return terminationErr },
+		forceDomain: func(nativePlatformState, int, time.Time) error {
+			if afterDrainBound {
+				return terminationErr
+			}
+
+			return nil
+		},
+		domainEmpty:    func(nativePlatformState, int) (bool, error) { return true, nil },
 		readOutputFile: func(*os.File) (string, uint64, error) { return "", 0, nil },
 	}
 
@@ -1656,18 +1688,27 @@ func TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound(t *testi
 					},
 				}
 			case supervisorForceOwned:
-				nativeExecutor.attempts[action.generation] = &supervisorNativeAttempt{
+				nativeAttempt := &supervisorNativeAttempt{
 					command: &exec.Cmd{Process: &os.Process{Pid: 123}},
 					output:  &os.File{}, waitDone: nativeWaitDone, trackingErr: waitErr,
 				}
+				if !afterDrainBound {
+					nativeAttempt.waitOnce.Do(func() {})
+					close(nativeWaitDone)
+				}
+				nativeExecutor.attempts[action.generation] = nativeAttempt
 
 				return nativeExecutor.force(action)
 			case supervisorObserveEmptiness:
-				t.Fatalf("expired force unexpectedly observed emptiness")
+				if afterDrainBound {
+					t.Fatalf("expired force unexpectedly observed emptiness")
+				}
 
-				return nil
+				return nativeExecutor.observeEmpty(action)
 			case supervisorCaptureOutput:
-				close(nativeWaitDone)
+				if afterDrainBound {
+					close(nativeWaitDone)
+				}
 				event := nativeExecutor.captureOutput(action)
 				nextAt = event.at
 
@@ -1710,11 +1751,8 @@ func TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound(t *testi
 	owned.Attempt.Stop(StopRequest{At: stopAt, DrainBy: drainBy})
 	terminal := owned.Attempt.Wait()
 	close(waitReleased)
-	unconfirmed, ok := terminal.(DrainUnconfirmed)
-	if !ok || unconfirmed.Failures.Wait != waitErr.Error() ||
-		unconfirmed.Failures.Termination != terminationErr.Error() {
-		t.Fatalf("terminal = %#v, want late wait and termination failures", terminal)
-	}
+
+	return terminal, waitErr, terminationErr
 }
 
 func TestSupervisorDriverDueAutomaticFuseBeatsLaterWaitFailureRegardlessOfReadiness(t *testing.T) {
