@@ -326,7 +326,7 @@ func TestSupervisorReducerLaunchEmergencyReleasedSnapshotSelectsOwnedIntentThrou
 				!attempt.deadlineAt.Equal(releasedAt.Add(test.commandDeadline)) ||
 				!reflect.DeepEqual(attempt.intent, wantIntent) ||
 				!reflect.DeepEqual(actions[1].intent, wantIntent) ||
-				attempt.pendingDrain != (supervisorPendingAction{kind: actions[1].kind, token: actions[1].token}) ||
+				attempt.pendingAction != (supervisorPendingAction{kind: actions[1].kind, token: actions[1].token}) ||
 				!attempt.drain.effectiveDrainBy.Equal(emergencyDrainBy) ||
 				!actions[1].drainBy.Equal(emergencyDrainBy) {
 				t.Fatalf("serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)

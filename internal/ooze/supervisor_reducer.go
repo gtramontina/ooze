@@ -27,6 +27,8 @@ const (
 	supervisorSealingStopAdmission
 	supervisorReleasingDomain
 	supervisorTransferringResidualCustody
+	supervisorSettlingRuntime
+	supervisorAwaitingEmergencySettlement
 )
 
 type supervisorEventKind uint8
@@ -40,6 +42,7 @@ const (
 	supervisorDrainCompleted
 	supervisorOutputCompleted
 	supervisorStopAdmissionSealed
+	supervisorReleaseCompleted
 )
 
 type supervisorActionKind uint8
@@ -60,7 +63,21 @@ const (
 	supervisorSealStopAdmission
 	supervisorReleaseDomain
 	supervisorTransferResidualCustody
+	supervisorSettleRuntime
 )
+
+type supervisorTerminalKind uint8
+
+const (
+	supervisorTerminalSettled supervisorTerminalKind = iota + 1
+	supervisorTerminalInfrastructureRelease
+	supervisorTerminalInfrastructureOutput
+	supervisorTerminalInfrastructureControl
+)
+
+type supervisorFiredBound uint8
+
+const supervisorNoCommandBound supervisorFiredBound = iota
 
 type supervisorDrainCompletionKind uint8
 
@@ -211,6 +228,13 @@ type supervisorStopSealCompletion struct {
 	at         time.Time
 }
 
+type supervisorReleaseCompletion struct {
+	generation attemptGeneration
+	action     supervisorPendingAction
+	at         time.Time
+	diagnostic supervisorDiagnosticRef
+}
+
 type supervisorOutputEvidence struct {
 	ref                   supervisorOutputRef
 	cutoff                uint64
@@ -218,6 +242,27 @@ type supervisorOutputEvidence struct {
 	completeThroughCutoff bool
 	final                 bool
 	diagnostic            supervisorDiagnosticRef
+}
+
+type supervisorTerminalDiagnostics struct {
+	wait    supervisorDiagnosticRef
+	running supervisorDiagnosticRef
+	drain   supervisorDiagnosticRef
+	control supervisorDiagnosticRef
+	release supervisorDiagnosticRef
+}
+
+type supervisorTerminalEvidence struct {
+	kind            supervisorTerminalKind
+	commandDeadline time.Duration
+	launchDuration  time.Duration
+	commandDuration time.Duration
+	firedBound      supervisorFiredBound
+	exitCode        int
+	exitSignal      int
+	count           supervisorObservedCount
+	output          supervisorOutputEvidence
+	diagnostics     supervisorTerminalDiagnostics
 }
 
 type supervisorEmergencySnapshot struct {
@@ -233,26 +278,28 @@ type supervisorEmergencyEpoch struct {
 }
 
 type supervisorAttemptState struct {
-	generation      attemptGeneration
-	attempt         attemptIdentity
-	profile         Profile
-	commandDeadline time.Duration
-	registeredAt    time.Time
-	launchBy        time.Time
-	lastEventAt     time.Time
-	revokedAt       time.Time
-	startedAt       time.Time
-	deadlineAt      time.Time
-	launchAction    supervisorActionToken
-	waitAction      supervisorActionToken
-	sampleAction    supervisorActionToken
-	pendingDrain    supervisorPendingAction
-	phase           supervisorAttemptPhase
-	releaseRevoked  bool
-	runningPeak     supervisorObservedCount
-	intent          supervisorRunningIntent
-	drain           supervisorDrainState
-	output          supervisorOutputEvidence
+	generation        attemptGeneration
+	attempt           attemptIdentity
+	profile           Profile
+	commandDeadline   time.Duration
+	registeredAt      time.Time
+	launchBy          time.Time
+	lastEventAt       time.Time
+	revokedAt         time.Time
+	startedAt         time.Time
+	deadlineAt        time.Time
+	launchAction      supervisorActionToken
+	waitAction        supervisorActionToken
+	sampleAction      supervisorActionToken
+	pendingAction     supervisorPendingAction
+	phase             supervisorAttemptPhase
+	releaseRevoked    bool
+	releaseDiagnostic supervisorDiagnosticRef
+	runningPeak       supervisorObservedCount
+	intent            supervisorRunningIntent
+	drain             supervisorDrainState
+	output            supervisorOutputEvidence
+	terminal          supervisorTerminalEvidence
 }
 
 type supervisorState struct {
@@ -276,6 +323,7 @@ type supervisorEvent struct {
 	drain              *supervisorDrainCompletion
 	output             *supervisorOutputCompletion
 	seal               *supervisorStopSealCompletion
+	release            *supervisorReleaseCompletion
 }
 
 type supervisorAction struct {
@@ -288,8 +336,10 @@ type supervisorAction struct {
 	launchFailure  LaunchFailure
 	launchDuration time.Duration
 	intent         supervisorRunningIntent
+	terminal       supervisorTerminalEvidence
 }
 
+//nolint:cyclop // One sealed deterministic event dispatch intentionally enumerates every supervisor event.
 func reduceSupervisor(state supervisorState, event supervisorEvent) (supervisorState, []supervisorAction) {
 	next := cloneSupervisorState(state)
 	switch event.kind {
@@ -309,6 +359,8 @@ func reduceSupervisor(state supervisorState, event supervisorEvent) (supervisorS
 		return reduceOutputCompletion(next, event)
 	case supervisorStopAdmissionSealed:
 		return reduceStopSealCompletion(next, event)
+	case supervisorReleaseCompleted:
+		return reduceReleaseCompletion(next, event)
 	default:
 		invariant(supervisorReducerOperation, "event kind is invalid")
 
@@ -329,7 +381,7 @@ func reduceProspectiveRegistration(
 	if event.generation == 0 || event.attempt == "" || event.at.IsZero() ||
 		event.launchBy.IsZero() || !event.launchBy.After(event.at) ||
 		!event.drainBy.IsZero() || event.completion != nil || event.drain != nil ||
-		event.output != nil || event.seal != nil || len(event.emergencySnapshots) != 0 ||
+		event.output != nil || event.seal != nil || event.release != nil || len(event.emergencySnapshots) != 0 ||
 		event.running != nil || (event.profile != AutomaticProfile && event.profile != SerialProfile) ||
 		event.commandDeadline <= 0 || state.attemptIndex(event.generation) >= 0 {
 		invariant(supervisorReducerOperation, "prospective registration is incomplete or duplicated")
@@ -360,6 +412,7 @@ func reduceLaunchCompletion(
 	completion := requireLaunchCompletion(attempt, event.completion)
 	if event.at.IsZero() || !event.at.Equal(completion.at) || !event.attemptIsZero() ||
 		!event.launchBy.IsZero() || event.drain != nil || event.output != nil || event.seal != nil ||
+		event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 || event.commandDeadline != 0 ||
 		event.running != nil || event.at.Before(attempt.lastEventAt) {
 		invariant(supervisorReducerOperation, "launch completion event is malformed or moved backward")
@@ -412,6 +465,7 @@ func reduceLaunchBoundary(
 		!event.attemptIsZero() || !event.launchBy.IsZero() || !event.drainBy.IsZero() ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 || event.commandDeadline != 0 ||
 		event.running != nil || event.drain != nil || event.output != nil || event.seal != nil ||
+		event.release != nil ||
 		event.at.Before(attempt.lastEventAt) {
 		invariant(supervisorReducerOperation, "launch boundary is invalid or duplicated")
 	}
@@ -435,7 +489,8 @@ func reduceLaunchEmergency(
 	if state.emergency.active || event.generation != 0 || !event.attemptIsZero() ||
 		event.at.IsZero() || !event.launchBy.IsZero() || !event.drainBy.After(event.at) ||
 		event.completion != nil || event.profile != 0 || event.commandDeadline != 0 ||
-		event.running != nil || event.drain != nil || event.output != nil || event.seal != nil {
+		event.running != nil || event.drain != nil || event.output != nil || event.seal != nil ||
+		event.release != nil {
 		invariant(supervisorReducerOperation, "emergency epoch is invalid, duplicated, or conflicting")
 	}
 	state.emergency = supervisorEmergencyEpoch{active: true, at: event.at, drainBy: event.drainBy}
@@ -507,9 +562,9 @@ func reduceLaunchEmergency(
 				invariant(supervisorReducerOperation, "owned emergency snapshot contains launch completion")
 			}
 			state.attempts[index].phase = supervisorEmergencyDraining
-			if attempt.pendingDrain.token == 0 {
+			if attempt.pendingAction.token == 0 {
 				action := state.newAction(supervisorForceOwned, index, event.at, event.drainBy, nil)
-				state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+				state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 				state.attempts[index].drain = supervisorDrainState{
 					effectiveDrainBy: event.drainBy,
 					forced:           true,
@@ -529,7 +584,7 @@ func reduceLaunchEmergency(
 			)
 			action := state.newAction(supervisorForceOwned, index, event.at, event.drainBy, nil)
 			action.intent = state.attempts[index].intent
-			state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+			state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 			state.attempts[index].drain = supervisorDrainState{
 				effectiveDrainBy: effectiveDrainBy,
 				forced:           true,
@@ -543,14 +598,14 @@ func reduceLaunchEmergency(
 			validateRunningBundleCorrelation(attempt, snapshot.running)
 			validateSealedRunningBundle(attempt, event.at, *snapshot.running)
 			state.attempts[index].phase = supervisorEmergencyDraining
-			if attempt.pendingDrain.token == 0 || attempt.pendingDrain.kind == 0 {
+			if attempt.pendingAction.token == 0 || attempt.pendingAction.kind == 0 {
 				invariant(supervisorReducerOperation, "latched intent has no correlated drain action")
 			}
 			state.clampDrain(index, event.drainBy)
 			state.attempts[index].lastEventAt = event.at
 		case supervisorCapturingOutput:
 			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) ||
-				attempt.pendingDrain.kind != supervisorCaptureOutput || attempt.pendingDrain.token == 0 ||
+				attempt.pendingAction.kind != supervisorCaptureOutput || attempt.pendingAction.token == 0 ||
 				(attempt.drain.decision != supervisorDrainProvenEmpty &&
 					attempt.drain.decision != supervisorDrainUnconfirmed) {
 				invariant(supervisorReducerOperation, "capture emergency snapshot or pending action is invalid")
@@ -571,7 +626,7 @@ func reduceLaunchEmergency(
 				(attempt.phase == supervisorTransferringResidualCustody &&
 					attempt.drain.decision == supervisorDrainUnconfirmed)
 			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) ||
-				attempt.pendingDrain.kind != wantPending || attempt.pendingDrain.token == 0 ||
+				attempt.pendingAction.kind != wantPending || attempt.pendingAction.token == 0 ||
 				attempt.output.ref == 0 || !branchOwnsDecision ||
 				attempt.output.final != (attempt.drain.decision == supervisorDrainProvenEmpty) ||
 				(attempt.drain.decision != supervisorDrainProvenEmpty &&
@@ -579,6 +634,29 @@ func reduceLaunchEmergency(
 				invariant(supervisorReducerOperation, "output pipeline emergency snapshot is invalid")
 			}
 			state.clampDrain(index, event.drainBy)
+			state.attempts[index].lastEventAt = event.at
+		case supervisorAwaitingEmergencySettlement:
+			if snapshot.completion != nil || snapshot.running != nil ||
+				event.at.Before(attempt.lastEventAt) ||
+				attempt.pendingAction != (supervisorPendingAction{}) ||
+				attempt.terminal != (supervisorTerminalEvidence{}) ||
+				attempt.intent != (supervisorRunningIntent{}) || !attempt.releaseRevoked ||
+				!attempt.startedAt.IsZero() || !attempt.deadlineAt.IsZero() ||
+				attempt.drain.decision != supervisorDrainProvenEmpty ||
+				attempt.output.ref == 0 || !attempt.output.final {
+				invariant(supervisorReducerOperation, "settled late-adoption emergency snapshot is invalid")
+			}
+			state.attempts[index].lastEventAt = event.at
+		case supervisorSettlingRuntime:
+			if snapshot.completion != nil || snapshot.running != nil ||
+				event.at.Before(attempt.lastEventAt) || attempt.terminal.kind == 0 ||
+				attempt.pendingAction.kind != supervisorSettleRuntime ||
+				attempt.pendingAction.token == 0 ||
+				attempt.terminal.diagnostics.release != attempt.releaseDiagnostic ||
+				attempt.drain.decision != supervisorDrainProvenEmpty ||
+				attempt.output.ref == 0 || !attempt.output.final {
+				invariant(supervisorReducerOperation, "runtime-settlement emergency snapshot is invalid")
+			}
 			state.attempts[index].lastEventAt = event.at
 		default:
 			invariant(supervisorReducerOperation, "emergency encountered an invalid attempt phase")
@@ -610,7 +688,7 @@ func reduceRunningBundle(
 	attempt := state.attempts[index]
 	if event.running == nil || event.at.IsZero() || event.drainBy.IsZero() ||
 		!event.attemptIsZero() || !event.launchBy.IsZero() || event.completion != nil ||
-		event.drain != nil || event.output != nil || event.seal != nil ||
+		event.drain != nil || event.output != nil || event.seal != nil || event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 || event.commandDeadline != 0 ||
 		!event.running.drainBy.IsZero() {
 		invariant(supervisorReducerOperation, "running bundle shape or action correlation is invalid")
@@ -636,7 +714,7 @@ func reduceRunningBundle(
 	}
 	action := state.newAction(actionKind, index, intent.at, intent.drainBy, nil)
 	action.intent = intent
-	state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 	state.attempts[index].drain = supervisorDrainState{
 		effectiveDrainBy: action.drainBy,
 		forced:           action.kind == supervisorForceOwned,
@@ -653,10 +731,10 @@ func reduceDrainCompletion(
 	attempt := state.attempts[index]
 	completion := event.drain
 	if completion == nil || completion.generation != attempt.generation ||
-		completion.action != attempt.pendingDrain || completion.action.token == 0 ||
+		completion.action != attempt.pendingAction || completion.action.token == 0 ||
 		completion.at.IsZero() || !event.at.Equal(completion.at) || event.at.Before(attempt.lastEventAt) ||
 		!event.attemptIsZero() || !event.launchBy.IsZero() || !event.drainBy.IsZero() ||
-		event.completion != nil || event.output != nil || event.seal != nil ||
+		event.completion != nil || event.output != nil || event.seal != nil || event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 ||
 		event.commandDeadline != 0 || event.running != nil {
 		invariant(supervisorReducerOperation, "drain completion correlation or shape is invalid")
@@ -691,7 +769,7 @@ func reduceDrainCompletion(
 		invariant(supervisorReducerOperation, "pending native action is not a drain completion")
 	}
 
-	state.attempts[index].pendingDrain = supervisorPendingAction{}
+	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
 	if completion.kind == supervisorDrainForceCompleted {
 		if completion.diagnostic != 0 {
@@ -730,13 +808,13 @@ func reduceOutputCompletion(
 	attempt := state.attempts[index]
 	completion := event.output
 	if completion == nil || completion.generation != attempt.generation ||
-		completion.action != attempt.pendingDrain ||
+		completion.action != attempt.pendingAction ||
 		completion.action.kind != supervisorCaptureOutput || completion.action.token == 0 ||
 		completion.at.IsZero() || !event.at.Equal(completion.at) || event.at.Before(attempt.lastEventAt) ||
 		completion.ref == 0 || completion.prefixLength > completion.cutoff ||
 		(completion.diagnostic == 0 && completion.prefixLength != completion.cutoff) ||
 		!event.attemptIsZero() || !event.launchBy.IsZero() || !event.drainBy.IsZero() ||
-		event.completion != nil || event.drain != nil || event.seal != nil ||
+		event.completion != nil || event.drain != nil || event.seal != nil || event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 ||
 		event.commandDeadline != 0 || event.running != nil {
 		invariant(supervisorReducerOperation, "output completion correlation, evidence, or shape is invalid")
@@ -748,7 +826,7 @@ func reduceOutputCompletion(
 		invariant(supervisorReducerOperation, "output completion is outside immutable capture")
 	}
 
-	state.attempts[index].pendingDrain = supervisorPendingAction{}
+	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
 	state.attempts[index].output = supervisorOutputEvidence{
 		ref:                   completion.ref,
@@ -766,7 +844,7 @@ func reduceOutputCompletion(
 		state.attempts[index].drain.effectiveDrainBy,
 		nil,
 	)
-	state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 
 	return state, []supervisorAction{action}
 }
@@ -779,11 +857,11 @@ func reduceStopSealCompletion(
 	attempt := state.attempts[index]
 	completion := event.seal
 	if completion == nil || completion.generation != attempt.generation ||
-		completion.action != attempt.pendingDrain ||
+		completion.action != attempt.pendingAction ||
 		completion.action.kind != supervisorSealStopAdmission || completion.action.token == 0 ||
 		completion.at.IsZero() || !event.at.Equal(completion.at) || event.at.Before(attempt.lastEventAt) ||
 		!event.attemptIsZero() || !event.launchBy.IsZero() || !event.drainBy.IsZero() ||
-		event.completion != nil || event.drain != nil || event.output != nil ||
+		event.completion != nil || event.drain != nil || event.output != nil || event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 ||
 		event.commandDeadline != 0 || event.running != nil {
 		invariant(supervisorReducerOperation, "stop-admission seal completion correlation or shape is invalid")
@@ -795,7 +873,7 @@ func reduceStopSealCompletion(
 		invariant(supervisorReducerOperation, "stop-admission seal completion is outside output custody")
 	}
 
-	state.attempts[index].pendingDrain = supervisorPendingAction{}
+	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
 	actionKind := supervisorTransferResidualCustody
 	state.attempts[index].phase = supervisorTransferringResidualCustody
@@ -810,7 +888,171 @@ func reduceStopSealCompletion(
 		state.attempts[index].drain.effectiveDrainBy,
 		nil,
 	)
-	state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
+
+	return state, []supervisorAction{action}
+}
+
+func reduceReleaseCompletion(
+	state supervisorState,
+	event supervisorEvent,
+) (supervisorState, []supervisorAction) {
+	index := state.requireAttempt(event.generation)
+	attempt := state.attempts[index]
+	completion := requireReleaseCompletion(attempt, event)
+	validateProvenEmptyReleaseCustody(attempt)
+
+	state.attempts[index].pendingAction = supervisorPendingAction{}
+	state.attempts[index].lastEventAt = completion.at
+	state.attempts[index].releaseDiagnostic = completion.diagnostic
+	if !attempt.intent.latched {
+		return state.completeLateAdoptedRelease(index)
+	}
+
+	validateRootExitReleaseProvenance(attempt)
+	evidence := normalizeRootExitTerminalEvidence(state.attempts[index])
+
+	return state.beginRuntimeSettlement(index, completion.at, evidence)
+}
+
+func requireReleaseCompletion(
+	attempt supervisorAttemptState,
+	event supervisorEvent,
+) supervisorReleaseCompletion {
+	if event.release == nil {
+		invariant(supervisorReducerOperation, "release completion correlation or shape is invalid")
+	}
+	completion := *event.release
+	wantCompletion := supervisorReleaseCompletion{
+		generation: attempt.generation,
+		action:     attempt.pendingAction,
+		at:         event.at,
+		diagnostic: completion.diagnostic,
+	}
+	if completion != wantCompletion || completion.action.kind != supervisorReleaseDomain ||
+		completion.action.token == 0 || completion.at.IsZero() || event.at.Before(attempt.lastEventAt) {
+		invariant(supervisorReducerOperation, "release completion correlation or shape is invalid")
+	}
+
+	type releaseEventShape struct {
+		kind            supervisorEventKind
+		generation      attemptGeneration
+		attempt         attemptIdentity
+		at              time.Time
+		launchBy        time.Time
+		drainBy         time.Time
+		completion      *supervisorLaunchCompletion
+		profile         Profile
+		commandDeadline time.Duration
+		running         *supervisorRunningBundle
+		drain           *supervisorDrainCompletion
+		output          *supervisorOutputCompletion
+		seal            *supervisorStopSealCompletion
+	}
+	shape := releaseEventShape{
+		kind: event.kind, generation: event.generation, attempt: event.attempt,
+		at: event.at, launchBy: event.launchBy, drainBy: event.drainBy,
+		completion: event.completion, profile: event.profile,
+		commandDeadline: event.commandDeadline, running: event.running,
+		drain: event.drain, output: event.output, seal: event.seal,
+	}
+	wantShape := releaseEventShape{
+		kind: supervisorReleaseCompleted, generation: attempt.generation, at: completion.at,
+	}
+	if shape != wantShape || len(event.emergencySnapshots) != 0 {
+		invariant(supervisorReducerOperation, "release completion correlation or shape is invalid")
+	}
+
+	return completion
+}
+
+func validateProvenEmptyReleaseCustody(attempt supervisorAttemptState) {
+	if attempt.phase != supervisorReleasingDomain ||
+		attempt.drain.decision != supervisorDrainProvenEmpty ||
+		attempt.output.ref == 0 || !attempt.output.final ||
+		attempt.output.prefixLength > attempt.output.cutoff ||
+		attempt.output.completeThroughCutoff != (attempt.output.diagnostic == 0) ||
+		(attempt.output.diagnostic == 0 && attempt.output.prefixLength != attempt.output.cutoff) ||
+		attempt.terminal != (supervisorTerminalEvidence{}) {
+		invariant(supervisorReducerOperation, "release completion is outside proven-empty output custody")
+	}
+}
+
+func (state supervisorState) completeLateAdoptedRelease(
+	index int,
+) (supervisorState, []supervisorAction) {
+	attempt := state.attempts[index]
+	if attempt.intent != (supervisorRunningIntent{}) || !attempt.releaseRevoked ||
+		!attempt.startedAt.IsZero() || !attempt.deadlineAt.IsZero() {
+		invariant(supervisorReducerOperation, "late-adoption release cannot construct ordinary terminal evidence")
+	}
+	state.attempts[index].phase = supervisorAwaitingEmergencySettlement
+
+	return state, nil
+}
+
+func validateRootExitReleaseProvenance(attempt supervisorAttemptState) {
+	if attempt.registeredAt.IsZero() || attempt.startedAt.IsZero() ||
+		attempt.startedAt.Before(attempt.registeredAt) || attempt.commandDeadline <= 0 ||
+		!attempt.deadlineAt.Equal(attempt.startedAt.Add(attempt.commandDeadline)) ||
+		attempt.intent.at.Before(attempt.startedAt) || attempt.intent.at.After(attempt.deadlineAt) {
+		invariant(supervisorReducerOperation, "release completion lacks immutable root-exit provenance")
+	}
+	wantIntent := attempt.intent
+	wantIntent.latched = true
+	wantIntent.kind = supervisorIntentRootExit
+	wantIntent.duration = attempt.intent.at.Sub(attempt.startedAt)
+	wantIntent.count = supervisorObservedCount{}
+	wantIntent.stop = StopRequest{}
+	wantIntent.observationSource = 0
+	if attempt.intent != wantIntent {
+		invariant(supervisorReducerOperation, "release completion lacks immutable root-exit provenance")
+	}
+}
+
+func normalizeRootExitTerminalEvidence(
+	attempt supervisorAttemptState,
+) supervisorTerminalEvidence {
+	terminalKind := supervisorTerminalSettled
+	switch {
+	case attempt.drain.controlDiagnostic != 0:
+		terminalKind = supervisorTerminalInfrastructureControl
+	case attempt.output.diagnostic != 0:
+		terminalKind = supervisorTerminalInfrastructureOutput
+	case attempt.releaseDiagnostic != 0:
+		terminalKind = supervisorTerminalInfrastructureRelease
+	}
+
+	return supervisorTerminalEvidence{
+		kind:            terminalKind,
+		commandDeadline: attempt.commandDeadline,
+		launchDuration:  attempt.startedAt.Sub(attempt.registeredAt),
+		commandDuration: attempt.intent.duration,
+		firedBound:      supervisorNoCommandBound,
+		exitCode:        attempt.intent.exitCode,
+		exitSignal:      attempt.intent.exitSignal,
+		count:           supervisorObservedCount{},
+		output:          attempt.output,
+		diagnostics: supervisorTerminalDiagnostics{
+			wait:    attempt.intent.diagnostics.wait,
+			running: attempt.intent.diagnostics.running,
+			drain:   attempt.drain.observationDiagnostic,
+			control: attempt.drain.controlDiagnostic,
+			release: attempt.releaseDiagnostic,
+		},
+	}
+}
+
+func (state supervisorState) beginRuntimeSettlement(
+	index int,
+	at time.Time,
+	evidence supervisorTerminalEvidence,
+) (supervisorState, []supervisorAction) {
+	state.attempts[index].terminal = evidence
+	state.attempts[index].phase = supervisorSettlingRuntime
+	action := state.newAction(supervisorSettleRuntime, index, at, time.Time{}, nil)
+	action.terminal = evidence
+	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 
 	return state, []supervisorAction{action}
 }
@@ -820,12 +1062,12 @@ func (state supervisorState) issueDrainAction(
 	kind supervisorActionKind,
 	at time.Time,
 ) (supervisorState, []supervisorAction) {
-	if state.attempts[index].pendingDrain != (supervisorPendingAction{}) ||
+	if state.attempts[index].pendingAction != (supervisorPendingAction{}) ||
 		(kind != supervisorForceOwned && kind != supervisorObserveEmptiness) {
 		invariant(supervisorReducerOperation, "drain action overlaps its predecessor or has an invalid kind")
 	}
 	action := state.newAction(kind, index, at, state.attempts[index].drain.effectiveDrainBy, nil)
-	state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 
 	return state, []supervisorAction{action}
 }
@@ -835,7 +1077,7 @@ func (state supervisorState) captureDrain(
 	at time.Time,
 	provenEmpty bool,
 ) (supervisorState, []supervisorAction) {
-	if state.attempts[index].pendingDrain != (supervisorPendingAction{}) ||
+	if state.attempts[index].pendingAction != (supervisorPendingAction{}) ||
 		state.attempts[index].drain.decision != 0 {
 		invariant(supervisorReducerOperation, "drain capture overlaps or duplicates settlement")
 	}
@@ -851,7 +1093,7 @@ func (state supervisorState) captureDrain(
 		state.attempts[index].drain.effectiveDrainBy,
 		nil,
 	)
-	state.attempts[index].pendingDrain = supervisorPendingAction{kind: action.kind, token: action.token}
+	state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
 
 	return state, []supervisorAction{action}
 }
@@ -1372,7 +1614,7 @@ func (state supervisorState) forceLaunchOwnership(
 	publish := state.newAction(publishKind, index, at, drainBy, &completion)
 	force := state.newAction(supervisorForceOwned, index, at, drainBy, &completion)
 	force.intent = intent
-	state.attempts[index].pendingDrain = supervisorPendingAction{
+	state.attempts[index].pendingAction = supervisorPendingAction{
 		kind: force.kind, token: force.token,
 	}
 	state.attempts[index].drain = supervisorDrainState{
@@ -1433,7 +1675,7 @@ func (state *supervisorState) newAction(
 	drainBy time.Time,
 	completion *supervisorLaunchCompletion,
 ) supervisorAction {
-	if kind < supervisorLaunchNative || kind > supervisorTransferResidualCustody ||
+	if kind < supervisorLaunchNative || kind > supervisorSettleRuntime ||
 		index < 0 || index >= len(state.attempts) || state.nextAction == ^supervisorActionToken(0) {
 		invariant(supervisorReducerOperation, "action allocation is invalid or exhausted")
 	}

@@ -685,7 +685,7 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 		attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
 		if attempt.phase != supervisorEmergencyDraining || attempt.intent.kind != supervisorIntentRootExit ||
 			!attempt.intent.at.Equal(factAt) || !attempt.intent.drainBy.Equal(localDrainBy) ||
-			attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
+			attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
 			!actions[0].at.Equal(emergencyAt) || !actions[0].drainBy.Equal(emergencyDrainBy) {
 			t.Fatalf("emergency running snapshot = %#v actions=%#v", attempt, actions)
 		}
@@ -731,7 +731,7 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 			duration: emergencyAt.Sub(fixture.startedAt),
 		}
 		if attempt.phase != supervisorEmergencyDraining || !reflect.DeepEqual(attempt.intent, wantIntent) ||
-			attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
+			attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
 			!reflect.DeepEqual(actions[0].intent, wantIntent) ||
 			!attempt.drain.effectiveDrainBy.Equal(drainBy) || !actions[0].drainBy.Equal(drainBy) {
 			t.Fatalf("runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
@@ -812,7 +812,7 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 		)
 		beforeAttempt := supervisorAttemptByGeneration(t, latched, fixture.generation)
 		before := beforeAttempt.intent
-		if beforeAttempt.pendingDrain != (supervisorPendingAction{
+		if beforeAttempt.pendingAction != (supervisorPendingAction{
 			kind: intentActions[0].kind, token: intentActions[0].token,
 		}) {
 			t.Fatalf("latched intent did not retain first drain action: %#v actions=%#v", beforeAttempt, intentActions)
@@ -834,7 +834,7 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 		}
 		after := supervisorAttemptByGeneration(t, next, fixture.generation)
 		if after.phase != supervisorEmergencyDraining || !reflect.DeepEqual(after.intent, before) ||
-			after.pendingDrain != beforeAttempt.pendingDrain ||
+			after.pendingAction != beforeAttempt.pendingAction ||
 			!next.emergency.active || !next.emergency.at.Equal(emergencyAt) ||
 			!next.emergency.drainBy.Equal(drainBy) {
 			t.Fatalf("emergency rewrote accepted intent: before=%#v after=%#v", before, after)

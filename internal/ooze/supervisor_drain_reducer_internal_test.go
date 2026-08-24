@@ -20,7 +20,7 @@ func TestSupervisorReducerDrainForcedIntentsForceThenObserveUnderOneBound(t *tes
 			}
 			attempt := supervisorAttemptByGeneration(t, fixture.state, fixture.generation)
 			if !attempt.drain.effectiveDrainBy.Equal(fixture.drainBy) || !attempt.drain.forced ||
-				attempt.pendingDrain != (supervisorPendingAction{kind: fixture.first.kind, token: fixture.first.token}) {
+				attempt.pendingAction != (supervisorPendingAction{kind: fixture.first.kind, token: fixture.first.token}) {
 				t.Fatalf("forced drain start = %#v action=%#v", attempt, fixture.first)
 			}
 
@@ -31,7 +31,7 @@ func TestSupervisorReducerDrainForcedIntentsForceThenObserveUnderOneBound(t *tes
 				t.Fatalf("force completion reset drain bound or token: first=%#v next=%#v", fixture.first, actions[0])
 			}
 			attempt = supervisorAttemptByGeneration(t, next, fixture.generation)
-			if attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
+			if attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
 				!attempt.drain.effectiveDrainBy.Equal(fixture.drainBy) {
 				t.Fatalf("post-force observation = %#v actions=%#v", attempt, actions)
 			}
@@ -55,7 +55,7 @@ func TestSupervisorReducerDrainRootExitObservesAndTimelyEmptyCapturesWithoutForc
 	after := supervisorAttemptByGeneration(t, next, fixture.generation)
 	if after.phase != supervisorCapturingOutput || after.drain.decision != supervisorDrainProvenEmpty ||
 		after.drain.forced || !actions[0].drainBy.Equal(fixture.drainBy) ||
-		after.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
+		after.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
 		t.Fatalf("timely empty root-exit drain = %#v actions=%#v", after, actions)
 	}
 }
@@ -77,7 +77,7 @@ func TestSupervisorReducerDrainResidualAndObservationFailureForceOrReobserveCaus
 			assertSupervisorActions(t, actions, supervisorForceOwned)
 			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
 			if !attempt.drain.forced || !actions[0].drainBy.Equal(fixture.drainBy) ||
-				attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
+				attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
 				t.Fatalf("natural residual/fault escaped force: %#v actions=%#v", attempt, actions)
 			}
 		})
@@ -95,7 +95,7 @@ func TestSupervisorReducerDrainResidualAndObservationFailureForceOrReobserveCaus
 			assertSupervisorActions(t, actions, supervisorObserveEmptiness)
 			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
 			if !actions[0].drainBy.Equal(fixture.drainBy) ||
-				attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
+				attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
 				t.Fatalf("post-force observation changed epoch: %#v actions=%#v", attempt, actions)
 			}
 		})
@@ -190,7 +190,7 @@ func TestSupervisorReducerDrainEmergencyClampPersistsAcrossInflightAction(t *tes
 				t.Fatalf("emergency issued competing action: %#v", actions)
 			}
 			attempt := supervisorAttemptByGeneration(t, clamped, fixture.generation)
-			if attempt.pendingDrain != originalPending || !attempt.drain.effectiveDrainBy.Equal(clamp) {
+			if attempt.pendingAction != originalPending || !attempt.drain.effectiveDrainBy.Equal(clamp) {
 				t.Fatalf("in-flight emergency clamp = %#v", attempt)
 			}
 
@@ -278,8 +278,8 @@ func TestSupervisorReducerDrainEmergencyDuringCapturePreservesDecisionAndPending
 			if emergencyDrainBy.Before(wantBound) {
 				wantBound = emergencyDrainBy
 			}
-			if after.phase != supervisorCapturingOutput || after.pendingDrain != before.pendingDrain ||
-				after.pendingDrain != (supervisorPendingAction{kind: supervisorCaptureOutput, token: capture.token}) ||
+			if after.phase != supervisorCapturingOutput || after.pendingAction != before.pendingAction ||
+				after.pendingAction != (supervisorPendingAction{kind: supervisorCaptureOutput, token: capture.token}) ||
 				after.drain.decision != before.drain.decision ||
 				after.drain.controlDiagnostic != before.drain.controlDiagnostic ||
 				after.drain.observationDiagnostic != before.drain.observationDiagnostic ||
@@ -616,7 +616,7 @@ func assertUnconfirmedCapture(
 		attempt.drain.decision != supervisorDrainUnconfirmed ||
 		!attempt.drain.effectiveDrainBy.Equal(drainBy) ||
 		!actions[0].drainBy.Equal(drainBy) ||
-		attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
+		attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
 		t.Fatalf("unconfirmed capture = %#v actions=%#v", attempt, actions)
 	}
 }

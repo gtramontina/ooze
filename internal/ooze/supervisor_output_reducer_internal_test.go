@@ -60,7 +60,7 @@ func TestSupervisorReducerOutputEvidenceCompletenessAndFinalityAreIndependent(t 
 			}
 			if attempt.phase != supervisorSealingStopAdmission ||
 				!reflect.DeepEqual(attempt.output, wantEvidence) ||
-				attempt.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
+				attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
 				!actions[0].drainBy.Equal(fixture.drainBy) {
 				t.Fatalf("output evidence/seal = %#v actions=%#v, want %#v", attempt, actions, wantEvidence)
 			}
@@ -150,7 +150,7 @@ func TestSupervisorReducerStopSealBranchesOnlyAfterCorrelatedCompletion(t *testi
 			)
 			assertSupervisorActions(t, sealActions, supervisorSealStopAdmission)
 			before := supervisorAttemptByGeneration(t, withOutput, fixture.generation)
-			if before.pendingDrain.kind != supervisorSealStopAdmission {
+			if before.pendingAction.kind != supervisorSealStopAdmission {
 				t.Fatalf("output did not stop at seal: %#v", before)
 			}
 
@@ -161,7 +161,7 @@ func TestSupervisorReducerStopSealBranchesOnlyAfterCorrelatedCompletion(t *testi
 			assertSupervisorActions(t, actions, test.wantAction)
 			after := supervisorAttemptByGeneration(t, next, fixture.generation)
 			if after.phase != test.wantPhase || !reflect.DeepEqual(after.output, before.output) ||
-				after.pendingDrain != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
+				after.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
 				!actions[0].drainBy.Equal(fixture.drainBy) {
 				t.Fatalf("seal branch = %#v actions=%#v", after, actions)
 			}
@@ -257,7 +257,7 @@ func TestSupervisorReducerOutputPipelineRejectsImpossibleFinalityAndBranchOwners
 			name: "release phase with unconfirmed decision",
 			mutate: func(attempt *supervisorAttemptState) {
 				attempt.phase = supervisorReleasingDomain
-				attempt.pendingDrain.kind = supervisorReleaseDomain
+				attempt.pendingAction.kind = supervisorReleaseDomain
 				attempt.drain.decision = supervisorDrainUnconfirmed
 				attempt.output.final = false
 			},
@@ -266,7 +266,7 @@ func TestSupervisorReducerOutputPipelineRejectsImpossibleFinalityAndBranchOwners
 			name: "transfer phase with proven empty decision",
 			mutate: func(attempt *supervisorAttemptState) {
 				attempt.phase = supervisorTransferringResidualCustody
-				attempt.pendingDrain.kind = supervisorTransferResidualCustody
+				attempt.pendingAction.kind = supervisorTransferResidualCustody
 				attempt.drain.decision = supervisorDrainProvenEmpty
 				attempt.output.final = true
 			},
@@ -344,8 +344,8 @@ func TestSupervisorReducerOutputPipelineEmergencyCompositionPreservesInflightSta
 			if emergencyDrainBy.Before(wantBound) {
 				wantBound = emergencyDrainBy
 			}
-			if after.phase != before.phase || after.pendingDrain != before.pendingDrain ||
-				after.pendingDrain != (supervisorPendingAction{kind: pending.kind, token: pending.token}) ||
+			if after.phase != before.phase || after.pendingAction != before.pendingAction ||
+				after.pendingAction != (supervisorPendingAction{kind: pending.kind, token: pending.token}) ||
 				!reflect.DeepEqual(after.output, before.output) ||
 				after.drain.decision != before.drain.decision ||
 				!after.drain.effectiveDrainBy.Equal(wantBound) ||
@@ -375,7 +375,7 @@ func TestSupervisorReducerOutputPipelinePropagatesEmergencyClampAfterCompletion(
 		)
 		assertSupervisorActions(t, seal, supervisorSealStopAdmission)
 		if !seal[0].drainBy.Equal(clamp) ||
-			supervisorAttemptByGeneration(t, next, fixture.generation).pendingDrain !=
+			supervisorAttemptByGeneration(t, next, fixture.generation).pendingAction !=
 				(supervisorPendingAction{kind: seal[0].kind, token: seal[0].token}) {
 			t.Fatalf("post-clamp output completion lost bound: %#v", seal)
 		}
