@@ -909,7 +909,7 @@ func (driver *supervisorDriver) transferResidualCustody(action supervisorAction)
 func terminalObservation(evidence supervisorTerminalEvidence) attemptObservation {
 	switch evidence.kind {
 	case supervisorTerminalSettled:
-		return attemptSettled{}
+		return attemptSettled{profile: evidence.profile, deadline: evidence.commandDeadline}
 	case supervisorTerminalFuseTrip:
 		return attemptTripped{kind: fuseTrip}
 	case supervisorTerminalAutomaticDeadlineTrip, supervisorTerminalSerialDeadlineTrip:
@@ -930,7 +930,7 @@ func terminalObservation(evidence supervisorTerminalEvidence) attemptObservation
 func (driver *supervisorDriver) deliverTerminal(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
-	terminal := publicTerminal(action.terminal, driver.readOutput, driver.readDiagnostic)
+	terminal := publicTerminal(action.terminal, driver.readOutput, driver.readDiagnostic, action.runtimeKind)
 	delivery := attempt.terminal
 	if attempt.terminalReady {
 		driver.mutex.Unlock()
@@ -1157,6 +1157,7 @@ func publicTerminal(
 	evidence supervisorTerminalEvidence,
 	readOutput func(supervisorOutputRef) string,
 	readDiagnostic func(supervisorDiagnosticRef) error,
+	runtimeKind supervisorRuntimeReceiptKind,
 ) Terminal {
 	diagnostics := resolvePublicDiagnostics(evidence, readDiagnostic)
 	data := ExecutionData{
@@ -1167,7 +1168,9 @@ func publicTerminal(
 			CompleteThroughCutoff: evidence.output.completeThroughCutoff,
 			Final:                 evidence.output.final,
 		},
-		Failures: diagnostics.failures,
+		Failures:                diagnostics.failures,
+		profile:                 evidence.profile,
+		confirmationProvisional: runtimeKind == supervisorRuntimeProvisionalDeadline,
 	}
 	if evidence.firedBound == supervisorCommandDeadlineFired {
 		data.BoundFired = CommandDeadlineFired

@@ -319,6 +319,7 @@ type supervisorTerminalDiagnostics struct {
 
 type supervisorTerminalEvidence struct {
 	kind            supervisorTerminalKind
+	profile         Profile
 	commandDeadline time.Duration
 	launchDuration  time.Duration
 	commandDuration time.Duration
@@ -1706,6 +1707,7 @@ func normalizeTerminalEvidence(
 
 	return supervisorTerminalEvidence{
 		kind:            terminalKind,
+		profile:         attempt.profile,
 		commandDeadline: attempt.commandDeadline,
 		launchDuration:  attempt.startedAt.Sub(attempt.registeredAt),
 		commandDuration: attempt.intent.duration,

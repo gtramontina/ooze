@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 const confirmationAttempt = "confirm-a"
+
+func settledConfirmation(grant admissionGrant) attemptSettled {
+	return attemptSettled{profile: grant.profile, deadline: grant.deadline}
+}
 
 //nolint:cyclop // This is one ordered trace; splitting its checks would hide the event sequence.
 func TestProcessRuntimeOverlapDeadlineAtomicallyClosesGateAndInstallsBarrier(t *testing.T) {
@@ -70,6 +75,7 @@ func TestProcessRuntimeOverlapDeadlineAtomicallyClosesGateAndInstallsBarrier(t *
 	runtime, bound := runtime.sealAndBindConfirmationBarrier(barrierBinding{
 		campaign: campaignA.token,
 		attempt:  confirmationAttempt,
+		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if bound.decision != barrierBound || len(bound.deliveries) != 0 {
 		t.Fatalf("barrier bind=%#v", bound)
@@ -80,7 +86,10 @@ func TestProcessRuntimeOverlapDeadlineAtomicallyClosesGateAndInstallsBarrier(t *
 	}
 	runtime, confirmation := runtime.startCommitted(settledB.deliveries[0])
 	runtime, _ = runtime.observeAttempt(confirmation.generation, launchOwned{})
-	runtime, confirmationSettled := runtime.observeAttempt(confirmation.generation, attemptSettled{})
+	runtime, confirmationSettled := runtime.observeAttempt(
+		confirmation.generation,
+		settledConfirmation(settledB.deliveries[0]),
+	)
 	if !reflect.DeepEqual(confirmationSettled.deliveries, []admissionGrant{later.request}) {
 		t.Fatalf("post-confirmation FIFO deliveries=%#v", confirmationSettled.deliveries)
 	}
@@ -115,6 +124,7 @@ func TestProcessRuntimeBarrierCannotBindBeforeCampaignClosureSetSettles(t *testi
 	runtime, premature := runtime.sealAndBindConfirmationBarrier(barrierBinding{
 		campaign: campaignA.token,
 		attempt:  confirmationAttempt,
+		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if premature.decision != barrierRejectedClosureOutstanding || !reflect.DeepEqual(runtime, unchanged) {
 		t.Fatalf("premature bind result/state=%#v/%#v", premature, runtime)
@@ -123,6 +133,7 @@ func TestProcessRuntimeBarrierCannotBindBeforeCampaignClosureSetSettles(t *testi
 	_, bound := runtime.sealAndBindConfirmationBarrier(barrierBinding{
 		campaign: campaignA.token,
 		attempt:  confirmationAttempt,
+		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if bound.decision != barrierBound {
 		t.Fatalf("barrier was not bound after closure set settled: %#v", bound)
@@ -219,7 +230,7 @@ func TestProcessRuntimeConfirmationSettlementAuthorizesSingleAdmission(t *testin
 	grant := runtime.admissions[barrierAt].grant
 	runtime, started := runtime.startCommitted(grant)
 	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
-	runtime, result := runtime.observeAttempt(started.generation, attemptSettled{})
+	runtime, result := runtime.observeAttempt(started.generation, settledConfirmation(grant))
 	if runtime.mode != singleAdmission {
 		t.Fatalf("confirmation did not authorize pressure transition: %#v", runtime)
 	}
@@ -240,13 +251,13 @@ func TestProcessRuntimeConfirmationPressureDoesNotReopenGateBeforeQueueDrains(t 
 	firstGrant := runtime.admissions[firstAt].grant
 	runtime, first := runtime.startCommitted(firstGrant)
 	runtime, _ = runtime.observeAttempt(first.generation, launchOwned{})
-	runtime, firstResult := runtime.observeAttempt(first.generation, attemptSettled{})
+	runtime, firstResult := runtime.observeAttempt(first.generation, settledConfirmation(firstGrant))
 	campaignAt := runtime.campaignIndex(firstGrant.campaign)
 	if !firstResult.pressureTransitioned || runtime.mode != singleAdmission || runtime.campaigns[campaignAt].primaryGateOpen {
 		t.Fatalf("continuing confirmation pressure/gate=%#v/%#v", firstResult, runtime)
 	}
 	runtime, requested := runtime.requestAdmission(admissionRequest{
-		campaign: firstGrant.campaign, attempt: "next-confirmation", class: confirmationAdmission,
+		campaign: firstGrant.campaign, attempt: "next-confirmation", class: confirmationAdmission, profile: AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if requested.decision != admissionAccepted || len(requested.deliveries) != 1 {
 		t.Fatalf("next confirmation admission=%#v", requested)
@@ -258,7 +269,7 @@ func TestProcessRuntimeConfirmationPressureDoesNotReopenGateBeforeQueueDrains(t 
 		t.Fatalf("repeated continuing confirmation reopened gate: %#v", runtime)
 	}
 	runtime, requested = runtime.requestAdmission(admissionRequest{
-		campaign: firstGrant.campaign, attempt: "last-confirmation", class: confirmationAdmission,
+		campaign: firstGrant.campaign, attempt: "last-confirmation", class: confirmationAdmission, profile: AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if requested.decision != admissionAccepted || len(requested.deliveries) != 1 {
 		t.Fatalf("last confirmation admission=%#v", requested)
@@ -285,7 +296,7 @@ func TestProcessRuntimeRejectsConfirmationBeforePrimaryGateCloses(t *testing.T) 
 	runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
 	unchanged := runtime
 	runtime, result := runtime.requestAdmission(admissionRequest{
-		campaign: campaign.token, attempt: "early-confirmation", class: confirmationAdmission,
+		campaign: campaign.token, attempt: "early-confirmation", class: confirmationAdmission, profile: AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if result.decision != admissionRejectedGateOpen || !reflect.DeepEqual(runtime, unchanged) {
 		t.Fatalf("early confirmation result/state=%#v/%#v", result, runtime)
@@ -1029,7 +1040,7 @@ func TestProcessRuntimeConfirmationOutcomeControlsPressureAndReopensGate(t *test
 		grant := runtime.admissions[barrierAt].grant
 		runtime, started := runtime.startCommitted(grant)
 		runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
-		_, result := runtime.observeAttempt(started.generation, attemptSettled{})
+		_, result := runtime.observeAttempt(started.generation, settledConfirmation(grant))
 		if result.pressureTransitioned {
 			t.Fatalf("duplicate pressure transition=%#v", result)
 		}
@@ -1042,11 +1053,27 @@ func TestProcessRuntimeDerivesConfirmationPressureFromOrdinarySettlement(t *test
 	grant := runtime.admissions[barrierAt].grant
 	runtime, started := runtime.startCommitted(grant)
 	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
-	runtime, result := runtime.observeAttempt(started.generation, attemptSettled{})
+	runtime, result := runtime.observeAttempt(started.generation, settledConfirmation(grant))
 	campaignAt := runtime.campaignIndex(grant.campaign)
 	if runtime.mode != singleAdmission || !result.pressureTransitioned ||
 		runtime.campaigns[campaignAt].primaryGateOpen {
 		t.Fatalf("ordinary confirmation settlement result/state = %#v/%#v", result, runtime)
+	}
+}
+
+func TestProcessRuntimeRejectsPressureWhenConfirmationFactsDifferFromGrant(t *testing.T) {
+	runtime := runtimeAtBoundConfirmation(t)
+	barrierAt := runtime.grantedConfirmationIndex()
+	runtime.admissions[barrierAt].grant.profile = AutomaticProfile
+	runtime.admissions[barrierAt].grant.deadline = 31 * time.Second
+	grant := runtime.admissions[barrierAt].grant
+	runtime, started := runtime.startCommitted(grant)
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, result := runtime.observeAttempt(started.generation, attemptSettled{
+		profile: AutomaticProfile, deadline: 30 * time.Second,
+	})
+	if runtime.mode != fullAutomatic || result.pressureTransitioned {
+		t.Fatalf("mismatched confirmation changed pressure = %#v/%#v", result, runtime)
 	}
 }
 
@@ -1115,7 +1142,10 @@ func TestProcessRuntimePrimaryGateAppliesToSharedAndSerialButNotConfirmation(t *
 			t.Fatalf("class %v gate result=%#v", class, result)
 		}
 	}
-	_, result := runtime.requestAdmission(admissionRequest{campaign: campaign, attempt: "follow-on", class: confirmationAdmission})
+	_, result := runtime.requestAdmission(admissionRequest{
+		campaign: campaign, attempt: "follow-on", class: confirmationAdmission,
+		profile: AutomaticProfile, deadline: 31 * time.Second,
+	})
 	if result.decision != admissionRejectedExclusiveOutstanding {
 		t.Fatalf("confirmation cardinality result=%#v", result)
 	}
@@ -1408,6 +1438,7 @@ func runtimeAtBoundConfirmation(t *testing.T) processRuntime {
 	runtime, bound := runtime.sealAndBindConfirmationBarrier(barrierBinding{
 		campaign: campaignA.token,
 		attempt:  confirmationAttempt,
+		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if bound.decision != barrierBound || len(bound.deliveries) != 1 {
 		t.Fatalf("bound confirmation setup=%#v/%#v", bound, runtime)

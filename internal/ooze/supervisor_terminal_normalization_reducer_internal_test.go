@@ -44,6 +44,7 @@ func TestSupervisorReducerTerminalNormalization(t *testing.T) {
 
 			want := supervisorTerminalEvidence{
 				kind:            spec.wantKind,
+				profile:         spec.profile,
 				commandDeadline: before.commandDeadline,
 				launchDuration:  before.startedAt.Sub(before.registeredAt),
 				commandDuration: before.intent.duration,

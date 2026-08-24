@@ -2316,7 +2316,7 @@ func TestPublicTerminalPreservesEveryIndependentInfrastructureDiagnostic(t *test
 				},
 			}, func(supervisorOutputRef) string { return "partial" }, func(ref supervisorDiagnosticRef) error {
 				return diagnostics[ref]
-			})
+			}, supervisorRuntimeAcknowledged)
 			infrastructure, ok := terminal.(Infrastructure)
 			if !ok || infrastructure.Cause != test.cause ||
 				!errors.Is(infrastructure.Err, diagnostics[test.primary]) {

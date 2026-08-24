@@ -141,7 +141,7 @@ type MutationFatalUncertainty struct {
 func (MutationFatalUncertainty) mutationDisposition() {}
 
 // ClassifyPrimaryMutation maps one drained primary observation into mutation policy.
-func ClassifyPrimaryMutation(primary Terminal, overlapAmbiguous bool) MutationDisposition {
+func ClassifyPrimaryMutation(primary Terminal) MutationDisposition {
 	switch terminal := primary.(type) {
 	case Settled:
 		outcome := MutationKilled
@@ -153,7 +153,7 @@ func ClassifyPrimaryMutation(primary Terminal, overlapAmbiguous bool) MutationDi
 	case Tripped:
 		switch terminal.Trip.(type) {
 		case AutomaticDeadlineTrip, SerialDeadlineTrip:
-			if overlapAmbiguous {
+			if terminal.confirmationProvisional {
 				return MutationNeedsConfirmation{primary: terminal}
 			}
 
@@ -178,7 +178,9 @@ func ClassifyMutationConfirmation(
 	provisional MutationNeedsConfirmation,
 	confirmation Terminal,
 ) MutationDisposition {
-	if terminalDeadline(confirmation) != provisional.primary.Deadline {
+	confirmationData := terminalExecutionData(confirmation)
+	if confirmationData.Deadline != provisional.primary.Deadline ||
+		confirmationData.profile != provisional.primary.profile {
 		return MutationAborted{Primary: provisional.primary, Confirmation: confirmation}
 	}
 	switch terminal := confirmation.(type) {
@@ -216,18 +218,18 @@ func ClassifyMutationConfirmation(
 	}
 }
 
-func terminalDeadline(terminal Terminal) time.Duration {
+func terminalExecutionData(terminal Terminal) ExecutionData {
 	switch terminal := terminal.(type) {
 	case Settled:
-		return terminal.Deadline
+		return terminal.ExecutionData
 	case Tripped:
-		return terminal.Deadline
+		return terminal.ExecutionData
 	case Stopped:
-		return terminal.Deadline
+		return terminal.ExecutionData
 	case Infrastructure:
-		return terminal.Deadline
+		return terminal.ExecutionData
 	case DrainUnconfirmed:
-		return terminal.Deadline
+		return terminal.ExecutionData
 	default:
 		panic("mutation terminal has no execution evidence")
 	}
