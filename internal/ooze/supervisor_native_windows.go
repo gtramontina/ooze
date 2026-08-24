@@ -122,6 +122,24 @@ func closeNativeDomain(state nativePlatformState) error {
 	return windows.CloseHandle(state.job)
 }
 
+func nativeDescendantCount(state nativePlatformState, root int) (bool, uint64, error) {
+	processes, err := nativeJobProcessIDs(state.job)
+	if err != nil {
+		return false, 0, err
+	}
+	rootLive := false
+	count := uint64(0)
+	for _, processID := range processes {
+		if processID == uint32(root) { //nolint:gosec // Windows process IDs are 32-bit.
+			rootLive = true
+		} else {
+			count++
+		}
+	}
+
+	return rootLive, count, nil
+}
+
 func nativeJobProcessIDs(job windows.Handle) ([]uint32, error) {
 	capacity := uint32(16)
 	for range windowsJobQueryMaximumAttempts {

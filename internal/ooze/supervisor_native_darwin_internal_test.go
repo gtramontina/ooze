@@ -100,3 +100,44 @@ func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T
 		t.Fatalf("serial deadline evidence = %#v", tripped)
 	}
 }
+
+func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 103})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "darwin-fuse",
+		class:    sharedAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	launched := supervisor.Launch(Spec{
+		Attempt: "darwin-fuse",
+		Command: []string{
+			"/bin/sh", "-c",
+			"i=0; while [ $i -lt 65 ]; do sleep 10 & i=$((i+1)); done; wait",
+		},
+		Dir: t.TempDir(), Env: os.Environ(), Profile: AutomaticProfile,
+		Deadline: 10 * time.Second,
+	})
+	owned, ok := launched.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", launched)
+	}
+	terminal := owned.Attempt.Wait()
+	tripped, ok := terminal.(Tripped)
+	if !ok {
+		t.Fatalf("terminal = %#v, want Tripped", terminal)
+	}
+	fuse, ok := tripped.Trip.(FuseTrip)
+	if !ok || fuse.Live < 65 || tripped.BoundFired != NoBoundFired {
+		t.Fatalf("automatic fuse evidence = %#v", tripped)
+	}
+}

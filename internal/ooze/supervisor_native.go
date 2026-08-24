@@ -48,7 +48,8 @@ func newNativeSupervisorDriver(
 	return newSupervisorDriver(supervisorDriverConstruction{
 		runtime: runtime, now: time.Now, launchProgress: launchProgress, drainEpoch: drainEpoch,
 		prepare: executor.prepare, execute: executor.execute,
-		recheckRoot: executor.recheckRoot, readOutput: executor.readOutput,
+		recheckRoot: executor.recheckRoot, sampleRunning: executor.sampleRunning,
+		readOutput: executor.readOutput,
 	})
 }
 
@@ -260,6 +261,16 @@ func (executor *supervisorNativeExecutor) recheckRoot(
 	default:
 		return ExitStatus{}, false, nil
 	}
+}
+
+func (executor *supervisorNativeExecutor) sampleRunning(
+	generation attemptGeneration,
+) (bool, uint64, error) {
+	executor.mutex.Lock()
+	attempt := executor.requireAttempt(generation)
+	executor.mutex.Unlock()
+
+	return nativeDescendantCount(attempt.platform, attempt.command.Process.Pid)
 }
 
 func nativeDrainEvent(

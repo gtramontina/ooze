@@ -7,6 +7,8 @@ import (
 
 const supervisorDriverOperation = "drive supervisor"
 
+const nominalSupervisorFuseCadence = 50 * time.Millisecond
+
 type supervisorDriverConstruction struct {
 	runtime        *processRuntimeShell
 	now            func() time.Time
@@ -15,6 +17,7 @@ type supervisorDriverConstruction struct {
 	prepare        func(attemptGeneration, Spec)
 	execute        func(supervisorAction) *supervisorEvent
 	recheckRoot    func(attemptGeneration) (ExitStatus, bool, error)
+	sampleRunning  func(attemptGeneration) (bool, uint64, error)
 	readOutput     func(supervisorOutputRef) string
 }
 
@@ -39,6 +42,7 @@ type supervisorDriver struct {
 	prepare          func(attemptGeneration, Spec)
 	execute          func(supervisorAction) *supervisorEvent
 	recheckRoot      func(attemptGeneration) (ExitStatus, bool, error)
+	sampleRunning    func(attemptGeneration) (bool, uint64, error)
 	readOutput       func(supervisorOutputRef) string
 	attempts         map[attemptGeneration]*supervisorDrivenAttempt
 	emergency        chan SweepResult
@@ -55,9 +59,10 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		runtime: construction.runtime, now: construction.now,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
 		prepare: construction.prepare, execute: construction.execute,
-		recheckRoot: construction.recheckRoot, readOutput: construction.readOutput,
-		attempts:  make(map[attemptGeneration]*supervisorDrivenAttempt),
-		emergency: make(chan SweepResult, 1),
+		recheckRoot: construction.recheckRoot, sampleRunning: construction.sampleRunning,
+		readOutput: construction.readOutput,
+		attempts:   make(map[attemptGeneration]*supervisorDrivenAttempt),
+		emergency:  make(chan SweepResult, 1),
 	}
 }
 
@@ -310,31 +315,84 @@ func (driver *supervisorDriver) waitThroughDeadline(
 	go func() { waited <- driver.execute(waitAction) }()
 	timer := time.NewTimer(time.Until(deadlineAt))
 	defer timer.Stop()
-	select {
-	case event := <-waited:
-		if event == nil {
-			invariant(supervisorDriverOperation, "root wait returned no completion")
+	var samples <-chan time.Time
+	var ticker *time.Ticker
+	if sampleAction.token != 0 {
+		if driver.sampleRunning == nil {
+			invariant(supervisorDriverOperation, "automatic wait lacks a running sampler")
 		}
-		driver.apply(*event)
-	case <-timer.C:
-		status, observed, err := driver.recheckRoot(waitAction.generation)
-		if err != nil {
-			invariant(supervisorDriverOperation, "deadline root recheck failed")
+		ticker = time.NewTicker(nominalSupervisorFuseCadence)
+		defer ticker.Stop()
+		samples = ticker.C
+	}
+	for {
+		select {
+		case event := <-waited:
+			if event == nil {
+				invariant(supervisorDriverOperation, "root wait returned no completion")
+			}
+			driver.apply(*event)
+
+			return
+		case <-timer.C:
+			status, observed, err := driver.recheckRoot(waitAction.generation)
+			if err != nil {
+				invariant(supervisorDriverOperation, "deadline root recheck failed")
+			}
+			recheck := supervisorExitRecheck{performed: true, observed: observed, at: deadlineAt}
+			if observed {
+				recheck.code = status.Code
+				recheck.signal = status.Signal
+			}
+			driver.apply(supervisorEvent{
+				kind: supervisorRunningObserved, generation: waitAction.generation,
+				at: deadlineAt, drainBy: deadlineAt.Add(driver.drainEpoch),
+				running: &supervisorRunningBundle{
+					generation: waitAction.generation,
+					waitAction: waitAction.token, sampleAction: sampleAction.token,
+					exitRecheck: recheck,
+				},
+			})
+
+			return
+		case at := <-samples:
+			if !at.Before(deadlineAt) {
+				continue
+			}
+			rootLive, live, err := driver.sampleRunning(waitAction.generation)
+			var facts []supervisorRunningFact
+			if err != nil {
+				facts = []supervisorRunningFact{{
+					generation: waitAction.generation, action: sampleAction.token,
+					kind: supervisorRunningObservationFailed, at: at,
+					source: supervisorObservationRunning, diagnostic: 1,
+				}}
+			} else if rootLive && live != 0 {
+				facts = []supervisorRunningFact{{
+					generation: waitAction.generation, action: sampleAction.token,
+					kind: supervisorRunningFuseObserved, at: at,
+					rootLive: true, live: live,
+				}}
+			}
+			if len(facts) == 0 {
+				continue
+			}
+			driver.apply(supervisorEvent{
+				kind: supervisorRunningObserved, generation: waitAction.generation,
+				at: at, drainBy: at.Add(driver.drainEpoch),
+				running: &supervisorRunningBundle{
+					generation: waitAction.generation,
+					waitAction: waitAction.token, sampleAction: sampleAction.token,
+					facts: facts,
+				},
+			})
+			driver.mutex.Lock()
+			terminalReady := driver.requireAttempt(waitAction.generation).terminalReady
+			driver.mutex.Unlock()
+			if terminalReady {
+				return
+			}
 		}
-		recheck := supervisorExitRecheck{performed: true, observed: observed, at: deadlineAt}
-		if observed {
-			recheck.code = status.Code
-			recheck.signal = status.Signal
-		}
-		driver.apply(supervisorEvent{
-			kind: supervisorRunningObserved, generation: waitAction.generation,
-			at: deadlineAt, drainBy: deadlineAt.Add(driver.drainEpoch),
-			running: &supervisorRunningBundle{
-				generation: waitAction.generation,
-				waitAction: waitAction.token, sampleAction: sampleAction.token,
-				exitRecheck: recheck,
-			},
-		})
 	}
 }
 
