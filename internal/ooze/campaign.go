@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -73,13 +74,17 @@ const (
 )
 
 type campaignEffect struct {
-	id       campaignEffectID
-	kind     campaignEffectKind
-	snapshot snapshotIdentity
-	attempt  attemptIdentity
-	deadline time.Duration
-	profile  Profile
-	terminal campaignTerminalCandidate
+	id         campaignEffectID
+	kind       campaignEffectKind
+	snapshot   snapshotIdentity
+	workspace  string
+	attempt    attemptIdentity
+	deadline   time.Duration
+	profile    Profile
+	request    admissionRequest
+	grant      admissionGrant
+	generation attemptGeneration
+	terminal   campaignTerminalCandidate
 }
 
 type campaignTraceRecord struct {
@@ -88,17 +93,58 @@ type campaignTraceRecord struct {
 }
 
 type campaignState struct {
-	definition   campaignDefinition
-	phase        campaignPhase
-	runtimeToken campaignToken
-	snapshot     snapshotIdentity
-	catalogue    []mutantIdentity
-	obligations  []campaignObligation
-	trace        []campaignTraceRecord
-	outcome      campaignOutcome
-	candidate    campaignTerminalCandidate
-	nextEffect   campaignEffectID
-	commands     int
+	definition       campaignDefinition
+	phase            campaignPhase
+	runtimeToken     campaignToken
+	snapshot         snapshotIdentity
+	catalogue        []mutantIdentity
+	catalogueKnown   bool
+	mutants          []campaignMutant
+	attempts         []campaignAttempt
+	obligations      []campaignObligation
+	trace            []campaignTraceRecord
+	outcome          campaignOutcome
+	candidate        campaignTerminalCandidate
+	nextEffect       campaignEffectID
+	commands         int
+	nextAttempt      uint64
+	mutationDeadline time.Duration
+}
+
+type campaignAttemptKind uint8
+
+const (
+	campaignAttemptBaseline campaignAttemptKind = iota + 1
+	campaignAttemptPrimary
+	campaignAttemptConfirmation
+)
+
+type campaignAttemptStage uint8
+
+const (
+	campaignAttemptMaterializing campaignAttemptStage = iota + 1
+	campaignAttemptAdmissionWaiting
+	campaignAttemptGranted
+	campaignAttemptProspective
+	campaignAttemptOwned
+	campaignAttemptSettled
+)
+
+type campaignAttempt struct {
+	identity   attemptIdentity
+	kind       campaignAttemptKind
+	mutant     mutantIdentity
+	stage      campaignAttemptStage
+	workspace  string
+	request    admissionRequest
+	grant      admissionGrant
+	generation attemptGeneration
+}
+
+type campaignMutant struct {
+	identity       mutantIdentity
+	result         mutantResultKind
+	primaryStarted bool
 }
 
 type campaignEventPayload interface {
@@ -122,18 +168,55 @@ type resourceSettledEvent struct {
 	identity string
 }
 type terminalCommittedEvent struct{ result terminalResult }
+type workspaceMaterializedEvent struct {
+	attempt   attemptIdentity
+	workspace string
+	snapshot  snapshotIdentity
+}
+type admissionGrantedEvent struct {
+	attempt attemptIdentity
+	grant   admissionGrant
+}
+type startCommittedEvent struct {
+	attempt attemptIdentity
+	grant   admissionGrant
+	result  startCommittedResult
+}
+type attemptLaunchEvent struct {
+	attempt    attemptIdentity
+	generation attemptGeneration
+	result     LaunchResult
+	receipt    observationResult
+}
+type attemptTerminalEvent struct {
+	attempt                  attemptIdentity
+	generation               attemptGeneration
+	terminal                 Terminal
+	receipt                  observationResult
+	resolvedMutationDeadline time.Duration
+}
 
-func (campaignRegisteredEvent) campaignEventPayload()  {}
-func (snapshotEstablishedEvent) campaignEventPayload() {}
-func (catalogueDiscoveredEvent) campaignEventPayload() {}
-func (resourceSettledEvent) campaignEventPayload()     {}
-func (terminalCommittedEvent) campaignEventPayload()   {}
+func (campaignRegisteredEvent) campaignEventPayload()    {}
+func (snapshotEstablishedEvent) campaignEventPayload()   {}
+func (catalogueDiscoveredEvent) campaignEventPayload()   {}
+func (resourceSettledEvent) campaignEventPayload()       {}
+func (terminalCommittedEvent) campaignEventPayload()     {}
+func (workspaceMaterializedEvent) campaignEventPayload() {}
+func (admissionGrantedEvent) campaignEventPayload()      {}
+func (startCommittedEvent) campaignEventPayload()        {}
+func (attemptLaunchEvent) campaignEventPayload()         {}
+func (attemptTerminalEvent) campaignEventPayload()       {}
 
-func (campaignRegisteredEvent) campaignEventName() string  { return "campaign registered" }
-func (snapshotEstablishedEvent) campaignEventName() string { return "snapshot established" }
-func (catalogueDiscoveredEvent) campaignEventName() string { return "catalogue discovered" }
-func (resourceSettledEvent) campaignEventName() string     { return "resource settled" }
-func (terminalCommittedEvent) campaignEventName() string   { return "terminal committed" }
+func (campaignRegisteredEvent) campaignEventName() string    { return "campaign registered" }
+func (snapshotEstablishedEvent) campaignEventName() string   { return "snapshot established" }
+func (catalogueDiscoveredEvent) campaignEventName() string   { return "catalogue discovered" }
+func (resourceSettledEvent) campaignEventName() string       { return "resource settled" }
+func (terminalCommittedEvent) campaignEventName() string     { return "terminal committed" }
+func (workspaceMaterializedEvent) campaignEventName() string { return "workspace materialized" }
+func (admissionGrantedEvent) campaignEventName() string      { return "admission granted" }
+func (startCommittedEvent) campaignEventName() string        { return "start committed" }
+func (attemptLaunchEvent) campaignEventName() string         { return "attempt launched" }
+func (attemptTerminalEvent) campaignEventName() string       { return "attempt terminal" }
 
 type campaignTerminalKind uint8
 
@@ -212,6 +295,16 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 		return state.onResourceSettled(observed)
 	case terminalCommittedEvent:
 		return state.onTerminalCommitted(observed)
+	case workspaceMaterializedEvent:
+		return state.onWorkspaceMaterialized(observed)
+	case admissionGrantedEvent:
+		return state.onAdmissionGranted(observed)
+	case startCommittedEvent:
+		return state.onStartCommitted(observed)
+	case attemptLaunchEvent:
+		return state.onAttemptLaunch(observed)
+	case attemptTerminalEvent:
+		return state.onAttemptTerminal(observed)
 	default:
 		campaignInvariant("advance", "event kind is unknown")
 	}
@@ -248,7 +341,7 @@ func (state campaignState) onSnapshotEstablished(event snapshotEstablishedEvent)
 }
 
 func (state campaignState) onCatalogueDiscovered(event catalogueDiscoveredEvent) (campaignState, []campaignEffect) {
-	if state.phase != campaignPreparing || state.snapshot == "" || event.snapshot != state.snapshot || state.catalogue != nil {
+	if state.phase != campaignPreparing || state.snapshot == "" || event.snapshot != state.snapshot || state.catalogueKnown {
 		campaignInvariant("discover catalogue", "catalogue observation is invalid")
 	}
 	seen := make(map[mutantIdentity]struct{}, len(event.mutants))
@@ -262,8 +355,17 @@ func (state campaignState) onCatalogueDiscovered(event catalogueDiscoveredEvent)
 		seen[mutant] = struct{}{}
 	}
 	state.catalogue = slices.Clone(event.mutants)
+	state.catalogueKnown = true
+	state.mutants = make([]campaignMutant, len(state.catalogue))
+	for index, mutant := range state.catalogue {
+		state.mutants[index].identity = mutant
+	}
 	if len(state.catalogue) != 0 {
-		campaignInvariant("discover catalogue", "non-empty catalogue transition is not installed")
+		state.phase = campaignBaselining
+		var effect campaignEffect
+		state, effect = state.materializeAttempt(campaignAttemptBaseline, "")
+
+		return state, []campaignEffect{effect}
 	}
 	state.candidate = campaignTerminalCandidate{kind: campaignTerminalNoMutants}
 
@@ -276,6 +378,21 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 		campaignInvariant("settle resource", "resource obligation is unknown")
 	}
 	state.obligations = slices.Delete(state.obligations, index, index+1)
+	if event.kind == campaignResourceWorkspace {
+		attemptAt := slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool {
+			return attempt.workspace == event.identity && attempt.stage == campaignAttemptSettled
+		})
+		if attemptAt < 0 {
+			campaignInvariant("settle resource", "workspace has no settled attempt")
+		}
+		kind := state.attempts[attemptAt].kind
+		state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
+		if kind == campaignAttemptBaseline {
+			state.phase = campaignRunning
+
+			return state.materializePrimaryBatch()
+		}
+	}
 	if state.candidate.kind == campaignTerminalNoMutants && event.kind == campaignResourceSnapshot &&
 		len(state.obligations) == 1 && state.obligations[0].kind == campaignResourceRegistration {
 		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
@@ -304,6 +421,185 @@ func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (ca
 	return state, nil
 }
 
+func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEvent) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || event.workspace == "" || event.snapshot != state.snapshot ||
+		state.attempts[attemptAt].stage != campaignAttemptMaterializing {
+		campaignInvariant("materialize workspace", "workspace observation is invalid")
+	}
+	if state.obligationIndex(campaignResourceWorkspace, string(event.attempt)) < 0 {
+		campaignInvariant("materialize workspace", "workspace obligation is missing")
+	}
+	state.attempts[attemptAt].workspace = event.workspace
+	state.attempts[attemptAt].stage = campaignAttemptAdmissionWaiting
+	obligationAt := state.obligationIndex(campaignResourceWorkspace, string(event.attempt))
+	state.obligations[obligationAt].identity = event.workspace
+	class := sharedAdmission
+	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
+		class = exclusiveAdmission
+	} else if state.definition.profile == SerialProfile {
+		class = serialPrimaryAdmission
+	} else if state.attempts[attemptAt].kind == campaignAttemptConfirmation {
+		class = confirmationAdmission
+	}
+	request := admissionRequest{campaign: state.runtimeToken, attempt: event.attempt, class: class}
+	state.attempts[attemptAt].request = request
+	state.obligations = append(state.obligations, campaignObligation{
+		kind: campaignResourceAdmission, identity: string(event.attempt), attempt: event.attempt,
+	})
+
+	return state.emit(campaignEffect{kind: campaignEffectRequestAdmission, attempt: event.attempt, request: request})
+}
+
+func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
+		event.grant != state.attempts[attemptAt].request {
+		campaignInvariant("grant admission", "grant is stale or wrong")
+	}
+	state.attempts[attemptAt].stage = campaignAttemptGranted
+	state.attempts[attemptAt].grant = event.grant
+	state.obligations = append(state.obligations, campaignObligation{
+		kind: campaignResourcePendingStart, identity: string(event.attempt), attempt: event.attempt,
+	})
+
+	return state.emit(campaignEffect{
+		kind: campaignEffectRequestStartCommitment, attempt: event.attempt, grant: event.grant,
+	})
+}
+
+func (state campaignState) onStartCommitted(event startCommittedEvent) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptGranted ||
+		event.grant != state.attempts[attemptAt].grant || event.result.decision != startCommittedAccepted ||
+		event.result.generation == 0 {
+		campaignInvariant("start committed", "commitment is stale or unauthorized")
+	}
+	pendingAt := state.obligationIndex(campaignResourcePendingStart, string(event.attempt))
+	if pendingAt < 0 {
+		campaignInvariant("start committed", "pending-start obligation is missing")
+	}
+	state.obligations = slices.Delete(state.obligations, pendingAt, pendingAt+1)
+	state.obligations = append(state.obligations, campaignObligation{
+		kind: campaignResourceExecutionDomain, identity: string(event.attempt),
+		attempt: event.attempt, generation: event.result.generation,
+	})
+	state.attempts[attemptAt].stage = campaignAttemptProspective
+	state.attempts[attemptAt].generation = event.result.generation
+	deadline := state.mutationDeadline
+	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
+		deadline = state.definition.baselineDeadline
+	}
+	if deadline <= 0 {
+		campaignInvariant("start committed", "attempt deadline is unresolved")
+	}
+	state.commands++
+
+	return state.emit(campaignEffect{
+		kind: campaignEffectLaunchAttempt, attempt: event.attempt, generation: event.result.generation,
+		snapshot: state.snapshot, workspace: state.attempts[attemptAt].workspace,
+		deadline: deadline, profile: state.definition.profile,
+	})
+}
+
+func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	_, owned := event.result.(Owned)
+	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptProspective || !owned ||
+		event.generation == 0 || event.generation != state.attempts[attemptAt].generation ||
+		event.receipt.generation != event.generation || event.receipt.runtimeClosureInProgress {
+		campaignInvariant("observe launch", "owned launch is invalid")
+	}
+	state.attempts[attemptAt].stage = campaignAttemptOwned
+
+	return state, nil
+}
+
+func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptOwned ||
+		event.generation != state.attempts[attemptAt].generation || event.terminal == nil ||
+		event.receipt.generation != event.generation || !event.receipt.settlementAcknowledged ||
+		event.receipt.runtimeClosureInProgress {
+		campaignInvariant("observe terminal", "attempt terminal is invalid")
+	}
+	attempt := &state.attempts[attemptAt]
+	if attempt.kind != campaignAttemptBaseline {
+		campaignInvariant("observe terminal", "primary terminal transition is not installed")
+	}
+	settled, ok := event.terminal.(Settled)
+	if !ok || !settled.Exit.Passed() || settled.Deadline != state.definition.baselineDeadline ||
+		settled.CommandDuration <= 0 || event.resolvedMutationDeadline <= 0 {
+		campaignInvariant("observe baseline terminal", "passing baseline evidence is invalid")
+	}
+	state.mutationDeadline = event.resolvedMutationDeadline
+	attempt.stage = campaignAttemptSettled
+	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, event.generation)
+	state.removeAttemptObligation(campaignResourceExecutionDomain, event.attempt, event.generation)
+
+	return state.emit(campaignEffect{
+		kind: campaignEffectReleaseWorkspace, attempt: event.attempt, workspace: attempt.workspace,
+	})
+}
+
+func (state campaignState) materializeAttempt(kind campaignAttemptKind, mutant mutantIdentity) (campaignState, campaignEffect) {
+	state.nextAttempt++
+	attempt := attemptIdentity(string(state.definition.identity) + ":" + strconv.FormatUint(state.nextAttempt, 10))
+	state.attempts = append(state.attempts, campaignAttempt{
+		identity: attempt, kind: kind, mutant: mutant, stage: campaignAttemptMaterializing,
+	})
+	state.obligations = append(state.obligations, campaignObligation{
+		kind: campaignResourceWorkspace, identity: string(attempt), attempt: attempt,
+	})
+	state.nextEffect++
+
+	return state, campaignEffect{
+		id: state.nextEffect, kind: campaignEffectMaterializeWorkspace,
+		snapshot: state.snapshot, attempt: attempt,
+	}
+}
+
+func (state campaignState) materializePrimaryBatch() (campaignState, []campaignEffect) {
+	limit := state.definition.peers
+	if state.definition.profile == SerialProfile {
+		limit = 1
+	}
+	effects := make([]campaignEffect, 0, limit)
+	for index := range state.mutants {
+		if len(effects) == limit {
+			break
+		}
+		if state.mutants[index].primaryStarted || state.mutants[index].result != 0 {
+			continue
+		}
+		state.mutants[index].primaryStarted = true
+		var effect campaignEffect
+		state, effect = state.materializeAttempt(campaignAttemptPrimary, state.mutants[index].identity)
+		effects = append(effects, effect)
+	}
+
+	return state, effects
+}
+
+func (state campaignState) attemptIndex(identity attemptIdentity) int {
+	return slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool { return attempt.identity == identity })
+}
+
+func (state *campaignState) removeAttemptObligation(
+	kind campaignResourceKind,
+	attempt attemptIdentity,
+	generation attemptGeneration,
+) {
+	index := slices.IndexFunc(state.obligations, func(obligation campaignObligation) bool {
+		return obligation.kind == kind && obligation.attempt == attempt &&
+			(generation == 0 || obligation.generation == 0 || obligation.generation == generation)
+	})
+	if index < 0 {
+		campaignInvariant("settle attempt", "attempt obligation is missing")
+	}
+	state.obligations = slices.Delete(state.obligations, index, index+1)
+}
+
 func (state campaignState) emit(effect campaignEffect) (campaignState, []campaignEffect) {
 	state.nextEffect++
 	effect.id = state.nextEffect
@@ -321,6 +617,8 @@ func (state campaignState) clone() campaignState {
 	state.definition.command = slices.Clone(state.definition.command)
 	state.definition.env = slices.Clone(state.definition.env)
 	state.catalogue = slices.Clone(state.catalogue)
+	state.mutants = slices.Clone(state.mutants)
+	state.attempts = slices.Clone(state.attempts)
 	state.obligations = slices.Clone(state.obligations)
 	state.trace = slices.Clone(state.trace)
 
@@ -331,4 +629,17 @@ func (state campaignState) commandCount() int { return state.commands }
 
 func campaignInvariant(operation, reason string) {
 	panic(runtimeInvariantViolation{operation: "campaign " + operation, reason: reason})
+}
+
+func resolveMutationDeadline(baseline time.Duration, peers int) time.Duration {
+	if baseline <= 0 || peers <= 0 {
+		campaignInvariant("resolve mutation deadline", "inputs must be positive")
+	}
+	factorHalves := int64(10 + 3*(peers-1))
+	resolved := baseline * time.Duration(factorHalves) / 2
+	if resolved < 20*time.Second {
+		return 20 * time.Second
+	}
+
+	return resolved
 }
