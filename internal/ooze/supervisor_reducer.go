@@ -176,6 +176,7 @@ type supervisorDrainState struct {
 	effectiveDrainBy      time.Time
 	forced                bool
 	decision              supervisorDrainDecision
+	waitDiagnostic        supervisorDiagnosticRef
 	controlDiagnostic     supervisorDiagnosticRef
 	observationDiagnostic supervisorDiagnosticRef
 }
@@ -244,11 +245,12 @@ type supervisorLaunchCompletion struct {
 }
 
 type supervisorDrainCompletion struct {
-	generation attemptGeneration
-	action     supervisorPendingAction
-	at         time.Time
-	kind       supervisorDrainCompletionKind
-	diagnostic supervisorDiagnosticRef
+	generation     attemptGeneration
+	action         supervisorPendingAction
+	at             time.Time
+	kind           supervisorDrainCompletionKind
+	waitDiagnostic supervisorDiagnosticRef
+	diagnostic     supervisorDiagnosticRef
 }
 
 type supervisorOutputCompletion struct {
@@ -967,7 +969,8 @@ func validateNormalizedTerminalCustody(
 	}
 	validateOutputCustody(attempt.output, true)
 	if !attempt.drain.forced &&
-		(attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
+		(attempt.drain.waitDiagnostic != 0 || attempt.drain.controlDiagnostic != 0 ||
+			attempt.drain.observationDiagnostic != 0) {
 		invariant(supervisorReducerOperation, "normalized terminal drain diagnostics are invalid")
 	}
 	validateTerminalReleaseProvenance(attempt, emergency)
@@ -1059,7 +1062,14 @@ func reduceDrainCompletion(
 		if completion.kind != supervisorDrainForceCompleted || !attempt.drain.forced {
 			invariant(supervisorReducerOperation, "force completion does not match the pending action")
 		}
+		if completion.waitDiagnostic != 0 &&
+			(completion.waitDiagnostic == completion.diagnostic || attempt.intent.diagnostics.wait != 0) {
+			invariant(supervisorReducerOperation, "force completion wait diagnostic is duplicated")
+		}
 	case supervisorObserveEmptiness:
+		if completion.waitDiagnostic != 0 {
+			invariant(supervisorReducerOperation, "emptiness observation carries a wait diagnostic")
+		}
 		switch completion.kind {
 		case supervisorDrainObservedEmpty, supervisorDrainObservedResidual:
 			if completion.diagnostic != 0 {
@@ -1079,6 +1089,7 @@ func reduceDrainCompletion(
 	state.attempts[index].pendingAction = supervisorPendingAction{}
 	state.attempts[index].lastEventAt = completion.at
 	if completion.kind == supervisorDrainForceCompleted {
+		state.attempts[index].drain.waitDiagnostic = completion.waitDiagnostic
 		if completion.diagnostic != 0 {
 			state.attempts[index].drain.controlDiagnostic = completion.diagnostic
 		}
@@ -1348,7 +1359,8 @@ func validateUnconfirmedResidualEvidence(attempt supervisorAttemptState) {
 func validateUnconfirmedDrainProvenance(attempt supervisorAttemptState) {
 	if !attempt.drain.forced &&
 		(attempt.intent.kind != supervisorIntentRootExit ||
-			attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
+			attempt.drain.waitDiagnostic != 0 || attempt.drain.controlDiagnostic != 0 ||
+			attempt.drain.observationDiagnostic != 0) {
 		invariant(supervisorReducerOperation, "unforced residual custody lacks root-exit provenance")
 	}
 }
@@ -1479,7 +1491,8 @@ func validateProvenEmptyReleaseCustody(attempt supervisorAttemptState) {
 	}
 	validateOutputCustody(attempt.output, true)
 	if !attempt.drain.forced &&
-		(attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
+		(attempt.drain.waitDiagnostic != 0 || attempt.drain.controlDiagnostic != 0 ||
+			attempt.drain.observationDiagnostic != 0) {
 		invariant(supervisorReducerOperation, "unforced drain carries impossible diagnostics")
 	}
 }
@@ -1687,13 +1700,25 @@ func normalizeTerminalEvidence(
 		count:           count,
 		output:          attempt.output,
 		diagnostics: supervisorTerminalDiagnostics{
-			wait:    attempt.intent.diagnostics.wait,
+			wait:    terminalWaitDiagnostic(attempt),
 			running: attempt.intent.diagnostics.running,
 			drain:   attempt.drain.observationDiagnostic,
 			control: attempt.drain.controlDiagnostic,
 			release: attempt.releaseDiagnostic,
 		},
 	}
+}
+
+func terminalWaitDiagnostic(attempt supervisorAttemptState) supervisorDiagnosticRef {
+	if attempt.drain.waitDiagnostic != 0 {
+		if attempt.intent.diagnostics.wait != 0 {
+			invariant(supervisorReducerOperation, "terminal wait diagnostic is duplicated")
+		}
+
+		return attempt.drain.waitDiagnostic
+	}
+
+	return attempt.intent.diagnostics.wait
 }
 
 func normalizeDrainUnconfirmedTerminalEvidence(

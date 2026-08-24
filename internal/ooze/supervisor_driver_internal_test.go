@@ -3,6 +3,8 @@ package ooze
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"reflect"
 	"runtime"
 	"testing"
@@ -1577,6 +1579,147 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 	if !ok || infrastructure.Cause != WaitFailed || !errors.Is(infrastructure.Err, waitErr) ||
 		infrastructure.Failures.Wait != waitErr.Error() {
 		t.Fatalf("terminal = %#v, want immutable wait failure", terminal)
+	}
+}
+
+func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testing.T) {
+	registeredAt := time.Now().Add(-2 * time.Second)
+	releasedAt := registeredAt.Add(time.Millisecond)
+	stopAt := releasedAt.Add(time.Second)
+	drainBy := stopAt.Add(10 * time.Second)
+	nextAt := registeredAt.Add(-time.Nanosecond)
+	waitErr := errors.New("root tracking failed during termination")
+	terminationErr := errors.New("terminate execution domain")
+	waitReleased := make(chan struct{})
+	nativeExecutor := &supervisorNativeExecutor{
+		attempts: make(map[attemptGeneration]*supervisorNativeAttempt),
+		outputs:  make(map[supervisorOutputRef]string), diagnostics: make(map[supervisorDiagnosticRef]error),
+		forceDomain: func(nativePlatformState, int, time.Time) error { return terminationErr },
+	}
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 97})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "driver-independent-force-diagnostics", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now: func() time.Time {
+			nextAt = nextAt.Add(time.Nanosecond)
+
+			return nextAt
+		},
+		launchBoundary:  func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		commandBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		launchProgress:  time.Second,
+		drainEpoch:      5 * time.Second,
+		recheckRoot: func(attemptGeneration) (ExitStatus, time.Time, bool, error) {
+			return ExitStatus{}, time.Time{}, false, nil
+		},
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token,
+					at: releasedAt, kind: supervisorLaunchReleased,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releasedAt, completion: &completion,
+				}
+			case supervisorWaitRoot:
+				<-waitReleased
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningRootExited, at: stopAt.Add(time.Nanosecond),
+				}
+
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: fact.at, drainBy: drainBy,
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
+			case supervisorForceOwned:
+				waitDone := make(chan struct{})
+				close(waitDone)
+				nativeExecutor.attempts[action.generation] = &supervisorNativeAttempt{
+					command:  &exec.Cmd{Process: &os.Process{Pid: 123}},
+					waitDone: waitDone, trackingErr: waitErr,
+				}
+
+				return nativeExecutor.force(action)
+			case supervisorObserveEmptiness:
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         action.at.Add(time.Nanosecond), kind: supervisorDrainObservedEmpty,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: completion.at, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         action.at.Add(time.Nanosecond), ref: 1,
+				}
+				nextAt = completion.at
+
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: completion.at, output: &completion,
+				}
+			case supervisorReleaseDomain:
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         action.at.Add(time.Nanosecond),
+				}
+				nextAt = completion.at
+
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation,
+					at: completion.at, release: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput:     func(supervisorOutputRef) string { return "" },
+		readDiagnostic: nativeExecutor.readDiagnostic,
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+	result := supervisor.Launch(Spec{
+		Attempt: "driver-independent-force-diagnostics", Command: []string{"stop"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	owned, ok := result.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", result)
+	}
+	owned.Attempt.Stop(StopRequest{At: stopAt, DrainBy: drainBy})
+	terminal := owned.Attempt.Wait()
+	close(waitReleased)
+	infrastructure, ok := terminal.(Infrastructure)
+	if !ok || infrastructure.Cause != TerminationControlFailed ||
+		infrastructure.Err == nil || infrastructure.Err.Error() != terminationErr.Error() ||
+		infrastructure.Failures.Wait != waitErr.Error() ||
+		infrastructure.Failures.Termination != terminationErr.Error() {
+		t.Fatalf("terminal = %#v, want independent wait and primary termination failures", terminal)
 	}
 }
 

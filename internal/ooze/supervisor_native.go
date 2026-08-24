@@ -76,6 +76,7 @@ type supervisorNativeExecutor struct {
 	diagnostics    map[supervisorDiagnosticRef]error
 	nextDiagnostic supervisorDiagnosticRef
 	readOutputFile func(*os.File) (string, uint64, error)
+	forceDomain    func(nativePlatformState, int, time.Time) error
 }
 
 func newNativeSupervisorDriver(
@@ -461,27 +462,43 @@ func (executor *supervisorNativeExecutor) observeEmpty(action supervisorAction) 
 		kind = supervisorDrainObservedEmpty
 	}
 
-	return nativeDrainEvent(action, at, kind, diagnostic)
+	return nativeDrainEvent(action, at, kind, 0, diagnostic)
 }
 
 func (executor *supervisorNativeExecutor) force(action supervisorAction) *supervisorEvent {
 	executor.mutex.Lock()
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
-	err := forceNativeDomain(attempt.platform, attempt.command.Process.Pid, action.drainBy)
-	if err == nil {
+	forceDomain := executor.forceDomain
+	if forceDomain == nil {
+		forceDomain = forceNativeDomain
+	}
+	controlErr := forceDomain(attempt.platform, attempt.command.Process.Pid, action.drainBy)
+	waitCompleted := false
+	if controlErr == nil {
 		executor.awaitRoot(attempt)
+		waitCompleted = true
+	} else {
+		select {
+		case <-attempt.waitDone:
+			waitCompleted = true
+		default:
+		}
 	}
-	diagnostic := supervisorDiagnosticRef(0)
-	combined := err
-	if err == nil {
-		combined = errors.Join(attempt.trackingErr, nativeWaitFailure(attempt.waitErr))
+	waitDiagnostic := supervisorDiagnosticRef(0)
+	if waitCompleted && action.intent.diagnostics.wait == 0 {
+		if waitErr := errors.Join(attempt.trackingErr, nativeWaitFailure(attempt.waitErr)); waitErr != nil {
+			waitDiagnostic = executor.recordDiagnostic(waitErr)
+		}
 	}
-	if combined != nil {
-		diagnostic = executor.recordDiagnostic(combined)
+	controlDiagnostic := supervisorDiagnosticRef(0)
+	if controlErr != nil {
+		controlDiagnostic = executor.recordDiagnostic(controlErr)
 	}
 
-	return nativeDrainEvent(action, time.Now(), supervisorDrainForceCompleted, diagnostic)
+	return nativeDrainEvent(
+		action, time.Now(), supervisorDrainForceCompleted, waitDiagnostic, controlDiagnostic,
+	)
 }
 
 func (executor *supervisorNativeExecutor) recheckRoot(
@@ -512,12 +529,13 @@ func nativeDrainEvent(
 	action supervisorAction,
 	at time.Time,
 	kind supervisorDrainCompletionKind,
+	waitDiagnostic supervisorDiagnosticRef,
 	diagnostic supervisorDiagnosticRef,
 ) *supervisorEvent {
 	completion := supervisorDrainCompletion{
 		generation: action.generation,
 		action:     supervisorPendingAction{kind: action.kind, token: action.token},
-		at:         at, kind: kind, diagnostic: diagnostic,
+		at:         at, kind: kind, waitDiagnostic: waitDiagnostic, diagnostic: diagnostic,
 	}
 
 	return &supervisorEvent{
