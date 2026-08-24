@@ -614,6 +614,11 @@ func (driver *supervisorDriver) waitThroughDeadline(
 
 			return
 		case <-deadline:
+			if driver.applyReadySamplesBeforeDeadline(
+				waitAction, sampleAction, samples, deadlineAt,
+			) {
+				return
+			}
 			status, completedAt, observed, err := driver.recheckRoot(waitAction.generation)
 			if err != nil {
 				invariant(supervisorDriverOperation, "deadline root recheck failed")
@@ -651,6 +656,27 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			if driver.applyRunningSampleFacts(waitAction, sampleAction, at, facts) {
 				return
 			}
+		}
+	}
+}
+
+func (driver *supervisorDriver) applyReadySamplesBeforeDeadline(
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	samples <-chan time.Time,
+	deadlineAt time.Time,
+) bool {
+	for {
+		select {
+		case at := <-samples:
+			if at.Before(deadlineAt) && driver.applyRunningSampleFacts(
+				waitAction, sampleAction, at,
+				driver.runningSampleFacts(waitAction, sampleAction, at),
+			) {
+				return true
+			}
+		default:
+			return false
 		}
 	}
 }

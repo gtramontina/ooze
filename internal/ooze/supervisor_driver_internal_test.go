@@ -1923,6 +1923,170 @@ func TestSupervisorDriverEqualAutomaticFuseRetainsWaitFailureDiagnostic(t *testi
 	}
 }
 
+func TestSupervisorDriverRetainsEarlierAutomaticPeakWhenDeadlineIsAlsoReady(t *testing.T) {
+	for iteration := range 100 {
+		terminal := runReadyAutomaticDeadlinePeak(t, iteration)
+		tripped, ok := terminal.(Tripped)
+		if !ok {
+			t.Fatalf("iteration %d terminal = %#v, want automatic deadline", iteration, terminal)
+		}
+		deadline, ok := tripped.Trip.(AutomaticDeadlineTrip)
+		if !ok || deadline.Peak != (ObservedCount{Value: 7, Present: true}) {
+			t.Fatalf("iteration %d deadline evidence = %#v, want pre-deadline peak 7", iteration, tripped)
+		}
+	}
+}
+
+func runReadyAutomaticDeadlinePeak(t *testing.T, iteration int) Terminal {
+	t.Helper()
+	registeredAt := time.Unix(29_000+int64(iteration)*100, 0)
+	releasedAt := registeredAt.Add(time.Millisecond)
+	deadlineAt := releasedAt.Add(3 * time.Second)
+	nextAt := registeredAt.Add(-time.Nanosecond)
+	waitReleased := make(chan struct{})
+	deadlines := make(chan time.Time, 1)
+	deadlines <- deadlineAt
+	samples := make(chan time.Time, 3)
+	samples <- releasedAt.Add(time.Second)
+	samples <- releasedAt.Add(2 * time.Second)
+	samples <- deadlineAt
+	sampleCount := 0
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(400 + iteration)})
+	attempt := attemptIdentity(fmt.Sprintf("driver-ready-deadline-peak-%d", iteration))
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: attempt, class: sharedAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now: func() time.Time {
+			nextAt = nextAt.Add(time.Nanosecond)
+
+			return nextAt
+		},
+		launchBoundary:  func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		commandBoundary: func(time.Time) <-chan time.Time { return deadlines },
+		sampleTicks:     func() (<-chan time.Time, func()) { return samples, func() {} },
+		launchProgress:  time.Second,
+		drainEpoch:      5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token,
+					at: releasedAt, kind: supervisorLaunchReleased,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releasedAt, completion: &completion,
+				}
+			case supervisorWaitRoot:
+				<-waitReleased
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningRootExited, at: deadlineAt.Add(time.Second),
+				}
+
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: fact.at, drainBy: fact.at.Add(5 * time.Second),
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
+			case supervisorForceOwned:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, kind: supervisorDrainForceCompleted,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: nextAt, drain: &completion,
+				}
+			case supervisorObserveEmptiness:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, kind: supervisorDrainObservedEmpty,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: nextAt, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, ref: 1,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: nextAt, output: &completion,
+				}
+			case supervisorReleaseDomain:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: nextAt,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation,
+					at: nextAt, release: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		sampleRunning: func(attemptGeneration) (bool, uint64, error) {
+			sampleCount++
+			if sampleCount == 1 {
+				return true, 3, nil
+			}
+
+			if sampleCount == 2 {
+				return true, 7, nil
+			}
+
+			return true, 9, nil
+		},
+		recheckRoot: func(attemptGeneration) (ExitStatus, time.Time, bool, error) {
+			return ExitStatus{}, time.Time{}, false, nil
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	result := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	).Launch(Spec{
+		Attempt: string(attempt), Command: []string{"automatic-deadline"}, Dir: "/tmp",
+		Profile: AutomaticProfile, Deadline: 3 * time.Second,
+	})
+	owned, ok := result.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", result)
+	}
+	terminal := owned.Attempt.Wait()
+	close(waitReleased)
+
+	return terminal
+}
+
 func runDueAutomaticFuseWaitFailureRace(
 	t *testing.T,
 	iteration int,
