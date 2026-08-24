@@ -1,6 +1,7 @@
 PATH := $(PWD)/.bin:$(PATH)
 SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
+STRESS_COUNT ?= 10
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
 .git/.hooks.log:
@@ -26,6 +27,14 @@ test.mutation: $(pre-reqs)
 test.adversarial: $(pre-reqs)
 	@gotestsum --format=testname -- -count=1 -timeout=120s -tags=adversarial ./internal/cmdtestrunner/...
 .PHONY: test.adversarial
+
+# Repeats only green, independently bounded process fixtures. Whether this
+# target gates CI belongs to the cross-platform acceptance-gate decision.
+test.adversarial.stress: $(pre-reqs)
+	@gotestsum --format=testname -- -race -count=$(STRESS_COUNT) -timeout=10m -shuffle=on \
+		-run '^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob)$$' \
+		./internal/cmdtestrunner ./internal/ooze
+.PHONY: test.adversarial.stress
 
 lint: $(pre-reqs)
 	@golangci-lint -v run
