@@ -141,3 +141,45 @@ func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 		t.Fatalf("automatic fuse evidence = %#v", tripped)
 	}
 }
+
+func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 104})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "darwin-emergency",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	launched := supervisor.Launch(Spec{
+		Attempt: "darwin-emergency",
+		Command: []string{"/bin/sh", "-c", "sleep 10"},
+		Dir:     t.TempDir(), Env: os.Environ(), Profile: SerialProfile,
+		Deadline: 10 * time.Second,
+	})
+	owned, ok := launched.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", launched)
+	}
+	emergencyAt := time.Now()
+	shell.closeRuntime(runtimeFatalCause("native emergency test"))
+	settlement := supervisor.EmergencyDrain(EmergencyRequest{
+		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
+	})
+	if _, ok := settlement.(SweepDrained); !ok {
+		t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
+	}
+	terminal := owned.Attempt.Wait()
+	stopped, ok := terminal.(Stopped)
+	if !ok || stopped.BoundFired != NoBoundFired {
+		t.Fatalf("emergency terminal = %#v, want Stopped", terminal)
+	}
+}
