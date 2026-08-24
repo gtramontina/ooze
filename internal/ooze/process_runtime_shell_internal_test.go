@@ -15,6 +15,23 @@ func (s *processRuntimeShell) snapshot() processRuntime {
 	return s.core.clone()
 }
 
+func TestProcessRuntimeShellCompletesSealedConfirmationQueue(t *testing.T) {
+	core := runtimeAtBoundConfirmation(t)
+	barrierAt := core.grantedConfirmationIndex()
+	grant := core.admissions[barrierAt].grant
+	core, started := core.startCommitted(grant)
+	core, _ = core.observeAttempt(started.generation, launchOwned{})
+	core, _ = core.observeAttempt(started.generation, attemptTripped{kind: deadlineTrip})
+	shell := &processRuntimeShell{core: core, emergency: make(chan struct{})}
+
+	result := shell.completeConfirmationQueue(grant.campaign)
+	snapshot := shell.snapshot()
+	if result.decision != confirmationQueueCompleted ||
+		!snapshot.campaigns[snapshot.campaignIndex(grant.campaign)].primaryGateOpen {
+		t.Fatalf("queue completion/state = %#v/%#v", result, snapshot)
+	}
+}
+
 func (cell *pendingStartCell) installedGeneration() attemptGeneration {
 	cell.mutex.Lock()
 	defer cell.mutex.Unlock()

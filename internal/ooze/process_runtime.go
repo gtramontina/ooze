@@ -180,15 +180,13 @@ const (
 type attemptObservation interface{ attemptObservation() }
 
 type (
-	launchOwned              struct{}
-	launchNotReleased        struct{ reason launchNotReleasedReason }
-	attemptSettled           struct{}
-	launchUnconfirmed        struct{}
-	drainUnconfirmed         struct{}
-	attemptStopped           struct{}
-	attemptInfrastructure    struct{ cause string }
-	confirmationContinues    struct{ outcome confirmationOutcome }
-	confirmationQueueDrained struct{ outcome confirmationOutcome }
+	launchOwned           struct{}
+	launchNotReleased     struct{ reason launchNotReleasedReason }
+	attemptSettled        struct{}
+	launchUnconfirmed     struct{}
+	drainUnconfirmed      struct{}
+	attemptStopped        struct{}
+	attemptInfrastructure struct{ cause string }
 )
 
 type confirmationOutcome uint8
@@ -207,16 +205,14 @@ const (
 
 type attemptTripped struct{ kind attemptTripKind }
 
-func (launchOwned) attemptObservation()              {}
-func (launchNotReleased) attemptObservation()        {}
-func (attemptSettled) attemptObservation()           {}
-func (attemptTripped) attemptObservation()           {}
-func (launchUnconfirmed) attemptObservation()        {}
-func (drainUnconfirmed) attemptObservation()         {}
-func (attemptStopped) attemptObservation()           {}
-func (attemptInfrastructure) attemptObservation()    {}
-func (confirmationContinues) attemptObservation()    {}
-func (confirmationQueueDrained) attemptObservation() {}
+func (launchOwned) attemptObservation()           {}
+func (launchNotReleased) attemptObservation()     {}
+func (attemptSettled) attemptObservation()        {}
+func (attemptTripped) attemptObservation()        {}
+func (launchUnconfirmed) attemptObservation()     {}
+func (drainUnconfirmed) attemptObservation()      {}
+func (attemptStopped) attemptObservation()        {}
+func (attemptInfrastructure) attemptObservation() {}
 
 type observationResult struct {
 	generation                                      attemptGeneration
@@ -284,6 +280,19 @@ const (
 type barrierResult struct {
 	decision   barrierDecision
 	request    admissionRequestToken
+	deliveries []admissionGrant
+}
+
+type confirmationQueueDecision uint8
+
+const (
+	confirmationQueueCompleted confirmationQueueDecision = iota + 1
+	confirmationQueueRejectedMissing
+	confirmationQueueRejectedOutstanding
+)
+
+type confirmationQueueResult struct {
+	decision   confirmationQueueDecision
 	deliveries []admissionGrant
 }
 
@@ -457,10 +466,6 @@ func (r processRuntime) observeAttempt(generation attemptGeneration, observation
 		return next.observeLaunchUnconfirmed(generation, index)
 	case drainUnconfirmed:
 		return next.observeDrainUnconfirmed(generation, index)
-	case confirmationContinues:
-		return next.observeConfirmation(generation, index, observed.outcome, false)
-	case confirmationQueueDrained:
-		return next.observeConfirmation(generation, index, observed.outcome, true)
 	default:
 		invariant(observeOperation, "unknown observation")
 	}
@@ -497,6 +502,14 @@ func (r processRuntime) observeOwnedTerminal(
 		r.admissions[index].disposition = dispositionTerminalDeferred
 
 		return r, observationResult{generation: generation, runtimeClosureInProgress: true}
+	}
+	if admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission {
+		outcome := confirmationRejected
+		if _, settled := observation.(attemptSettled); settled {
+			outcome = confirmationPressureAccepted
+		}
+
+		return r.observeConfirmation(generation, index, outcome)
 	}
 	if tripKind != 0 {
 		return r.observeTrip(generation, index, attemptTripped{kind: tripKind})
@@ -652,7 +665,6 @@ func (r processRuntime) observeConfirmation(
 	generation attemptGeneration,
 	index int,
 	outcome confirmationOutcome,
-	queueDrained bool,
 ) (processRuntime, observationResult) {
 	admission := r.admissions[index]
 	validClass := admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission
@@ -669,9 +681,6 @@ func (r processRuntime) observeConfirmation(
 		r.mode = singleAdmission
 	}
 	r.admissions = slices.Delete(r.admissions, index, index+1)
-	if queueDrained {
-		r.campaigns[campaignAt].primaryGateOpen = true
-	}
 	r, deliveries := r.grantAvailable()
 	result := observationResult{generation: generation, settlementAcknowledged: true}
 	result.deliveries = deliveries
@@ -699,6 +708,24 @@ func (r processRuntime) sealAndBindConfirmationBarrier(binding barrierBinding) (
 	next, deliveries := next.grantAvailable()
 
 	return next, barrierResult{decision: barrierBound, request: request, deliveries: deliveries}
+}
+
+func (r processRuntime) completeConfirmationQueue(campaign campaignToken) (processRuntime, confirmationQueueResult) {
+	campaignAt := r.campaignIndex(campaign)
+	if !r.open() || campaignAt < 0 || r.campaigns[campaignAt].primaryGateOpen {
+		return r, confirmationQueueResult{decision: confirmationQueueRejectedMissing}
+	}
+	for _, admission := range r.admissions {
+		if admission.grant.campaign == campaign &&
+			(admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission) {
+			return r, confirmationQueueResult{decision: confirmationQueueRejectedOutstanding}
+		}
+	}
+	next := r.clone()
+	next.campaigns[campaignAt].primaryGateOpen = true
+	next, deliveries := next.grantAvailable()
+
+	return next, confirmationQueueResult{decision: confirmationQueueCompleted, deliveries: deliveries}
 }
 
 func (r processRuntime) closeRuntime(cause runtimeFatalCause) (processRuntime, runtimeClosure) {

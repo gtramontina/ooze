@@ -225,7 +225,7 @@ func TestPrimaryDeadlineRequiresConfirmationOnlyWithRecordedOverlap(t *testing.T
 
 	ambiguous := managed.ClassifyPrimaryMutation(primary, true)
 	provisional, ok := ambiguous.(managed.MutationNeedsConfirmation)
-	if !ok || provisional.Primary != primary {
+	if !ok || provisional.Primary() != primary {
 		t.Fatalf("overlapped deadline = %#v, want MutationNeedsConfirmation", ambiguous)
 	}
 }
@@ -267,5 +267,147 @@ func TestPrimaryUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
 	fatal, ok := disposition.(managed.MutationFatalUncertainty)
 	if !ok || fatal.Primary != primary || fatal.Confirmation != nil {
 		t.Fatalf("drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+	}
+}
+
+func TestOrdinaryConfirmationClassifiesOpaqueExitAndValidatesPressure(t *testing.T) {
+	t.Parallel()
+
+	primary := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 10 * time.Minute, CommandDuration: 10 * time.Minute,
+			BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	provisional := managed.ClassifyPrimaryMutation(primary, true).(managed.MutationNeedsConfirmation)
+	confirmation := managed.Settled{
+		Exit: managed.ExitStatus{Code: 2},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 10 * time.Minute, CommandDuration: 10 * time.Minute,
+			Output: managed.OutputSnapshot{
+				Bytes: "panic: test timed out after 10m0s", Cutoff: 36,
+				CompleteThroughCutoff: true, Final: true,
+			},
+		},
+	}
+	disposition := managed.ClassifyMutationConfirmation(provisional, confirmation)
+	authoritative, ok := disposition.(managed.AttributableMutation)
+	if !ok || authoritative.Outcome != managed.MutationKilled || authoritative.Primary != primary ||
+		authoritative.Confirmation != confirmation || !authoritative.PressureValidated {
+		t.Fatalf("confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
+	}
+}
+
+func TestPassingConfirmationSurvivesAndValidatesPressure(t *testing.T) {
+	t.Parallel()
+
+	primary := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 31 * time.Second, BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	provisional := managed.ClassifyPrimaryMutation(primary, true).(managed.MutationNeedsConfirmation)
+	confirmation := managed.Settled{ExecutionData: managed.ExecutionData{Deadline: 31 * time.Second}}
+	disposition := managed.ClassifyMutationConfirmation(provisional, confirmation)
+	authoritative, ok := disposition.(managed.AttributableMutation)
+	if !ok || authoritative.Outcome != managed.MutationSurvived || !authoritative.PressureValidated {
+		t.Fatalf("passing confirmation = %#v, want Survived with validated pressure", disposition)
+	}
+}
+
+func TestRepeatedConfirmationDeadlineIsTimedOutWithoutPressure(t *testing.T) {
+	t.Parallel()
+
+	primary := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 31 * time.Second, BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	provisional := managed.ClassifyPrimaryMutation(primary, true).(managed.MutationNeedsConfirmation)
+	confirmation := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 31 * time.Second, BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	disposition := managed.ClassifyMutationConfirmation(provisional, confirmation)
+	authoritative, ok := disposition.(managed.AttributableMutation)
+	if !ok || authoritative.Outcome != managed.MutationTimedOut || authoritative.Primary != primary ||
+		authoritative.Confirmation != confirmation || authoritative.PressureValidated {
+		t.Fatalf("repeated deadline = %#v, want TimedOut without pressure", disposition)
+	}
+}
+
+func TestConfirmationFuseTripIsIndependentlyAttributableRunaway(t *testing.T) {
+	t.Parallel()
+
+	primary := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 31 * time.Second, BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	provisional := managed.ClassifyPrimaryMutation(primary, true).(managed.MutationNeedsConfirmation)
+	confirmation := managed.Tripped{
+		Trip:          managed.FuseTrip{Live: 65},
+		ExecutionData: managed.ExecutionData{Deadline: 31 * time.Second},
+	}
+	disposition := managed.ClassifyMutationConfirmation(provisional, confirmation)
+	authoritative, ok := disposition.(managed.AttributableMutation)
+	if !ok || authoritative.Outcome != managed.MutationRunaway || authoritative.Primary != primary ||
+		authoritative.Confirmation != confirmation || authoritative.PressureValidated {
+		t.Fatalf("confirmation fuse = %#v, want independent Runaway without pressure", disposition)
+	}
+}
+
+func TestConfirmationWithDifferentResolvedDeadlineAbortsUnscored(t *testing.T) {
+	t.Parallel()
+
+	primary := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 31 * time.Second, BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	provisional := managed.ClassifyPrimaryMutation(primary, true).(managed.MutationNeedsConfirmation)
+	confirmation := managed.Settled{ExecutionData: managed.ExecutionData{Deadline: 30 * time.Second}}
+	disposition := managed.ClassifyMutationConfirmation(provisional, confirmation)
+	aborted, ok := disposition.(managed.MutationAborted)
+	if !ok || aborted.Primary != primary || aborted.Confirmation != confirmation {
+		t.Fatalf("mismatched deadline = %#v, want unscored MutationAborted", disposition)
+	}
+}
+
+func TestConfirmationUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
+	t.Parallel()
+
+	primary := managed.Tripped{
+		Trip: managed.AutomaticDeadlineTrip{},
+		ExecutionData: managed.ExecutionData{
+			Deadline: 31 * time.Second, BoundFired: managed.CommandDeadlineFired,
+		},
+	}
+	provisional := managed.ClassifyPrimaryMutation(primary, true).(managed.MutationNeedsConfirmation)
+	confirmation := managed.Infrastructure{
+		Cause: managed.CensusFailed, Err: errors.New("census failed"),
+		ExecutionData: managed.ExecutionData{Deadline: 31 * time.Second},
+	}
+	disposition := managed.ClassifyMutationConfirmation(provisional, confirmation)
+	aborted, ok := disposition.(managed.MutationAborted)
+	if !ok || aborted.Primary != primary || aborted.Confirmation != confirmation {
+		t.Fatalf("infrastructure confirmation = %#v, want MutationAborted", disposition)
+	}
+
+	unconfirmed := managed.DrainUnconfirmed{
+		Residual:      managed.OwnedUndrained,
+		ExecutionData: managed.ExecutionData{Deadline: 31 * time.Second},
+	}
+	disposition = managed.ClassifyMutationConfirmation(provisional, unconfirmed)
+	fatal, ok := disposition.(managed.MutationFatalUncertainty)
+	if !ok || fatal.Primary != primary || fatal.Confirmation != unconfirmed {
+		t.Fatalf("unconfirmed confirmation = %#v, want MutationFatalUncertainty", disposition)
 	}
 }
