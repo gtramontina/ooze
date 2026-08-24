@@ -117,6 +117,24 @@ func TestSupervisorReducerRunningDeadlineRechecksExitAndRetainsOnlyValidCountEvi
 		assertSupervisorActions(t, actions, supervisorObserveEmptiness)
 	})
 
+	t.Run("boundary recheck preserves earlier completion instant", func(t *testing.T) {
+		fixture := newRunningReducerFixture(t, AutomaticProfile)
+		completedAt := fixture.deadlineAt.Add(-time.Second)
+		recheck := supervisorExitRecheck{
+			performed: true,
+			observed:  true,
+			at:        completedAt,
+			code:      19,
+		}
+		next, actions := fixture.reduceBundle(t, fixture.deadlineAt, nil, recheck)
+		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
+		if intent.kind != supervisorIntentRootExit || !intent.at.Equal(completedAt) ||
+			intent.duration != completedAt.Sub(fixture.startedAt) || intent.exitCode != 19 {
+			t.Fatalf("deadline recheck root evidence = %#v, want actual earlier completion", intent)
+		}
+		assertSupervisorActions(t, actions, supervisorObserveEmptiness)
+	})
+
 	t.Run("automatic deadline retains real pre-intent peak", func(t *testing.T) {
 		fixture := newRunningReducerFixture(t, AutomaticProfile)
 		facts := fixture.runningFacts([]runningFactSpec{

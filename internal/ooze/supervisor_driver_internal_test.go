@@ -2041,6 +2041,9 @@ func automaticDeadlineTerminalWithReadyPeak(
 				}
 			case supervisorForceOwned:
 				nextAt = action.at.Add(time.Nanosecond)
+				if readyRoot && !nextAt.After(deadlineAt) {
+					nextAt = deadlineAt.Add(time.Nanosecond)
+				}
 				completion := supervisorDrainCompletion{
 					generation: action.generation,
 					action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -2053,6 +2056,9 @@ func automaticDeadlineTerminalWithReadyPeak(
 				}
 			case supervisorObserveEmptiness:
 				nextAt = action.at.Add(time.Nanosecond)
+				if readyRoot && !nextAt.After(deadlineAt) {
+					nextAt = deadlineAt.Add(time.Nanosecond)
+				}
 				completion := supervisorDrainCompletion{
 					generation: action.generation,
 					action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -2105,6 +2111,10 @@ func automaticDeadlineTerminalWithReadyPeak(
 			return true, equalityLive, nil
 		},
 		recheckRoot: func(attemptGeneration) (ExitStatus, time.Time, bool, error) {
+			if readyRoot {
+				return ExitStatus{Code: 23}, releasedAt.Add(500 * time.Millisecond), true, nil
+			}
+
 			return ExitStatus{}, time.Time{}, false, nil
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },

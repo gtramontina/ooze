@@ -1904,17 +1904,33 @@ func reduceRunningSnapshot(
 	deadlineReached := !through.Before(attempt.deadlineAt)
 	if deadlineReached {
 		recheck := bundle.exitRecheck
-		if !recheck.performed || !recheck.at.Equal(attempt.deadlineAt) || recheck.action != 0 {
+		if !recheck.performed || recheck.action != 0 ||
+			(recheck.observed && (recheck.at.Before(attempt.startedAt) ||
+				recheck.at.After(attempt.deadlineAt))) ||
+			(!recheck.observed && !recheck.at.Equal(attempt.deadlineAt)) {
 			invariant(supervisorReducerOperation, "deadline boundary lacks its explicit exit recheck")
 		}
 		if !recheck.observed && (recheck.code != 0 || recheck.signal != 0) {
 			invariant(supervisorReducerOperation, "unobserved exit recheck carries exit status")
 		}
 		if recheck.observed {
-			candidates = append(candidates, supervisorIntentCandidate{
-				kind: supervisorIntentRootExit, at: attempt.deadlineAt,
+			candidate := supervisorIntentCandidate{
+				kind: supervisorIntentRootExit, at: recheck.at,
 				exitCode: recheck.code, exitSignal: recheck.signal,
-			})
+			}
+			corroborated := false
+			for _, existing := range candidates {
+				if existing.kind != supervisorIntentRootExit || !existing.at.Equal(candidate.at) {
+					continue
+				}
+				if existing.exitCode != candidate.exitCode || existing.exitSignal != candidate.exitSignal {
+					invariant(supervisorReducerOperation, "deadline recheck contradicts root completion")
+				}
+				corroborated = true
+			}
+			if !corroborated {
+				candidates = append(candidates, candidate)
+			}
 		}
 		candidates = append(candidates, supervisorIntentCandidate{
 			kind: supervisorIntentDeadline, at: attempt.deadlineAt,
