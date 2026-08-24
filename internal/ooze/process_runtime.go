@@ -16,6 +16,7 @@ type (
 	campaignLineage   uint64
 	attemptIdentity   string
 	attemptGeneration uint64
+	fatalEpochID      uint64
 	runtimeFatalCause string
 )
 
@@ -151,6 +152,7 @@ type processRuntime struct {
 	mode        admissionMode
 	lifecycle   runtimeLifecycle
 	fatalCauses []runtimeFatalCause
+	fatalEpoch  fatalEpochID
 	campaigns   []registeredCampaign
 	admissions  []admittedAttempt
 }
@@ -224,9 +226,11 @@ type observationResult struct {
 	cancelledWaiting, compensatedGrants             []admissionRequestToken
 	settlementAcknowledged, confirmationProvisional bool
 	pressureTransitioned, runtimeClosureInProgress  bool
+	fatalEpoch                                      fatalEpochID
 }
 
 type runtimeClosure struct {
+	epoch                               fatalEpochID
 	cancelledWaiting, compensatedGrants []admissionRequestToken
 	residual                            []residualCustody
 }
@@ -252,6 +256,7 @@ type emergencyResolution struct {
 type emergencySweep struct{ resolutions []emergencyResolution }
 
 type emergencySettlement struct {
+	epoch        fatalEpochID
 	acknowledged []attemptGeneration
 	residual     []residualCustody
 }
@@ -617,6 +622,7 @@ func (r processRuntime) observeLaunchUnconfirmed(generation attemptGeneration, i
 	index = r.admissionIndexByGeneration(generation)
 	r.admissions[index].disposition = dispositionFatalSeeded
 	result := observationResult{generation: generation, runtimeClosureInProgress: true}
+	result.fatalEpoch = r.fatalEpoch
 	result.cancelledWaiting = closure.cancelledWaiting
 	result.compensatedGrants = closure.compensatedGrants
 
@@ -634,6 +640,7 @@ func (r processRuntime) observeDrainUnconfirmed(generation attemptGeneration, in
 	index = r.admissionIndexByGeneration(generation)
 	r.admissions[index].disposition = dispositionCustodyTransferred
 	result := observationResult{generation: generation, runtimeClosureInProgress: true}
+	result.fatalEpoch = r.fatalEpoch
 	result.cancelledWaiting = closure.cancelledWaiting
 	result.compensatedGrants = closure.compensatedGrants
 
@@ -706,14 +713,16 @@ func (r processRuntime) closeRuntime(cause runtimeFatalCause) (processRuntime, r
 		invariant("close runtime", "fatal cause is empty")
 	}
 	if r.lifecycle == runtimeClosedDrained || r.lifecycle == runtimeClosedUnconfirmed {
-		return r, runtimeClosure{residual: r.residualCustody()}
+		return r, runtimeClosure{epoch: r.fatalEpoch, residual: r.residualCustody()}
 	}
 	next := r.clone()
 	if next.open() {
+		next.nextID++
+		next.fatalEpoch = fatalEpochID(next.nextID)
 		next.lifecycle = runtimeFatalClosing
 	}
 	next.fatalCauses = append(next.fatalCauses, cause)
-	closure := runtimeClosure{}
+	closure := runtimeClosure{epoch: next.fatalEpoch}
 	if !r.open() {
 		closure.residual = next.residualCustody()
 
@@ -778,7 +787,9 @@ func (r processRuntime) settleEmergency(sweep emergencySweep) (processRuntime, e
 	next.lifecycle = runtimeFatalSettledClosing
 	next = next.finalizeFatalClosure()
 
-	return next, emergencySettlement{acknowledged: acknowledged, residual: next.residualCustody()}
+	return next, emergencySettlement{
+		epoch: next.fatalEpoch, acknowledged: acknowledged, residual: next.residualCustody(),
+	}
 }
 
 func (r processRuntime) finalizeFatalClosure() processRuntime {

@@ -106,6 +106,7 @@ type campaignState struct {
 	obligations              []campaignObligation
 	trace                    []campaignTraceRecord
 	outcome                  campaignOutcome
+	failure                  campaignFailure
 	candidate                campaignTerminalCandidate
 	nextEffect               campaignEffectID
 	commands                 int
@@ -113,6 +114,7 @@ type campaignState struct {
 	mutationDeadline         time.Duration
 	drain                    campaignDrainIntent
 	confirmationBarrierBound bool
+	pendingGrantReturns      []admissionGrant
 }
 
 type campaignDrainIntentKind uint8
@@ -128,7 +130,7 @@ type campaignDrainIntent struct {
 	kind         campaignDrainIntentKind
 	provisionals []mutantIdentity
 	cause        string
-	epoch        uint64
+	epoch        fatalEpochID
 }
 
 type campaignAttemptKind uint8
@@ -147,6 +149,7 @@ const (
 	campaignAttemptGranted
 	campaignAttemptProspective
 	campaignAttemptOwned
+	campaignAttemptReturningGrant
 	campaignAttemptSettled
 )
 
@@ -220,6 +223,14 @@ type confirmationBarrierBoundEvent struct {
 	attempt attemptIdentity
 	result  barrierResult
 }
+type grantReturnAcknowledgedEvent struct {
+	grant  admissionGrant
+	result admissionResult
+}
+type runtimeEmergencySettledEvent struct {
+	epoch      fatalEpochID
+	settlement emergencySettlement
+}
 
 func (campaignRegisteredEvent) campaignEventPayload()       {}
 func (snapshotEstablishedEvent) campaignEventPayload()      {}
@@ -232,6 +243,8 @@ func (startCommittedEvent) campaignEventPayload()           {}
 func (attemptLaunchEvent) campaignEventPayload()            {}
 func (attemptTerminalEvent) campaignEventPayload()          {}
 func (confirmationBarrierBoundEvent) campaignEventPayload() {}
+func (grantReturnAcknowledgedEvent) campaignEventPayload()  {}
+func (runtimeEmergencySettledEvent) campaignEventPayload()  {}
 
 func (campaignRegisteredEvent) campaignEventName() string    { return "campaign registered" }
 func (snapshotEstablishedEvent) campaignEventName() string   { return "snapshot established" }
@@ -246,6 +259,8 @@ func (attemptTerminalEvent) campaignEventName() string       { return "attempt t
 func (confirmationBarrierBoundEvent) campaignEventName() string {
 	return "confirmation barrier bound"
 }
+func (grantReturnAcknowledgedEvent) campaignEventName() string { return "grant return acknowledged" }
+func (runtimeEmergencySettledEvent) campaignEventName() string { return "runtime emergency settled" }
 
 type campaignTerminalKind uint8
 
@@ -262,9 +277,19 @@ type noMutantsOutcome struct{}
 type completedOutcome struct{ mutants []mutantResult }
 type abortedOutcome struct{ cause string }
 
-func (noMutantsOutcome) campaignOutcome() {}
-func (completedOutcome) campaignOutcome() {}
-func (abortedOutcome) campaignOutcome()   {}
+type campaignFailure interface{ campaignFailure() }
+
+type nonEmptyResidualCustody struct {
+	head residualCustody
+	tail []residualCustody
+}
+
+type cleanupUnconfirmedFault struct{ residual nonEmptyResidualCustody }
+
+func (noMutantsOutcome) campaignOutcome()        {}
+func (completedOutcome) campaignOutcome()        {}
+func (abortedOutcome) campaignOutcome()          {}
+func (cleanupUnconfirmedFault) campaignFailure() {}
 
 type mutantResult struct {
 	mutant mutantIdentity
@@ -308,6 +333,9 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 	if state.outcome != nil {
 		campaignInvariant("advance", "terminal campaign accepts no event")
 	}
+	if state.failure != nil {
+		campaignInvariant("advance", "failed campaign accepts no event")
+	}
 	if event.payload == nil || event.id == 0 || event.id != campaignEventID(len(state.trace)+1) {
 		campaignInvariant("advance", "event identity is invalid")
 	}
@@ -336,11 +364,43 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 		return state.onAttemptTerminal(observed)
 	case confirmationBarrierBoundEvent:
 		return state.onConfirmationBarrierBound(observed)
+	case grantReturnAcknowledgedEvent:
+		return state.onGrantReturnAcknowledged(observed)
+	case runtimeEmergencySettledEvent:
+		return state.onRuntimeEmergencySettled(observed)
 	default:
 		campaignInvariant("advance", "event kind is unknown")
 	}
 
 	return campaignState{}, nil
+}
+
+func advanceCampaignGuarded(
+	runtime *processRuntime,
+	state campaignState,
+	event campaignEvent,
+	emergencyDrain func(runtimeClosure) emergencySweep,
+) (next campaignState, effects []campaignEffect) {
+	if runtime == nil || emergencyDrain == nil {
+		campaignInvariant("guard", "runtime guard is invalid")
+	}
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		violation, ok := recovered.(runtimeInvariantViolation)
+		if !ok {
+			violation = runtimeInvariantViolation{operation: "campaign advance", reason: "unexpected panic"}
+		}
+		var closure runtimeClosure
+		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
+		sweep := emergencyDrain(closure)
+		*runtime, _ = runtime.settleEmergency(sweep)
+		panic(violation)
+	}()
+
+	return advanceCampaign(state, event)
 }
 
 func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaignState, []campaignEffect) {
@@ -534,6 +594,14 @@ func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (camp
 		event.grant != state.attempts[attemptAt].request {
 		campaignInvariant("grant admission", "grant is stale or wrong")
 	}
+	if slices.Contains(state.pendingGrantReturns, event.grant) {
+		state.attempts[attemptAt].grant = event.grant
+		state.attempts[attemptAt].stage = campaignAttemptReturningGrant
+
+		return state.emit(campaignEffect{
+			kind: campaignEffectReturnAdmission, attempt: event.attempt, grant: event.grant,
+		})
+	}
 
 	return state.acceptGrant(attemptAt, event.grant)
 }
@@ -564,6 +632,31 @@ func (state campaignState) onConfirmationBarrierBound(
 	state.attempts[attemptAt].request = event.result.request
 
 	return state.acceptGrant(attemptAt, event.result.deliveries[0])
+}
+
+func (state campaignState) onGrantReturnAcknowledged(
+	event grantReturnAcknowledgedEvent,
+) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.grant.attempt)
+	returnAt := slices.Index(state.pendingGrantReturns, event.grant)
+	if attemptAt < 0 || returnAt < 0 || state.attempts[attemptAt].stage != campaignAttemptReturningGrant ||
+		state.attempts[attemptAt].grant != event.grant ||
+		(event.result.decision != admissionReturnedAfterGateClosure &&
+			event.result.decision != admissionReturnedAfterClosure) {
+		campaignInvariant("acknowledge grant return", "grant return acknowledgement is invalid")
+	}
+	state.pendingGrantReturns = slices.Delete(state.pendingGrantReturns, returnAt, returnAt+1)
+	state.removeAttemptObligation(campaignResourceAdmission, event.grant.attempt, 0)
+	state.attempts[attemptAt].stage = campaignAttemptSettled
+	mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
+	if mutantAt >= 0 {
+		state.mutants[mutantAt].primaryStarted = false
+	}
+
+	return state.emit(campaignEffect{
+		kind: campaignEffectReleaseWorkspace, attempt: event.grant.attempt,
+		workspace: state.attempts[attemptAt].workspace,
+	})
 }
 
 func (state campaignState) onStartCommitted(event startCommittedEvent) (campaignState, []campaignEffect) {
@@ -615,6 +708,21 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 
 func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
+	_, drainFailed := event.terminal.(DrainUnconfirmed)
+	if drainFailed {
+		if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptOwned ||
+			event.generation != state.attempts[attemptAt].generation || !event.receipt.runtimeClosureInProgress ||
+			event.receipt.fatalEpoch == 0 || event.receipt.settlementAcknowledged {
+			campaignInvariant("observe drain unconfirmed", "fatal seed is invalid")
+		}
+		state.phase = campaignDraining
+		state.drain = campaignDrainIntent{
+			kind: campaignDrainRuntimeEmergency, cause: "execution-domain drainage unconfirmed",
+			epoch: event.receipt.fatalEpoch,
+		}
+
+		return state, nil
+	}
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptOwned ||
 		event.generation != state.attempts[attemptAt].generation || event.terminal == nil ||
 		event.receipt.generation != event.generation || !event.receipt.settlementAcknowledged ||
@@ -622,7 +730,8 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		campaignInvariant("observe terminal", "attempt terminal is invalid")
 	}
 	attempt := &state.attempts[attemptAt]
-	if attempt.kind == campaignAttemptBaseline {
+	switch attempt.kind {
+	case campaignAttemptBaseline:
 		settled, passed := event.terminal.(Settled)
 		passed = passed && settled.Exit.Passed() && settled.Deadline == state.definition.baselineDeadline &&
 			settled.CommandDuration > 0 && event.resolvedMutationDeadline > 0
@@ -632,7 +741,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			state.phase = campaignDraining
 			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "baseline did not pass"}
 		}
-	} else if attempt.kind == campaignAttemptPrimary {
+	case campaignAttemptPrimary:
 		mutantAt := state.mutantIndex(attempt.mutant)
 		if mutantAt < 0 || state.mutants[mutantAt].result != 0 {
 			campaignInvariant("observe primary terminal", "primary mutant is stale or already attributed")
@@ -665,7 +774,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		default:
 			campaignInvariant("observe primary terminal", "primary terminal kind is invalid")
 		}
-	} else if attempt.kind == campaignAttemptConfirmation {
+	case campaignAttemptConfirmation:
 		mutantAt := state.mutantIndex(attempt.mutant)
 		if mutantAt < 0 || state.mutants[mutantAt].result != 0 || len(state.drain.provisionals) == 0 ||
 			state.drain.provisionals[0] != attempt.mutant {
@@ -689,16 +798,80 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			campaignInvariant("observe confirmation terminal", "confirmation terminal is invalid")
 		}
 		state.drain.provisionals = slices.Clone(state.drain.provisionals[1:])
-	} else {
+	default:
 		campaignInvariant("observe terminal", "attempt kind is invalid")
 	}
 	attempt.stage = campaignAttemptSettled
 	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, event.generation)
 	state.removeAttemptObligation(campaignResourceExecutionDomain, event.attempt, event.generation)
-
-	return state.emit(campaignEffect{
+	var effects []campaignEffect
+	state, effects = state.applyRuntimeCompensations(event.receipt)
+	effects = append(effects, campaignEffect{
 		kind: campaignEffectReleaseWorkspace, attempt: event.attempt, workspace: attempt.workspace,
 	})
+
+	return state.emitAll(effects)
+}
+
+func (state campaignState) onRuntimeEmergencySettled(
+	event runtimeEmergencySettledEvent,
+) (campaignState, []campaignEffect) {
+	if state.drain.kind != campaignDrainRuntimeEmergency || event.epoch == 0 ||
+		event.epoch != state.drain.epoch || event.settlement.epoch != event.epoch {
+		campaignInvariant("settle runtime emergency", "emergency settlement is stale or wrong")
+	}
+	if len(event.settlement.residual) == 0 {
+		campaignInvariant("settle runtime emergency", "empty emergency settlement is not installed")
+	}
+	residual := slices.Clone(event.settlement.residual)
+	state.failure = cleanupUnconfirmedFault{residual: nonEmptyResidualCustody{
+		head: residual[0], tail: slices.Clone(residual[1:]),
+	}}
+
+	return state, nil
+}
+
+func (state campaignState) applyRuntimeCompensations(
+	receipt observationResult,
+) (campaignState, []campaignEffect) {
+	effects := make([]campaignEffect, 0, len(receipt.cancelledWaiting)+len(receipt.compensatedGrants))
+	for _, request := range receipt.cancelledWaiting {
+		attemptAt := state.attemptIndex(request.attempt)
+		if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
+			state.attempts[attemptAt].request != request {
+			campaignInvariant("compensate cancellation", "cancelled admission is stale or wrong")
+		}
+		state.attempts[attemptAt].stage = campaignAttemptSettled
+		state.removeAttemptObligation(campaignResourceAdmission, request.attempt, 0)
+		mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
+		if mutantAt >= 0 {
+			state.mutants[mutantAt].primaryStarted = false
+		}
+		effects = append(effects, campaignEffect{
+			kind: campaignEffectReleaseWorkspace, attempt: request.attempt,
+			workspace: state.attempts[attemptAt].workspace,
+		})
+	}
+	for _, grant := range receipt.compensatedGrants {
+		if slices.Contains(state.pendingGrantReturns, grant) {
+			campaignInvariant("compensate grant", "grant return is duplicated")
+		}
+		attemptAt := state.attemptIndex(grant.attempt)
+		if attemptAt < 0 || (state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting &&
+			state.attempts[attemptAt].stage != campaignAttemptGranted) {
+			campaignInvariant("compensate grant", "grant return is stale or wrong")
+		}
+		state.pendingGrantReturns = append(state.pendingGrantReturns, grant)
+		if state.attempts[attemptAt].stage == campaignAttemptGranted {
+			state.attempts[attemptAt].stage = campaignAttemptReturningGrant
+			state.removeAttemptObligation(campaignResourcePendingStart, grant.attempt, 0)
+			effects = append(effects, campaignEffect{
+				kind: campaignEffectReturnAdmission, attempt: grant.attempt, grant: grant,
+			})
+		}
+	}
+
+	return state, effects
 }
 
 func (state campaignState) insertProvisional(mutant mutantIdentity) []mutantIdentity {
@@ -825,6 +998,15 @@ func (state campaignState) emit(effect campaignEffect) (campaignState, []campaig
 	return state, []campaignEffect{effect}
 }
 
+func (state campaignState) emitAll(effects []campaignEffect) (campaignState, []campaignEffect) {
+	for index := range effects {
+		state.nextEffect++
+		effects[index].id = state.nextEffect
+	}
+
+	return state, effects
+}
+
 func (state campaignState) obligationIndex(kind campaignResourceKind, identity string) int {
 	return slices.IndexFunc(state.obligations, func(obligation campaignObligation) bool {
 		return obligation.kind == kind && obligation.identity == identity
@@ -838,6 +1020,7 @@ func (state campaignState) clone() campaignState {
 	state.mutants = slices.Clone(state.mutants)
 	state.attempts = slices.Clone(state.attempts)
 	state.drain.provisionals = slices.Clone(state.drain.provisionals)
+	state.pendingGrantReturns = slices.Clone(state.pendingGrantReturns)
 	state.obligations = slices.Clone(state.obligations)
 	state.trace = slices.Clone(state.trace)
 
