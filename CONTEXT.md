@@ -38,7 +38,7 @@ _Avoid_: CPU allocation, subtree quota, confirmation override
 
 **Confirmation**:
 A fresh, process-local exclusive attempt that resolves a primary deadline with recorded peer overlap after all competing attempts have drained. A primary deadline without recorded peer overlap needs no confirmation.
-_Avoid_: Retry, rerun
+_Avoid_: Confirmation net, retry, rerun
 
 **Confirmation queue**:
 The stable, finite ordering of provisional mutants awaiting confirmation while their campaign remains paused.
