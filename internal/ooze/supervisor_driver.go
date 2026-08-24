@@ -64,9 +64,84 @@ func newDrivenSupervisorForTest(
 		panic("driven supervisor requires a driver")
 	}
 	supervisor := newSupervisorForTest(installStart, driver.launch)
+	supervisor.driveLaunch = driver.launchInstalled
 	supervisor.emergencyDrain = driver.emergencyDrain
 
 	return supervisor
+}
+
+func (driver *supervisorDriver) launchInstalled(start installedStart, spec Spec) LaunchResult {
+	var actions []supervisorAction
+	var launchObservation attemptObservation
+	observed := start.launch(func(generation attemptGeneration) attemptObservation {
+		launchObservation, actions = driver.stageLaunch(generation, spec)
+
+		return launchObservation
+	})
+	start.shell.observeAttempt(start.generation, observed)
+	for _, action := range actions {
+		driver.run(action)
+	}
+	driver.mutex.Lock()
+	published := driver.requireAttempt(start.generation).launchResult
+	driver.mutex.Unlock()
+	if launchObservation == nil || published == nil {
+		invariant(supervisorDriverOperation, "launch returned before publication")
+	}
+
+	return published
+}
+
+func (driver *supervisorDriver) stageLaunch(
+	generation attemptGeneration,
+	spec Spec,
+) (attemptObservation, []supervisorAction) {
+	registeredAt := driver.now()
+	driver.mutex.Lock()
+	if generation == 0 || driver.attempts[generation] != nil {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "launch generation is zero or duplicated")
+	}
+	driver.attempts[generation] = &supervisorDrivenAttempt{
+		spec: spec, terminal: make(chan Terminal, 1),
+	}
+	driver.mutex.Unlock()
+	actions := driver.reduce(supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: generation,
+		attempt: attemptIdentity(spec.Attempt), at: registeredAt,
+		launchBy: registeredAt.Add(driver.launchProgress), profile: spec.Profile,
+		commandDeadline: spec.Deadline,
+	})
+	if len(actions) != 1 || actions[0].kind != supervisorLaunchNative {
+		invariant(supervisorDriverOperation, "prospective registration did not issue native launch")
+	}
+	event := driver.execute(actions[0])
+	if event == nil {
+		invariant(supervisorDriverOperation, "native launch returned no completion")
+	}
+	publication := driver.reduce(*event)
+	completion := event.completion
+	if completion == nil {
+		invariant(supervisorDriverOperation, "native launch completion is absent")
+	}
+	var observation attemptObservation
+	switch completion.kind {
+	case supervisorLaunchReleased:
+		observation = launchOwned{}
+	case supervisorLaunchProvenNotReleased:
+		switch completion.failure {
+		case LaunchFailed:
+			observation = launchNotReleased{reason: launchFailed}
+		case LaunchResourceExhausted:
+			observation = launchNotReleased{reason: launchResourceExhausted}
+		default:
+			invariant(supervisorDriverOperation, "not-released launch classification is invalid")
+		}
+	default:
+		invariant(supervisorDriverOperation, "native launch completion kind is invalid")
+	}
+
+	return observation, publication
 }
 
 func (driver *supervisorDriver) launch(generation attemptGeneration, spec Spec) LaunchResult {
@@ -97,11 +172,17 @@ func (driver *supervisorDriver) launch(generation attemptGeneration, spec Spec) 
 	return result
 }
 
-func (driver *supervisorDriver) apply(event supervisorEvent) {
+func (driver *supervisorDriver) reduce(event supervisorEvent) []supervisorAction {
 	driver.mutex.Lock()
+	defer driver.mutex.Unlock()
 	next, actions := reduceSupervisor(driver.state, event)
 	driver.state = next
-	driver.mutex.Unlock()
+
+	return actions
+}
+
+func (driver *supervisorDriver) apply(event supervisorEvent) {
+	actions := driver.reduce(event)
 	for _, action := range actions {
 		driver.run(action)
 	}

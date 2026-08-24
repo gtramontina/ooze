@@ -127,7 +127,7 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 		},
 		readOutput: func(supervisorOutputRef) string { return "bad" },
 	})
-	supervisor := newSupervisorForTest(
+	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			if attempt != grant.attempt {
 				t.Fatalf("start attempt = %q, want %q", attempt, grant.attempt)
@@ -136,7 +136,7 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 
 			return prepared.start
 		},
-		driver.launch,
+		driver,
 	)
 
 	result := supervisor.Launch(Spec{
@@ -146,6 +146,10 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	owned, ok := result.(Owned)
 	if !ok || owned.Attempt == nil {
 		t.Fatalf("launch = %#v, want Owned", result)
+	}
+	launched := shell.snapshot()
+	if len(launched.admissions) != 1 || launched.admissions[0].stage != admissionOwned {
+		t.Fatalf("Owned published before runtime ownership: %#v", launched)
 	}
 	terminal := owned.Attempt.Wait()
 	settled, ok := terminal.(Settled)
