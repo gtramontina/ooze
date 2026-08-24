@@ -32,6 +32,9 @@ jobs:
     - name: "🧪 Test"
       run: devbox run -- make test
 
+    - name: "🧭 Cross-compile supported and sentinel targets"
+      run: devbox run -- make test.crosscompile
+
   required:
     name: CI
     if: ${{ always() }}

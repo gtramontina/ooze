@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    - cron: "23 4 * * 2"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +20,7 @@ jobs:
     env:
       GOTOOLCHAIN: local
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: Ubuntu 24.04
@@ -42,11 +46,47 @@ jobs:
       - name: Test
         run: go test -race -cover -timeout=60s -shuffle=on ./...
 
+      - name: Native acceptance
+        env:
+          ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+        run: go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/cmdtestrunner ./internal/ooze
+
+  stress:
+    name: Stress / ${{ matrix.name }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GOTOOLCHAIN: local
+      ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            runner: ubuntu-24.04
+          - name: macOS 26
+            runner: macos-26
+          - name: Windows 2025
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go 1.26.6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      - name: Repeat bounded native acceptance
+        run: go test -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/cmdtestrunner ./internal/ooze
+
   required:
     name: OS Compatibility
     if: ${{ always() }}
-    needs: test
+    needs: [ test, stress ]
     runs-on: ubuntu-24.04
     steps:
       - name: Verify supported operating systems
-        run: test "${{ needs.test.result }}" = "success"
+        run: test "${{ needs.test.result }}" = "success" && { test "${{ needs.stress.result }}" = "success" || test "${{ needs.stress.result }}" = "skipped"; }
