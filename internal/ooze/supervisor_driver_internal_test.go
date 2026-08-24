@@ -1199,6 +1199,9 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 			}
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
+		recheckRoot: func(attemptGeneration) (ExitStatus, time.Time, bool, error) {
+			return ExitStatus{}, time.Time{}, false, nil
+		},
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
@@ -1214,7 +1217,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 
 	result := supervisor.Launch(Spec{
 		Attempt: "driver-emergency", Command: []string{"sleep", "10"}, Dir: "/tmp",
-		Profile: SerialProfile, Deadline: 10 * time.Second,
+		Profile: SerialProfile, Deadline: 2 * time.Second,
 	})
 	owned, ok := result.(Owned)
 	if !ok || owned.Attempt == nil {
@@ -1230,10 +1233,13 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 		t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
 	}
 	terminal := owned.Attempt.Wait()
-	stopped, ok := terminal.(Stopped)
-	if !ok || stopped.CommandDuration != emergencyAt.Sub(releasedAt) ||
-		stopped.BoundFired != NoBoundFired {
-		t.Fatalf("emergency terminal = %#v, want runtime-emergency Stopped", terminal)
+	tripped, ok := terminal.(Tripped)
+	if !ok || tripped.CommandDuration != 2*time.Second ||
+		tripped.BoundFired != CommandDeadlineFired {
+		t.Fatalf("emergency terminal = %#v, want inclusive command-deadline Tripped", terminal)
+	}
+	if _, ok := tripped.Trip.(SerialDeadlineTrip); !ok {
+		t.Fatalf("emergency trip = %#v, want SerialDeadlineTrip", tripped.Trip)
 	}
 	wantActions := []supervisorActionKind{
 		supervisorLaunchNative,

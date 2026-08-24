@@ -787,11 +787,58 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 				snapshot.completion = attempt.launchEvent.completion
 			}
 		case supervisorRunning:
-			snapshot.running = &supervisorRunningBundle{
+			running := &supervisorRunningBundle{
 				generation:   state.generation,
 				waitAction:   state.waitAction,
 				sampleAction: state.sampleAction,
 			}
+			deadlineReached := !request.At.Before(state.deadlineAt)
+			if driver.recheckRoot == nil {
+				if deadlineReached {
+					driver.mutex.Unlock()
+					invariant(supervisorDriverOperation, "owned deadline emergency lacks a root completion cell")
+				}
+			} else {
+				status, completedAt, observed, err := driver.recheckRoot(state.generation)
+				if err != nil {
+					driver.mutex.Unlock()
+					invariant(supervisorDriverOperation, "owned emergency root snapshot failed")
+				}
+				rootThroughCut := observed && !completedAt.After(request.At)
+				if rootThroughCut {
+					running.facts = append(running.facts, supervisorRunningFact{
+						generation: state.generation,
+						action:     state.waitAction,
+						kind:       supervisorRunningRootExited,
+						at:         completedAt,
+						exitCode:   status.Code,
+						exitSignal: status.Signal,
+					})
+				}
+				selectedAt := time.Time{}
+				if rootThroughCut {
+					selectedAt = completedAt
+				}
+				if deadlineReached {
+					rootThroughDeadline := observed && !completedAt.After(state.deadlineAt)
+					running.exitRecheck = supervisorExitRecheck{
+						performed: true,
+						observed:  rootThroughDeadline,
+						at:        state.deadlineAt,
+					}
+					if rootThroughDeadline {
+						running.exitRecheck.code = status.Code
+						running.exitRecheck.signal = status.Signal
+					}
+					if selectedAt.IsZero() || state.deadlineAt.Before(selectedAt) {
+						selectedAt = state.deadlineAt
+					}
+				}
+				if !selectedAt.IsZero() {
+					running.drainBy = selectedAt.Add(driver.drainEpoch)
+				}
+			}
+			snapshot.running = running
 		case supervisorIntentLatched:
 			snapshot.running = &supervisorRunningBundle{
 				generation:   state.generation,
