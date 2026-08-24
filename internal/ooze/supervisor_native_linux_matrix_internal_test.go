@@ -41,7 +41,7 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 		},
 		{
 			name: "double-forked session orphan", role: "orphan-root",
-			walkFromRoot: [2]bool{false, false}, waitable: [2]bool{true, true}, postRootSeed: "subject",
+			walkFromRoot: [2]bool{true, false}, waitable: [2]bool{true, true}, postRootSeed: "subject",
 		},
 		{
 			name: "session escapee whose parent is the root", role: "escape-root",
