@@ -197,9 +197,11 @@ func TestSupervisorReducerLaunchEmergencyUsesSerializedCompletionOrNil(t *testin
 		{
 			name: "proven no release snapshot closes normally", generation: 32,
 			hasCompletion: true, completionKind: supervisorLaunchProvenNotReleased,
-			failure:     LaunchFailed,
-			wantActions: []supervisorActionKind{supervisorPublishNotReleased},
-			wantPhase:   supervisorLaunchClosedNotReleased,
+			failure: LaunchFailed,
+			wantActions: []supervisorActionKind{
+				supervisorPublishNotReleased, supervisorSettleEmergency,
+			},
+			wantPhase: supervisorLaunchClosedNotReleased,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

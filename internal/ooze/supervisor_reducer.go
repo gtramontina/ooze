@@ -1,6 +1,9 @@
 package ooze
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 const supervisorReducerOperation = "reduce supervisor"
 
@@ -44,6 +47,7 @@ const (
 	supervisorStopAdmissionSealed
 	supervisorReleaseCompleted
 	supervisorRuntimeCompleted
+	supervisorEmergencySettlementCompleted
 )
 
 type supervisorActionKind uint8
@@ -66,7 +70,20 @@ const (
 	supervisorTransferResidualCustody
 	supervisorSettleRuntime
 	supervisorDeliverTerminal
+	supervisorSettleEmergency
+	supervisorDeliverEmergencySettlement
 )
+
+type supervisorEmergencyResolutionKind uint8
+
+const (
+	supervisorEmergencyConfirmedDrained supervisorEmergencyResolutionKind = iota + 1
+	supervisorEmergencyResidualOwned
+)
+
+type supervisorResidualKind uint8
+
+const supervisorResidualOwned supervisorResidualKind = iota + 1
 
 type supervisorRuntimeReceiptKind uint8
 
@@ -261,6 +278,23 @@ type supervisorRuntimeCompletion struct {
 	kind       supervisorRuntimeReceiptKind
 }
 
+type supervisorEmergencyResolution struct {
+	generation attemptGeneration
+	kind       supervisorEmergencyResolutionKind
+}
+
+type supervisorEmergencyResidual struct {
+	generation attemptGeneration
+	attempt    attemptIdentity
+	kind       supervisorResidualKind
+}
+
+type supervisorEmergencySettlementCompletion struct {
+	action       supervisorPendingAction
+	acknowledged []attemptGeneration
+	residuals    []supervisorEmergencyResolution
+}
+
 type supervisorOutputEvidence struct {
 	ref                   supervisorOutputRef
 	cutoff                uint64
@@ -298,9 +332,10 @@ type supervisorEmergencySnapshot struct {
 }
 
 type supervisorEmergencyEpoch struct {
-	active  bool
-	at      time.Time
-	drainBy time.Time
+	active        bool
+	at            time.Time
+	drainBy       time.Time
+	pendingAction supervisorPendingAction
 }
 
 type supervisorAttemptState struct {
@@ -335,22 +370,23 @@ type supervisorState struct {
 }
 
 type supervisorEvent struct {
-	kind               supervisorEventKind
-	generation         attemptGeneration
-	attempt            attemptIdentity
-	at                 time.Time
-	launchBy           time.Time
-	drainBy            time.Time
-	completion         *supervisorLaunchCompletion
-	emergencySnapshots []supervisorEmergencySnapshot
-	profile            Profile
-	commandDeadline    time.Duration
-	running            *supervisorRunningBundle
-	drain              *supervisorDrainCompletion
-	output             *supervisorOutputCompletion
-	seal               *supervisorStopSealCompletion
-	release            *supervisorReleaseCompletion
-	runtime            *supervisorRuntimeCompletion
+	kind                supervisorEventKind
+	generation          attemptGeneration
+	attempt             attemptIdentity
+	at                  time.Time
+	launchBy            time.Time
+	drainBy             time.Time
+	completion          *supervisorLaunchCompletion
+	emergencySnapshots  []supervisorEmergencySnapshot
+	profile             Profile
+	commandDeadline     time.Duration
+	running             *supervisorRunningBundle
+	drain               *supervisorDrainCompletion
+	output              *supervisorOutputCompletion
+	seal                *supervisorStopSealCompletion
+	release             *supervisorReleaseCompletion
+	runtime             *supervisorRuntimeCompletion
+	emergencySettlement *supervisorEmergencySettlementCompletion
 }
 
 type supervisorAction struct {
@@ -365,6 +401,8 @@ type supervisorAction struct {
 	intent         supervisorRunningIntent
 	terminal       supervisorTerminalEvidence
 	runtimeKind    supervisorRuntimeReceiptKind
+	resolutions    []supervisorEmergencyResolution
+	residuals      []supervisorEmergencyResidual
 }
 
 //nolint:cyclop // One sealed deterministic event dispatch intentionally enumerates every supervisor event.
@@ -372,33 +410,46 @@ func reduceSupervisor(state supervisorState, event supervisorEvent) (supervisorS
 	if event.kind != supervisorRuntimeCompleted && event.runtime != nil {
 		invariant(supervisorReducerOperation, "non-runtime event carries a runtime completion")
 	}
+	if event.kind != supervisorEmergencySettlementCompleted && event.emergencySettlement != nil {
+		invariant(supervisorReducerOperation, "non-settlement event carries an emergency settlement completion")
+	}
+	if state.emergency.pendingAction != (supervisorPendingAction{}) &&
+		event.kind != supervisorEmergencySettlementCompleted {
+		invariant(supervisorReducerOperation, "emergency settlement freezes noncompletion events")
+	}
 	next := cloneSupervisorState(state)
+	if event.kind == supervisorEmergencySettlementCompleted {
+		return reduceEmergencySettlementCompletion(next, event)
+	}
+	var actions []supervisorAction
 	switch event.kind {
 	case supervisorProspectiveRegistered:
-		return reduceProspectiveRegistration(next, event)
+		next, actions = reduceProspectiveRegistration(next, event)
 	case supervisorLaunchCompleted:
-		return reduceLaunchCompletion(next, event)
+		next, actions = reduceLaunchCompletion(next, event)
 	case supervisorLaunchBoundary:
-		return reduceLaunchBoundary(next, event)
+		next, actions = reduceLaunchBoundary(next, event)
 	case supervisorEmergencyStarted:
-		return reduceLaunchEmergency(next, event)
+		next, actions = reduceLaunchEmergency(next, event)
 	case supervisorRunningObserved:
-		return reduceRunningBundle(next, event)
+		next, actions = reduceRunningBundle(next, event)
 	case supervisorDrainCompleted:
-		return reduceDrainCompletion(next, event)
+		next, actions = reduceDrainCompletion(next, event)
 	case supervisorOutputCompleted:
-		return reduceOutputCompletion(next, event)
+		next, actions = reduceOutputCompletion(next, event)
 	case supervisorStopAdmissionSealed:
-		return reduceStopSealCompletion(next, event)
+		next, actions = reduceStopSealCompletion(next, event)
 	case supervisorReleaseCompleted:
-		return reduceReleaseCompletion(next, event)
+		next, actions = reduceReleaseCompletion(next, event)
 	case supervisorRuntimeCompleted:
-		return reduceRuntimeCompletion(next, event)
+		next, actions = reduceRuntimeCompletion(next, event)
 	default:
 		invariant(supervisorReducerOperation, "event kind is invalid")
 
 		return supervisorState{}, nil
 	}
+
+	return appendEmergencySettlementIfReady(next, actions)
 }
 
 func cloneSupervisorState(state supervisorState) supervisorState {
@@ -407,11 +458,158 @@ func cloneSupervisorState(state supervisorState) supervisorState {
 	return state
 }
 
+func appendEmergencySettlementIfReady(
+	state supervisorState,
+	actions []supervisorAction,
+) (supervisorState, []supervisorAction) {
+	if !state.emergency.active || state.emergency.pendingAction != (supervisorPendingAction{}) ||
+		!state.emergencySettlementInventoryReady() {
+		return state, actions
+	}
+	action := state.newGlobalAction(supervisorSettleEmergency)
+	action.resolutions = state.emergencySettlementResolutions()
+	state.emergency.pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
+
+	return state, append(actions, action)
+}
+
+func (state supervisorState) emergencySettlementInventoryReady() bool {
+	for _, attempt := range state.attempts {
+		if attempt.phase != supervisorLaunchClosedNotReleased &&
+			attempt.phase != supervisorAwaitingEmergencySettlement {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (state supervisorState) emergencySettlementResolutions() []supervisorEmergencyResolution {
+	var resolutions []supervisorEmergencyResolution
+	for _, attempt := range state.attempts {
+		if attempt.phase == supervisorLaunchClosedNotReleased {
+			continue
+		}
+		validateEmergencySettlementCustody(attempt, state.emergency)
+		kind := supervisorEmergencyConfirmedDrained
+		if attempt.drain.decision == supervisorDrainUnconfirmed {
+			kind = supervisorEmergencyResidualOwned
+		}
+		resolutions = append(resolutions, supervisorEmergencyResolution{
+			generation: attempt.generation,
+			kind:       kind,
+		})
+	}
+
+	return resolutions
+}
+
+func reduceEmergencySettlementCompletion(
+	state supervisorState,
+	event supervisorEvent,
+) (supervisorState, []supervisorAction) {
+	completion := requireEmergencySettlementCompletion(state, event)
+	resolutions := state.emergencySettlementResolutions()
+	validateEmergencySettlementCompletionInventory(completion, resolutions)
+
+	actions := make([]supervisorAction, 0, len(state.attempts)+1)
+	var kept []supervisorAttemptState
+	var residuals []supervisorEmergencyResidual
+	for index, attempt := range state.attempts {
+		if attempt.phase == supervisorLaunchClosedNotReleased {
+			kept = append(kept, attempt)
+
+			continue
+		}
+		if attempt.drain.decision == supervisorDrainProvenEmpty &&
+			attempt.terminal != (supervisorTerminalEvidence{}) {
+			action := state.newAction(supervisorDeliverTerminal, index, time.Time{}, time.Time{}, nil)
+			action.terminal = attempt.terminal
+			action.runtimeKind = supervisorRuntimeClosurePending
+			actions = append(actions, action)
+		}
+		if attempt.drain.decision == supervisorDrainUnconfirmed {
+			residuals = append(residuals, supervisorEmergencyResidual{
+				generation: attempt.generation,
+				attempt:    attempt.attempt,
+				kind:       supervisorResidualOwned,
+			})
+		}
+	}
+	delivery := state.newGlobalAction(supervisorDeliverEmergencySettlement)
+	delivery.residuals = residuals
+	actions = append(actions, delivery)
+	state.attempts = kept
+	state.emergency.pendingAction = supervisorPendingAction{}
+
+	return state, actions
+}
+
+func requireEmergencySettlementCompletion(
+	state supervisorState,
+	event supervisorEvent,
+) supervisorEmergencySettlementCompletion {
+	if event.emergencySettlement == nil || !state.emergency.active ||
+		state.emergency.pendingAction.kind != supervisorSettleEmergency ||
+		state.emergency.pendingAction.token == 0 || !state.emergencySettlementInventoryReady() {
+		invariant(supervisorReducerOperation, "emergency settlement completion is outside pending custody")
+	}
+	validateEmergencySettlementEventShape(event)
+	completion := *event.emergencySettlement
+	if completion.action != state.emergency.pendingAction {
+		invariant(supervisorReducerOperation, "emergency settlement completion correlation is stale or wrong")
+	}
+
+	return completion
+}
+
+func validateEmergencySettlementEventShape(event supervisorEvent) {
+	if emergencySettlementEventHasEnvelopeData(event) ||
+		emergencySettlementEventHasLaunchData(event) ||
+		emergencySettlementEventHasCustodyData(event) {
+		invariant(supervisorReducerOperation, "emergency settlement completion event shape is invalid")
+	}
+}
+
+func emergencySettlementEventHasEnvelopeData(event supervisorEvent) bool {
+	return event.kind != supervisorEmergencySettlementCompleted || event.generation != 0 ||
+		!event.attemptIsZero() || !event.at.IsZero() || !event.launchBy.IsZero() || !event.drainBy.IsZero()
+}
+
+func emergencySettlementEventHasLaunchData(event supervisorEvent) bool {
+	return event.completion != nil || len(event.emergencySnapshots) != 0 ||
+		event.profile != 0 || event.commandDeadline != 0 || event.running != nil
+}
+
+func emergencySettlementEventHasCustodyData(event supervisorEvent) bool {
+	return event.drain != nil || event.output != nil || event.seal != nil ||
+		event.release != nil || event.runtime != nil
+}
+
+func validateEmergencySettlementCompletionInventory(
+	completion supervisorEmergencySettlementCompletion,
+	resolutions []supervisorEmergencyResolution,
+) {
+	acknowledged := make([]attemptGeneration, len(resolutions))
+	var residuals []supervisorEmergencyResolution
+	for index, resolution := range resolutions {
+		acknowledged[index] = resolution.generation
+		if resolution.kind == supervisorEmergencyResidualOwned {
+			residuals = append(residuals, resolution)
+		}
+	}
+	if !slices.Equal(completion.acknowledged, acknowledged) ||
+		!slices.Equal(completion.residuals, residuals) {
+		invariant(supervisorReducerOperation, "emergency settlement completion inventory is stale or reordered")
+	}
+}
+
 func reduceProspectiveRegistration(
 	state supervisorState,
 	event supervisorEvent,
 ) (supervisorState, []supervisorAction) {
 	if event.generation == 0 || event.attempt == "" || event.at.IsZero() ||
+		state.emergency.active ||
 		event.launchBy.IsZero() || !event.launchBy.After(event.at) ||
 		!event.drainBy.IsZero() || event.completion != nil || event.drain != nil ||
 		event.output != nil || event.seal != nil || event.release != nil ||
@@ -420,7 +618,7 @@ func reduceProspectiveRegistration(
 		event.commandDeadline <= 0 || state.attemptIndex(event.generation) >= 0 {
 		invariant(supervisorReducerOperation, "prospective registration is incomplete or duplicated")
 	}
-	state.attempts = append(state.attempts, supervisorAttemptState{
+	attempt := supervisorAttemptState{
 		generation:      event.generation,
 		attempt:         event.attempt,
 		profile:         event.profile,
@@ -429,8 +627,16 @@ func reduceProspectiveRegistration(
 		launchBy:        event.launchBy,
 		lastEventAt:     event.at,
 		phase:           supervisorLaunchEstablishing,
-	})
-	index := len(state.attempts) - 1
+	}
+	index := len(state.attempts)
+	for candidate := range state.attempts {
+		if state.attempts[candidate].generation > event.generation {
+			index = candidate
+
+			break
+		}
+	}
+	state.attempts = slices.Insert(state.attempts, index, attempt)
 	action := state.newAction(supervisorLaunchNative, index, event.at, time.Time{}, nil)
 	state.attempts[index].launchAction = action.token
 
@@ -700,9 +906,19 @@ func validateAwaitingEmergencySettlement(
 	at time.Time,
 	emergency supervisorEmergencyEpoch,
 ) {
-	if snapshot.completion != nil || snapshot.running != nil || at.Before(attempt.lastEventAt) ||
-		attempt.pendingAction != (supervisorPendingAction{}) {
+	if snapshot.completion != nil || snapshot.running != nil || at.Before(attempt.lastEventAt) {
 		invariant(supervisorReducerOperation, "awaiting-settlement emergency snapshot is invalid")
+	}
+	validateEmergencySettlementCustody(attempt, emergency)
+}
+
+func validateEmergencySettlementCustody(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) {
+	if attempt.phase != supervisorAwaitingEmergencySettlement ||
+		attempt.pendingAction != (supervisorPendingAction{}) {
+		invariant(supervisorReducerOperation, "emergency settlement attempt custody is invalid")
 	}
 	switch attempt.drain.decision {
 	case supervisorDrainProvenEmpty:
@@ -2160,6 +2376,16 @@ func (state *supervisorState) newAction(
 	}
 
 	return action
+}
+
+func (state *supervisorState) newGlobalAction(kind supervisorActionKind) supervisorAction {
+	if (kind != supervisorSettleEmergency && kind != supervisorDeliverEmergencySettlement) ||
+		state.nextAction == ^supervisorActionToken(0) {
+		invariant(supervisorReducerOperation, "global action allocation is invalid or exhausted")
+	}
+	state.nextAction++
+
+	return supervisorAction{kind: kind, token: state.nextAction}
 }
 
 func (state supervisorState) attemptIndex(generation attemptGeneration) int {

@@ -132,15 +132,25 @@ func assertDeliveredRuntimeReceipt(
 ) {
 	t.Helper()
 	wantToken := input.nextAction + 1
-	wantAction := supervisorAction{
+	wantActions := []supervisorAction{{
 		kind: supervisorDeliverTerminal, generation: fixture.generation,
 		token: wantToken, terminal: fixture.terminal, runtimeKind: receipt,
-	}
+	}}
 	wantState := cloneSupervisorState(input)
 	wantState.nextAction = wantToken
 	wantState = removeRuntimeReceiptAttempt(t, wantState, fixture.generation)
-	if !reflect.DeepEqual(actions, []supervisorAction{wantAction}) {
-		t.Fatalf("runtime delivery actions = %#v, want %#v", actions, []supervisorAction{wantAction})
+	if input.emergency.active {
+		wantState.nextAction++
+		settle := supervisorAction{
+			kind: supervisorSettleEmergency, token: wantState.nextAction,
+		}
+		wantActions = append(wantActions, settle)
+		wantState.emergency.pendingAction = supervisorPendingAction{
+			kind: settle.kind, token: settle.token,
+		}
+	}
+	if !reflect.DeepEqual(actions, wantActions) {
+		t.Fatalf("runtime delivery actions = %#v, want %#v", actions, wantActions)
 	}
 	if !reflect.DeepEqual(next, wantState) {
 		t.Fatalf("runtime delivery state = %#v, want %#v", next, wantState)
@@ -161,8 +171,23 @@ func assertDeferredRuntimeReceipt(
 	wantAttempt := &wantState.attempts[targetIndex]
 	wantAttempt.phase = supervisorAwaitingEmergencySettlement
 	wantAttempt.pendingAction = supervisorPendingAction{}
-	if len(actions) != 0 {
-		t.Fatalf("closure-pending receipt emitted action: %#v", actions)
+	var wantActions []supervisorAction
+	if input.emergency.active {
+		wantState.nextAction++
+		settle := supervisorAction{
+			kind: supervisorSettleEmergency, token: wantState.nextAction,
+			resolutions: []supervisorEmergencyResolution{{
+				generation: fixture.generation,
+				kind:       supervisorEmergencyConfirmedDrained,
+			}},
+		}
+		wantActions = []supervisorAction{settle}
+		wantState.emergency.pendingAction = supervisorPendingAction{
+			kind: settle.kind, token: settle.token,
+		}
+	}
+	if !reflect.DeepEqual(actions, wantActions) {
+		t.Fatalf("closure-pending receipt actions = %#v, want %#v", actions, wantActions)
 	}
 	if !reflect.DeepEqual(next, wantState) {
 		t.Fatalf("closure-pending state = %#v, want %#v", next, wantState)
@@ -188,14 +213,25 @@ func assertEmergencyAfterDeferredRuntimeReceipt(
 		kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 		emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 	})
-	if len(actions) != 0 {
-		t.Fatalf("post-receipt emergency emitted action: %#v", actions)
-	}
 	want := cloneSupervisorState(input)
 	want.emergency = supervisorEmergencyEpoch{
 		active: true, at: emergencyAt, drainBy: emergencyDrainBy,
 	}
 	want.attempts[targetIndex].lastEventAt = emergencyAt
+	want.nextAction++
+	settle := supervisorAction{
+		kind: supervisorSettleEmergency, token: want.nextAction,
+		resolutions: []supervisorEmergencyResolution{{
+			generation: fixture.generation,
+			kind:       supervisorEmergencyConfirmedDrained,
+		}},
+	}
+	want.emergency.pendingAction = supervisorPendingAction{
+		kind: settle.kind, token: settle.token,
+	}
+	if !reflect.DeepEqual(actions, []supervisorAction{settle}) {
+		t.Fatalf("post-receipt emergency actions = %#v, want %#v", actions, []supervisorAction{settle})
+	}
 	if !reflect.DeepEqual(next, want) {
 		t.Fatalf("post-receipt emergency state = %#v, want %#v", next, want)
 	}

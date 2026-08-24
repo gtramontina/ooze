@@ -377,14 +377,25 @@ func assertLateAdoptedEmergencyContinuation(
 		kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 		emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 	})
-	if len(emergencyActions) != 0 {
-		t.Fatalf("settled late-adopted sweep restarted native or ordinary settlement: %#v", emergencyActions)
-	}
 	wantEmergency := cloneSupervisorState(released)
 	wantEmergency.emergency = supervisorEmergencyEpoch{
 		active: true, at: emergencyAt, drainBy: emergencyDrainBy,
 	}
 	wantEmergency.attempts[0].lastEventAt = emergencyAt
+	wantEmergency.nextAction++
+	settle := supervisorAction{
+		kind: supervisorSettleEmergency, token: wantEmergency.nextAction,
+		resolutions: []supervisorEmergencyResolution{{
+			generation: fixture.generation,
+			kind:       supervisorEmergencyConfirmedDrained,
+		}},
+	}
+	wantEmergency.emergency.pendingAction = supervisorPendingAction{
+		kind: settle.kind, token: settle.token,
+	}
+	if !reflect.DeepEqual(emergencyActions, []supervisorAction{settle}) {
+		t.Fatalf("settled late-adopted sweep actions = %#v, want %#v", emergencyActions, []supervisorAction{settle})
+	}
 	if !reflect.DeepEqual(afterEmergency, wantEmergency) {
 		t.Fatalf("post-release emergency state = %#v, want %#v", afterEmergency, wantEmergency)
 	}
@@ -407,7 +418,7 @@ func assertLateAdoptedEmergencyState(
 		after.terminal != (supervisorTerminalEvidence{}) ||
 		after.intent != (supervisorRunningIntent{}) || after.releaseDiagnostic != 707 ||
 		!after.drain.effectiveDrainBy.Equal(fixtureAttempt.drain.effectiveDrainBy) ||
-		afterEmergency.nextAction != fixture.state.nextAction {
+		afterEmergency.nextAction != fixture.state.nextAction+1 {
 		t.Fatalf("post-release emergency restarted or lengthened completed drainage: %#v", after)
 	}
 }

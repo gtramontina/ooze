@@ -365,6 +365,19 @@ func assertRuntimeTransferReceiptTransition(
 			runtimeKind: supervisorRuntimeClosurePending,
 		}}
 	}
+	if input.emergency.active {
+		wantState.nextAction++
+		settle := supervisorAction{
+			kind: supervisorSettleEmergency, token: wantState.nextAction,
+			resolutions: []supervisorEmergencyResolution{{
+				generation: fixture.generation, kind: supervisorEmergencyResidualOwned,
+			}},
+		}
+		wantActions = append(wantActions, settle)
+		wantState.emergency.pendingAction = supervisorPendingAction{
+			kind: settle.kind, token: settle.token,
+		}
+	}
 	if !reflect.DeepEqual(actions, wantActions) {
 		t.Fatalf("runtime transfer actions = %#v, want %#v", actions, wantActions)
 	}
@@ -391,22 +404,30 @@ func reduceRuntimeTransferReceiptAndEmergency(
 	emergencyAt := baseAttempt.lastEventAt.Add(time.Nanosecond)
 	emergencyDrainBy := baseAttempt.drain.effectiveDrainBy.Add(time.Second)
 	state := fixture.state
+	var combined []supervisorAction
 	if !receiptFirst {
-		state = applyRuntimeTransferEmergency(t, state, fixture.generation, emergencyAt, emergencyDrainBy)
+		state, combined = applyRuntimeTransferEmergency(
+			t, state, fixture.generation, emergencyAt, emergencyDrainBy,
+		)
 		fixture.state = state
 	}
 	input := cloneSupervisorState(fixture.state)
 	next, delivery := reduceRuntimeTransferReceiptMustAccept(t, fixture)
 	assertRuntimeTransferReceiptTransition(t, fixture, input, next, delivery)
 	state = next
+	combined = append(combined, delivery...)
 	if receiptFirst {
-		state = applyRuntimeTransferEmergency(t, state, fixture.generation, emergencyAt, emergencyDrainBy)
+		var emergencyActions []supervisorAction
+		state, emergencyActions = applyRuntimeTransferEmergency(
+			t, state, fixture.generation, emergencyAt, emergencyDrainBy,
+		)
+		combined = append(combined, emergencyActions...)
 	}
 	completion, event := runtimeTransferReceiptEvent(fixture)
 	event.runtime = &completion
 	assertRuntimeTransferReceiptInvariantByteStable(t, state, event)
 
-	return state, delivery
+	return state, combined
 }
 
 func applyRuntimeTransferEmergency(
@@ -415,7 +436,7 @@ func applyRuntimeTransferEmergency(
 	generation attemptGeneration,
 	at time.Time,
 	drainBy time.Time,
-) supervisorState {
+) (supervisorState, []supervisorAction) {
 	t.Helper()
 	input := cloneSupervisorState(state)
 	targetIndex := runtimeReceiptAttemptIndex(t, state, generation)
@@ -424,12 +445,26 @@ func applyRuntimeTransferEmergency(
 		kind: supervisorEmergencyStarted, at: at, drainBy: drainBy,
 		emergencySnapshots: []supervisorEmergencySnapshot{{generation: generation}},
 	})
-	if len(actions) != 0 {
-		t.Fatalf("runtime transfer emergency emitted action: %#v", actions)
-	}
 	want := cloneSupervisorState(input)
 	want.emergency = supervisorEmergencyEpoch{active: true, at: at, drainBy: drainBy}
 	want.attempts[targetIndex].lastEventAt = at
+	wantActions := make([]supervisorAction, 0)
+	if state.attempts[targetIndex].phase == supervisorAwaitingEmergencySettlement {
+		want.nextAction++
+		settle := supervisorAction{
+			kind: supervisorSettleEmergency, token: want.nextAction,
+			resolutions: []supervisorEmergencyResolution{{
+				generation: generation, kind: supervisorEmergencyResidualOwned,
+			}},
+		}
+		wantActions = []supervisorAction{settle}
+		want.emergency.pendingAction = supervisorPendingAction{
+			kind: settle.kind, token: settle.token,
+		}
+	}
+	if !reflect.DeepEqual(actions, wantActions) {
+		t.Fatalf("runtime transfer emergency actions = %#v, want %#v", actions, wantActions)
+	}
 	if !reflect.DeepEqual(next, want) {
 		t.Fatalf("runtime transfer emergency state = %#v, want %#v", next, want)
 	}
@@ -442,7 +477,7 @@ func applyRuntimeTransferEmergency(
 		t.Fatalf("runtime transfer emergency mutated input: before=%#v after=%#v", input, state)
 	}
 
-	return next
+	return next, actions
 }
 
 type runtimeTransferReceiptMalformedSpec struct {
