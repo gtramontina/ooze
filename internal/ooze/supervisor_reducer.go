@@ -89,6 +89,7 @@ const (
 	supervisorTerminalInfrastructureRelease
 	supervisorTerminalInfrastructureOutput
 	supervisorTerminalInfrastructureControl
+	supervisorTerminalDrainUnconfirmed
 )
 
 type supervisorFiredBound uint8
@@ -645,19 +646,14 @@ func reduceLaunchEmergency(
 			}
 			state.clampDrain(index, event.drainBy)
 			state.attempts[index].lastEventAt = event.at
-		case supervisorSealingStopAdmission, supervisorReleasingDomain,
-			supervisorTransferringResidualCustody:
+		case supervisorSealingStopAdmission, supervisorReleasingDomain:
 			wantPending := supervisorSealStopAdmission
 			if attempt.phase == supervisorReleasingDomain {
 				wantPending = supervisorReleaseDomain
-			} else if attempt.phase == supervisorTransferringResidualCustody {
-				wantPending = supervisorTransferResidualCustody
 			}
 			branchOwnsDecision := attempt.phase == supervisorSealingStopAdmission ||
 				(attempt.phase == supervisorReleasingDomain &&
-					attempt.drain.decision == supervisorDrainProvenEmpty) ||
-				(attempt.phase == supervisorTransferringResidualCustody &&
-					attempt.drain.decision == supervisorDrainUnconfirmed)
+					attempt.drain.decision == supervisorDrainProvenEmpty)
 			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) ||
 				attempt.pendingAction.kind != wantPending || attempt.pendingAction.token == 0 ||
 				attempt.output.ref == 0 || !branchOwnsDecision ||
@@ -666,6 +662,13 @@ func reduceLaunchEmergency(
 					attempt.drain.decision != supervisorDrainUnconfirmed) {
 				invariant(supervisorReducerOperation, "output pipeline emergency snapshot is invalid")
 			}
+			state.clampDrain(index, event.drainBy)
+			state.attempts[index].lastEventAt = event.at
+		case supervisorTransferringResidualCustody:
+			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) {
+				invariant(supervisorReducerOperation, "residual-transfer emergency snapshot is invalid")
+			}
+			validateRuntimeTransferCustody(attempt, state.emergency)
 			state.clampDrain(index, event.drainBy)
 			state.attempts[index].lastEventAt = event.at
 		case supervisorAwaitingEmergencySettlement:
@@ -701,21 +704,26 @@ func validateAwaitingEmergencySettlement(
 		attempt.pendingAction != (supervisorPendingAction{}) {
 		invariant(supervisorReducerOperation, "awaiting-settlement emergency snapshot is invalid")
 	}
-	if attempt.terminal == (supervisorTerminalEvidence{}) {
-		validateLateAdoptedEmergencySettlement(attempt)
-
-		return
+	switch attempt.drain.decision {
+	case supervisorDrainProvenEmpty:
+		if attempt.terminal == (supervisorTerminalEvidence{}) {
+			validateLateAdoptedProvenEmptyCustody(attempt)
+		} else {
+			validateNormalizedTerminalCustody(attempt, emergency)
+		}
+	case supervisorDrainUnconfirmed:
+		validateUnconfirmedResidualCustody(attempt, emergency)
+	default:
+		invariant(supervisorReducerOperation, "awaiting-settlement drain decision is invalid")
 	}
-	validateNormalizedTerminalCustody(attempt, emergency)
 }
 
-func validateLateAdoptedEmergencySettlement(attempt supervisorAttemptState) {
-	if attempt.intent != (supervisorRunningIntent{}) || !attempt.releaseRevoked ||
-		!attempt.startedAt.IsZero() || !attempt.deadlineAt.IsZero() ||
-		attempt.drain.decision != supervisorDrainProvenEmpty ||
-		attempt.output.ref == 0 || !attempt.output.final {
+func validateLateAdoptedProvenEmptyCustody(attempt supervisorAttemptState) {
+	validateLateAdoptedSettlementIdentity(attempt)
+	if attempt.drain.decision != supervisorDrainProvenEmpty {
 		invariant(supervisorReducerOperation, "settled late-adoption emergency snapshot is invalid")
 	}
+	validateOutputCustody(attempt.output, true)
 }
 
 func validateNormalizedTerminalCustody(
@@ -726,7 +734,7 @@ func validateNormalizedTerminalCustody(
 		attempt.deadlineAt.IsZero() || attempt.drain.decision != supervisorDrainProvenEmpty {
 		invariant(supervisorReducerOperation, "normalized terminal custody is invalid")
 	}
-	validateProvenEmptyOutputCustody(attempt.output)
+	validateOutputCustody(attempt.output, true)
 	if !attempt.drain.forced &&
 		(attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
 		invariant(supervisorReducerOperation, "normalized terminal drain diagnostics are invalid")
@@ -989,7 +997,30 @@ func reduceRuntimeCompletion(
 ) (supervisorState, []supervisorAction) {
 	index := state.requireAttempt(event.generation)
 	attempt := state.attempts[index]
-	completion := requireRuntimeCompletion(attempt, state.emergency, event)
+	completion := requireRuntimeCompletion(attempt, event)
+	switch attempt.pendingAction.kind {
+	case supervisorSettleRuntime:
+		validateRuntimeSettlementCustody(attempt)
+		validateNormalizedTerminalCustody(attempt, state.emergency)
+
+		return reduceRuntimeSettlementCompletion(state, index, attempt, completion)
+	case supervisorTransferResidualCustody:
+		validateRuntimeTransferCustody(attempt, state.emergency)
+
+		return reduceRuntimeTransferCompletion(state, index, attempt, completion)
+	default:
+		invariant(supervisorReducerOperation, "runtime completion is outside runtime custody")
+
+		return supervisorState{}, nil
+	}
+}
+
+func reduceRuntimeSettlementCompletion(
+	state supervisorState,
+	index int,
+	attempt supervisorAttemptState,
+	completion supervisorRuntimeCompletion,
+) (supervisorState, []supervisorAction) {
 	switch completion.kind {
 	case supervisorRuntimeAcknowledged, supervisorRuntimeProvisionalDeadline:
 		if completion.kind == supervisorRuntimeProvisionalDeadline &&
@@ -1016,21 +1047,94 @@ func reduceRuntimeCompletion(
 	}
 }
 
+func reduceRuntimeTransferCompletion(
+	state supervisorState,
+	index int,
+	attempt supervisorAttemptState,
+	completion supervisorRuntimeCompletion,
+) (supervisorState, []supervisorAction) {
+	if completion.kind != supervisorRuntimeClosurePending {
+		invariant(supervisorReducerOperation, "residual custody accepts only closure-pending runtime receipt")
+	}
+	state.attempts[index].pendingAction = supervisorPendingAction{}
+	state.attempts[index].phase = supervisorAwaitingEmergencySettlement
+	if !attempt.intent.latched {
+		return state, nil
+	}
+	evidence := normalizeDrainUnconfirmedTerminalEvidence(attempt)
+	action := state.newAction(supervisorDeliverTerminal, index, time.Time{}, time.Time{}, nil)
+	action.terminal = evidence
+	action.runtimeKind = supervisorRuntimeClosurePending
+
+	return state, []supervisorAction{action}
+}
+
 func requireRuntimeCompletion(
 	attempt supervisorAttemptState,
-	emergency supervisorEmergencyEpoch,
 	event supervisorEvent,
 ) supervisorRuntimeCompletion {
 	if event.runtime == nil {
 		invariant(supervisorReducerOperation, "runtime completion correlation or shape is invalid")
 	}
 	completion := *event.runtime
-	validateRuntimeSettlementCustody(attempt)
-	validateNormalizedTerminalCustody(attempt, emergency)
 	validateRuntimeCompletionCorrelation(attempt, event, completion)
 	validateRuntimeCompletionEventShape(event)
 
 	return completion
+}
+
+func validateRuntimeTransferCustody(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) {
+	if attempt.phase != supervisorTransferringResidualCustody ||
+		attempt.pendingAction.kind != supervisorTransferResidualCustody ||
+		attempt.pendingAction.token == 0 {
+		invariant(supervisorReducerOperation, "runtime completion is outside residual-transfer custody")
+	}
+	validateUnconfirmedResidualCustody(attempt, emergency)
+}
+
+func validateUnconfirmedResidualCustody(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) {
+	validateUnconfirmedResidualEvidence(attempt)
+	validateUnconfirmedDrainProvenance(attempt)
+	validateUnconfirmedResidualOwner(attempt, emergency)
+}
+
+func validateUnconfirmedResidualEvidence(attempt supervisorAttemptState) {
+	if attempt.drain.decision != supervisorDrainUnconfirmed ||
+		attempt.drain.effectiveDrainBy.IsZero() ||
+		attempt.drain.effectiveDrainBy.After(attempt.lastEventAt) ||
+		attempt.releaseDiagnostic != 0 || attempt.terminal != (supervisorTerminalEvidence{}) {
+		invariant(supervisorReducerOperation, "unconfirmed residual custody is invalid")
+	}
+	validateOutputCustody(attempt.output, false)
+}
+
+func validateUnconfirmedDrainProvenance(attempt supervisorAttemptState) {
+	if !attempt.drain.forced &&
+		(attempt.intent.kind != supervisorIntentRootExit ||
+			attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
+		invariant(supervisorReducerOperation, "unforced residual custody lacks root-exit provenance")
+	}
+}
+
+func validateUnconfirmedResidualOwner(
+	attempt supervisorAttemptState,
+	emergency supervisorEmergencyEpoch,
+) {
+	if attempt.intent.latched {
+		if attempt.releaseRevoked || attempt.startedAt.IsZero() || attempt.deadlineAt.IsZero() {
+			invariant(supervisorReducerOperation, "caller-owned residual custody is invalid")
+		}
+		validateTerminalReleaseProvenance(attempt, emergency)
+
+		return
+	}
+	validateLateAdoptedSettlementIdentity(attempt)
 }
 
 func validateRuntimeSettlementCustody(attempt supervisorAttemptState) {
@@ -1142,18 +1246,18 @@ func validateProvenEmptyReleaseCustody(attempt supervisorAttemptState) {
 		attempt.terminal != (supervisorTerminalEvidence{}) {
 		invariant(supervisorReducerOperation, "release completion is outside proven-empty output custody")
 	}
-	validateProvenEmptyOutputCustody(attempt.output)
+	validateOutputCustody(attempt.output, true)
 	if !attempt.drain.forced &&
 		(attempt.drain.controlDiagnostic != 0 || attempt.drain.observationDiagnostic != 0) {
 		invariant(supervisorReducerOperation, "unforced drain carries impossible diagnostics")
 	}
 }
 
-func validateProvenEmptyOutputCustody(output supervisorOutputEvidence) {
-	if output.ref == 0 || !output.final || output.prefixLength > output.cutoff ||
+func validateOutputCustody(output supervisorOutputEvidence, final bool) {
+	if output.ref == 0 || output.final != final || output.prefixLength > output.cutoff ||
 		output.completeThroughCutoff != (output.diagnostic == 0) ||
 		(output.diagnostic == 0 && output.prefixLength != output.cutoff) {
-		invariant(supervisorReducerOperation, "release completion is outside proven-empty output custody")
+		invariant(supervisorReducerOperation, "output evidence is outside immutable custody")
 	}
 }
 
@@ -1161,13 +1265,17 @@ func (state supervisorState) completeLateAdoptedRelease(
 	index int,
 ) (supervisorState, []supervisorAction) {
 	attempt := state.attempts[index]
-	if attempt.intent != (supervisorRunningIntent{}) || !attempt.releaseRevoked ||
-		!attempt.startedAt.IsZero() || !attempt.deadlineAt.IsZero() {
-		invariant(supervisorReducerOperation, "late-adoption release cannot construct ordinary terminal evidence")
-	}
+	validateLateAdoptedSettlementIdentity(attempt)
 	state.attempts[index].phase = supervisorAwaitingEmergencySettlement
 
 	return state, nil
+}
+
+func validateLateAdoptedSettlementIdentity(attempt supervisorAttemptState) {
+	if attempt.intent != (supervisorRunningIntent{}) || !attempt.releaseRevoked ||
+		!attempt.startedAt.IsZero() || !attempt.deadlineAt.IsZero() {
+		invariant(supervisorReducerOperation, "late adoption cannot construct ordinary terminal evidence")
+	}
 }
 
 func validateTerminalReleaseProvenance(
@@ -1355,6 +1463,18 @@ func normalizeTerminalEvidence(
 			release: attempt.releaseDiagnostic,
 		},
 	}
+}
+
+func normalizeDrainUnconfirmedTerminalEvidence(
+	attempt supervisorAttemptState,
+) supervisorTerminalEvidence {
+	evidence := normalizeTerminalEvidence(attempt)
+	evidence.kind = supervisorTerminalDrainUnconfirmed
+	evidence.exitCode = 0
+	evidence.exitSignal = 0
+	evidence.count = supervisorObservedCount{}
+
+	return evidence
 }
 
 func normalizeTerminalIntent(
