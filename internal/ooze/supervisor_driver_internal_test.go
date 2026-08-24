@@ -1923,21 +1923,50 @@ func TestSupervisorDriverEqualAutomaticFuseRetainsWaitFailureDiagnostic(t *testi
 	}
 }
 
-func TestSupervisorDriverRetainsEarlierAutomaticPeakWhenDeadlineIsAlsoReady(t *testing.T) {
+func TestSupervisorDriverRetainsAutomaticPeakThroughReadyDeadline(t *testing.T) {
 	for iteration := range 100 {
-		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration)
+		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration, 9, false)
 		tripped, ok := terminal.(Tripped)
 		if !ok {
 			t.Fatalf("iteration %d terminal = %#v, want automatic deadline", iteration, terminal)
 		}
 		deadline, ok := tripped.Trip.(AutomaticDeadlineTrip)
-		if !ok || deadline.Peak != (ObservedCount{Value: 7, Present: true}) {
-			t.Fatalf("iteration %d deadline evidence = %#v, want pre-deadline peak 7", iteration, tripped)
+		if !ok || deadline.Peak != (ObservedCount{Value: 9, Present: true}) {
+			t.Fatalf("iteration %d deadline evidence = %#v, want inclusive-boundary peak 9", iteration, tripped)
 		}
 	}
 }
 
-func automaticDeadlineTerminalWithReadyPeak(t *testing.T, iteration int) Terminal {
+func TestSupervisorDriverEqualAutomaticFuseBeatsReadyDeadline(t *testing.T) {
+	for iteration := range 100 {
+		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration, 65, false)
+		tripped, ok := terminal.(Tripped)
+		if !ok {
+			t.Fatalf("iteration %d terminal = %#v, want equal-time fuse", iteration, terminal)
+		}
+		fuse, ok := tripped.Trip.(FuseTrip)
+		if !ok || fuse.Live != 65 {
+			t.Fatalf("iteration %d terminal = %#v, want equal-time fuse count 65", iteration, terminal)
+		}
+	}
+}
+
+func TestSupervisorDriverReadyEarlierRootExitBeatsDeadlineAndSamples(t *testing.T) {
+	for iteration := range 100 {
+		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration, 9, true)
+		settled, ok := terminal.(Settled)
+		if !ok || settled.Exit.Code != 23 {
+			t.Fatalf("iteration %d terminal = %#v, want earlier root exit", iteration, terminal)
+		}
+	}
+}
+
+func automaticDeadlineTerminalWithReadyPeak(
+	t *testing.T,
+	iteration int,
+	equalityLive uint64,
+	readyRoot bool,
+) Terminal {
 	t.Helper()
 	registeredAt := time.Unix(29_000+int64(iteration)*100, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)
@@ -1945,7 +1974,9 @@ func automaticDeadlineTerminalWithReadyPeak(t *testing.T, iteration int) Termina
 	nextAt := registeredAt.Add(-time.Nanosecond)
 	waitReleased := make(chan struct{})
 	deadlines := make(chan time.Time, 1)
-	deadlines <- deadlineAt
+	if !readyRoot {
+		deadlines <- deadlineAt
+	}
 	samples := make(chan time.Time, 3)
 	samples <- releasedAt.Add(time.Second)
 	samples <- releasedAt.Add(2 * time.Second)
@@ -1984,10 +2015,20 @@ func automaticDeadlineTerminalWithReadyPeak(t *testing.T, iteration int) Termina
 					at: releasedAt, completion: &completion,
 				}
 			case supervisorWaitRoot:
-				<-waitReleased
+				if !readyRoot {
+					<-waitReleased
+				} else {
+					go func() {
+						time.Sleep(time.Millisecond)
+						deadlines <- deadlineAt
+					}()
+				}
 				fact := supervisorRunningFact{
 					generation: action.generation, action: action.token,
-					kind: supervisorRunningRootExited, at: deadlineAt.Add(time.Second),
+					kind: supervisorRunningRootExited, at: deadlineAt.Add(time.Second), exitCode: 23,
+				}
+				if readyRoot {
+					fact.at = releasedAt.Add(500 * time.Millisecond)
 				}
 
 				return &supervisorEvent{
@@ -2061,7 +2102,7 @@ func automaticDeadlineTerminalWithReadyPeak(t *testing.T, iteration int) Termina
 				return true, 7, nil
 			}
 
-			return true, 9, nil
+			return true, equalityLive, nil
 		},
 		recheckRoot: func(attemptGeneration) (ExitStatus, time.Time, bool, error) {
 			return ExitStatus{}, time.Time{}, false, nil

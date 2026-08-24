@@ -614,34 +614,21 @@ func (driver *supervisorDriver) waitThroughDeadline(
 
 			return
 		case <-deadline:
-			if driver.applyReadySamplesBeforeDeadline(
-				waitAction, sampleAction, samples, deadlineAt,
-			) {
-				return
-			}
-			status, completedAt, observed, err := driver.recheckRoot(waitAction.generation)
-			if err != nil {
-				invariant(supervisorDriverOperation, "deadline root recheck failed")
-			}
-			recheck := supervisorExitRecheck{performed: true, observed: observed, at: deadlineAt}
-			if observed {
-				recheck.at = completedAt
-				recheck.code = status.Code
-				recheck.signal = status.Signal
-			}
-			driver.applyMonitorEvent(supervisorEvent{
-				kind: supervisorRunningObserved, generation: waitAction.generation,
-				at: deadlineAt, drainBy: deadlineAt.Add(driver.drainEpoch),
-				running: &supervisorRunningBundle{
-					generation: waitAction.generation,
-					waitAction: waitAction.token, sampleAction: sampleAction.token,
-					exitRecheck: recheck,
-				},
-			})
+			driver.applyDeadlineBoundary(
+				waited, waitAction, sampleAction, samples, deadlineAt, nil,
+			)
 
 			return
 		case at := <-samples:
-			if !at.Before(deadlineAt) {
+			if at.Equal(deadlineAt) {
+				driver.applyDeadlineBoundary(
+					waited, waitAction, sampleAction, samples, deadlineAt,
+					driver.runningSampleFacts(waitAction, sampleAction, at),
+				)
+
+				return
+			}
+			if at.After(deadlineAt) {
 				continue
 			}
 			facts := driver.runningSampleFacts(waitAction, sampleAction, at)
@@ -660,23 +647,64 @@ func (driver *supervisorDriver) waitThroughDeadline(
 	}
 }
 
-func (driver *supervisorDriver) applyReadySamplesBeforeDeadline(
+func (driver *supervisorDriver) applyDeadlineBoundary(
+	waited <-chan *supervisorEvent,
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
 	samples <-chan time.Time,
 	deadlineAt time.Time,
-) bool {
+	facts []supervisorRunningFact,
+) {
+	facts = append(facts, driver.readyRunningFactsThroughDeadline(
+		waited, waitAction, sampleAction, samples, deadlineAt,
+	)...)
+	status, completedAt, observed, err := driver.recheckRoot(waitAction.generation)
+	if err != nil {
+		invariant(supervisorDriverOperation, "deadline root recheck failed")
+	}
+	recheck := supervisorExitRecheck{performed: true, observed: observed, at: deadlineAt}
+	if observed {
+		recheck.at = completedAt
+		recheck.code = status.Code
+		recheck.signal = status.Signal
+	}
+	driver.applyMonitorEvent(supervisorEvent{
+		kind: supervisorRunningObserved, generation: waitAction.generation,
+		at: deadlineAt, drainBy: deadlineAt.Add(driver.drainEpoch),
+		running: &supervisorRunningBundle{
+			generation: waitAction.generation,
+			waitAction: waitAction.token, sampleAction: sampleAction.token,
+			facts: facts, exitRecheck: recheck,
+		},
+	})
+}
+
+func (driver *supervisorDriver) readyRunningFactsThroughDeadline(
+	waited <-chan *supervisorEvent,
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	samples <-chan time.Time,
+	deadlineAt time.Time,
+) []supervisorRunningFact {
+	var facts []supervisorRunningFact
+	select {
+	case event := <-waited:
+		driver.correlateWaitCompletion(event, waitAction, sampleAction)
+		if !event.at.After(deadlineAt) {
+			facts = append(facts, event.running.facts...)
+		}
+	default:
+	}
 	for {
 		select {
 		case at := <-samples:
-			if at.Before(deadlineAt) && driver.applyRunningSampleFacts(
-				waitAction, sampleAction, at,
-				driver.runningSampleFacts(waitAction, sampleAction, at),
-			) {
-				return true
+			if !at.After(deadlineAt) {
+				facts = append(facts, driver.runningSampleFacts(
+					waitAction, sampleAction, at,
+				)...)
 			}
 		default:
-			return false
+			return facts
 		}
 	}
 }
