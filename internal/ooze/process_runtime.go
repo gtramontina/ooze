@@ -265,6 +265,7 @@ type terminalDecision uint8
 
 const (
 	terminalCommitted terminalDecision = iota + 1
+	terminalForcedAborted
 	terminalRejectedUnknown
 	terminalRejectedOutstanding
 	terminalRejectedClosed
@@ -292,7 +293,14 @@ type barrierResult struct {
 	deliveries []admissionGrant
 }
 
-type runtimeInvariantViolation struct{ operation, reason string }
+type runtimeInvariantViolation struct {
+	operation, reason  string
+	phase              uint8
+	rejectedEvent      string
+	stableIdentities   []string
+	obligationSnapshot []string
+	traceTail          []string
+}
 
 func newProcessRuntime(capacity int) processRuntime {
 	if capacity <= 0 {
@@ -828,6 +836,25 @@ func (r processRuntime) commitTerminal(campaign campaignToken) (processRuntime, 
 	next.campaigns = slices.Delete(next.campaigns, index, index+1)
 
 	return next, terminalResult{decision: terminalCommitted}
+}
+
+func (r processRuntime) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) (processRuntime, terminalResult) {
+	if epoch == 0 || epoch != r.fatalEpoch || r.lifecycle != runtimeClosedDrained {
+		return r, terminalResult{decision: terminalRejectedClosed}
+	}
+	index := r.campaignIndex(campaign)
+	if index < 0 {
+		return r, terminalResult{decision: terminalRejectedUnknown}
+	}
+	for _, admission := range r.admissions {
+		if admission.grant.campaign == campaign {
+			return r, terminalResult{decision: terminalRejectedOutstanding}
+		}
+	}
+	next := r.clone()
+	next.campaigns = slices.Delete(next.campaigns, index, index+1)
+
+	return next, terminalResult{decision: terminalForcedAborted}
 }
 
 func (r processRuntime) grantAvailable() (processRuntime, []admissionGrant) {
