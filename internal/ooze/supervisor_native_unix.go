@@ -168,15 +168,15 @@ func confirmNativeCommandStopped(command *exec.Cmd, state nativePlatformState) e
 	return nil
 }
 
-func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
+func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) (time.Time, error) {
 	if err := syscall.PtraceDetach(command.Process.Pid); err != nil {
-		return fmt.Errorf("release traced Linux managed-attempt guardian: %w", err)
+		return time.Time{}, fmt.Errorf("release traced Linux managed-attempt guardian: %w", err)
 	}
 	state.guardian.mutex.Lock()
 	defer state.guardian.mutex.Unlock()
 	var status linuxNativeLaunchStatus
 	if err := state.guardian.decoder.Decode(&status); err != nil {
-		return fmt.Errorf("read Linux guardian target launch status: %w", err)
+		return time.Time{}, fmt.Errorf("read Linux guardian target launch status: %w", err)
 	}
 	if status.ProcessID <= 0 {
 		launchErr := error(errors.New(status.Message))
@@ -187,7 +187,7 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 		state.guardian.waitOnce.Do(func() {
 			state.guardian.waitErr = nativeWaitFailure(command.Wait())
 		})
-		return nativeLaunchOperationError{
+		return time.Time{}, nativeLaunchOperationError{
 			operation: nativeLaunchTargetExec, stage: nativeLaunchPreRelease,
 			closureProven: state.guardian.waitErr == nil,
 			err:           fmt.Errorf("start Linux managed-attempt target: %w", launchErr),
@@ -195,7 +195,7 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 	}
 	state.guardian.targetPID = status.ProcessID
 
-	return nil
+	return time.Now(), nil
 }
 
 func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {

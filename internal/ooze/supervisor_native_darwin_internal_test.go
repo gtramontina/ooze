@@ -40,7 +40,7 @@ func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
 	if _, err = os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("target executed before release: stat error=%v", err)
 	}
-	if err = releaseNativeCommand(command, state); err != nil {
+	if _, err = releaseNativeCommand(command, state); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = command.Process.Wait(); err != nil {

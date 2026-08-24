@@ -48,7 +48,7 @@ func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 	return nativePlatformState{job: job, shared: &windowsNativeState{}}, nil
 }
 
-func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
+func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) (time.Time, error) {
 	processID := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit.
 	process, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
@@ -56,7 +56,7 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 		processID,
 	)
 	if err != nil {
-		return nativeLaunchOperationError{
+		return time.Time{}, nativeLaunchOperationError{
 			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
 			err: fmt.Errorf("open suspended process %d: %w", processID, err),
 		}
@@ -64,7 +64,7 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 	assignErr := windows.AssignProcessToJobObject(state.job, process)
 	closeErr := windows.CloseHandle(process)
 	if assignErr != nil {
-		return nativeLaunchOperationError{
+		return time.Time{}, nativeLaunchOperationError{
 			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
 			err: errors.Join(fmt.Errorf("assign process %d to job: %w", processID, assignErr), closeErr),
 		}
@@ -75,13 +75,13 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 
 	released, resumeErr := resumeNativeProcess(processID)
 	if !released {
-		return resumeErr
+		return time.Time{}, resumeErr
 	}
 	if resumeErr != nil {
 		state.shared.releaseCleanup = errors.Join(state.shared.releaseCleanup, resumeErr)
 	}
 
-	return nil
+	return time.Now(), nil
 }
 
 func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {

@@ -177,13 +177,13 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	err = command.Start()
-	at := time.Now()
+	startFailedAt := time.Now()
 	if err != nil {
 		closeErr := closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return executor.notReleased(action, at, classifyNativeLaunchFailure(
+		return executor.notReleased(action, startFailedAt, classifyNativeLaunchFailure(
 			nativeLaunchFailureEvidence{
 				operation: nativeLaunchLauncherStart, stage: nativeLaunchPreRelease,
 				err: err, closureProven: closeErr == nil,
@@ -224,9 +224,9 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 
 		return executor.notReleased(action, time.Now(), LaunchFailed, errNativeLaunchReleaseRevoked)
 	}
-	err = releaseNativeCommand(command, platform)
+	releasedAt, err := releaseNativeCommand(command, platform)
 	if err == nil {
-		attempt.releasedAt = at
+		attempt.releasedAt = releasedAt
 	}
 	executor.mutex.Unlock()
 	if errors.Is(err, errWindowsReleaseUnknown) {
@@ -271,12 +271,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	}
 	completion := supervisorLaunchCompletion{
 		generation: action.generation, action: action.token,
-		at: at, kind: supervisorLaunchReleased,
+		at: releasedAt, kind: supervisorLaunchReleased,
 	}
 
 	return &supervisorEvent{
 		kind: supervisorLaunchCompleted, generation: action.generation,
-		at: at, completion: &completion,
+		at: releasedAt, completion: &completion,
 	}
 }
 

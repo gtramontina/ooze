@@ -116,6 +116,110 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 	}
 }
 
+func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompletions(t *testing.T) {
+	registeredAt := time.Unix(7_250, 0)
+	emergencyAt := registeredAt.Add(500 * time.Millisecond)
+	drainBy := emergencyAt.Add(5 * time.Second)
+	type pendingLaunch struct {
+		action  supervisorAction
+		release chan struct{}
+	}
+	started := make(chan pendingLaunch, 2)
+	boundary := make(chan time.Time)
+	shell := newProcessRuntimeShell(2)
+	grants := make(map[attemptIdentity]admissionGrant)
+	for index, attempt := range []attemptIdentity{"multi-prospective-a", "multi-prospective-b"} {
+		campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(120 + index)})
+		requested := shell.requestAdmission(admissionRequest{
+			campaign: campaign.token, attempt: attempt, class: sharedAdmission,
+		})
+		grants[attempt] = <-requested.delivery
+	}
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell, now: func() time.Time { return registeredAt },
+		launchBoundary: func(time.Time) <-chan time.Time { return boundary },
+		launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				release := make(chan struct{})
+				started <- pendingLaunch{action: action, release: release}
+				<-release
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token, at: emergencyAt,
+					kind: supervisorLaunchProvenNotReleased, failure: LaunchFailed,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: emergencyAt, completion: &completion,
+				}
+			case supervisorRevokeLaunchRelease:
+				return nil
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
+			grant, ok := grants[attempt]
+			if !ok {
+				t.Fatalf("unexpected attempt %q", attempt)
+			}
+
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+	results := make(chan LaunchResult, 2)
+	for _, attempt := range []string{"multi-prospective-a", "multi-prospective-b"} {
+		attempt := attempt
+		go func() {
+			results <- supervisor.Launch(Spec{
+				Attempt: attempt, Command: []string{"blocked-start"}, Dir: "/tmp",
+				Profile: AutomaticProfile, Deadline: 10 * time.Second,
+			})
+		}()
+	}
+	pending := []pendingLaunch{<-started, <-started}
+	closure := shell.closeRuntime(runtimeFatalCause("multi prospective emergency"))
+	if len(closure.residual) != 2 {
+		t.Fatalf("runtime closure residuals = %#v, want two prospective generations", closure.residual)
+	}
+	settled := make(chan SweepResult, 1)
+	go func() {
+		settled <- supervisor.EmergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
+	}()
+	for range 2 {
+		select {
+		case result := <-results:
+			if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
+				t.Fatalf("launch = %#v, want LaunchUnconfirmed", result)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("multi-prospective emergency did not release every callback")
+		}
+	}
+	for _, launch := range pending {
+		close(launch.release)
+	}
+	select {
+	case settlement := <-settled:
+		if _, ok := settlement.(SweepDrained); !ok {
+			t.Fatalf("settlement = %#v, want SweepDrained", settlement)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("equality no-release completions did not settle one emergency epoch")
+	}
+	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 {
+		t.Fatalf("multi-prospective final runtime = %#v", snapshot)
+	}
+}
+
 func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *testing.T) {
 	registeredAt := time.Unix(7_500, 0)
 	releasedAt := registeredAt.Add(100 * time.Millisecond)
@@ -1218,6 +1322,54 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 	if !ok || infrastructure.Cause != WaitFailed || !errors.Is(infrastructure.Err, waitErr) ||
 		infrastructure.Failures.Wait != waitErr.Error() {
 		t.Fatalf("terminal = %#v, want immutable wait failure", terminal)
+	}
+}
+
+func TestPublicTerminalPreservesEveryIndependentInfrastructureDiagnostic(t *testing.T) {
+	diagnostics := map[supervisorDiagnosticRef]error{
+		1: errors.New("wait diagnostic"),
+		2: errors.New("running diagnostic"),
+		3: errors.New("drain diagnostic"),
+		4: errors.New("control diagnostic"),
+		5: errors.New("output diagnostic"),
+		6: errors.New("release diagnostic"),
+	}
+	for _, test := range []struct {
+		name    string
+		kind    supervisorTerminalKind
+		cause   Cause
+		primary supervisorDiagnosticRef
+	}{
+		{name: "wait", kind: supervisorTerminalInfrastructureWait, cause: WaitFailed, primary: 1},
+		{name: "running census", kind: supervisorTerminalInfrastructureRunning, cause: CensusFailed, primary: 2},
+		{name: "termination", kind: supervisorTerminalInfrastructureControl, cause: TerminationControlFailed, primary: 4},
+		{name: "output", kind: supervisorTerminalInfrastructureOutput, cause: OutputCaptureFailed, primary: 5},
+		{name: "release", kind: supervisorTerminalInfrastructureRelease, cause: ReleaseFailed, primary: 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			terminal := publicTerminal(supervisorTerminalEvidence{
+				kind:   test.kind,
+				output: supervisorOutputEvidence{ref: 1, diagnostic: 5},
+				diagnostics: supervisorTerminalDiagnostics{
+					wait: 1, running: 2, drain: 3, control: 4, release: 6,
+				},
+			}, func(supervisorOutputRef) string { return "partial" }, func(ref supervisorDiagnosticRef) error {
+				return diagnostics[ref]
+			})
+			infrastructure, ok := terminal.(Infrastructure)
+			if !ok || infrastructure.Cause != test.cause ||
+				!errors.Is(infrastructure.Err, diagnostics[test.primary]) {
+				t.Fatalf("terminal = %#v, want primary diagnostic %d", terminal, test.primary)
+			}
+			want := FailureDiagnostics{
+				Wait: diagnostics[1].Error(), RunningCensus: diagnostics[2].Error(),
+				DrainCensus: diagnostics[3].Error(), Termination: diagnostics[4].Error(),
+				Output: diagnostics[5].Error(), Release: diagnostics[6].Error(),
+			}
+			if infrastructure.Failures != want || infrastructure.Output.Bytes != "partial" {
+				t.Fatalf("immutable diagnostics = %#v, want %#v", infrastructure, want)
+			}
+		})
 	}
 }
 

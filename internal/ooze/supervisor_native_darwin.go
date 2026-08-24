@@ -79,12 +79,12 @@ func confirmNativeCommandStopped(command *exec.Cmd, state nativePlatformState) e
 	return nil
 }
 
-func releaseNativeCommand(command *exec.Cmd, _ nativePlatformState) error {
+func releaseNativeCommand(command *exec.Cmd, _ nativePlatformState) (time.Time, error) {
 	if err := syscall.PtraceDetach(command.Process.Pid); err != nil {
-		return fmt.Errorf("release traced managed-attempt root: %w", err)
+		return time.Time{}, fmt.Errorf("release traced managed-attempt root: %w", err)
 	}
 
-	return nil
+	return time.Now(), nil
 }
 
 func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
