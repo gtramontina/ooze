@@ -80,11 +80,13 @@ func TestProcessRuntimeOverlapDeadlineAtomicallyClosesGateAndInstallsBarrier(t *
 	}
 	runtime, confirmation := runtime.startCommitted(settledB.deliveries[0])
 	runtime, _ = runtime.observeAttempt(confirmation.generation, launchOwned{})
-	_, confirmationSettled := runtime.observeAttempt(confirmation.generation, confirmationQueueDrained{
-		outcome: confirmationPressureAccepted,
-	})
+	runtime, confirmationSettled := runtime.observeAttempt(confirmation.generation, attemptSettled{})
 	if !reflect.DeepEqual(confirmationSettled.deliveries, []admissionGrant{later.request}) {
-		t.Fatalf("post-barrier deliveries=%#v", confirmationSettled.deliveries)
+		t.Fatalf("post-confirmation FIFO deliveries=%#v", confirmationSettled.deliveries)
+	}
+	_, completed := runtime.completeConfirmationQueue(campaignA.token)
+	if len(completed.deliveries) != 0 {
+		t.Fatalf("queue completion duplicated FIFO deliveries=%#v", completed.deliveries)
 	}
 }
 
@@ -217,14 +219,17 @@ func TestProcessRuntimeConfirmationSettlementAuthorizesSingleAdmission(t *testin
 	grant := runtime.admissions[barrierAt].grant
 	runtime, started := runtime.startCommitted(grant)
 	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
-	runtime, result := runtime.observeAttempt(started.generation, confirmationQueueDrained{
-		outcome: confirmationPressureAccepted,
-	})
+	runtime, result := runtime.observeAttempt(started.generation, attemptSettled{})
 	if runtime.mode != singleAdmission {
 		t.Fatalf("confirmation did not authorize pressure transition: %#v", runtime)
 	}
-	if !result.pressureTransitioned || !runtime.campaigns[runtime.campaignIndex(grant.campaign)].primaryGateOpen {
-		t.Fatalf("confirmation did not acknowledge transition and reopen gate: %#v/%#v", result, runtime)
+	if !result.pressureTransitioned || runtime.campaigns[runtime.campaignIndex(grant.campaign)].primaryGateOpen {
+		t.Fatalf("confirmation transition reopened gate early: %#v/%#v", result, runtime)
+	}
+	runtime, completed := runtime.completeConfirmationQueue(grant.campaign)
+	if completed.decision != confirmationQueueCompleted ||
+		!runtime.campaigns[runtime.campaignIndex(grant.campaign)].primaryGateOpen {
+		t.Fatalf("confirmation queue completion/state = %#v/%#v", completed, runtime)
 	}
 }
 
@@ -235,9 +240,7 @@ func TestProcessRuntimeConfirmationPressureDoesNotReopenGateBeforeQueueDrains(t 
 	firstGrant := runtime.admissions[firstAt].grant
 	runtime, first := runtime.startCommitted(firstGrant)
 	runtime, _ = runtime.observeAttempt(first.generation, launchOwned{})
-	runtime, firstResult := runtime.observeAttempt(first.generation, confirmationContinues{
-		outcome: confirmationPressureAccepted,
-	})
+	runtime, firstResult := runtime.observeAttempt(first.generation, attemptSettled{})
 	campaignAt := runtime.campaignIndex(firstGrant.campaign)
 	if !firstResult.pressureTransitioned || runtime.mode != singleAdmission || runtime.campaigns[campaignAt].primaryGateOpen {
 		t.Fatalf("continuing confirmation pressure/gate=%#v/%#v", firstResult, runtime)
@@ -250,7 +253,7 @@ func TestProcessRuntimeConfirmationPressureDoesNotReopenGateBeforeQueueDrains(t 
 	}
 	runtime, second := runtime.startCommitted(requested.deliveries[0])
 	runtime, _ = runtime.observeAttempt(second.generation, launchOwned{})
-	runtime, _ = runtime.observeAttempt(second.generation, confirmationContinues{outcome: confirmationRejected})
+	runtime, _ = runtime.observeAttempt(second.generation, attemptTripped{kind: deadlineTrip})
 	if runtime.campaigns[campaignAt].primaryGateOpen {
 		t.Fatalf("repeated continuing confirmation reopened gate: %#v", runtime)
 	}
@@ -262,7 +265,11 @@ func TestProcessRuntimeConfirmationPressureDoesNotReopenGateBeforeQueueDrains(t 
 	}
 	runtime, last := runtime.startCommitted(requested.deliveries[0])
 	runtime, _ = runtime.observeAttempt(last.generation, launchOwned{})
-	runtime, _ = runtime.observeAttempt(last.generation, confirmationQueueDrained{outcome: confirmationRejected})
+	runtime, _ = runtime.observeAttempt(last.generation, attemptTripped{kind: deadlineTrip})
+	runtime, completed := runtime.completeConfirmationQueue(firstGrant.campaign)
+	if completed.decision != confirmationQueueCompleted {
+		t.Fatalf("drained confirmation queue completion=%#v", completed)
+	}
 	if !runtime.campaigns[campaignAt].primaryGateOpen {
 		t.Fatalf("drained confirmation queue did not reopen gate: %#v", runtime)
 	}
@@ -1006,10 +1013,12 @@ func TestProcessRuntimeConfirmationOutcomeControlsPressureAndReopensGate(t *test
 		grant := runtime.admissions[barrierAt].grant
 		runtime, started := runtime.startCommitted(grant)
 		runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
-		runtime, result := runtime.observeAttempt(started.generation, confirmationQueueDrained{outcome: confirmationRejected})
+		runtime, result := runtime.observeAttempt(started.generation, attemptTripped{kind: deadlineTrip})
+		runtime, completed := runtime.completeConfirmationQueue(grant.campaign)
 		campaignAt := runtime.campaignIndex(grant.campaign)
-		if runtime.mode != fullAutomatic || result.pressureTransitioned || !runtime.campaigns[campaignAt].primaryGateOpen {
-			t.Fatalf("rejected confirmation result/state=%#v/%#v", result, runtime)
+		if completed.decision != confirmationQueueCompleted || runtime.mode != fullAutomatic ||
+			result.pressureTransitioned || !runtime.campaigns[campaignAt].primaryGateOpen {
+			t.Fatalf("rejected confirmation result/completion/state=%#v/%#v/%#v", result, completed, runtime)
 		}
 	})
 
@@ -1020,13 +1029,51 @@ func TestProcessRuntimeConfirmationOutcomeControlsPressureAndReopensGate(t *test
 		grant := runtime.admissions[barrierAt].grant
 		runtime, started := runtime.startCommitted(grant)
 		runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
-		_, result := runtime.observeAttempt(started.generation, confirmationQueueDrained{
-			outcome: confirmationPressureAccepted,
-		})
+		_, result := runtime.observeAttempt(started.generation, attemptSettled{})
 		if result.pressureTransitioned {
 			t.Fatalf("duplicate pressure transition=%#v", result)
 		}
 	})
+}
+
+func TestProcessRuntimeDerivesConfirmationPressureFromOrdinarySettlement(t *testing.T) {
+	runtime := runtimeAtBoundConfirmation(t)
+	barrierAt := runtime.grantedConfirmationIndex()
+	grant := runtime.admissions[barrierAt].grant
+	runtime, started := runtime.startCommitted(grant)
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, result := runtime.observeAttempt(started.generation, attemptSettled{})
+	campaignAt := runtime.campaignIndex(grant.campaign)
+	if runtime.mode != singleAdmission || !result.pressureTransitioned ||
+		runtime.campaigns[campaignAt].primaryGateOpen {
+		t.Fatalf("ordinary confirmation settlement result/state = %#v/%#v", result, runtime)
+	}
+}
+
+func TestProcessRuntimeReopensPrimaryGateOnlyAfterConfirmationQueueCompletion(t *testing.T) {
+	runtime := runtimeAtBoundConfirmation(t)
+	barrierAt := runtime.grantedConfirmationIndex()
+	grant := runtime.admissions[barrierAt].grant
+	runtime, started := runtime.startCommitted(grant)
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, _ = runtime.observeAttempt(started.generation, attemptTripped{kind: deadlineTrip})
+	runtime, rejected := runtime.requestAdmission(admissionRequest{
+		campaign: grant.campaign, attempt: "primary-before-completion", class: sharedAdmission,
+	})
+	if rejected.decision != admissionRejectedGateClosed {
+		t.Fatalf("primary admission before queue completion = %#v", rejected)
+	}
+
+	runtime, completed := runtime.completeConfirmationQueue(grant.campaign)
+	if completed.decision != confirmationQueueCompleted {
+		t.Fatalf("confirmation queue completion = %#v", completed)
+	}
+	runtime, admitted := runtime.requestAdmission(admissionRequest{
+		campaign: grant.campaign, attempt: "primary-after-completion", class: sharedAdmission,
+	})
+	if admitted.decision != admissionAccepted || len(admitted.deliveries) != 1 {
+		t.Fatalf("primary admission after queue completion = %#v", admitted)
+	}
 }
 
 func TestProcessRuntimeClosedEmergencyStateCannotBeRewritten(t *testing.T) {

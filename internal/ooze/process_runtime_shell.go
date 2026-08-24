@@ -170,6 +170,16 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 	})
 }
 
+func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) confirmationQueueResult {
+	return underRuntimeLock(s, "complete confirmation queue", func() (result confirmationQueueResult) {
+		s.core, result = s.core.completeConfirmationQueue(campaign)
+		s.deliver(result.deliveries)
+		result.deliveries = nil
+
+		return result
+	})
+}
+
 // No executable value enters this lock; only the post-unlock return accepts a native thunk.
 func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation startInstallation) preparedStart {
 	return underRuntimeLock(s, startInstallerOperation, func() preparedStart {

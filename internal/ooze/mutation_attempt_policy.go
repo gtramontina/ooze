@@ -116,9 +116,13 @@ type AttributableMutation struct {
 func (AttributableMutation) mutationDisposition() {}
 
 // MutationNeedsConfirmation retains one overlap-ambiguous primary deadline.
-type MutationNeedsConfirmation struct{ Primary Tripped }
+// Only primary classification can construct this proof.
+type MutationNeedsConfirmation struct{ primary Tripped }
 
 func (MutationNeedsConfirmation) mutationDisposition() {}
+
+// Primary returns the overlap-ambiguous primary deadline observation.
+func (provisional MutationNeedsConfirmation) Primary() Tripped { return provisional.primary }
 
 // MutationAborted retains infrastructure uncertainty that cannot be scored.
 type MutationAborted struct {
@@ -150,7 +154,7 @@ func ClassifyPrimaryMutation(primary Terminal, overlapAmbiguous bool) MutationDi
 		switch terminal.Trip.(type) {
 		case AutomaticDeadlineTrip, SerialDeadlineTrip:
 			if overlapAmbiguous {
-				return MutationNeedsConfirmation{Primary: terminal}
+				return MutationNeedsConfirmation{primary: terminal}
 			}
 
 			return AttributableMutation{Outcome: MutationTimedOut, Primary: primary}
@@ -165,5 +169,66 @@ func ClassifyPrimaryMutation(primary Terminal, overlapAmbiguous bool) MutationDi
 		return MutationFatalUncertainty{Primary: primary}
 	default:
 		panic("primary mutation classification is not implemented for this terminal")
+	}
+}
+
+// ClassifyMutationConfirmation maps one exclusive confirmation without
+// producing another confirmation request.
+func ClassifyMutationConfirmation(
+	provisional MutationNeedsConfirmation,
+	confirmation Terminal,
+) MutationDisposition {
+	if terminalDeadline(confirmation) != provisional.primary.Deadline {
+		return MutationAborted{Primary: provisional.primary, Confirmation: confirmation}
+	}
+	switch terminal := confirmation.(type) {
+	case Settled:
+		outcome := MutationKilled
+		if terminal.Exit.Passed() {
+			outcome = MutationSurvived
+		}
+
+		return AttributableMutation{
+			Outcome: outcome, Primary: provisional.primary,
+			Confirmation: confirmation, PressureValidated: true,
+		}
+	case Tripped:
+		switch terminal.Trip.(type) {
+		case AutomaticDeadlineTrip, SerialDeadlineTrip:
+			return AttributableMutation{
+				Outcome: MutationTimedOut, Primary: provisional.primary,
+				Confirmation: confirmation,
+			}
+		case FuseTrip:
+			return AttributableMutation{
+				Outcome: MutationRunaway, Primary: provisional.primary,
+				Confirmation: confirmation,
+			}
+		default:
+			panic("mutation confirmation trip classification is not implemented")
+		}
+	case Stopped, Infrastructure:
+		return MutationAborted{Primary: provisional.primary, Confirmation: confirmation}
+	case DrainUnconfirmed:
+		return MutationFatalUncertainty{Primary: provisional.primary, Confirmation: confirmation}
+	default:
+		panic("mutation confirmation classification is not implemented for this terminal")
+	}
+}
+
+func terminalDeadline(terminal Terminal) time.Duration {
+	switch terminal := terminal.(type) {
+	case Settled:
+		return terminal.Deadline
+	case Tripped:
+		return terminal.Deadline
+	case Stopped:
+		return terminal.Deadline
+	case Infrastructure:
+		return terminal.Deadline
+	case DrainUnconfirmed:
+		return terminal.Deadline
+	default:
+		panic("mutation terminal has no execution evidence")
 	}
 }
