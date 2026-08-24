@@ -4,9 +4,46 @@ package ooze
 
 import (
 	"os"
+	"os/exec"
+	"runtime"
 	"testing"
 	"time"
 )
+
+func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
+	marker := t.TempDir() + "/released"
+	command := exec.Command("/usr/bin/touch", marker)
+	state, err := prepareNativeCommand(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err = command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = forceNativeDomain(state, command.Process.Pid)
+		_, _ = command.Process.Wait()
+		_ = closeNativeDomain(state)
+	}()
+	if err = confirmNativeCommandStopped(command, state); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if _, err = os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("target executed before release: stat error=%v", err)
+	}
+	if err = releaseNativeCommand(command, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = command.Process.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(marker); err != nil {
+		t.Fatalf("released target did not execute: %v", err)
+	}
+}
 
 func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *testing.T) {
 	shell := newProcessRuntimeShell(1)

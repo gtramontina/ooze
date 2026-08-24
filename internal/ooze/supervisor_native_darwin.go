@@ -17,12 +17,31 @@ type nativePlatformState struct{}
 
 func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 	//nolint:exhaustruct // Every other process attribute deliberately retains the OS default.
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Ptrace: true}
 
 	return nativePlatformState{}, nil
 }
 
-func releaseNativeCommand(*exec.Cmd, nativePlatformState) error { return nil }
+func confirmNativeCommandStopped(command *exec.Cmd, _ nativePlatformState) error {
+	status := syscall.WaitStatus(0)
+	observed, err := syscall.Wait4(command.Process.Pid, &status, syscall.WUNTRACED, nil)
+	if err != nil {
+		return fmt.Errorf("confirm traced managed-attempt root stop: %w", err)
+	}
+	if observed != command.Process.Pid || !status.Stopped() {
+		return fmt.Errorf("confirm traced managed-attempt root stop: pid=%d status=%#x", observed, uint32(status))
+	}
+
+	return nil
+}
+
+func releaseNativeCommand(command *exec.Cmd, _ nativePlatformState) error {
+	if err := syscall.PtraceDetach(command.Process.Pid); err != nil {
+		return fmt.Errorf("release traced managed-attempt root: %w", err)
+	}
+
+	return nil
+}
 
 func nativeDomainEmpty(_ nativePlatformState, processGroup int) (bool, error) {
 	err := syscall.Kill(-processGroup, 0)

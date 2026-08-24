@@ -59,6 +59,8 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 	return resumeNativeProcess(processID)
 }
 
+func confirmNativeCommandStopped(*exec.Cmd, nativePlatformState) error { return nil }
+
 func resumeNativeProcess(processID uint32) error {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {

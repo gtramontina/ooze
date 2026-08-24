@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -123,6 +124,8 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	attempt.platform = platform
 	executor.mutex.Unlock()
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	err = command.Start()
 	at := time.Now()
 	if err != nil {
@@ -131,6 +134,15 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = os.Remove(output.Name())
 
 		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(err))
+	}
+	if err = confirmNativeCommandStopped(command, platform); err != nil {
+		_ = forceNativeDomain(platform, command.Process.Pid)
+		_, _ = command.Process.Wait()
+		_ = closeNativeDomain(platform)
+		_ = output.Close()
+		_ = os.Remove(output.Name())
+
+		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(err))
 	}
 	go executor.awaitRoot(attempt)
 	executor.mutex.Lock()
