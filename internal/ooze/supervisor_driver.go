@@ -38,24 +38,28 @@ type supervisorDrivenAttempt struct {
 	launchPublished chan struct{}
 	launchResolved  bool
 	launchConsumed  bool
+	launchReturn    []supervisorAction
+	emergencyReturn bool
 }
 
 type supervisorDriver struct {
-	mutex            sync.Mutex
-	state            supervisorState
-	runtime          *processRuntimeShell
-	now              func() time.Time
-	launchBoundary   func(time.Time) <-chan time.Time
-	launchProgress   time.Duration
-	drainEpoch       time.Duration
-	prepare          func(attemptGeneration, Spec)
-	execute          func(supervisorAction) *supervisorEvent
-	recheckRoot      func(attemptGeneration) (ExitStatus, bool, error)
-	sampleRunning    func(attemptGeneration) (bool, uint64, error)
-	readOutput       func(supervisorOutputRef) string
-	attempts         map[attemptGeneration]*supervisorDrivenAttempt
-	emergency        chan SweepResult
-	emergencyStarted bool
+	mutex             sync.Mutex
+	state             supervisorState
+	runtime           *processRuntimeShell
+	now               func() time.Time
+	launchBoundary    func(time.Time) <-chan time.Time
+	launchProgress    time.Duration
+	drainEpoch        time.Duration
+	prepare           func(attemptGeneration, Spec)
+	execute           func(supervisorAction) *supervisorEvent
+	recheckRoot       func(attemptGeneration) (ExitStatus, bool, error)
+	sampleRunning     func(attemptGeneration) (bool, uint64, error)
+	readOutput        func(supervisorOutputRef) string
+	attempts          map[attemptGeneration]*supervisorDrivenAttempt
+	emergency         chan SweepResult
+	emergencyStarted  bool
+	emergencyReturns  int
+	emergencyDeferred []supervisorAction
 }
 
 func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorDriver {
@@ -106,14 +110,7 @@ func (driver *supervisorDriver) launchInstalled(start installedStart, spec Spec)
 		return launchObservation
 	})
 	start.shell.observeAttempt(start.generation, observed)
-	for _, action := range actions {
-		driver.run(action)
-	}
-	driver.mutex.Lock()
-	attempt := driver.requireAttempt(start.generation)
-	published := attempt.launchResult
-	close(attempt.launchPublished)
-	driver.mutex.Unlock()
+	published := driver.finishLaunchReturn(start.generation, actions)
 	if launchObservation == nil || published == nil {
 		invariant(supervisorDriverOperation, "launch returned before publication")
 	}
@@ -159,6 +156,21 @@ func (driver *supervisorDriver) stageLaunch(
 		case <-driver.requireLaunchWake(generation):
 			driver.mutex.Lock()
 			attempt := driver.requireAttempt(generation)
+			if attempt.launchResolved && len(attempt.launchReturn) != 0 {
+				actions := append([]supervisorAction(nil), attempt.launchReturn...)
+				attempt.launchReturn = nil
+				completion := (*supervisorLaunchCompletion)(nil)
+				if attempt.launchConsumed {
+					completion = attempt.launchEvent.completion
+				}
+				observation := attemptObservation(launchUnconfirmed{})
+				if completion != nil {
+					observation = launchObservation(completion)
+				}
+				driver.mutex.Unlock()
+
+				return observation, actions
+			}
 			event := attempt.launchEvent
 			if event != nil && event.completion != nil && event.at.Before(launchBy) {
 				next, publication := reduceSupervisor(driver.state, *event)
@@ -195,6 +207,38 @@ func (driver *supervisorDriver) stageLaunch(
 			return observation, publication
 		}
 	}
+}
+
+func (driver *supervisorDriver) finishLaunchReturn(
+	generation attemptGeneration,
+	actions []supervisorAction,
+) LaunchResult {
+	for _, action := range actions {
+		driver.run(action)
+	}
+	driver.mutex.Lock()
+	attempt := driver.requireAttempt(generation)
+	published := attempt.launchResult
+	var deferred []supervisorAction
+	if attempt.emergencyReturn {
+		attempt.emergencyReturn = false
+		driver.emergencyReturns--
+		if driver.emergencyReturns < 0 {
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "emergency launch return count became negative")
+		}
+		if driver.emergencyReturns == 0 {
+			deferred = driver.emergencyDeferred
+			driver.emergencyDeferred = nil
+		}
+	}
+	close(attempt.launchPublished)
+	driver.mutex.Unlock()
+	for _, action := range deferred {
+		driver.run(action)
+	}
+
+	return published
 }
 
 func (driver *supervisorDriver) requireLaunchWake(generation attemptGeneration) <-chan struct{} {
@@ -652,12 +696,30 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 	}
 	driver.emergencyStarted = true
 	snapshots := make([]supervisorEmergencySnapshot, 0, len(driver.state.attempts))
+	returning := make(map[attemptGeneration]struct{})
 	for _, state := range driver.state.attempts {
 		if state.phase == supervisorLaunchClosedNotReleased {
 			continue
 		}
 		snapshot := supervisorEmergencySnapshot{generation: state.generation}
 		switch state.phase {
+		case supervisorLaunchEstablishing:
+			attempt := driver.requireAttempt(state.generation)
+			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
+				!attempt.launchEvent.at.After(request.At) {
+				if attempt.launchEvent.completion.kind == supervisorLaunchReleased {
+					driver.mutex.Unlock()
+					invariant(supervisorDriverOperation, "released prospective emergency snapshot lacks root provenance")
+				}
+				snapshot.completion = attempt.launchEvent.completion
+			}
+			returning[state.generation] = struct{}{}
+		case supervisorLaunchReportedUnconfirmed:
+			attempt := driver.requireAttempt(state.generation)
+			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
+				!attempt.launchEvent.at.After(request.At) {
+				snapshot.completion = attempt.launchEvent.completion
+			}
 		case supervisorRunning:
 			snapshot.running = &supervisorRunningBundle{
 				generation:   state.generation,
@@ -671,13 +733,60 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	driver.mutex.Unlock()
-	driver.apply(supervisorEvent{
+	next, actions := reduceSupervisor(driver.state, supervisorEvent{
 		kind: supervisorEmergencyStarted, at: request.At, drainBy: request.DrainBy,
 		emergencySnapshots: snapshots,
 	})
+	driver.state = next
+	remaining := make([]supervisorAction, 0, len(actions))
+	for _, action := range actions {
+		if _, ok := returning[action.generation]; ok {
+			attempt := driver.requireAttempt(action.generation)
+			attempt.launchReturn = append(attempt.launchReturn, action)
+
+			continue
+		}
+		if action.kind == supervisorSettleEmergency && len(returning) != 0 {
+			driver.emergencyDeferred = append(driver.emergencyDeferred, action)
+
+			continue
+		}
+		remaining = append(remaining, action)
+	}
+	for generation := range returning {
+		attempt := driver.requireAttempt(generation)
+		if len(attempt.launchReturn) == 0 || attempt.launchResolved || attempt.emergencyReturn {
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "emergency launch return is absent or duplicated")
+		}
+		attempt.launchResolved = true
+		attempt.launchConsumed = snapshotsCompletion(snapshots, generation) != nil
+		attempt.emergencyReturn = true
+		driver.emergencyReturns++
+		select {
+		case attempt.launchWake <- struct{}{}:
+		default:
+		}
+	}
+	driver.mutex.Unlock()
+	for _, action := range remaining {
+		driver.run(action)
+	}
 
 	return <-driver.emergency
+}
+
+func snapshotsCompletion(
+	snapshots []supervisorEmergencySnapshot,
+	generation attemptGeneration,
+) *supervisorLaunchCompletion {
+	for _, snapshot := range snapshots {
+		if snapshot.generation == generation {
+			return snapshot.completion
+		}
+	}
+
+	return nil
 }
 
 func (driver *supervisorDriver) executeEmergency(action supervisorAction) {

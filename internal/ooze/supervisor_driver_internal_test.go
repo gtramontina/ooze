@@ -7,6 +7,114 @@ import (
 	"time"
 )
 
+func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSettlesLateNoRelease(t *testing.T) {
+	registeredAt := time.Unix(7_000, 0)
+	launchBy := registeredAt.Add(time.Second)
+	emergencyAt := registeredAt.Add(500 * time.Millisecond)
+	drainBy := emergencyAt.Add(5 * time.Second)
+	nativeStarted := make(chan struct{})
+	nativeDone := make(chan struct{})
+	boundary := make(chan time.Time)
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 88})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "driver-prospective-emergency",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now:     func() time.Time { return registeredAt },
+		launchBoundary: func(got time.Time) <-chan time.Time {
+			if !got.Equal(launchBy) {
+				t.Fatalf("launch boundary = %v, want %v", got, launchBy)
+			}
+
+			return boundary
+		},
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				close(nativeStarted)
+				<-nativeDone
+				completedAt := emergencyAt.Add(time.Nanosecond)
+				completion := supervisorLaunchCompletion{
+					generation: action.generation,
+					action:     action.token,
+					at:         completedAt,
+					kind:       supervisorLaunchProvenNotReleased,
+					failure:    LaunchFailed,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: completedAt, completion: &completion,
+				}
+			case supervisorRevokeLaunchRelease:
+				return nil
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
+			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+
+			return prepared.start
+		},
+		driver,
+	)
+
+	launched := make(chan LaunchResult, 1)
+	go func() {
+		launched <- supervisor.Launch(Spec{
+			Attempt: "driver-prospective-emergency", Command: []string{"blocked-start"}, Dir: "/tmp",
+			Profile: SerialProfile, Deadline: 10 * time.Second,
+		})
+	}()
+	<-nativeStarted
+	closure := shell.closeRuntime(runtimeFatalCause("prospective launch emergency"))
+	if len(closure.residual) != 1 || closure.residual[0].generation == 0 {
+		t.Fatalf("runtime closure = %#v, want exact prospective generation", closure)
+	}
+	settled := make(chan SweepResult, 1)
+	go func() {
+		settled <- supervisor.EmergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
+	}()
+
+	select {
+	case result := <-launched:
+		if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
+			t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pre-Owned emergency did not release the launch callback")
+	}
+
+	close(nativeDone)
+	select {
+	case settlement := <-settled:
+		if _, ok := settlement.(SweepDrained); !ok {
+			t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late no-release did not complete emergency settlement")
+	}
+	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
+		len(snapshot.admissions) != 0 {
+		t.Fatalf("prospective emergency final runtime = %#v", snapshot)
+	}
+}
+
 func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityCompletion(t *testing.T) {
 	registeredAt := time.Unix(8_000, 0)
 	launchBy := registeredAt.Add(time.Second)
