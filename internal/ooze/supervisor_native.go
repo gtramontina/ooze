@@ -20,6 +20,7 @@ type supervisorNativeAttempt struct {
 	platform   nativePlatformState
 	releasedAt time.Time
 	waitOnce   sync.Once
+	waitDone   chan struct{}
 	waitAt     time.Time
 	waitErr    error
 	exit       ExitStatus
@@ -46,7 +47,8 @@ func newNativeSupervisorDriver(
 
 	return newSupervisorDriver(supervisorDriverConstruction{
 		runtime: runtime, now: time.Now, launchProgress: launchProgress, drainEpoch: drainEpoch,
-		prepare: executor.prepare, execute: executor.execute, readOutput: executor.readOutput,
+		prepare: executor.prepare, execute: executor.execute,
+		recheckRoot: executor.recheckRoot, readOutput: executor.readOutput,
 	})
 }
 
@@ -56,7 +58,7 @@ func (executor *supervisorNativeExecutor) prepare(generation attemptGeneration, 
 	if generation == 0 || executor.attempts[generation] != nil {
 		invariant(supervisorNativeOperation, "native attempt preparation is zero or duplicated")
 	}
-	executor.attempts[generation] = &supervisorNativeAttempt{spec: spec}
+	executor.attempts[generation] = &supervisorNativeAttempt{spec: spec, waitDone: make(chan struct{})}
 }
 
 func (executor *supervisorNativeExecutor) execute(action supervisorAction) *supervisorEvent {
@@ -172,6 +174,7 @@ func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *sup
 		attempt.waitErr = attempt.command.Wait()
 		attempt.waitAt = time.Now()
 		attempt.exit = nativeExitStatus(attempt.waitErr)
+		close(attempt.waitDone)
 	})
 	fact := supervisorRunningFact{
 		generation: action.generation, action: action.token,
@@ -235,6 +238,7 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 		attempt.waitErr = attempt.command.Wait()
 		attempt.waitAt = time.Now()
 		attempt.exit = nativeExitStatus(attempt.waitErr)
+		close(attempt.waitDone)
 	})
 	diagnostic := supervisorDiagnosticRef(0)
 	if err != nil {
@@ -242,6 +246,20 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 	}
 
 	return nativeDrainEvent(action, time.Now(), supervisorDrainForceCompleted, diagnostic)
+}
+
+func (executor *supervisorNativeExecutor) recheckRoot(
+	generation attemptGeneration,
+) (ExitStatus, bool, error) {
+	executor.mutex.Lock()
+	attempt := executor.requireAttempt(generation)
+	executor.mutex.Unlock()
+	select {
+	case <-attempt.waitDone:
+		return attempt.exit, true, nil
+	default:
+		return ExitStatus{}, false, nil
+	}
 }
 
 func nativeDrainEvent(

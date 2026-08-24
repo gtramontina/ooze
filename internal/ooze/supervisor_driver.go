@@ -14,6 +14,7 @@ type supervisorDriverConstruction struct {
 	drainEpoch     time.Duration
 	prepare        func(attemptGeneration, Spec)
 	execute        func(supervisorAction) *supervisorEvent
+	recheckRoot    func(attemptGeneration) (ExitStatus, bool, error)
 	readOutput     func(supervisorOutputRef) string
 }
 
@@ -37,6 +38,7 @@ type supervisorDriver struct {
 	drainEpoch       time.Duration
 	prepare          func(attemptGeneration, Spec)
 	execute          func(supervisorAction) *supervisorEvent
+	recheckRoot      func(attemptGeneration) (ExitStatus, bool, error)
 	readOutput       func(supervisorOutputRef) string
 	attempts         map[attemptGeneration]*supervisorDrivenAttempt
 	emergency        chan SweepResult
@@ -52,7 +54,8 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 	return &supervisorDriver{
 		runtime: construction.runtime, now: construction.now,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
-		prepare: construction.prepare, execute: construction.execute, readOutput: construction.readOutput,
+		prepare: construction.prepare, execute: construction.execute,
+		recheckRoot: construction.recheckRoot, readOutput: construction.readOutput,
 		attempts:  make(map[attemptGeneration]*supervisorDrivenAttempt),
 		emergency: make(chan SweepResult, 1),
 	}
@@ -281,12 +284,58 @@ func (driver *supervisorDriver) wait(generation attemptGeneration) Terminal {
 	waitAction := attempt.waitAction
 	terminal := attempt.terminal
 	terminalReady := attempt.terminalReady
+	var deadlineAt time.Time
+	if !terminalReady {
+		deadlineAt = driver.state.attempts[driver.state.requireAttempt(generation)].deadlineAt
+	}
+	sampleAction := attempt.sampleAction
 	driver.mutex.Unlock()
 	if !terminalReady {
-		driver.executeAction(waitAction)
+		if driver.recheckRoot == nil {
+			driver.executeAction(waitAction)
+		} else {
+			driver.waitThroughDeadline(waitAction, sampleAction, deadlineAt)
+		}
 	}
 
 	return <-terminal
+}
+
+func (driver *supervisorDriver) waitThroughDeadline(
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	deadlineAt time.Time,
+) {
+	waited := make(chan *supervisorEvent, 1)
+	go func() { waited <- driver.execute(waitAction) }()
+	timer := time.NewTimer(time.Until(deadlineAt))
+	defer timer.Stop()
+	select {
+	case event := <-waited:
+		if event == nil {
+			invariant(supervisorDriverOperation, "root wait returned no completion")
+		}
+		driver.apply(*event)
+	case <-timer.C:
+		status, observed, err := driver.recheckRoot(waitAction.generation)
+		if err != nil {
+			invariant(supervisorDriverOperation, "deadline root recheck failed")
+		}
+		recheck := supervisorExitRecheck{performed: true, observed: observed, at: deadlineAt}
+		if observed {
+			recheck.code = status.Code
+			recheck.signal = status.Signal
+		}
+		driver.apply(supervisorEvent{
+			kind: supervisorRunningObserved, generation: waitAction.generation,
+			at: deadlineAt, drainBy: deadlineAt.Add(driver.drainEpoch),
+			running: &supervisorRunningBundle{
+				generation: waitAction.generation,
+				waitAction: waitAction.token, sampleAction: sampleAction.token,
+				exitRecheck: recheck,
+			},
+		})
+	}
 }
 
 func (driver *supervisorDriver) stop(generation attemptGeneration, request StopRequest) {

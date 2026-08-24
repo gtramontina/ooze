@@ -55,3 +55,48 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 		t.Fatalf("runtime after native settlement = %#v", snapshot)
 	}
 }
+
+func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 102})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "darwin-deadline",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	launched := supervisor.Launch(Spec{
+		Attempt:  "darwin-deadline",
+		Command:  []string{"/bin/sh", "-c", "sleep 10"},
+		Dir:      t.TempDir(),
+		Env:      os.Environ(),
+		Profile:  SerialProfile,
+		Deadline: 50 * time.Millisecond,
+	})
+	owned, ok := launched.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", launched)
+	}
+	started := time.Now()
+	terminal := owned.Attempt.Wait()
+	if elapsed := time.Since(started); elapsed >= 5*time.Second {
+		t.Fatalf("deadline terminal took %s", elapsed)
+	}
+	tripped, ok := terminal.(Tripped)
+	if !ok {
+		t.Fatalf("terminal = %#v, want Tripped", terminal)
+	}
+	if _, ok := tripped.Trip.(SerialDeadlineTrip); !ok ||
+		tripped.BoundFired != CommandDeadlineFired ||
+		tripped.CommandDuration != 50*time.Millisecond {
+		t.Fatalf("serial deadline evidence = %#v", tripped)
+	}
+}
