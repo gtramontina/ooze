@@ -263,8 +263,9 @@ type attemptTerminalEvent struct {
 	generation               attemptGeneration
 	terminal                 Terminal
 	receipt                  observationResult
-	resolvedMutationDeadline time.Duration
+	resolvedMutationDeadline mutationDeadlineResolution
 }
+type mutationDeadlineResolution struct{ duration time.Duration }
 type confirmationBarrierBoundEvent struct {
 	attempt attemptIdentity
 	result  barrierResult
@@ -1118,13 +1119,11 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		settled, passed := event.terminal.(Settled)
 		passed = passed && settled.Exit.Passed() && settled.Deadline == state.definition.baselineDeadline &&
 			settled.CommandDuration > 0
-		if passed && event.resolvedMutationDeadline != resolveMutationDeadline(
-			settled.CommandDuration, state.definition.peers,
-		) {
-			campaignInvariant("observe terminal", "baseline mutation deadline resolution is invalid")
+		if passed && event.resolvedMutationDeadline.duration <= 0 {
+			campaignInvariant("observe terminal", "recorded baseline mutation deadline is not positive")
 		}
 		if passed {
-			state.mutationDeadline = event.resolvedMutationDeadline
+			state.mutationDeadline = event.resolvedMutationDeadline.duration
 		} else {
 			state.phase = campaignDraining
 			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "baseline did not pass"}
@@ -1559,7 +1558,7 @@ func campaignEventSummary(event campaignEvent) string {
 	case attemptTerminalEvent:
 		summary += " attempt=" + string(observed.attempt) + " generation=" +
 			strconv.FormatUint(uint64(observed.generation), 10) + " resolved-deadline=" +
-			observed.resolvedMutationDeadline.String() + " terminal=" + campaignTerminalSummary(observed.terminal) +
+			observed.resolvedMutationDeadline.duration.String() + " terminal=" + campaignTerminalSummary(observed.terminal) +
 			" receipt=" + campaignReceiptSummary(observed.receipt)
 	case confirmationBarrierBoundEvent:
 		summary += " attempt=" + string(observed.attempt)
@@ -1700,4 +1699,16 @@ func resolveMutationDeadline(baseline time.Duration, peers int) time.Duration {
 	}
 
 	return resolved
+}
+
+func resolveBaselineMutationDeadline(baseline time.Duration, peers int) mutationDeadlineResolution {
+	return mutationDeadlineResolution{duration: resolveMutationDeadline(baseline, peers)}
+}
+
+func recordedMutationDeadline(deadline time.Duration) mutationDeadlineResolution {
+	if deadline <= 0 {
+		campaignInvariant("record mutation deadline", "recorded deadline must be positive")
+	}
+
+	return mutationDeadlineResolution{duration: deadline}
 }

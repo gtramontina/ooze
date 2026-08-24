@@ -154,7 +154,8 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 	state, effects = advanceCampaign(state, campaignEvent{
 		id: 8, payload: attemptTerminalEvent{
 			attempt: baseline.attempt, generation: started.generation, terminal: terminal,
-			receipt: terminalReceipt, resolvedMutationDeadline: resolved,
+			receipt:                  terminalReceipt,
+			resolvedMutationDeadline: resolveBaselineMutationDeadline(terminal.CommandDuration, definition.peers),
 		},
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
@@ -178,20 +179,18 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 	}
 }
 
-func TestCampaignRejectsBaselineDeadlineThatDoesNotMatchRecordedPolicy(t *testing.T) {
+func TestCampaignReplayConsumesPositiveRecordedBaselineDeadlineWithoutRecomputation(t *testing.T) {
 	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 2)
 	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
-	defer func() {
-		violation, ok := recover().(runtimeInvariantViolation)
-		if !ok || violation.operation != "campaign observe terminal" {
-			t.Fatalf("recovered=%#v", violation)
-		}
-	}()
-	harness.settleAttempt(t, baseline, Settled{
+	effects := harness.settleAttempt(t, baseline, Settled{
 		Exit: ExitStatus{}, ExecutionData: ExecutionData{
 			Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second,
 		},
 	}, time.Nanosecond)
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	if harness.state.mutationDeadline != time.Nanosecond {
+		t.Fatalf("replay deadline=%s, want recorded 1ns", harness.state.mutationDeadline)
+	}
 }
 
 func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testing.T) {
@@ -1184,10 +1183,15 @@ func (harness *campaignHarness) settleAttempt(
 	var receipt observationResult
 	harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, observation)
 
-	return harness.advance(attemptTerminalEvent{
+	event := attemptTerminalEvent{
 		attempt: attempt.attempt, generation: attempt.generation, terminal: terminal,
-		receipt: receipt, resolvedMutationDeadline: resolved,
-	})
+		receipt: receipt,
+	}
+	if resolved > 0 {
+		event.resolvedMutationDeadline = recordedMutationDeadline(resolved)
+	}
+
+	return harness.advance(event)
 }
 
 func (harness *campaignHarness) launchConfirmation(
