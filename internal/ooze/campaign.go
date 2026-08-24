@@ -206,15 +206,34 @@ type resourceSettledEvent struct {
 	kind     campaignResourceKind
 	identity string
 }
+type resourceSettlementFailedEvent struct {
+	kind     campaignResourceKind
+	identity string
+	cause    string
+}
 type terminalCommittedEvent struct{ result terminalResult }
 type workspaceMaterializedEvent struct {
 	attempt   attemptIdentity
 	workspace string
 	snapshot  snapshotIdentity
 }
+type workspaceMaterializationFailedEvent struct {
+	attempt attemptIdentity
+	cause   string
+}
 type admissionGrantedEvent struct {
 	attempt attemptIdentity
 	grant   admissionGrant
+}
+type admissionCancelledEvent struct {
+	attempt attemptIdentity
+	request admissionRequestToken
+	result  admissionResult
+}
+type admissionRejectedEvent struct {
+	attempt attemptIdentity
+	result  admissionResult
+	cause   string
 }
 type startCommittedEvent struct {
 	attempt attemptIdentity
@@ -246,21 +265,27 @@ type runtimeEmergencySettledEvent struct {
 	epoch      fatalEpochID
 	settlement emergencySettlement
 }
+type runtimeEmergencyStartedEvent struct{ closure runtimeClosure }
 
-func (campaignRegisteredEvent) campaignEventPayload()        {}
-func (snapshotEstablishedEvent) campaignEventPayload()       {}
-func (catalogueDiscoveredEvent) campaignEventPayload()       {}
-func (campaignPreparationFailedEvent) campaignEventPayload() {}
-func (resourceSettledEvent) campaignEventPayload()           {}
-func (terminalCommittedEvent) campaignEventPayload()         {}
-func (workspaceMaterializedEvent) campaignEventPayload()     {}
-func (admissionGrantedEvent) campaignEventPayload()          {}
-func (startCommittedEvent) campaignEventPayload()            {}
-func (attemptLaunchEvent) campaignEventPayload()             {}
-func (attemptTerminalEvent) campaignEventPayload()           {}
-func (confirmationBarrierBoundEvent) campaignEventPayload()  {}
-func (grantReturnAcknowledgedEvent) campaignEventPayload()   {}
-func (runtimeEmergencySettledEvent) campaignEventPayload()   {}
+func (campaignRegisteredEvent) campaignEventPayload()             {}
+func (snapshotEstablishedEvent) campaignEventPayload()            {}
+func (catalogueDiscoveredEvent) campaignEventPayload()            {}
+func (campaignPreparationFailedEvent) campaignEventPayload()      {}
+func (resourceSettledEvent) campaignEventPayload()                {}
+func (resourceSettlementFailedEvent) campaignEventPayload()       {}
+func (terminalCommittedEvent) campaignEventPayload()              {}
+func (workspaceMaterializedEvent) campaignEventPayload()          {}
+func (workspaceMaterializationFailedEvent) campaignEventPayload() {}
+func (admissionGrantedEvent) campaignEventPayload()               {}
+func (admissionCancelledEvent) campaignEventPayload()             {}
+func (admissionRejectedEvent) campaignEventPayload()              {}
+func (startCommittedEvent) campaignEventPayload()                 {}
+func (attemptLaunchEvent) campaignEventPayload()                  {}
+func (attemptTerminalEvent) campaignEventPayload()                {}
+func (confirmationBarrierBoundEvent) campaignEventPayload()       {}
+func (grantReturnAcknowledgedEvent) campaignEventPayload()        {}
+func (runtimeEmergencySettledEvent) campaignEventPayload()        {}
+func (runtimeEmergencyStartedEvent) campaignEventPayload()        {}
 
 func (campaignRegisteredEvent) campaignEventName() string  { return "campaign registered" }
 func (snapshotEstablishedEvent) campaignEventName() string { return "snapshot established" }
@@ -268,18 +293,27 @@ func (catalogueDiscoveredEvent) campaignEventName() string { return "catalogue d
 func (campaignPreparationFailedEvent) campaignEventName() string {
 	return "campaign preparation failed"
 }
-func (resourceSettledEvent) campaignEventName() string       { return "resource settled" }
+func (resourceSettledEvent) campaignEventName() string { return "resource settled" }
+func (resourceSettlementFailedEvent) campaignEventName() string {
+	return "resource settlement failed"
+}
 func (terminalCommittedEvent) campaignEventName() string     { return "terminal committed" }
 func (workspaceMaterializedEvent) campaignEventName() string { return "workspace materialized" }
-func (admissionGrantedEvent) campaignEventName() string      { return "admission granted" }
-func (startCommittedEvent) campaignEventName() string        { return "start committed" }
-func (attemptLaunchEvent) campaignEventName() string         { return "attempt launched" }
-func (attemptTerminalEvent) campaignEventName() string       { return "attempt terminal" }
+func (workspaceMaterializationFailedEvent) campaignEventName() string {
+	return "workspace materialization failed"
+}
+func (admissionGrantedEvent) campaignEventName() string   { return "admission granted" }
+func (admissionCancelledEvent) campaignEventName() string { return "admission cancelled" }
+func (admissionRejectedEvent) campaignEventName() string  { return "admission rejected" }
+func (startCommittedEvent) campaignEventName() string     { return "start committed" }
+func (attemptLaunchEvent) campaignEventName() string      { return "attempt launched" }
+func (attemptTerminalEvent) campaignEventName() string    { return "attempt terminal" }
 func (confirmationBarrierBoundEvent) campaignEventName() string {
 	return "confirmation barrier bound"
 }
 func (grantReturnAcknowledgedEvent) campaignEventName() string { return "grant return acknowledged" }
 func (runtimeEmergencySettledEvent) campaignEventName() string { return "runtime emergency settled" }
+func (runtimeEmergencyStartedEvent) campaignEventName() string { return "runtime emergency started" }
 
 type campaignTerminalKind uint8
 
@@ -397,12 +431,20 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 		return state.onPreparationFailed(observed)
 	case resourceSettledEvent:
 		return state.onResourceSettled(observed)
+	case resourceSettlementFailedEvent:
+		return state.onResourceSettlementFailed(observed)
 	case terminalCommittedEvent:
 		return state.onTerminalCommitted(observed)
 	case workspaceMaterializedEvent:
 		return state.onWorkspaceMaterialized(observed)
+	case workspaceMaterializationFailedEvent:
+		return state.onWorkspaceMaterializationFailed(observed)
 	case admissionGrantedEvent:
 		return state.onAdmissionGranted(observed)
+	case admissionCancelledEvent:
+		return state.onAdmissionCancelled(observed)
+	case admissionRejectedEvent:
+		return state.onAdmissionRejected(observed)
 	case startCommittedEvent:
 		return state.onStartCommitted(observed)
 	case attemptLaunchEvent:
@@ -415,6 +457,8 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 		return state.onGrantReturnAcknowledged(observed)
 	case runtimeEmergencySettledEvent:
 		return state.onRuntimeEmergencySettled(observed)
+	case runtimeEmergencyStartedEvent:
+		return state.onRuntimeEmergencyStarted(observed)
 	default:
 		campaignInvariant("advance", "event kind is unknown")
 	}
@@ -621,7 +665,56 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 	return state, nil
 }
 
+func (state campaignState) onResourceSettlementFailed(
+	event resourceSettlementFailedEvent,
+) (campaignState, []campaignEffect) {
+	index := state.obligationIndex(event.kind, event.identity)
+	if index < 0 || event.kind == campaignResourceRegistration || event.cause == "" {
+		campaignInvariant("settle resource", "resource failure is invalid")
+	}
+	state.obligations = slices.Delete(state.obligations, index, index+1)
+	state.phase = campaignDraining
+	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
+	if event.kind == campaignResourceWorkspace {
+		attemptAt := slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool {
+			return attempt.workspace == event.identity && attempt.stage == campaignAttemptSettled
+		})
+		if attemptAt < 0 {
+			campaignInvariant("settle resource", "failed workspace has no settled attempt")
+		}
+		state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
+		if len(state.attempts) == 0 {
+			state.candidate = campaignTerminalCandidate{}
+
+			return state.releaseSnapshot(campaignTerminalAborted)
+		}
+
+		return state, nil
+	}
+	if event.kind == campaignResourceSnapshot && len(state.obligations) == 1 &&
+		state.obligations[0].kind == campaignResourceRegistration {
+		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
+	}
+
+	return state, nil
+}
+
 func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (campaignState, []campaignEffect) {
+	if event.result.decision == terminalRejectedClosed {
+		if state.candidate.kind == 0 || event.result.epoch == 0 || len(state.obligations) != 1 ||
+			state.obligations[0].kind != campaignResourceRegistration {
+			campaignInvariant("commit terminal", "fatal terminal rejection is invalid")
+		}
+		state.phase = campaignDraining
+		state.drain = campaignDrainIntent{
+			kind: campaignDrainRuntimeEmergency, cause: "fatal closure won terminal commitment",
+			epoch: event.result.epoch,
+		}
+		state.candidate = campaignTerminalCandidate{}
+
+		return state, nil
+	}
 	expected := terminalCommitted
 	if state.drain.kind == campaignDrainRuntimeEmergency {
 		expected = terminalForcedAborted
@@ -662,9 +755,20 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 		campaignInvariant("materialize workspace", "workspace obligation is missing")
 	}
 	state.attempts[attemptAt].workspace = event.workspace
-	state.attempts[attemptAt].stage = campaignAttemptAdmissionWaiting
 	obligationAt := state.obligationIndex(campaignResourceWorkspace, string(event.attempt))
 	state.obligations[obligationAt].identity = event.workspace
+	if state.drain.kind == campaignDrainAbort || state.drain.kind == campaignDrainRuntimeEmergency {
+		state.attempts[attemptAt].stage = campaignAttemptSettled
+		mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
+		if mutantAt >= 0 {
+			state.mutants[mutantAt].primaryStarted = false
+		}
+
+		return state.emit(campaignEffect{
+			kind: campaignEffectReleaseWorkspace, attempt: event.attempt, workspace: event.workspace,
+		})
+	}
+	state.attempts[attemptAt].stage = campaignAttemptAdmissionWaiting
 	class := sharedAdmission
 	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
 		class = exclusiveAdmission
@@ -693,6 +797,29 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 	return state.emit(campaignEffect{kind: campaignEffectRequestAdmission, attempt: event.attempt, request: request})
 }
 
+func (state campaignState) onWorkspaceMaterializationFailed(
+	event workspaceMaterializationFailedEvent,
+) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptMaterializing || event.cause == "" {
+		campaignInvariant("materialize workspace", "workspace failure is invalid")
+	}
+	state.removeAttemptObligation(campaignResourceWorkspace, event.attempt, 0)
+	mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
+	if mutantAt >= 0 {
+		state.mutants[mutantAt].primaryStarted = false
+	}
+	state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
+	state.phase = campaignDraining
+	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	effects := state.abortOutstandingAttempts("")
+	if len(state.attempts) == 0 {
+		return state.releaseSnapshot(campaignTerminalAborted)
+	}
+
+	return state.emitAll(effects)
+}
+
 func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
@@ -709,6 +836,82 @@ func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (camp
 	}
 
 	return state.acceptGrant(attemptAt, event.grant)
+}
+
+func (state campaignState) onAdmissionCancelled(
+	event admissionCancelledEvent,
+) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || event.request != state.attempts[attemptAt].request || event.result.request != event.request {
+		campaignInvariant("cancel admission", "cancellation is stale or wrong")
+	}
+	if event.result.decision == admissionRejectedAlreadyCommitted {
+		if state.attempts[attemptAt].stage != campaignAttemptGranted {
+			campaignInvariant("cancel admission", "commitment race has no granted attempt")
+		}
+
+		return state, nil
+	}
+	stage := state.attempts[attemptAt].stage
+	validWaiting := stage == campaignAttemptAdmissionWaiting &&
+		(event.result.decision == admissionCancelledWaiting || event.result.decision == admissionCancelledGranted)
+	validGranted := stage == campaignAttemptGranted && event.result.decision == admissionCancelledGranted
+	if !validWaiting && !validGranted {
+		campaignInvariant("cancel admission", "cancellation result is invalid")
+	}
+	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, 0)
+	if stage == campaignAttemptGranted {
+		state.removeAttemptObligation(campaignResourcePendingStart, event.attempt, 0)
+	}
+	state.attempts[attemptAt].stage = campaignAttemptSettled
+	mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
+	if mutantAt >= 0 {
+		state.mutants[mutantAt].primaryStarted = false
+	}
+
+	return state.emit(campaignEffect{
+		kind: campaignEffectReleaseWorkspace, attempt: event.attempt,
+		workspace: state.attempts[attemptAt].workspace,
+	})
+}
+
+func (state campaignState) onAdmissionRejected(
+	event admissionRejectedEvent,
+) (campaignState, []campaignEffect) {
+	attemptAt := state.attemptIndex(event.attempt)
+	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
+		event.result.request != state.attempts[attemptAt].request || event.cause == "" ||
+		event.result.decision == admissionAccepted {
+		campaignInvariant("reject admission", "admission rejection is invalid")
+	}
+	if event.result.decision < admissionRejectedClosed || event.result.decision > admissionRejectedSharedLimit {
+		campaignInvariant("reject admission", "admission rejection decision is invalid")
+	}
+	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, 0)
+	state.attempts[attemptAt].stage = campaignAttemptSettled
+	mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
+	if mutantAt >= 0 {
+		state.mutants[mutantAt].primaryStarted = false
+	}
+	if event.result.decision == admissionRejectedClosed {
+		if event.result.fatalEpoch == 0 {
+			campaignInvariant("reject admission", "closed rejection lacks fatal epoch")
+		}
+		state.phase = campaignDraining
+		state.drain = campaignDrainIntent{
+			kind: campaignDrainRuntimeEmergency, cause: event.cause, epoch: event.result.fatalEpoch,
+		}
+	} else {
+		state.phase = campaignDraining
+		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	}
+	effects := state.abortOutstandingAttempts(event.attempt)
+	effects = append(effects, campaignEffect{
+		kind: campaignEffectReleaseWorkspace, attempt: event.attempt,
+		workspace: state.attempts[attemptAt].workspace,
+	})
+
+	return state.emitAll(effects)
 }
 
 func (state campaignState) acceptGrant(attemptAt int, grant admissionGrant) (campaignState, []campaignEffect) {
@@ -838,7 +1041,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 		state.removeAttemptObligation(campaignResourceExecutionDomain, event.attempt, event.generation)
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "attempt was not released"}
-		effects := state.stopCommittedPeers(event.attempt)
+		effects := state.abortOutstandingAttempts(event.attempt)
 		effects = append(effects, campaignEffect{
 			kind: campaignEffectReleaseWorkspace, attempt: event.attempt,
 			workspace: state.attempts[attemptAt].workspace,
@@ -855,8 +1058,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 			kind: campaignDrainRuntimeEmergency, cause: "prospective launch unresolved",
 			epoch: event.receipt.fatalEpoch,
 		}
-
-		return state, nil
+		return state.applyRuntimeCompensations(event.receipt)
 	default:
 		campaignInvariant("observe launch", "launch result kind is invalid")
 	}
@@ -878,8 +1080,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			kind: campaignDrainRuntimeEmergency, cause: "execution-domain drainage unconfirmed",
 			epoch: event.receipt.fatalEpoch,
 		}
-
-		return state, nil
+		return state.applyRuntimeCompensations(event.receipt)
 	}
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptOwned ||
 		event.generation != state.attempts[attemptAt].generation || event.terminal == nil ||
@@ -936,13 +1137,13 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			if state.drain.kind != campaignDrainAbort {
 				state.phase = campaignDraining
 				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary stopped"}
-				transitionEffects = state.stopCommittedPeers(event.attempt)
+				transitionEffects = state.abortOutstandingAttempts(event.attempt)
 			}
 		case Infrastructure:
 			if state.drain.kind != campaignDrainAbort {
 				state.phase = campaignDraining
 				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary infrastructure uncertainty"}
-				transitionEffects = state.stopCommittedPeers(event.attempt)
+				transitionEffects = state.abortOutstandingAttempts(event.attempt)
 			}
 		default:
 			campaignInvariant("observe primary terminal", "primary terminal kind is invalid")
@@ -995,15 +1196,22 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	return state.emitAll(effects)
 }
 
-func (state campaignState) stopCommittedPeers(except attemptIdentity) []campaignEffect {
+func (state campaignState) abortOutstandingAttempts(except attemptIdentity) []campaignEffect {
 	effects := make([]campaignEffect, 0, len(state.attempts))
 	for _, attempt := range state.attempts {
-		if attempt.identity == except || attempt.stage != campaignAttemptOwned {
+		if attempt.identity == except {
 			continue
 		}
-		effects = append(effects, campaignEffect{
-			kind: campaignEffectStopAttempt, attempt: attempt.identity, generation: attempt.generation,
-		})
+		switch attempt.stage {
+		case campaignAttemptAdmissionWaiting, campaignAttemptGranted:
+			effects = append(effects, campaignEffect{
+				kind: campaignEffectCancelAdmission, attempt: attempt.identity, request: attempt.request,
+			})
+		case campaignAttemptOwned:
+			effects = append(effects, campaignEffect{
+				kind: campaignEffectStopAttempt, attempt: attempt.identity, generation: attempt.generation,
+			})
+		}
 	}
 
 	return effects
@@ -1017,6 +1225,7 @@ func (state campaignState) onRuntimeEmergencySettled(
 		campaignInvariant("settle runtime emergency", "emergency settlement is stale or wrong")
 	}
 	if len(event.settlement.residual) == 0 {
+		effects := make([]campaignEffect, 0, len(event.settlement.acknowledged))
 		for _, generation := range event.settlement.acknowledged {
 			attemptAt := slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool {
 				return attempt.generation == generation &&
@@ -1028,14 +1237,16 @@ func (state campaignState) onRuntimeEmergencySettled(
 			state.removeAttemptObligation(campaignResourceAdmission, state.attempts[attemptAt].identity, generation)
 			state.removeAttemptObligation(campaignResourceExecutionDomain, state.attempts[attemptAt].identity, generation)
 			state.attempts[attemptAt].stage = campaignAttemptSettled
+			effects = append(effects, campaignEffect{
+				kind: campaignEffectReleaseWorkspace, attempt: state.attempts[attemptAt].identity,
+				workspace: state.attempts[attemptAt].workspace,
+			})
 		}
-		effects := make([]campaignEffect, 0, len(event.settlement.acknowledged))
-		for _, attempt := range state.attempts {
-			if attempt.stage == campaignAttemptSettled {
-				effects = append(effects, campaignEffect{
-					kind: campaignEffectReleaseWorkspace, attempt: attempt.identity, workspace: attempt.workspace,
-				})
-			}
+		if len(effects) == 0 && len(state.obligations) == 1 &&
+			state.obligations[0].kind == campaignResourceRegistration {
+			state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
+
+			return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
 		}
 
 		return state.emitAll(effects)
@@ -1046,6 +1257,25 @@ func (state campaignState) onRuntimeEmergencySettled(
 	}}
 
 	return state, nil
+}
+
+func (state campaignState) onRuntimeEmergencyStarted(
+	event runtimeEmergencyStartedEvent,
+) (campaignState, []campaignEffect) {
+	if event.closure.epoch == 0 ||
+		(state.drain.kind == campaignDrainRuntimeEmergency && state.drain.epoch != event.closure.epoch) {
+		campaignInvariant("start runtime emergency", "runtime closure is stale or wrong")
+	}
+	state.phase = campaignDraining
+	state.drain = campaignDrainIntent{
+		kind: campaignDrainRuntimeEmergency, cause: "process runtime emergency", epoch: event.closure.epoch,
+	}
+	state.candidate = campaignTerminalCandidate{}
+
+	return state.applyRuntimeCompensations(observationResult{
+		cancelledWaiting:  event.closure.cancelledWaiting,
+		compensatedGrants: event.closure.compensatedGrants,
+	})
 }
 
 func (state campaignState) applyRuntimeCompensations(
@@ -1244,10 +1474,24 @@ func campaignEventSummary(event campaignEvent) string {
 		summary += " stage=" + strconv.Itoa(int(observed.stage)) + " cause=" + observed.cause
 	case resourceSettledEvent:
 		summary += " resource=" + strconv.Itoa(int(observed.kind)) + ":" + observed.identity
+	case resourceSettlementFailedEvent:
+		summary += " resource=" + strconv.Itoa(int(observed.kind)) + ":" + observed.identity +
+			" cause=" + observed.cause
+	case terminalCommittedEvent:
+		summary += " decision=" + strconv.Itoa(int(observed.result.decision)) + " epoch=" +
+			strconv.FormatUint(uint64(observed.result.epoch), 10)
 	case workspaceMaterializedEvent:
 		summary += " attempt=" + string(observed.attempt) + " snapshot=" + string(observed.snapshot)
+	case workspaceMaterializationFailedEvent:
+		summary += " attempt=" + string(observed.attempt) + " cause=" + observed.cause
 	case admissionGrantedEvent:
 		summary += " attempt=" + string(observed.attempt)
+	case admissionCancelledEvent:
+		summary += " attempt=" + string(observed.attempt) + " decision=" +
+			strconv.Itoa(int(observed.result.decision))
+	case admissionRejectedEvent:
+		summary += " attempt=" + string(observed.attempt) + " decision=" +
+			strconv.Itoa(int(observed.result.decision)) + " cause=" + observed.cause
 	case startCommittedEvent:
 		summary += " attempt=" + string(observed.attempt) + " generation=" +
 			strconv.FormatUint(uint64(observed.result.generation), 10)
@@ -1257,7 +1501,7 @@ func campaignEventSummary(event campaignEvent) string {
 	case attemptTerminalEvent:
 		summary += " attempt=" + string(observed.attempt) + " generation=" +
 			strconv.FormatUint(uint64(observed.generation), 10) + " resolved-deadline=" +
-			observed.resolvedMutationDeadline.String()
+			observed.resolvedMutationDeadline.String() + " terminal=" + campaignTerminalSummary(observed.terminal)
 	case confirmationBarrierBoundEvent:
 		summary += " attempt=" + string(observed.attempt)
 	case grantReturnAcknowledgedEvent:
@@ -1265,9 +1509,43 @@ func campaignEventSummary(event campaignEvent) string {
 	case runtimeEmergencySettledEvent:
 		summary += " epoch=" + strconv.FormatUint(uint64(observed.epoch), 10) +
 			" residual=" + strconv.Itoa(len(observed.settlement.residual))
+	case runtimeEmergencyStartedEvent:
+		summary += " epoch=" + strconv.FormatUint(uint64(observed.closure.epoch), 10) +
+			" residual=" + strconv.Itoa(len(observed.closure.residual))
 	}
 
 	return summary
+}
+
+func campaignTerminalSummary(terminal Terminal) string {
+	switch observed := terminal.(type) {
+	case Settled:
+		return "settled/code=" + strconv.Itoa(observed.Exit.Code) + "/signal=" +
+			strconv.Itoa(observed.Exit.Signal) + "/deadline=" + observed.Deadline.String()
+	case Tripped:
+		trip := "unknown"
+		switch evidence := observed.Trip.(type) {
+		case FuseTrip:
+			trip = "fuse/live=" + strconv.Itoa(evidence.Live)
+		case AutomaticDeadlineTrip:
+			trip = "automatic-deadline/peak=" + strconv.Itoa(evidence.Peak.Value) +
+				"/present=" + strconv.FormatBool(evidence.Peak.Present)
+		case SerialDeadlineTrip:
+			trip = "serial-deadline"
+		}
+
+		return "tripped/" + trip + "/deadline=" + observed.Deadline.String()
+	case Stopped:
+		return "stopped/deadline=" + observed.Deadline.String()
+	case Infrastructure:
+		return "infrastructure/cause=" + strconv.Itoa(int(observed.Cause)) +
+			"/deadline=" + observed.Deadline.String()
+	case DrainUnconfirmed:
+		return "drain-unconfirmed/residual=" + strconv.Itoa(int(observed.Residual)) +
+			"/deadline=" + observed.Deadline.String()
+	default:
+		return "nil-or-unknown"
+	}
 }
 
 func (state campaignState) stableIdentitySnapshot(event campaignEvent) []string {

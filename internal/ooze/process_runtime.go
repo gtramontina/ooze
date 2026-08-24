@@ -98,6 +98,7 @@ type admissionResult struct {
 	decision   admissionDecision
 	request    admissionRequestToken
 	deliveries []admissionGrant
+	fatalEpoch fatalEpochID
 }
 
 type registeredCampaign struct {
@@ -271,7 +272,10 @@ const (
 	terminalRejectedClosed
 )
 
-type terminalResult struct{ decision terminalDecision }
+type terminalResult struct {
+	decision terminalDecision
+	epoch    fatalEpochID
+}
 
 type barrierBinding struct {
 	campaign campaignToken
@@ -336,7 +340,9 @@ func (r processRuntime) requestAdmission(request admissionRequest) (processRunti
 		invariant("request admission", "invalid request")
 	}
 	if !r.open() {
-		return r, admissionResult{decision: admissionRejectedClosed, request: token}
+		return r, admissionResult{
+			decision: admissionRejectedClosed, request: token, fatalEpoch: r.fatalEpoch,
+		}
 	}
 	campaignAt := r.campaignIndex(request.campaign)
 	if campaignAt < 0 {
@@ -821,7 +827,7 @@ func (r processRuntime) finalizeFatalClosure() processRuntime {
 
 func (r processRuntime) commitTerminal(campaign campaignToken) (processRuntime, terminalResult) {
 	if !r.open() {
-		return r, terminalResult{decision: terminalRejectedClosed}
+		return r, terminalResult{decision: terminalRejectedClosed, epoch: r.fatalEpoch}
 	}
 	index := r.campaignIndex(campaign)
 	if index < 0 {
