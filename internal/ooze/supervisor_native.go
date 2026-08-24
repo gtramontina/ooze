@@ -35,6 +35,7 @@ type supervisorNativeExecutor struct {
 	nextOutput     supervisorOutputRef
 	diagnostics    map[supervisorDiagnosticRef]error
 	nextDiagnostic supervisorDiagnosticRef
+	readOutputFile func(*os.File) (string, uint64, error)
 }
 
 func newNativeSupervisorDriver(
@@ -43,10 +44,11 @@ func newNativeSupervisorDriver(
 	drainEpoch time.Duration,
 ) *supervisorDriver {
 	executor := &supervisorNativeExecutor{
-		drainEpoch:  drainEpoch,
-		attempts:    make(map[attemptGeneration]*supervisorNativeAttempt),
-		outputs:     make(map[supervisorOutputRef]string),
-		diagnostics: make(map[supervisorDiagnosticRef]error),
+		drainEpoch:     drainEpoch,
+		attempts:       make(map[attemptGeneration]*supervisorNativeAttempt),
+		outputs:        make(map[supervisorOutputRef]string),
+		diagnostics:    make(map[supervisorDiagnosticRef]error),
+		readOutputFile: readNativeOutput,
 	}
 
 	return newSupervisorDriver(supervisorDriverConstruction{
@@ -355,7 +357,11 @@ func (executor *supervisorNativeExecutor) captureOutput(action supervisorAction)
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
 	at := time.Now()
-	contents, err := readNativeOutput(attempt.output)
+	readOutputFile := executor.readOutputFile
+	if readOutputFile == nil {
+		readOutputFile = readNativeOutput
+	}
+	contents, cutoff, err := readOutputFile(attempt.output)
 	executor.mutex.Lock()
 	executor.nextOutput++
 	if executor.nextOutput == 0 {
@@ -372,7 +378,7 @@ func (executor *supervisorNativeExecutor) captureOutput(action supervisorAction)
 	completion := supervisorOutputCompletion{
 		generation: action.generation,
 		action:     supervisorPendingAction{kind: action.kind, token: action.token},
-		at:         at, ref: ref, cutoff: uint64(len(contents)), prefixLength: uint64(len(contents)),
+		at:         at, ref: ref, cutoff: cutoff, prefixLength: uint64(len(contents)),
 		diagnostic: diagnostic,
 	}
 
@@ -382,13 +388,21 @@ func (executor *supervisorNativeExecutor) captureOutput(action supervisorAction)
 	}
 }
 
-func readNativeOutput(file *os.File) (string, error) {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return "", err
+func readNativeOutput(file *os.File) (string, uint64, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return "", 0, err
 	}
-	contents, err := io.ReadAll(file)
+	if info.Size() < 0 {
+		return "", 0, errors.New("merged output size is negative")
+	}
+	cutoff := uint64(info.Size())
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", cutoff, err
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(file, int64(cutoff)))
 
-	return string(contents), err
+	return string(contents), cutoff, readErr
 }
 
 func (executor *supervisorNativeExecutor) release(action supervisorAction) *supervisorEvent {
