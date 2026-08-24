@@ -2,7 +2,9 @@ package ooze
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -70,6 +72,78 @@ func TestWindowsResumeCutRequiresExactPriorCountOne(t *testing.T) {
 			released, err := windowsResumeCut(test.prior, test.resumeErr, test.cleanup)
 			if released != test.released || !errors.Is(err, test.wantErr) {
 				t.Fatalf("resume cut = (%v, %v), want (%v, %v)", released, err, test.released, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestWindowsLaunchResourceExhaustionRequiresExactEvidence(t *testing.T) {
+	for _, operation := range []nativeLaunchOperation{
+		nativeLaunchInternalOutput,
+		nativeLaunchLauncherStart,
+		nativeLaunchContainmentPrepare,
+	} {
+		for _, code := range []syscall.Errno{4, 8, 14, 89, 1450, 1455} {
+			evidence := nativeLaunchFailureEvidence{
+				operation: operation, stage: nativeLaunchPreRelease,
+				err: fmt.Errorf("windows launch boundary: %w", code), closureProven: true,
+			}
+			if got := classifyWindowsLaunchFailure(evidence); got != LaunchResourceExhausted {
+				t.Fatalf("operation %d code %d classification = %v, want resource exhausted", operation, code, got)
+			}
+		}
+	}
+
+	for _, test := range []struct {
+		name     string
+		evidence nativeLaunchFailureEvidence
+	}{
+		{
+			name: "unlisted code",
+			evidence: nativeLaunchFailureEvidence{
+				operation: nativeLaunchLauncherStart, stage: nativeLaunchPreRelease,
+				err: syscall.Errno(5), closureProven: true,
+			},
+		},
+		{
+			name: "target exec operation",
+			evidence: nativeLaunchFailureEvidence{
+				operation: nativeLaunchTargetExec, stage: nativeLaunchPreRelease,
+				err: syscall.Errno(8), closureProven: true,
+			},
+		},
+		{
+			name: "root tracker operation",
+			evidence: nativeLaunchFailureEvidence{
+				operation: nativeLaunchRootTrackerCreate, stage: nativeLaunchPreRelease,
+				err: syscall.Errno(8), closureProven: true,
+			},
+		},
+		{
+			name: "release unknown stage",
+			evidence: nativeLaunchFailureEvidence{
+				operation: nativeLaunchContainmentPrepare, stage: nativeLaunchReleaseUnknown,
+				err: syscall.Errno(8), closureProven: true,
+			},
+		},
+		{
+			name: "closure unproven",
+			evidence: nativeLaunchFailureEvidence{
+				operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+				err: syscall.Errno(8), closureProven: false,
+			},
+		},
+		{
+			name: "cleanup only",
+			evidence: nativeLaunchFailureEvidence{
+				operation: nativeLaunchCleanup, stage: nativeLaunchPreRelease,
+				err: syscall.Errno(8), closureProven: true,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyWindowsLaunchFailure(test.evidence); got != LaunchFailed {
+				t.Fatalf("classification = %v, want launch failed", got)
 			}
 		})
 	}

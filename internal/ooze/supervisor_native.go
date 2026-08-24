@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -347,12 +348,38 @@ func (executor *supervisorNativeExecutor) notReleased(
 }
 
 func classifyNativeLaunchFailure(evidence nativeLaunchFailureEvidence) LaunchFailure {
+	return classifyNativeLaunchFailureWith(evidence, nativeLaunchResourceExhausted)
+}
+
+func classifyWindowsLaunchFailure(evidence nativeLaunchFailureEvidence) LaunchFailure {
+	return classifyNativeLaunchFailureWith(evidence, windowsLaunchResourceExhausted)
+}
+
+func classifyNativeLaunchFailureWith(
+	evidence nativeLaunchFailureEvidence,
+	resourceExhausted func(nativeLaunchOperation, error) bool,
+) LaunchFailure {
 	if evidence.err != nil && evidence.stage == nativeLaunchPreRelease && evidence.closureProven &&
-		nativeLaunchResourceExhausted(evidence.operation, evidence.err) {
+		resourceExhausted(evidence.operation, evidence.err) {
 		return LaunchResourceExhausted
 	}
 
 	return LaunchFailed
+}
+
+func windowsLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
+	switch operation {
+	case nativeLaunchInternalOutput, nativeLaunchLauncherStart, nativeLaunchContainmentPrepare:
+	default:
+		return false
+	}
+	for _, code := range []syscall.Errno{4, 8, 14, 89, 1450, 1455} {
+		if errors.Is(err, code) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func nativeLaunchFailureOperation(err error, fallback nativeLaunchOperation) nativeLaunchOperation {
