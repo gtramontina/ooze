@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -59,6 +60,8 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 	return resumeNativeProcess(processID)
 }
 
+func waitNativeRootExit(nativePlatformState) error { return nil }
+
 func confirmNativeCommandStopped(*exec.Cmd, nativePlatformState) error { return nil }
 
 func resumeNativeProcess(processID uint32) error {
@@ -107,7 +110,7 @@ func nativeDomainEmpty(state nativePlatformState, _ int) (bool, error) {
 	return len(processes) == 0, nil
 }
 
-func forceNativeDomain(state nativePlatformState, _ int) error {
+func forceNativeDomain(state nativePlatformState, _ int, _ time.Time) error {
 	err := windows.TerminateJobObject(state.job, 1)
 	if err != nil {
 		return fmt.Errorf("terminate managed-attempt job: %w", err)

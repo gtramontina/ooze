@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type nativePlatformState struct{}
@@ -43,6 +44,8 @@ func releaseNativeCommand(command *exec.Cmd, _ nativePlatformState) error {
 	return nil
 }
 
+func waitNativeRootExit(nativePlatformState) error { return nil }
+
 func nativeDomainEmpty(_ nativePlatformState, processID int) (bool, error) {
 	err := syscall.Kill(-processID, 0)
 	if errors.Is(err, syscall.ESRCH) {
@@ -55,7 +58,7 @@ func nativeDomainEmpty(_ nativePlatformState, processID int) (bool, error) {
 	return false, nil
 }
 
-func forceNativeDomain(_ nativePlatformState, processID int) error {
+func forceNativeDomain(_ nativePlatformState, processID int, _ time.Time) error {
 	err := syscall.Kill(-processID, syscall.SIGKILL)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil

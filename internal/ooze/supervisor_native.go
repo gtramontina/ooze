@@ -24,6 +24,7 @@ type supervisorNativeAttempt struct {
 	waitOnce       sync.Once
 	waitDone       chan struct{}
 	waitAt         time.Time
+	trackingErr    error
 	waitErr        error
 	exit           ExitStatus
 }
@@ -136,7 +137,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(err))
 	}
 	if err = confirmNativeCommandStopped(command, platform); err != nil {
-		_ = forceNativeDomain(platform, command.Process.Pid)
+		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
 		_, _ = command.Process.Wait()
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
@@ -148,7 +149,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	executor.mutex.Lock()
 	if attempt.releaseRevoked {
 		executor.mutex.Unlock()
-		_ = forceNativeDomain(platform, command.Process.Pid)
+		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
 		<-attempt.waitDone
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
@@ -162,7 +163,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	}
 	executor.mutex.Unlock()
 	if err != nil {
-		_ = forceNativeDomain(platform, command.Process.Pid)
+		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
 		<-attempt.waitDone
 		_ = closeNativeDomain(platform)
 		_ = output.Close()
@@ -218,7 +219,7 @@ func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *sup
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
 	executor.awaitRoot(attempt)
-	if err := nativeWaitFailure(attempt.waitErr); err != nil {
+	if err := errors.Join(attempt.trackingErr, nativeWaitFailure(attempt.waitErr)); err != nil {
 		fact := supervisorRunningFact{
 			generation: action.generation, action: action.token,
 			kind: supervisorRunningObservationFailed, at: attempt.waitAt,
@@ -264,6 +265,7 @@ func nativeWaitFailure(err error) error {
 
 func (executor *supervisorNativeExecutor) awaitRoot(attempt *supervisorNativeAttempt) {
 	attempt.waitOnce.Do(func() {
+		attempt.trackingErr = waitNativeRootExit(attempt.platform)
 		attempt.waitErr = attempt.command.Wait()
 		attempt.waitAt = time.Now()
 		attempt.exit = nativeExitStatus(attempt.waitErr)
@@ -312,10 +314,10 @@ func (executor *supervisorNativeExecutor) force(action supervisorAction) *superv
 	executor.mutex.Lock()
 	attempt := executor.requireAttempt(action.generation)
 	executor.mutex.Unlock()
-	err := forceNativeDomain(attempt.platform, attempt.command.Process.Pid)
+	err := forceNativeDomain(attempt.platform, attempt.command.Process.Pid, action.drainBy)
 	executor.awaitRoot(attempt)
 	diagnostic := supervisorDiagnosticRef(0)
-	if combined := errors.Join(err, nativeWaitFailure(attempt.waitErr)); combined != nil {
+	if combined := errors.Join(err, attempt.trackingErr, nativeWaitFailure(attempt.waitErr)); combined != nil {
 		diagnostic = executor.recordDiagnostic(combined)
 	}
 

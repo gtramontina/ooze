@@ -3,12 +3,18 @@
 package ooze
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+const darwinEscapeFixtureRole = "OOZE_DARWIN_ESCAPE_FIXTURE_ROLE"
 
 func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
 	marker := t.TempDir() + "/released"
@@ -23,7 +29,7 @@ func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_ = forceNativeDomain(state, command.Process.Pid)
+		_ = forceNativeDomain(state, command.Process.Pid, time.Now().Add(5*time.Second))
 		_, _ = command.Process.Wait()
 		_ = closeNativeDomain(state)
 	}()
@@ -43,6 +49,146 @@ func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
 	if _, err = os.Stat(marker); err != nil {
 		t.Fatalf("released target did not execute: %v", err)
 	}
+}
+
+func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T) {
+	role := os.Getenv(darwinEscapeFixtureRole)
+	if role != "" {
+		runDarwinEscapeFixture(t, role)
+
+		return
+	}
+
+	directory := t.TempDir()
+	pidPath := directory + "/escapee.pid"
+	markerPath := directory + "/escapee.marker"
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 106})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "darwin-escape-behind-member",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	launched := supervisor.Launch(Spec{
+		Attempt: "darwin-escape-behind-member",
+		Command: []string{os.Args[0], "-test.run=^TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember$"},
+		Dir:     directory,
+		Env: append(os.Environ(),
+			darwinEscapeFixtureRole+"=root",
+			"OOZE_DARWIN_ESCAPE_PID="+pidPath,
+			"OOZE_DARWIN_ESCAPE_MARKER="+markerPath,
+		),
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	owned, ok := launched.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", launched)
+	}
+	terminal := owned.Attempt.Wait()
+	if _, ok := terminal.(Settled); !ok {
+		t.Fatalf("terminal = %#v, want Settled", terminal)
+	}
+
+	pidBytes, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	escapee, err := strconv.Atoi(string(pidBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Kill(escapee, syscall.SIGKILL) }()
+	before, err := os.Stat(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	after, err := os.Stat(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() != before.Size() {
+		t.Fatalf("drainage returned while captured escapee %d remained executable", escapee)
+	}
+}
+
+func runDarwinEscapeFixture(t *testing.T, role string) {
+	t.Helper()
+	pidPath := os.Getenv("OOZE_DARWIN_ESCAPE_PID")
+	markerPath := os.Getenv("OOZE_DARWIN_ESCAPE_MARKER")
+	switch role {
+	case "root":
+		command := exec.Command(os.Args[0], "-test.run=^TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember$")
+		command.Env = darwinEscapeFixtureEnvironment("intermediate")
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		awaitDarwinEscapeFixtureFile(t, pidPath)
+	case "intermediate":
+		command := exec.Command(os.Args[0], "-test.run=^TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember$")
+		command.Env = darwinEscapeFixtureEnvironment("escapee")
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		awaitDarwinEscapeFixtureFile(t, pidPath)
+		for {
+			time.Sleep(time.Second)
+		}
+	case "escapee":
+		if err := syscall.Setpgid(0, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = fmt.Fprintln(file, time.Now().UnixNano())
+			closeErr := file.Close()
+			if err != nil || closeErr != nil {
+				t.Fatal(err, closeErr)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	default:
+		t.Fatalf("unknown Darwin escape fixture role %q", role)
+	}
+}
+
+func darwinEscapeFixtureEnvironment(role string) []string {
+	prefix := darwinEscapeFixtureRole + "="
+	environment := make([]string, 0, len(os.Environ())+1)
+	for _, variable := range os.Environ() {
+		if !strings.HasPrefix(variable, prefix) {
+			environment = append(environment, variable)
+		}
+	}
+
+	return append(environment, prefix+role)
+}
+
+func awaitDarwinEscapeFixtureFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out awaiting Darwin escape fixture file %s", path)
 }
 
 func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *testing.T) {
