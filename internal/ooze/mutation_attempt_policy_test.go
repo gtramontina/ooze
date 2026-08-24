@@ -291,7 +291,7 @@ func TestOrdinaryConfirmationClassifiesOpaqueExitAndValidatesPressure(t *testing
 			BoundFired: CommandDeadlineFired,
 		},
 	}
-	primary.ExecutionData.confirmationProvisional = true
+	primary.confirmationProvisional = true
 	provisional := ClassifyPrimaryMutation(primary).(MutationNeedsConfirmation)
 	confirmation := Settled{
 		Exit: ExitStatus{Code: 2},
@@ -320,7 +320,7 @@ func TestPassingConfirmationSurvivesAndValidatesPressure(t *testing.T) {
 			Deadline: 31 * time.Second, BoundFired: CommandDeadlineFired,
 		},
 	}
-	primary.ExecutionData.confirmationProvisional = true
+	primary.confirmationProvisional = true
 	provisional := ClassifyPrimaryMutation(primary).(MutationNeedsConfirmation)
 	confirmation := Settled{ExecutionData: ExecutionData{Deadline: 31 * time.Second}}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
@@ -339,7 +339,7 @@ func TestRepeatedConfirmationDeadlineIsTimedOutWithoutPressure(t *testing.T) {
 			Deadline: 31 * time.Second, BoundFired: CommandDeadlineFired,
 		},
 	}
-	primary.ExecutionData.confirmationProvisional = true
+	primary.confirmationProvisional = true
 	provisional := ClassifyPrimaryMutation(primary).(MutationNeedsConfirmation)
 	confirmation := Tripped{
 		Trip: AutomaticDeadlineTrip{},
@@ -364,7 +364,7 @@ func TestConfirmationFuseTripIsIndependentlyAttributableRunaway(t *testing.T) {
 			Deadline: 31 * time.Second, BoundFired: CommandDeadlineFired,
 		},
 	}
-	primary.ExecutionData.confirmationProvisional = true
+	primary.confirmationProvisional = true
 	provisional := ClassifyPrimaryMutation(primary).(MutationNeedsConfirmation)
 	confirmation := Tripped{
 		Trip:          FuseTrip{Live: 65},
@@ -387,7 +387,7 @@ func TestConfirmationWithDifferentResolvedDeadlineAbortsUnscored(t *testing.T) {
 			Deadline: 31 * time.Second, BoundFired: CommandDeadlineFired,
 		},
 	}
-	primary.ExecutionData.confirmationProvisional = true
+	primary.confirmationProvisional = true
 	provisional := ClassifyPrimaryMutation(primary).(MutationNeedsConfirmation)
 	confirmation := Settled{ExecutionData: ExecutionData{Deadline: 30 * time.Second}}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
@@ -427,7 +427,7 @@ func TestConfirmationUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
 			Deadline: 31 * time.Second, BoundFired: CommandDeadlineFired,
 		},
 	}
-	primary.ExecutionData.confirmationProvisional = true
+	primary.confirmationProvisional = true
 	provisional := ClassifyPrimaryMutation(primary).(MutationNeedsConfirmation)
 	confirmation := Infrastructure{
 		Cause: CensusFailed, Err: errors.New("census failed"),
