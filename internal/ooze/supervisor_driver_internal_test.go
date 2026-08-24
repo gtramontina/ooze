@@ -6,6 +6,102 @@ import (
 	"time"
 )
 
+func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotReleased(t *testing.T) {
+	registeredAt := time.Unix(9_000, 0)
+	launchBy := registeredAt.Add(time.Second)
+	boundary := make(chan time.Time, 1)
+	nativeDone := make(chan struct{})
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 90})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "driver-unconfirmed",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now:     func() time.Time { return registeredAt },
+		launchBoundary: func(got time.Time) <-chan time.Time {
+			if !got.Equal(launchBy) {
+				t.Fatalf("launch boundary = %v, want %v", got, launchBy)
+			}
+
+			return boundary
+		},
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				<-nativeDone
+				completedAt := launchBy.Add(time.Nanosecond)
+				completion := supervisorLaunchCompletion{
+					generation: action.generation,
+					action:     action.token,
+					at:         completedAt,
+					kind:       supervisorLaunchProvenNotReleased,
+					failure:    LaunchFailed,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: completedAt, completion: &completion,
+				}
+			case supervisorRevokeLaunchRelease:
+				return nil
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
+			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+
+			return prepared.start
+		},
+		driver,
+	)
+
+	launched := make(chan LaunchResult, 1)
+	go func() {
+		launched <- supervisor.Launch(Spec{
+			Attempt: "driver-unconfirmed", Command: []string{"blocked-start"}, Dir: "/tmp",
+			Profile: SerialProfile, Deadline: 10 * time.Second,
+		})
+	}()
+	boundary <- launchBy
+	select {
+	case result := <-launched:
+		if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
+			t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Launch remained blocked after LaunchBy")
+	}
+
+	close(nativeDone)
+	deadline := time.After(time.Second)
+	for {
+		snapshot := shell.snapshot()
+		if len(snapshot.admissions) == 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("late not-released completion retained custody: %#v", snapshot)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
 func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testing.T) {
 	registeredAt := time.Unix(10_000, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)

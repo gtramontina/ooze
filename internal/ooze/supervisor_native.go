@@ -14,16 +14,17 @@ import (
 const supervisorNativeOperation = "execute native supervisor action"
 
 type supervisorNativeAttempt struct {
-	spec       Spec
-	command    *exec.Cmd
-	output     *os.File
-	platform   nativePlatformState
-	releasedAt time.Time
-	waitOnce   sync.Once
-	waitDone   chan struct{}
-	waitAt     time.Time
-	waitErr    error
-	exit       ExitStatus
+	spec           Spec
+	command        *exec.Cmd
+	output         *os.File
+	platform       nativePlatformState
+	releasedAt     time.Time
+	releaseRevoked bool
+	waitOnce       sync.Once
+	waitDone       chan struct{}
+	waitAt         time.Time
+	waitErr        error
+	exit           ExitStatus
 }
 
 type supervisorNativeExecutor struct {
@@ -66,6 +67,8 @@ func (executor *supervisorNativeExecutor) execute(action supervisorAction) *supe
 	switch action.kind {
 	case supervisorLaunchNative:
 		return executor.launch(action)
+	case supervisorRevokeLaunchRelease:
+		return executor.revokeLaunchRelease(action)
 	case supervisorWaitRoot:
 		return executor.waitRoot(action)
 	case supervisorObserveEmptiness:
@@ -123,7 +126,23 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 
 		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(err))
 	}
-	if err = releaseNativeCommand(command, platform); err != nil {
+	executor.mutex.Lock()
+	if attempt.releaseRevoked {
+		executor.mutex.Unlock()
+		_ = forceNativeDomain(platform, command.Process.Pid)
+		_, _ = command.Process.Wait()
+		_ = closeNativeDomain(platform)
+		_ = output.Close()
+		_ = os.Remove(output.Name())
+
+		return nativeNotReleasedEvent(action, time.Now(), LaunchFailed)
+	}
+	err = releaseNativeCommand(command, platform)
+	if err == nil {
+		attempt.releasedAt = at
+	}
+	executor.mutex.Unlock()
+	if err != nil {
 		_ = forceNativeDomain(platform, command.Process.Pid)
 		_, _ = command.Process.Wait()
 		_ = closeNativeDomain(platform)
@@ -132,9 +151,6 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 
 		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(err))
 	}
-	executor.mutex.Lock()
-	attempt.releasedAt = at
-	executor.mutex.Unlock()
 	completion := supervisorLaunchCompletion{
 		generation: action.generation, action: action.token,
 		at: at, kind: supervisorLaunchReleased,
@@ -144,6 +160,17 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		kind: supervisorLaunchCompleted, generation: action.generation,
 		at: at, completion: &completion,
 	}
+}
+
+func (executor *supervisorNativeExecutor) revokeLaunchRelease(action supervisorAction) *supervisorEvent {
+	executor.mutex.Lock()
+	defer executor.mutex.Unlock()
+	attempt := executor.requireAttempt(action.generation)
+	if attempt.releasedAt.IsZero() {
+		attempt.releaseRevoked = true
+	}
+
+	return nil
 }
 
 func nativeNotReleasedEvent(action supervisorAction, at time.Time, failure LaunchFailure) *supervisorEvent {
