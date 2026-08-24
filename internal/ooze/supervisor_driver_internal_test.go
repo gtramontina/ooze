@@ -481,6 +481,113 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	}
 }
 
+func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody(t *testing.T) {
+	registeredAt := time.Unix(9_500, 0)
+	releaseAt := registeredAt.Add(time.Millisecond)
+	drainBy := releaseAt.Add(5 * time.Second)
+	releaseErr := errors.New("resume release unknown")
+	nextAt := releaseAt
+	registered := false
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 96})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "driver-release-unknown", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell, now: func() time.Time {
+			if !registered {
+				registered = true
+
+				return registeredAt
+			}
+			nextAt = nextAt.Add(time.Nanosecond)
+
+			return nextAt
+		},
+		launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			nextAt = nextAt.Add(time.Nanosecond)
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token, at: releaseAt,
+					kind: supervisorLaunchReleaseUnconfirmed, diagnostic: 23,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releaseAt, drainBy: drainBy, completion: &completion,
+				}
+			case supervisorForceOwned:
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, kind: supervisorDrainForceCompleted,
+				}
+
+				return &supervisorEvent{kind: supervisorDrainCompleted, generation: action.generation, at: nextAt, drain: &completion}
+			case supervisorObserveEmptiness:
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, kind: supervisorDrainObservedEmpty,
+				}
+
+				return &supervisorEvent{kind: supervisorDrainCompleted, generation: action.generation, at: nextAt, drain: &completion}
+			case supervisorCaptureOutput:
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: nextAt, ref: 1,
+				}
+
+				return &supervisorEvent{kind: supervisorOutputCompleted, generation: action.generation, at: nextAt, output: &completion}
+			case supervisorReleaseDomain:
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: nextAt,
+				}
+
+				return &supervisorEvent{kind: supervisorReleaseCompleted, generation: action.generation, at: nextAt, release: &completion}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+		readDiagnostic: func(ref supervisorDiagnosticRef) error {
+			if ref != 23 {
+				t.Fatalf("release diagnostic ref = %d, want 23", ref)
+			}
+
+			return releaseErr
+		},
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+	result := supervisor.Launch(Spec{
+		Attempt: "driver-release-unknown", Command: []string{"unknown-release"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
+		t.Fatalf("launch = %#v, want LaunchUnconfirmed", result)
+	}
+	settlement := supervisor.EmergencyDrain(EmergencyRequest{
+		At: releaseAt.Add(time.Second), DrainBy: releaseAt.Add(6 * time.Second),
+	})
+	if _, ok := settlement.(SweepDrained); !ok {
+		t.Fatalf("release-unknown settlement = %#v, want SweepDrained", settlement)
+	}
+	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 {
+		t.Fatalf("release-unknown final runtime = %#v", snapshot)
+	}
+}
+
 func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *testing.T) {
 	registeredAt := time.Unix(9_500, 0)
 	launchBy := registeredAt.Add(time.Second)

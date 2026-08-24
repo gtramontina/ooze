@@ -33,3 +33,29 @@ func TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic(t *testing.T
 		t.Fatalf("partial output completion = %#v", completion)
 	}
 }
+
+func TestWindowsResumeCutRequiresExactPriorCountOne(t *testing.T) {
+	resumeErr := errors.New("resume failed")
+	cleanupErr := errors.New("close thread handle")
+	for _, test := range []struct {
+		name      string
+		prior     uint32
+		resumeErr error
+		cleanup   error
+		released  bool
+		wantErr   error
+	}{
+		{name: "exact cut", prior: 1, released: true},
+		{name: "exact cut retains cleanup", prior: 1, cleanup: cleanupErr, released: true, wantErr: cleanupErr},
+		{name: "already running is unknown", prior: 0, wantErr: errWindowsReleaseUnknown},
+		{name: "still suspended is unknown", prior: 2, wantErr: errWindowsReleaseUnknown},
+		{name: "resume failure is unknown", prior: 1, resumeErr: resumeErr, wantErr: resumeErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			released, err := windowsResumeCut(test.prior, test.resumeErr, test.cleanup)
+			if released != test.released || !errors.Is(err, test.wantErr) {
+				t.Fatalf("resume cut = (%v, %v), want (%v, %v)", released, err, test.released, test.wantErr)
+			}
+		})
+	}
+}

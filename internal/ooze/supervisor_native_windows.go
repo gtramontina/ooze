@@ -15,7 +15,14 @@ import (
 
 const windowsJobQueryMaximumAttempts = 32
 
-type nativePlatformState struct{ job windows.Handle }
+type nativePlatformState struct {
+	job    windows.Handle
+	shared *windowsNativeState
+}
+
+type windowsNativeState struct {
+	releaseCleanup error
+}
 
 func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 	job, err := windows.CreateJobObject(nil, nil)
@@ -38,7 +45,7 @@ func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 	//nolint:exhaustruct // Every other process attribute deliberately retains the OS default.
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
 
-	return nativePlatformState{job: job}, nil
+	return nativePlatformState{job: job, shared: &windowsNativeState{}}, nil
 }
 
 func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
@@ -49,15 +56,32 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) error {
 		processID,
 	)
 	if err != nil {
-		return fmt.Errorf("open suspended process %d: %w", processID, err)
+		return nativeLaunchOperationError{
+			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+			err: fmt.Errorf("open suspended process %d: %w", processID, err),
+		}
 	}
 	assignErr := windows.AssignProcessToJobObject(state.job, process)
 	closeErr := windows.CloseHandle(process)
-	if assignErr != nil || closeErr != nil {
-		return errors.Join(fmt.Errorf("assign process %d to job: %w", processID, assignErr), closeErr)
+	if assignErr != nil {
+		return nativeLaunchOperationError{
+			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+			err: errors.Join(fmt.Errorf("assign process %d to job: %w", processID, assignErr), closeErr),
+		}
+	}
+	if closeErr != nil {
+		state.shared.releaseCleanup = closeErr
 	}
 
-	return resumeNativeProcess(processID)
+	released, resumeErr := resumeNativeProcess(processID)
+	if !released {
+		return resumeErr
+	}
+	if resumeErr != nil {
+		state.shared.releaseCleanup = errors.Join(state.shared.releaseCleanup, resumeErr)
+	}
+
+	return nil
 }
 
 func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
@@ -87,39 +111,48 @@ func waitNativeRootExit(nativePlatformState) error { return nil }
 
 func confirmNativeCommandStopped(*exec.Cmd, nativePlatformState) error { return nil }
 
-func resumeNativeProcess(processID uint32) error {
+func resumeNativeProcess(processID uint32) (released bool, resultErr error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
-		return fmt.Errorf("snapshot threads for process %d: %w", processID, err)
+		return false, nativeLaunchOperationError{
+			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+			err: fmt.Errorf("snapshot threads for process %d: %w", processID, err),
+		}
 	}
-	defer func() { _ = windows.CloseHandle(snapshot) }()
+	defer func() { resultErr = errors.Join(resultErr, windows.CloseHandle(snapshot)) }()
 	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))} //nolint:exhaustruct
 	if err = windows.Thread32First(snapshot, &entry); err != nil {
-		return fmt.Errorf("inspect first thread for process %d: %w", processID, err)
+		return false, nativeLaunchOperationError{
+			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+			err: fmt.Errorf("inspect first thread for process %d: %w", processID, err),
+		}
 	}
 	for {
 		if entry.OwnerProcessID == processID {
 			thread, openErr := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
 			if openErr != nil {
-				return fmt.Errorf("open suspended thread for process %d: %w", processID, openErr)
+				return false, nativeLaunchOperationError{
+					operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+					err: fmt.Errorf("open suspended thread for process %d: %w", processID, openErr),
+				}
 			}
 			prior, resumeErr := windows.ResumeThread(thread)
 			closeErr := windows.CloseHandle(thread)
-			if resumeErr != nil || prior != 1 || closeErr != nil {
-				return errors.Join(
-					fmt.Errorf("resume process %d from count %d: %w", processID, prior, resumeErr),
-					closeErr,
-				)
-			}
 
-			return nil
+			return windowsResumeCut(prior, resumeErr, closeErr)
 		}
 		err = windows.Thread32Next(snapshot, &entry)
 		if errors.Is(err, syscall.ERROR_NO_MORE_FILES) {
-			return fmt.Errorf("find suspended thread for process %d: %w", processID, err)
+			return false, nativeLaunchOperationError{
+				operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+				err: fmt.Errorf("find suspended thread for process %d: %w", processID, err),
+			}
 		}
 		if err != nil {
-			return fmt.Errorf("inspect thread for process %d: %w", processID, err)
+			return false, nativeLaunchOperationError{
+				operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
+				err: fmt.Errorf("inspect thread for process %d: %w", processID, err),
+			}
 		}
 	}
 }
@@ -147,7 +180,7 @@ func closeNativeDomain(state nativePlatformState) error {
 		return nil
 	}
 
-	return windows.CloseHandle(state.job)
+	return errors.Join(state.shared.releaseCleanup, windows.CloseHandle(state.job))
 }
 
 func nativeDescendantCount(state nativePlatformState, root int) (bool, uint64, error) {

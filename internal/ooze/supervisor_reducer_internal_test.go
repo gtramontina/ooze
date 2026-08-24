@@ -106,6 +106,29 @@ func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
 	})
 }
 
+func TestSupervisorReducerReleaseUnknownPublishesUnconfirmedAndForcesAdoptedCustody(t *testing.T) {
+	launchBy := time.Unix(150, 0)
+	completedAt := launchBy.Add(-time.Nanosecond)
+	drainBy := completedAt.Add(5 * time.Second)
+	state, launch := registeredReducerLaunch(t, 12, "release-unknown", launchBy)
+	completion := supervisorLaunchCompletion{
+		generation: 12, action: launch.token, at: completedAt,
+		kind: supervisorLaunchReleaseUnconfirmed, diagnostic: 7,
+	}
+	next, actions := reduceSupervisor(state, supervisorEvent{
+		kind: supervisorLaunchCompleted, generation: 12, at: completedAt,
+		drainBy: drainBy, completion: &completion,
+	})
+	assertSupervisorActions(t, actions,
+		supervisorPublishLaunchUnconfirmed, supervisorAdoptOwned, supervisorForceOwned,
+	)
+	attempt := supervisorAttemptByGeneration(t, next, 12)
+	if attempt.phase != supervisorLaunchOwned || !attempt.drain.effectiveDrainBy.Equal(drainBy) ||
+		actions[2].launchKind != supervisorLaunchReleased {
+		t.Fatalf("release-unknown adoption = %#v actions=%#v", attempt, actions)
+	}
+}
+
 func TestSupervisorReducerLaunchNilBoundaryRevokesAndLateCompletionRetainsCustody(t *testing.T) {
 	launchBy := time.Unix(200, 0)
 	for _, test := range []struct {

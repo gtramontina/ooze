@@ -14,6 +14,7 @@ type supervisorLaunchCompletionKind uint8
 const (
 	supervisorLaunchProvenNotReleased supervisorLaunchCompletionKind = iota + 1
 	supervisorLaunchReleased
+	supervisorLaunchReleaseUnconfirmed
 )
 
 type supervisorAttemptPhase uint8
@@ -662,12 +663,15 @@ func reduceLaunchCompletion(
 
 	switch attempt.phase {
 	case supervisorLaunchEstablishing:
-		if !event.at.Before(attempt.launchBy) || !event.drainBy.IsZero() {
+		releaseUnknown := completion.kind == supervisorLaunchReleaseUnconfirmed
+		if !event.at.Before(attempt.launchBy) ||
+			(releaseUnknown && !event.drainBy.After(event.at)) ||
+			(!releaseUnknown && !event.drainBy.IsZero()) {
 			invariant(supervisorReducerOperation, "at-bound or late completion bypassed boundary snapshot")
 		}
 		state.attempts[index].lastEventAt = event.at
 
-		return state.completeLaunch(index, completion, event.at, time.Time{})
+		return state.completeLaunch(index, completion, event.at, event.drainBy)
 	case supervisorLaunchReportedUnconfirmed:
 		if event.at.Before(attempt.revokedAt) {
 			invariant(supervisorReducerOperation, "late completion predates release revocation")
@@ -681,7 +685,8 @@ func reduceLaunchCompletion(
 			}
 			actionAt = state.emergency.at
 			drainBy = state.emergency.drainBy
-		} else if completion.kind == supervisorLaunchReleased {
+		} else if completion.kind == supervisorLaunchReleased ||
+			completion.kind == supervisorLaunchReleaseUnconfirmed {
 			if !event.drainBy.After(event.at) {
 				invariant(supervisorReducerOperation, "late release lacks a positive local drain bound")
 			}
@@ -704,7 +709,7 @@ func reduceLaunchBoundary(
 	index := state.requireAttempt(event.generation)
 	attempt := state.attempts[index]
 	if attempt.phase != supervisorLaunchEstablishing || !event.at.Equal(attempt.launchBy) ||
-		!event.attemptIsZero() || !event.launchBy.IsZero() || !event.drainBy.IsZero() ||
+		!event.attemptIsZero() || !event.launchBy.IsZero() ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 || event.commandDeadline != 0 ||
 		event.running != nil || event.drain != nil || event.output != nil || event.seal != nil ||
 		event.release != nil ||
@@ -713,12 +718,20 @@ func reduceLaunchBoundary(
 	}
 	if event.completion != nil {
 		completion := requireLaunchCompletion(attempt, event.completion)
+		releaseUnknown := completion.kind == supervisorLaunchReleaseUnconfirmed
+		if (releaseUnknown && !event.drainBy.After(completion.at)) ||
+			(!releaseUnknown && !event.drainBy.IsZero()) {
+			invariant(supervisorReducerOperation, "boundary completion carries an invalid drain bound")
+		}
 		if completion.at.After(event.at) || completion.at.Before(attempt.lastEventAt) {
 			invariant(supervisorReducerOperation, "boundary snapshot is outside its serialized interval")
 		}
 		state.attempts[index].lastEventAt = event.at
 
-		return state.completeLaunch(index, completion, completion.at, time.Time{})
+		return state.completeLaunch(index, completion, completion.at, event.drainBy)
+	}
+	if !event.drainBy.IsZero() {
+		invariant(supervisorReducerOperation, "empty launch boundary carries a drain bound")
 	}
 
 	return state.revokeProspective(index, event.at, time.Time{})
@@ -2194,6 +2207,27 @@ func (state supervisorState) completeLaunch(
 		}
 
 		return state, actions
+	case supervisorLaunchReleaseUnconfirmed:
+		if !drainBy.After(at) {
+			invariant(supervisorReducerOperation, "release-unknown launch lacks a positive drain bound")
+		}
+		state.attempts[index].phase = supervisorLaunchOwned
+		state.attempts[index].releaseRevoked = true
+		var publish supervisorAction
+		if !late {
+			publish = state.newAction(supervisorPublishLaunchUnconfirmed, index, at, drainBy, nil)
+			publish.launchDuration = completion.at.Sub(state.attempts[index].registeredAt)
+		}
+		released := completion
+		released.kind = supervisorLaunchReleased
+		released.diagnostic = 0
+		var actions []supervisorAction
+		state, actions = state.forceLaunchOwnership(index, at, drainBy, released)
+		if late {
+			return state, actions
+		}
+
+		return state, append([]supervisorAction{publish}, actions...)
 	default:
 		invariant(supervisorReducerOperation, "launch completion kind is invalid")
 
@@ -2344,6 +2378,10 @@ func requireLaunchCompletion(
 	case supervisorLaunchReleased:
 		if completion.failure != 0 || completion.diagnostic != 0 {
 			invariant(supervisorReducerOperation, "released completion carries a launch failure")
+		}
+	case supervisorLaunchReleaseUnconfirmed:
+		if completion.failure != 0 || completion.diagnostic == 0 {
+			invariant(supervisorReducerOperation, "release-unknown completion lacks its diagnostic")
 		}
 	default:
 		invariant(supervisorReducerOperation, "launch completion kind is invalid")

@@ -15,6 +15,7 @@ import (
 const supervisorNativeOperation = "execute native supervisor action"
 
 var errNativeLaunchReleaseRevoked = errors.New("managed-attempt release was revoked before target execution")
+var errWindowsReleaseUnknown = errors.New("windows managed-attempt release is unknown")
 
 type nativeLaunchOperation uint8
 
@@ -228,27 +229,42 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		attempt.releasedAt = at
 	}
 	executor.mutex.Unlock()
+	if errors.Is(err, errWindowsReleaseUnknown) {
+		completion := supervisorLaunchCompletion{
+			generation: action.generation, action: action.token,
+			at: time.Now(), kind: supervisorLaunchReleaseUnconfirmed,
+			diagnostic: executor.recordDiagnostic(err),
+		}
+
+		return &supervisorEvent{
+			kind: supervisorLaunchCompleted, generation: action.generation,
+			at: completion.at, drainBy: completion.at.Add(executor.drainEpoch), completion: &completion,
+		}
+	}
 	if err != nil {
-		_ = forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
+		forceErr := forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
 		if !rootWaitStarted {
 			go executor.awaitRoot(attempt)
 		}
 		<-attempt.waitDone
-		_ = closeNativeDomain(platform)
+		closeErr := closeNativeDomain(platform)
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
 		evidence := nativeLaunchFailureEvidence{
 			operation: nativeLaunchFailureOperation(err, nativeLaunchCleanup),
-			stage: nativeLaunchReleaseUnknown, err: err, closureProven: false,
+			stage:     nativeLaunchReleaseUnknown, err: err, closureProven: false,
 		}
+		cleanupErr := errors.Join(forceErr, attempt.trackingErr, nativeWaitFailure(attempt.waitErr), closeErr)
 		var operationError nativeLaunchOperationError
 		if errors.As(err, &operationError) && operationError.stage != 0 {
 			evidence.stage = operationError.stage
-			evidence.closureProven = operationError.closureProven
+			evidence.closureProven = operationError.closureProven || cleanupErr == nil
 		}
 
-		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(evidence), err)
+		return executor.notReleased(
+			action, time.Now(), classifyNativeLaunchFailure(evidence), errors.Join(err, cleanupErr),
+		)
 	}
 	if !rootWaitStarted {
 		go executor.awaitRoot(attempt)
@@ -312,6 +328,21 @@ func nativeLaunchFailureOperation(err error, fallback nativeLaunchOperation) nat
 	}
 
 	return fallback
+}
+
+func windowsResumeCut(prior uint32, resumeErr error, cleanupErr error) (bool, error) {
+	if resumeErr != nil {
+		return false, errors.Join(errWindowsReleaseUnknown, resumeErr, cleanupErr)
+	}
+	if prior != 1 {
+		return false, errors.Join(
+			errWindowsReleaseUnknown,
+			fmt.Errorf("resume thread returned prior suspension count %d", prior),
+			cleanupErr,
+		)
+	}
+
+	return true, cleanupErr
 }
 
 func (executor *supervisorNativeExecutor) waitRoot(action supervisorAction) *supervisorEvent {

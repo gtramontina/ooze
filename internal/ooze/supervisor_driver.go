@@ -197,9 +197,13 @@ func (driver *supervisorDriver) stageLaunch(
 				completion = attempt.launchEvent.completion
 				attempt.launchConsumed = true
 			}
+			boundaryDrainBy := time.Time{}
+			if completion != nil && completion.kind == supervisorLaunchReleaseUnconfirmed {
+				boundaryDrainBy = attempt.launchEvent.drainBy
+			}
 			next, publication := reduceSupervisor(driver.state, supervisorEvent{
 				kind: supervisorLaunchBoundary, generation: generation, at: launchBy,
-				completion: completion,
+				completion: completion, drainBy: boundaryDrainBy,
 			})
 			driver.state = next
 			attempt.launchResolved = true
@@ -286,7 +290,8 @@ func (driver *supervisorDriver) executeLaunch(action supervisorAction) {
 		invariant(supervisorDriverOperation, "late launch completion preceded boundary resolution")
 	}
 	late := *event
-	if event.completion.kind == supervisorLaunchReleased {
+	if event.completion.kind == supervisorLaunchReleased ||
+		event.completion.kind == supervisorLaunchReleaseUnconfirmed {
 		late.drainBy = event.at.Add(driver.drainEpoch)
 	}
 	driver.apply(late)
@@ -299,6 +304,8 @@ func launchObservation(completion *supervisorLaunchCompletion) attemptObservatio
 	switch completion.kind {
 	case supervisorLaunchReleased:
 		return launchOwned{}
+	case supervisorLaunchReleaseUnconfirmed:
+		return launchUnconfirmed{}
 	case supervisorLaunchProvenNotReleased:
 		switch completion.failure {
 		case LaunchFailed:
