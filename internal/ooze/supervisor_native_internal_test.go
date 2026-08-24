@@ -2,9 +2,7 @@ package ooze
 
 import (
 	"errors"
-	"fmt"
 	"os"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -78,17 +76,22 @@ func TestWindowsResumeCutRequiresExactPriorCountOne(t *testing.T) {
 }
 
 func TestWindowsLaunchResourceExhaustionRequiresExactEvidence(t *testing.T) {
+	classify := func(evidence nativeLaunchFailureEvidence, code uint32) LaunchFailure {
+		return classifyNativeLaunchFailureWith(evidence, func(operation nativeLaunchOperation, _ error) bool {
+			return windowsLaunchResourceExhaustedCode(operation, code)
+		})
+	}
 	for _, operation := range []nativeLaunchOperation{
 		nativeLaunchInternalOutput,
 		nativeLaunchLauncherStart,
 		nativeLaunchContainmentPrepare,
 	} {
-		for _, code := range []syscall.Errno{4, 8, 14, 89, 1450, 1455} {
+		for _, code := range []uint32{4, 8, 14, 89, 1450, 1455} {
 			evidence := nativeLaunchFailureEvidence{
 				operation: operation, stage: nativeLaunchPreRelease,
-				err: fmt.Errorf("windows launch boundary: %w", code), closureProven: true,
+				err: errors.New("windows launch boundary"), closureProven: true,
 			}
-			if got := classifyWindowsLaunchFailure(evidence); got != LaunchResourceExhausted {
+			if got := classify(evidence, code); got != LaunchResourceExhausted {
 				t.Fatalf("operation %d code %d classification = %v, want resource exhausted", operation, code, got)
 			}
 		}
@@ -97,52 +100,59 @@ func TestWindowsLaunchResourceExhaustionRequiresExactEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		evidence nativeLaunchFailureEvidence
+		code     uint32
 	}{
 		{
 			name: "unlisted code",
 			evidence: nativeLaunchFailureEvidence{
 				operation: nativeLaunchLauncherStart, stage: nativeLaunchPreRelease,
-				err: syscall.Errno(5), closureProven: true,
+				err: errors.New("access denied"), closureProven: true,
 			},
+			code: 5,
 		},
 		{
 			name: "target exec operation",
 			evidence: nativeLaunchFailureEvidence{
 				operation: nativeLaunchTargetExec, stage: nativeLaunchPreRelease,
-				err: syscall.Errno(8), closureProven: true,
+				err: errors.New("not enough memory"), closureProven: true,
 			},
+			code: 8,
 		},
 		{
 			name: "root tracker operation",
 			evidence: nativeLaunchFailureEvidence{
 				operation: nativeLaunchRootTrackerCreate, stage: nativeLaunchPreRelease,
-				err: syscall.Errno(8), closureProven: true,
+				err: errors.New("not enough memory"), closureProven: true,
 			},
+			code: 8,
 		},
 		{
 			name: "release unknown stage",
 			evidence: nativeLaunchFailureEvidence{
 				operation: nativeLaunchContainmentPrepare, stage: nativeLaunchReleaseUnknown,
-				err: syscall.Errno(8), closureProven: true,
+				err: errors.New("not enough memory"), closureProven: true,
 			},
+			code: 8,
 		},
 		{
 			name: "closure unproven",
 			evidence: nativeLaunchFailureEvidence{
 				operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
-				err: syscall.Errno(8), closureProven: false,
+				err: errors.New("not enough memory"), closureProven: false,
 			},
+			code: 8,
 		},
 		{
 			name: "cleanup only",
 			evidence: nativeLaunchFailureEvidence{
 				operation: nativeLaunchCleanup, stage: nativeLaunchPreRelease,
-				err: syscall.Errno(8), closureProven: true,
+				err: errors.New("not enough memory"), closureProven: true,
 			},
+			code: 8,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := classifyWindowsLaunchFailure(test.evidence); got != LaunchFailed {
+			if got := classify(test.evidence, test.code); got != LaunchFailed {
 				t.Fatalf("classification = %v, want launch failed", got)
 			}
 		})

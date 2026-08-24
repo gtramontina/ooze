@@ -94,7 +94,13 @@ func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) (time.Ti
 }
 
 func nativeLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
-	return windowsLaunchResourceExhausted(operation, err)
+	for _, code := range []syscall.Errno{4, 8, 14, 89, 1450, 1455} {
+		if errors.Is(err, code) {
+			return windowsLaunchResourceExhaustedCode(operation, uint32(code))
+		}
+	}
+
+	return false
 }
 
 func nativeRootWaitBeforeRelease() bool { return true }

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -351,10 +350,6 @@ func classifyNativeLaunchFailure(evidence nativeLaunchFailureEvidence) LaunchFai
 	return classifyNativeLaunchFailureWith(evidence, nativeLaunchResourceExhausted)
 }
 
-func classifyWindowsLaunchFailure(evidence nativeLaunchFailureEvidence) LaunchFailure {
-	return classifyNativeLaunchFailureWith(evidence, windowsLaunchResourceExhausted)
-}
-
 func classifyNativeLaunchFailureWith(
 	evidence nativeLaunchFailureEvidence,
 	resourceExhausted func(nativeLaunchOperation, error) bool,
@@ -367,14 +362,14 @@ func classifyNativeLaunchFailureWith(
 	return LaunchFailed
 }
 
-func windowsLaunchResourceExhausted(operation nativeLaunchOperation, err error) bool {
+func windowsLaunchResourceExhaustedCode(operation nativeLaunchOperation, code uint32) bool {
 	switch operation {
 	case nativeLaunchInternalOutput, nativeLaunchLauncherStart, nativeLaunchContainmentPrepare:
 	default:
 		return false
 	}
-	for _, code := range []syscall.Errno{4, 8, 14, 89, 1450, 1455} {
-		if errors.Is(err, code) {
+	for _, exhausted := range []uint32{4, 8, 14, 89, 1450, 1455} {
+		if code == exhausted {
 			return true
 		}
 	}
