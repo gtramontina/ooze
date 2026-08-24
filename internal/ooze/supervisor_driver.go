@@ -373,6 +373,8 @@ func (driver *supervisorDriver) run(action supervisorAction) {
 		driver.rememberMonitor(action, true)
 	case supervisorSealStopAdmission:
 		driver.sealStopAdmission(action)
+	case supervisorTransferResidualCustody:
+		driver.transferResidualCustody(action)
 	case supervisorSettleRuntime:
 		driver.settleRuntime(action)
 	case supervisorDeliverTerminal:
@@ -657,6 +659,23 @@ func (driver *supervisorDriver) settleRuntime(action supervisorAction) {
 		generation: action.generation,
 		action:     supervisorPendingAction{kind: action.kind, token: action.token},
 		kind:       kind,
+	}
+	driver.apply(supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: action.generation,
+		runtime: &completion,
+	})
+}
+
+func (driver *supervisorDriver) transferResidualCustody(action supervisorAction) {
+	receipt := driver.runtime.observeAttempt(action.generation, drainUnconfirmed{})
+	if receipt.settlementAcknowledged || receipt.confirmationProvisional ||
+		!receipt.runtimeClosureInProgress {
+		invariant(supervisorDriverOperation, "runtime rejected residual custody transfer")
+	}
+	completion := supervisorRuntimeCompletion{
+		generation: action.generation,
+		action:     supervisorPendingAction{kind: action.kind, token: action.token},
+		kind:       supervisorRuntimeClosurePending,
 	}
 	driver.apply(supervisorEvent{
 		kind: supervisorRuntimeCompleted, generation: action.generation,

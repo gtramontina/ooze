@@ -808,6 +808,138 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	}
 }
 
+func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing.T) {
+	registeredAt := time.Unix(15_000, 0)
+	releasedAt := registeredAt.Add(time.Millisecond)
+	exitedAt := releasedAt.Add(time.Second)
+	drainBy := exitedAt.Add(5 * time.Second)
+	nextAt := registeredAt.Add(-time.Nanosecond)
+	observations := 0
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 95})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "driver-residual",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now: func() time.Time {
+			nextAt = nextAt.Add(time.Nanosecond)
+
+			return nextAt
+		},
+		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token,
+					at: releasedAt, kind: supervisorLaunchReleased,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releasedAt, completion: &completion,
+				}
+			case supervisorWaitRoot:
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningRootExited, at: exitedAt, exitCode: 19,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: exitedAt, drainBy: drainBy,
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
+			case supervisorObserveEmptiness:
+				observations++
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         drainBy, kind: supervisorDrainObservedResidual,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: completion.at, drain: &completion,
+				}
+			case supervisorForceOwned:
+				if observations != 1 {
+					t.Fatalf("force followed %d emptiness observations, want 1", observations)
+				}
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         drainBy, kind: supervisorDrainForceCompleted,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: completion.at, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				nextAt = drainBy.Add(time.Nanosecond)
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, ref: 4, cutoff: 7, prefixLength: 7,
+				}
+
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: completion.at, output: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "partial" },
+	})
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	result := supervisor.Launch(Spec{
+		Attempt: "driver-residual", Command: []string{"residual"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	owned, ok := result.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", result)
+	}
+	terminal := owned.Attempt.Wait()
+	unconfirmed, ok := terminal.(DrainUnconfirmed)
+	if !ok || unconfirmed.Residual != OwnedUndrained || unconfirmed.Output.Bytes != "partial" ||
+		unconfirmed.Output.Final {
+		t.Fatalf("terminal = %#v, want partial DrainUnconfirmed", terminal)
+	}
+	emergencyAt := nextAt.Add(time.Nanosecond)
+	settlement := supervisor.EmergencyDrain(EmergencyRequest{
+		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
+	})
+	residuals, ok := settlement.(SweepUnconfirmed)
+	if !ok || !reflect.DeepEqual(residuals.Residuals(), []ResidualRef{{
+		Attempt: "driver-residual", Kind: OwnedUndrained,
+	}}) {
+		t.Fatalf("emergency settlement = %#v, want exact owned residual", settlement)
+	}
+}
+
 func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) {
 	registeredAt := time.Unix(20_000, 0)
 	releasedAt := registeredAt.Add(time.Millisecond)
