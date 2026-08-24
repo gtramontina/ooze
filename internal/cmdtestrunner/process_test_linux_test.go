@@ -16,6 +16,8 @@ import (
 
 const descendantSupervisionSupported = true
 
+const directRootProcessGroupEscapeDefeatsContainment = false
+
 // Linux contains a session escape: the guardian arms PR_SET_CHILD_SUBREAPER
 // before starting the command, so an orphaned descendant reparents to the
 // guardian rather than to process 1, whatever session it moved to.

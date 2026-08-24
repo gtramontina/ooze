@@ -13,6 +13,8 @@ import (
 
 const descendantSupervisionSupported = true
 
+const directRootProcessGroupEscapeDefeatsContainment = true
+
 // A descendant that is double-forked into its own session leaves both the
 // process group the macOS supervisor censuses and any ancestry leading back to
 // the supervised root. No macOS primitive reaches it, so this is a documented
