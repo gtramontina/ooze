@@ -14,6 +14,8 @@ import (
 
 const supervisorNativeOperation = "execute native supervisor action"
 
+var errNativeLaunchReleaseRevoked = errors.New("managed-attempt release was revoked before target execution")
+
 type nativeLaunchOperation uint8
 
 const (
@@ -139,12 +141,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 	if err != nil {
 		executor.mutex.Unlock()
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(
 			nativeLaunchFailureEvidence{
 				operation: nativeLaunchInternalOutput, stage: nativeLaunchPreRelease,
 				err: err, closureProven: true,
 			},
-		))
+		), err)
 	}
 	command := exec.Command(attempt.spec.Command[0], attempt.spec.Command[1:]...) //nolint:gosec,noctx
 	command.Dir = attempt.spec.Dir
@@ -157,12 +159,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = os.Remove(output.Name())
 		executor.mutex.Unlock()
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(
 			nativeLaunchFailureEvidence{
 				operation: nativeLaunchFailureOperation(platformErr, nativeLaunchContainmentPrepare),
 				stage:     nativeLaunchPreRelease, err: platformErr, closureProven: true,
 			},
-		))
+		), platformErr)
 	}
 	attempt.command = command
 	attempt.output = output
@@ -178,12 +180,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, at, classifyNativeLaunchFailure(
+		return executor.notReleased(action, at, classifyNativeLaunchFailure(
 			nativeLaunchFailureEvidence{
 				operation: nativeLaunchLauncherStart, stage: nativeLaunchPreRelease,
 				err: err, closureProven: closeErr == nil,
 			},
-		))
+		), errors.Join(err, closeErr))
 	}
 	if err = confirmNativeCommandStopped(command, platform); err != nil {
 		forceErr := forceNativeDomain(platform, command.Process.Pid, time.Now().Add(executor.drainEpoch))
@@ -192,13 +194,14 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+		cleanupErr := errors.Join(forceErr, nativeWaitFailure(waitErr), closeErr)
+		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(
 			nativeLaunchFailureEvidence{
 				operation: nativeLaunchFailureOperation(err, nativeLaunchContainmentPrepare),
 				stage:     nativeLaunchPreRelease, err: err,
-				closureProven: errors.Join(forceErr, nativeWaitFailure(waitErr), closeErr) == nil,
+				closureProven: cleanupErr == nil,
 			},
-		))
+		), errors.Join(err, cleanupErr))
 	}
 	go executor.awaitRoot(attempt)
 	executor.mutex.Lock()
@@ -210,7 +213,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, time.Now(), LaunchFailed)
+		return executor.notReleased(action, time.Now(), LaunchFailed, errNativeLaunchReleaseRevoked)
 	}
 	err = releaseNativeCommand(command, platform)
 	if err == nil {
@@ -224,12 +227,12 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 		_ = output.Close()
 		_ = os.Remove(output.Name())
 
-		return nativeNotReleasedEvent(action, time.Now(), classifyNativeLaunchFailure(
+		return executor.notReleased(action, time.Now(), classifyNativeLaunchFailure(
 			nativeLaunchFailureEvidence{
 				operation: nativeLaunchFailureOperation(err, nativeLaunchCleanup),
 				stage:     nativeLaunchReleaseUnknown, err: err, closureProven: false,
 			},
-		))
+		), err)
 	}
 	completion := supervisorLaunchCompletion{
 		generation: action.generation, action: action.token,
@@ -253,10 +256,19 @@ func (executor *supervisorNativeExecutor) revokeLaunchRelease(action supervisorA
 	return nil
 }
 
-func nativeNotReleasedEvent(action supervisorAction, at time.Time, failure LaunchFailure) *supervisorEvent {
+func (executor *supervisorNativeExecutor) notReleased(
+	action supervisorAction,
+	at time.Time,
+	failure LaunchFailure,
+	err error,
+) *supervisorEvent {
+	if err == nil {
+		invariant(supervisorNativeOperation, "native no-release result lacks its primary failure")
+	}
 	completion := supervisorLaunchCompletion{
 		generation: action.generation, action: action.token,
 		at: at, kind: supervisorLaunchProvenNotReleased, failure: failure,
+		diagnostic: executor.recordDiagnostic(err),
 	}
 
 	return &supervisorEvent{

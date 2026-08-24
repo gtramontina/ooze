@@ -93,6 +93,35 @@ func TestDarwinNativeLaunchResourceExhaustionRequiresExactPreReleaseEvidence(t *
 	}
 }
 
+func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) {
+	directory := t.TempDir()
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 107})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "darwin-not-released", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	result := supervisor.Launch(Spec{
+		Attempt: "darwin-not-released", Command: []string{directory + "/absent-command"},
+		Dir: directory, Env: os.Environ(), Profile: SerialProfile, Deadline: 10 * time.Second,
+	})
+	notReleased, ok := result.(NotReleased)
+	if !ok || notReleased.Kind != LaunchFailed || notReleased.Err == nil {
+		t.Fatalf("launch = %#v, want immutable NotReleased error", result)
+	}
+	if snapshot := shell.snapshot(); len(snapshot.admissions) != 0 {
+		t.Fatalf("proven no-release retained runtime custody: %#v", snapshot)
+	}
+}
+
 func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T) {
 	role := os.Getenv(darwinEscapeFixtureRole)
 	if role != "" {

@@ -239,6 +239,7 @@ type supervisorLaunchCompletion struct {
 	at         time.Time
 	kind       supervisorLaunchCompletionKind
 	failure    LaunchFailure
+	diagnostic supervisorDiagnosticRef
 }
 
 type supervisorDrainCompletion struct {
@@ -390,19 +391,20 @@ type supervisorEvent struct {
 }
 
 type supervisorAction struct {
-	kind           supervisorActionKind
-	generation     attemptGeneration
-	token          supervisorActionToken
-	at             time.Time
-	drainBy        time.Time
-	launchKind     supervisorLaunchCompletionKind
-	launchFailure  LaunchFailure
-	launchDuration time.Duration
-	intent         supervisorRunningIntent
-	terminal       supervisorTerminalEvidence
-	runtimeKind    supervisorRuntimeReceiptKind
-	resolutions    []supervisorEmergencyResolution
-	residuals      []supervisorEmergencyResidual
+	kind             supervisorActionKind
+	generation       attemptGeneration
+	token            supervisorActionToken
+	at               time.Time
+	drainBy          time.Time
+	launchKind       supervisorLaunchCompletionKind
+	launchFailure    LaunchFailure
+	launchDiagnostic supervisorDiagnosticRef
+	launchDuration   time.Duration
+	intent           supervisorRunningIntent
+	terminal         supervisorTerminalEvidence
+	runtimeKind      supervisorRuntimeReceiptKind
+	resolutions      []supervisorEmergencyResolution
+	residuals        []supervisorEmergencyResidual
 }
 
 //nolint:cyclop // One sealed deterministic event dispatch intentionally enumerates every supervisor event.
@@ -2340,7 +2342,7 @@ func requireLaunchCompletion(
 			invariant(supervisorReducerOperation, "not-released completion has invalid failure classification")
 		}
 	case supervisorLaunchReleased:
-		if completion.failure != 0 {
+		if completion.failure != 0 || completion.diagnostic != 0 {
 			invariant(supervisorReducerOperation, "released completion carries a launch failure")
 		}
 	default:
@@ -2372,6 +2374,7 @@ func (state *supervisorState) newAction(
 	if completion != nil {
 		action.launchKind = completion.kind
 		action.launchFailure = completion.failure
+		action.launchDiagnostic = completion.diagnostic
 		action.launchDuration = completion.at.Sub(state.attempts[index].registeredAt)
 	}
 

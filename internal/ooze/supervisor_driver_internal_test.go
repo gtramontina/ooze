@@ -301,6 +301,7 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityCompletion(t *testing.T) {
 	registeredAt := time.Unix(8_000, 0)
 	launchBy := registeredAt.Add(time.Second)
+	launchErr := errors.New("typed launch failure")
 	completionReturned := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
@@ -344,6 +345,7 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 				at:         launchBy,
 				kind:       supervisorLaunchProvenNotReleased,
 				failure:    LaunchFailed,
+				diagnostic: 19,
 			}
 			close(completionReturned)
 
@@ -353,6 +355,13 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 			}
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
+		readDiagnostic: func(ref supervisorDiagnosticRef) error {
+			if ref != 19 {
+				t.Fatalf("launch diagnostic ref = %d, want 19", ref)
+			}
+
+			return launchErr
+		},
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
@@ -368,7 +377,7 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	notReleased, ok := result.(NotReleased)
-	if !ok || notReleased.Kind != LaunchFailed {
+	if !ok || notReleased.Kind != LaunchFailed || !errors.Is(notReleased.Err, launchErr) {
 		t.Fatalf("launch = %#v, want equality NotReleased", result)
 	}
 	if snapshot := shell.snapshot(); len(snapshot.admissions) != 0 {

@@ -458,7 +458,17 @@ func (driver *supervisorDriver) publishNotReleased(action supervisorAction) {
 	if attempt.launchResult != nil {
 		invariant(supervisorDriverOperation, "not-released launch was published twice")
 	}
-	attempt.launchResult = NotReleased{Kind: action.launchFailure}
+	var err error
+	if action.launchDiagnostic != 0 {
+		if driver.readDiagnostic == nil {
+			invariant(supervisorDriverOperation, "launch diagnostic registry is absent")
+		}
+		err = driver.readDiagnostic(action.launchDiagnostic)
+		if err == nil {
+			invariant(supervisorDriverOperation, "launch diagnostic reference resolved nil")
+		}
+	}
+	attempt.launchResult = NotReleased{Kind: action.launchFailure, Err: err}
 }
 
 func (driver *supervisorDriver) rememberMonitor(action supervisorAction, sample bool) {
