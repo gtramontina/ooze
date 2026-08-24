@@ -290,12 +290,15 @@ func (driver *supervisorDriver) wait(generation attemptGeneration) Terminal {
 	terminal := attempt.terminal
 	terminalReady := attempt.terminalReady
 	var deadlineAt time.Time
+	monitorRequired := false
 	if !terminalReady {
-		deadlineAt = driver.state.attempts[driver.state.requireAttempt(generation)].deadlineAt
+		state := driver.state.attempts[driver.state.requireAttempt(generation)]
+		deadlineAt = state.deadlineAt
+		monitorRequired = state.phase == supervisorRunning
 	}
 	sampleAction := attempt.sampleAction
 	driver.mutex.Unlock()
-	if !terminalReady {
+	if !terminalReady && monitorRequired {
 		if driver.recheckRoot == nil {
 			driver.executeAction(waitAction)
 		} else {
@@ -408,10 +411,17 @@ func (driver *supervisorDriver) stop(generation attemptGeneration, request StopR
 		}},
 	}
 	driver.mutex.Unlock()
-	driver.apply(supervisorEvent{
+	actions := driver.reduce(supervisorEvent{
 		kind: supervisorRunningObserved, generation: generation,
 		at: request.At, drainBy: request.DrainBy, running: &bundle,
 	})
+	if len(actions) != 0 {
+		go func() {
+			for _, action := range actions {
+				driver.run(action)
+			}
+		}()
+	}
 }
 
 func (driver *supervisorDriver) sealStopAdmission(action supervisorAction) {

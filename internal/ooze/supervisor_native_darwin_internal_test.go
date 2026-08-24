@@ -183,3 +183,39 @@ func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 		t.Fatalf("emergency terminal = %#v, want Stopped", terminal)
 	}
 }
+
+func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 105})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token,
+		attempt:  "darwin-stop",
+		class:    serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newNativeSupervisorDriver(shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	launched := supervisor.Launch(Spec{
+		Attempt: "darwin-stop",
+		Command: []string{"/bin/sh", "-c", "sleep 10"},
+		Dir:     t.TempDir(), Env: os.Environ(), Profile: SerialProfile,
+		Deadline: 10 * time.Second,
+	})
+	owned, ok := launched.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", launched)
+	}
+	stopAt := time.Now()
+	owned.Attempt.Stop(StopRequest{At: stopAt, DrainBy: stopAt.Add(5 * time.Second)})
+	terminal := owned.Attempt.Wait()
+	stopped, ok := terminal.(Stopped)
+	if !ok || stopped.BoundFired != NoBoundFired || stopped.CommandDuration <= 0 {
+		t.Fatalf("stop terminal = %#v, want Stopped", terminal)
+	}
+}
