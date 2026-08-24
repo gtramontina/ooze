@@ -9,6 +9,25 @@ import "testing"
 // precisely because both outcomes are expected: it records what containment is
 // promised, and fails if a platform silently changes side.
 func TestSupervisedDomainPlatformContract(t *testing.T) {
+	// A direct child that leaves the supervised process group becomes
+	// unreachable on Darwin after its root exits. The fixture proves the child
+	// really changed group and reported the root as its parent before recording
+	// that limit. Linux contains the same shape through subreaper adoption.
+	// Windows has no process group to leave; its breakaway contract is exercised
+	// through the native Job Object fixture instead.
+	t.Run("a direct child that leaves its process group", func(t *testing.T) {
+		if !descendantCanEscapeSupervision {
+			t.Skip("this platform has no process-group escape shape")
+		}
+		if directRootProcessGroupEscapeDefeatsContainment {
+			assertSupervisionLeavesDescendantRunning(t, true, descendantEscapesProcessGroup)
+
+			return
+		}
+
+		assertDoesNotReturnWhileDescendantCanWrite(t, true, descendantEscapesProcessGroup)
+	})
+
 	// A descendant double-forked into its own session is not a child of the
 	// supervised root, so no walk of parent identity from that root reaches it
 	// even while the root is alive, and it is in neither the root's process group
