@@ -14,6 +14,7 @@ type supervisorDriverConstruction struct {
 	now              func() time.Time
 	launchBoundary   func(time.Time) <-chan time.Time
 	commandBoundary  func(time.Time) <-chan time.Time
+	sampleTicks      func() (<-chan time.Time, func())
 	launchProgress   time.Duration
 	drainEpoch       time.Duration
 	prepare          func(attemptGeneration, Spec)
@@ -53,6 +54,7 @@ type supervisorDriver struct {
 	now               func() time.Time
 	launchBoundary    func(time.Time) <-chan time.Time
 	commandBoundary   func(time.Time) <-chan time.Time
+	sampleTicks       func() (<-chan time.Time, func())
 	launchProgress    time.Duration
 	drainEpoch        time.Duration
 	prepare           func(attemptGeneration, Spec)
@@ -83,10 +85,17 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 	if commandBoundary == nil {
 		commandBoundary = waitForSupervisorLaunchBoundary
 	}
+	sampleTicks := construction.sampleTicks
+	if sampleTicks == nil {
+		sampleTicks = func() (<-chan time.Time, func()) {
+			ticker := time.NewTicker(nominalSupervisorFuseCadence)
+			return ticker.C, ticker.Stop
+		}
+	}
 
 	return &supervisorDriver{
 		runtime: construction.runtime, now: construction.now,
-		launchBoundary: launchBoundary, commandBoundary: commandBoundary,
+		launchBoundary: launchBoundary, commandBoundary: commandBoundary, sampleTicks: sampleTicks,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
 		prepare: construction.prepare, execute: construction.execute,
 		recheckRoot: construction.recheckRoot, sampleRunning: construction.sampleRunning,
@@ -569,20 +578,35 @@ func (driver *supervisorDriver) waitThroughDeadline(
 	go func() { waited <- driver.execute(waitAction) }()
 	deadline := driver.commandBoundary(deadlineAt)
 	var samples <-chan time.Time
-	var ticker *time.Ticker
 	if sampleAction.token != 0 {
 		if driver.sampleRunning == nil {
 			invariant(supervisorDriverOperation, "automatic wait lacks a running sampler")
 		}
-		ticker = time.NewTicker(nominalSupervisorFuseCadence)
-		defer ticker.Stop()
-		samples = ticker.C
+		var stopSamples func()
+		samples, stopSamples = driver.sampleTicks()
+		if samples == nil || stopSamples == nil {
+			invariant(supervisorDriverOperation, "automatic wait lacks a sample cadence")
+		}
+		defer stopSamples()
 	}
 	for {
 		select {
 		case event := <-waited:
-			if event == nil {
-				invariant(supervisorDriverOperation, "root wait returned no completion")
+			if event == nil || event.running == nil ||
+				event.generation != waitAction.generation ||
+				event.running.generation != waitAction.generation ||
+				event.running.waitAction != waitAction.token ||
+				event.running.sampleAction != 0 {
+				invariant(supervisorDriverOperation, "root wait returned a malformed completion")
+			}
+			event.running.sampleAction = sampleAction.token
+			select {
+			case at := <-samples:
+				if !at.After(event.at) && at.Before(deadlineAt) &&
+					driver.applyRunningSample(waitAction, sampleAction, at) {
+					return
+				}
+			default:
 			}
 			driver.applyMonitorEvent(*event)
 
@@ -613,44 +637,53 @@ func (driver *supervisorDriver) waitThroughDeadline(
 			if !at.Before(deadlineAt) {
 				continue
 			}
-			rootLive, live, err := driver.sampleRunning(waitAction.generation)
-			var facts []supervisorRunningFact
-			if err != nil {
-				if driver.recordDiagnostic == nil {
-					invariant(supervisorDriverOperation, "running sampler diagnostic registry is absent")
-				}
-				facts = []supervisorRunningFact{{
-					generation: waitAction.generation, action: sampleAction.token,
-					kind: supervisorRunningObservationFailed, at: at,
-					source: supervisorObservationRunning, diagnostic: driver.recordDiagnostic(err),
-				}}
-			} else if rootLive && live != 0 {
-				facts = []supervisorRunningFact{{
-					generation: waitAction.generation, action: sampleAction.token,
-					kind: supervisorRunningFuseObserved, at: at,
-					rootLive: true, live: live,
-				}}
-			}
-			if len(facts) == 0 {
-				continue
-			}
-			driver.applyMonitorEvent(supervisorEvent{
-				kind: supervisorRunningObserved, generation: waitAction.generation,
-				at: at, drainBy: at.Add(driver.drainEpoch),
-				running: &supervisorRunningBundle{
-					generation: waitAction.generation,
-					waitAction: waitAction.token, sampleAction: sampleAction.token,
-					facts: facts,
-				},
-			})
-			driver.mutex.Lock()
-			terminalReady := driver.requireAttempt(waitAction.generation).terminalReady
-			driver.mutex.Unlock()
-			if terminalReady {
+			if driver.applyRunningSample(waitAction, sampleAction, at) {
 				return
 			}
 		}
 	}
+}
+
+func (driver *supervisorDriver) applyRunningSample(
+	waitAction supervisorAction,
+	sampleAction supervisorAction,
+	at time.Time,
+) bool {
+	rootLive, live, err := driver.sampleRunning(waitAction.generation)
+	var facts []supervisorRunningFact
+	if err != nil {
+		if driver.recordDiagnostic == nil {
+			invariant(supervisorDriverOperation, "running sampler diagnostic registry is absent")
+		}
+		facts = []supervisorRunningFact{{
+			generation: waitAction.generation, action: sampleAction.token,
+			kind: supervisorRunningObservationFailed, at: at,
+			source: supervisorObservationRunning, diagnostic: driver.recordDiagnostic(err),
+		}}
+	} else if rootLive && live != 0 {
+		facts = []supervisorRunningFact{{
+			generation: waitAction.generation, action: sampleAction.token,
+			kind: supervisorRunningFuseObserved, at: at,
+			rootLive: true, live: live,
+		}}
+	}
+	if len(facts) == 0 {
+		return false
+	}
+	driver.applyMonitorEvent(supervisorEvent{
+		kind: supervisorRunningObserved, generation: waitAction.generation,
+		at: at, drainBy: at.Add(driver.drainEpoch),
+		running: &supervisorRunningBundle{
+			generation: waitAction.generation,
+			waitAction: waitAction.token, sampleAction: sampleAction.token,
+			facts: facts,
+		},
+	})
+	driver.mutex.Lock()
+	terminalReady := driver.requireAttempt(waitAction.generation).terminalReady
+	driver.mutex.Unlock()
+
+	return terminalReady
 }
 
 func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {

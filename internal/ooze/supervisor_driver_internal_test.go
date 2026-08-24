@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"runtime"
 	"testing"
@@ -1577,6 +1578,159 @@ func TestSupervisorDriverPublishesImmutableWaitFailureDiagnostics(t *testing.T) 
 		infrastructure.Failures.Wait != waitErr.Error() {
 		t.Fatalf("terminal = %#v, want immutable wait failure", terminal)
 	}
+}
+
+func TestSupervisorDriverDueAutomaticFuseBeatsLaterWaitFailureRegardlessOfReadiness(t *testing.T) {
+	for iteration := range 100 {
+		terminal := runDueAutomaticFuseWaitFailureRace(t, iteration)
+		tripped, ok := terminal.(Tripped)
+		if !ok {
+			t.Fatalf("iteration %d terminal = %#v, want due FuseTrip instead of WaitFailed", iteration, terminal)
+		}
+		fuse, ok := tripped.Trip.(FuseTrip)
+		if !ok || fuse.Live != 65 {
+			t.Fatalf("iteration %d fuse evidence = %#v, want exact count", iteration, tripped)
+		}
+	}
+}
+
+func runDueAutomaticFuseWaitFailureRace(t *testing.T, iteration int) Terminal {
+	t.Helper()
+	registeredAt := time.Unix(19_000+int64(iteration)*100, 0)
+	releasedAt := registeredAt.Add(time.Millisecond)
+	sampleAt := releasedAt.Add(time.Second)
+	waitFailedAt := sampleAt.Add(time.Nanosecond)
+	nextAt := registeredAt.Add(-time.Nanosecond)
+	waitErr := errors.New("Darwin root tracking failed after automatic sample became due")
+	waitReturned := make(chan struct{})
+	samples := make(chan time.Time, 1)
+	samples <- sampleAt
+
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(200 + iteration)})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: attemptIdentity(fmt.Sprintf("driver-fuse-wait-race-%d", iteration)),
+		class: sharedAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell,
+		now: func() time.Time {
+			nextAt = nextAt.Add(time.Nanosecond)
+			return nextAt
+		},
+		launchBoundary:  func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		commandBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		sampleTicks: func() (<-chan time.Time, func()) {
+			<-waitReturned
+			time.Sleep(time.Millisecond)
+			return samples, func() {}
+		},
+		launchProgress: time.Second,
+		drainEpoch:     5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			switch action.kind {
+			case supervisorLaunchNative:
+				completion := supervisorLaunchCompletion{
+					generation: action.generation, action: action.token,
+					at: releasedAt, kind: supervisorLaunchReleased,
+				}
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation,
+					at: releasedAt, completion: &completion,
+				}
+			case supervisorWaitRoot:
+				fact := supervisorRunningFact{
+					generation: action.generation, action: action.token,
+					kind: supervisorRunningObservationFailed, at: waitFailedAt,
+					source: supervisorObservationWait, diagnostic: 1,
+				}
+				event := &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation,
+					at: waitFailedAt, drainBy: waitFailedAt.Add(5 * time.Second),
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{fact},
+					},
+				}
+				close(waitReturned)
+				return event
+			case supervisorForceOwned:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, kind: supervisorDrainForceCompleted,
+				}
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: nextAt, drain: &completion,
+				}
+			case supervisorObserveEmptiness:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorDrainCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, kind: supervisorDrainObservedEmpty,
+				}
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation,
+					at: nextAt, drain: &completion,
+				}
+			case supervisorCaptureOutput:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorOutputCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token},
+					at:         nextAt, ref: 1,
+				}
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation,
+					at: nextAt, output: &completion,
+				}
+			case supervisorReleaseDomain:
+				nextAt = action.at.Add(time.Nanosecond)
+				completion := supervisorReleaseCompletion{
+					generation: action.generation,
+					action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: nextAt,
+				}
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation,
+					at: nextAt, release: &completion,
+				}
+			default:
+				t.Fatalf("unexpected native action: %#v", action)
+				return nil
+			}
+		},
+		sampleRunning: func(attemptGeneration) (bool, uint64, error) { return true, 65, nil },
+		recheckRoot: func(attemptGeneration) (ExitStatus, time.Time, bool, error) {
+			return ExitStatus{}, time.Time{}, false, nil
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+		readDiagnostic: func(ref supervisorDiagnosticRef) error {
+			if ref != 1 {
+				t.Fatalf("diagnostic ref = %d, want 1", ref)
+			}
+			return waitErr
+		},
+	})
+	attempt := fmt.Sprintf("driver-fuse-wait-race-%d", iteration)
+	result := newDrivenSupervisorForTest(
+		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	).Launch(Spec{
+		Attempt: attempt, Command: []string{"automatic"}, Dir: "/tmp",
+		Profile: AutomaticProfile, Deadline: 10 * time.Second,
+	})
+	owned, ok := result.(Owned)
+	if !ok || owned.Attempt == nil {
+		t.Fatalf("launch = %#v, want Owned", result)
+	}
+
+	return owned.Attempt.Wait()
 }
 
 func TestPublicTerminalPreservesEveryIndependentInfrastructureDiagnostic(t *testing.T) {
