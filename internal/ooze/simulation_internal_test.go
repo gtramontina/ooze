@@ -397,6 +397,30 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 }
 
+func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T) {
+	recorder := newSimulationRecorder()
+	definition := campaignDefinition{
+		identity: "campaign-immutable-record", lineage: 53, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	}
+	campaign, _ := beginCampaign(definition)
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	driver := &supervisorDriver{recorder: recorder}
+	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	runner.advance(campaignRegisteredEvent{registration: registration})
+	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
+	mutants := []mutantIdentity{"mutant-a", "mutant-b"}
+	runner.advance(catalogueDiscoveredEvent{snapshot: "private-snapshot", mutants: mutants})
+
+	trace, _ := recorder.quiescent(runner, shell, driver)
+	mutants[0] = "caller-rewrite"
+	got := trace.records[len(trace.records)-1].campaignEvent.payload.(catalogueDiscoveredEvent).mutants
+	if !reflect.DeepEqual(got, []mutantIdentity{"mutant-a", "mutant-b"}) {
+		t.Fatalf("recorded catalogue changed with caller input: %v", got)
+	}
+}
+
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
