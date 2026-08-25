@@ -1004,6 +1004,9 @@ func reduceRunningBundle(
 		!event.running.drainBy.IsZero() {
 		invariant(supervisorReducerOperation, "running bundle shape or action correlation is invalid")
 	}
+	if event.at.Before(attempt.startedAt) {
+		invariant(supervisorReducerOperation, "running bundle is outside the active running interval")
+	}
 	if event.at.Before(attempt.lastEventAt) {
 		event.at = attempt.lastEventAt
 	}
@@ -1013,8 +1016,7 @@ func reduceRunningBundle(
 
 		return state, nil
 	}
-	if attempt.phase != supervisorRunning || event.at.Before(attempt.startedAt) ||
-		event.at.Before(attempt.lastEventAt) {
+	if attempt.phase != supervisorRunning || event.at.Before(attempt.lastEventAt) {
 		invariant(supervisorReducerOperation, "running bundle is outside the active running interval")
 	}
 	state, selected := reduceRunningSnapshot(state, index, event.at, event.drainBy, *event.running)
