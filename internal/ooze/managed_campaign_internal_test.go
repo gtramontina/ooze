@@ -186,6 +186,69 @@ func TestManagedCampaignPropagatesAbsoluteTimeoutAndRetainsTimedOutResult(t *tes
 	}
 }
 
+func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
+	}}
+	launchesReady := make(chan struct{})
+	attempts := &managedAttemptFixture{
+		waitForLaunches: 3, launchesReady: launchesReady,
+		terminals: []Terminal{
+			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Tripped{Trip: AutomaticDeadlineTrip{}},
+			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		},
+	}
+	shell := newProcessRuntimeShell(2)
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: shell, repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 2, mutationTimeout: time.Minute,
+		viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	completed, ok := result.outcome.(completedOutcome)
+	if !ok || len(completed.mutants) != 2 || completed.mutants[0].kind != mutantKilled ||
+		completed.mutants[1].kind != mutantKilled {
+		t.Fatalf("outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	}
+	if attempts.launches != 4 || shell.snapshot().mode != singleAdmission {
+		t.Fatalf("launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
+	}
+}
+
+func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}}
+	attempts := &managedAttemptFixture{
+		notReleasedAt: 2,
+		terminals: []Terminal{
+			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		},
+	}
+	shell := newProcessRuntimeShell(2)
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: shell, repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if _, ok := result.outcome.(abortedOutcome); !ok || shell.snapshot().mode != singleAdmission ||
+		attempts.launches != 2 {
+		t.Fatalf("outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
+	}
+}
+
 func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testing.T) {
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
@@ -327,6 +390,10 @@ type managedAttemptFixture struct {
 	releasePrimaries    <-chan struct{}
 	waitAll             <-chan struct{}
 	launchStarted       chan Spec
+	waitForLaunches     int
+	launchesReady       chan struct{}
+	launchesReadyOnce   sync.Once
+	notReleasedAt       int
 	stopRelease         chan struct{}
 	stops               int
 	emergencies         int
@@ -344,12 +411,27 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 		f.terminalByGen = make(map[attemptGeneration]Terminal)
 	}
 	f.byGeneration[start.generation] = spec
-	f.terminalByGen[start.generation] = f.terminals[f.launches-1]
+	if f.launches <= len(f.terminals) {
+		f.terminalByGen[start.generation] = f.terminals[f.launches-1]
+	}
+	if f.waitForLaunches != 0 && f.launches >= f.waitForLaunches {
+		f.launchesReadyOnce.Do(func() { close(f.launchesReady) })
+	}
 	f.mutex.Unlock()
 	if f.launchStarted != nil {
 		f.launchStarted <- spec
 	}
 	var result LaunchResult
+	if f.notReleasedAt == f.launches {
+		observed := start.launch(func(attemptGeneration) attemptObservation {
+			result = NotReleased{Kind: LaunchResourceExhausted}
+
+			return launchNotReleased{reason: launchResourceExhausted}
+		})
+		receipt := start.shell.observeAttempt(start.generation, observed)
+
+		return managedObservedLaunch{result: result, receipt: receipt}
+	}
 	observed := start.launch(func(attemptGeneration) attemptObservation {
 		result = Owned{Attempt: newOwnedAttempt(func(StopRequest) {}, func() Terminal { return nil })}
 
@@ -366,6 +448,9 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 	f.mutex.Unlock()
 	if f.waitAll != nil {
 		<-f.waitAll
+	}
+	if f.waitForLaunches != 0 && spec.Deadline != baselineBootstrapDeadline {
+		<-f.launchesReady
 	}
 	if f.waitStarted != nil && spec.Deadline != baselineBootstrapDeadline {
 		f.waitStarted <- spec
@@ -391,6 +476,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 		}
 	case Tripped:
 		terminal.ExecutionData = data
+		terminal.BoundFired = CommandDeadlineFired
 
 		return managedObservedTerminal{
 			terminal: terminal,
