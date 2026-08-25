@@ -789,18 +789,31 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 	} else if state.definition.profile == SerialProfile {
 		class = serialPrimaryAdmission
 	}
+	deadline := state.mutationDeadline
+	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
+		deadline = state.definition.baselineDeadline
+	}
+	if deadline <= 0 {
+		campaignInvariant("materialize workspace", "attempt deadline is unresolved")
+	}
 	if state.attempts[attemptAt].kind == campaignAttemptConfirmation && !state.confirmationBarrierBound {
 		state.obligations = append(state.obligations, campaignObligation{
 			kind: campaignResourceAdmission, identity: string(event.attempt), attempt: event.attempt,
 		})
-		binding := barrierBinding{campaign: state.runtimeToken, attempt: event.attempt}
+		binding := barrierBinding{
+			campaign: state.runtimeToken, attempt: event.attempt,
+			profile: state.definition.profile, deadline: deadline,
+		}
 
 		return state.emit(campaignEffect{
 			kind: campaignEffectBindConfirmationBarrier, attempt: event.attempt,
 			mutant: state.attempts[attemptAt].mutant, binding: binding,
 		})
 	}
-	request := admissionRequest{campaign: state.runtimeToken, attempt: event.attempt, class: class}
+	request := admissionRequest{
+		campaign: state.runtimeToken, attempt: event.attempt, class: class,
+		profile: state.definition.profile, deadline: deadline,
+	}
 	state.attempts[attemptAt].request = request
 	state.obligations = append(state.obligations, campaignObligation{
 		kind: campaignResourceAdmission, identity: string(event.attempt), attempt: event.attempt,

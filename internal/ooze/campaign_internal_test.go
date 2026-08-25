@@ -1160,16 +1160,21 @@ func (harness *campaignHarness) settleAttempt(
 	resolved time.Duration,
 ) []campaignEffect {
 	t.Helper()
+	admissionAt := harness.runtime.admissionIndexByGeneration(attempt.generation)
+	if admissionAt < 0 {
+		t.Fatal("attempt generation is not live")
+	}
+	grant := harness.runtime.admissions[admissionAt].grant
 	var observation attemptObservation
 	switch observed := terminal.(type) {
 	case Settled:
-		observation = attemptSettled{}
+		observation = attemptSettled{profile: grant.profile, deadline: grant.deadline}
 	case Tripped:
 		switch observed.Trip.(type) {
 		case FuseTrip:
 			observation = attemptTripped{kind: fuseTrip}
 		default:
-			observation = attemptTripped{kind: deadlineTrip}
+			observation = attemptTripped{kind: deadlineTrip, profile: grant.profile, deadline: grant.deadline}
 		}
 	case Stopped:
 		observation = attemptStopped{}
@@ -1233,19 +1238,37 @@ func (harness *campaignHarness) settleConfirmation(
 ) []campaignEffect {
 	t.Helper()
 	queueDrained := len(harness.state.drain.provisionals) == 1
-	outcome := confirmationPressureAccepted
-	if _, repeated := terminal.(Tripped); repeated {
-		outcome = confirmationRejected
+	admissionAt := harness.runtime.admissionIndexByGeneration(attempt.generation)
+	if admissionAt < 0 {
+		t.Fatal("confirmation generation is not live")
+	}
+	grant := harness.runtime.admissions[admissionAt].grant
+	var observation attemptObservation
+	switch terminal := terminal.(type) {
+	case Settled:
+		observation = attemptSettled{profile: grant.profile, deadline: grant.deadline}
+	case Tripped:
+		switch terminal.Trip.(type) {
+		case FuseTrip:
+			observation = attemptTripped{kind: fuseTrip}
+		case AutomaticDeadlineTrip, SerialDeadlineTrip:
+			observation = attemptTripped{kind: deadlineTrip, profile: grant.profile, deadline: grant.deadline}
+		default:
+			t.Fatal("confirmation trip is invalid")
+		}
+	default:
+		t.Fatal("confirmation terminal is invalid")
 	}
 	var receipt observationResult
+	harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, observation)
 	if queueDrained {
-		harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, confirmationQueueDrained{
-			outcome: outcome,
-		})
-	} else {
-		harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, confirmationContinues{
-			outcome: outcome,
-		})
+		var completed confirmationQueueResult
+		harness.runtime, completed = harness.runtime.completeConfirmationQueue(grant.campaign)
+		if completed.decision != confirmationQueueCompleted {
+			t.Fatalf("confirmation queue completion = %#v", completed)
+		}
+		receipt.confirmationQueueDrained = true
+		receipt.deliveries = append(receipt.deliveries, completed.deliveries...)
 	}
 
 	return harness.advance(attemptTerminalEvent{

@@ -743,7 +743,6 @@ func (r processRuntime) observeConfirmation(
 	result.deliveries = deliveries
 	result.pressureTransitioned = transitioned
 	result.confirmationObserved = true
-	result.confirmationQueueDrained = queueDrained
 
 	return r, result
 }
