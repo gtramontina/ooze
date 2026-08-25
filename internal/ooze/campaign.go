@@ -1063,8 +1063,14 @@ func (state campaignState) onAdmissionRejected(
 		state.drain = campaignDrainIntent{
 			kind: campaignDrainRuntimeEmergency, cause: event.cause, epoch: event.result.fatalEpoch,
 		}
+	} else if state.drain.kind == 0 {
+		// The runtime closes the primary gate atomically when it observes an
+		// overlapping deadline. Its rejection can therefore arrive before the
+		// causative terminal is delivered to this reducer.
+		state.phase = campaignDraining
+		state.drain.kind = campaignDrainConfirm
 	} else if state.drain.kind != campaignDrainConfirm {
-		campaignInvariant("reject admission", "gate rejection arrived outside confirmation closure")
+		campaignInvariant("reject admission", "gate rejection contradicts campaign drain intent")
 	}
 	effects := state.abortOutstandingAttempts(event.attempt)
 	effects = append(effects, campaignEffect{
