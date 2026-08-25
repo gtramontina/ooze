@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1015,6 +1016,43 @@ func TestCampaignMalformedEventEmergencyCleansRuntimeAndRepanicsOriginalViolatio
 	}
 	if runtime.lifecycle != runtimeClosedDrained || runtime.fatalEpoch == 0 || len(runtime.fatalCauses) != 1 {
 		t.Fatalf("runtime after invariant=%#v", runtime)
+	}
+}
+
+func TestCampaignInvariantProjectionOmitsPrivateCustodyAndFilesystemFacts(t *testing.T) {
+	state := campaignState{
+		definition:   campaignDefinition{identity: "campaign-a"},
+		snapshot:     "/private/snapshot",
+		runtimeToken: campaignToken{id: 8888},
+		drain:        campaignDrainIntent{epoch: 9999},
+		attempts: []campaignAttempt{{
+			identity: "campaign-a:2", generation: 7777, workspace: "/private/workspace",
+		}},
+		obligations: []campaignObligation{{
+			kind: campaignResourceWorkspace, identity: "/private/workspace",
+			attempt: "campaign-a:2", generation: 7777,
+		}},
+	}
+	event := campaignEvent{id: 4, payload: resourceSettlementFailedEvent{
+		kind: campaignResourceWorkspace, identity: "/private/workspace", cause: "private cause",
+	}}
+	projected := strings.Join(append(
+		[]string{campaignEventSummary(event)},
+		append(state.stableIdentitySnapshot(event), state.obligationSnapshot()...)...,
+	), "\n")
+
+	for _, public := range []string{
+		"event=4 kind=resource settlement failed resource=workspace",
+		"campaign=campaign-a", "attempt=campaign-a:2", "workspace/attempt=campaign-a:2",
+	} {
+		if !strings.Contains(projected, public) {
+			t.Fatalf("safe invariant projection missing %q:\n%s", public, projected)
+		}
+	}
+	for _, private := range []string{"/private", "7777", "8888", "9999", "private cause", "generation", "token"} {
+		if strings.Contains(projected, private) {
+			t.Fatalf("safe invariant projection leaked %q:\n%s", private, projected)
+		}
 	}
 }
 
