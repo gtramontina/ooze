@@ -250,7 +250,7 @@ jobs:
         shell: bash
         run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
 
-      - name: Run mutation acceptance
+      - name: Mutation campaign acceptance
         shell: bash
         run: ${{ matrix.go-command }} test -timeout=30m -count=1 -v -tags=mutation
 
