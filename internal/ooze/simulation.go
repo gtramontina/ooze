@@ -85,8 +85,8 @@ type simulationRecord struct {
 	sequence  uint64
 	authority simulationAuthority
 
-	campaignEvent   campaignEvent
-	campaignState   campaignState
+	campaignEvent   simulationCampaignEvent
+	campaignState   simulationCampaignState
 	campaignEffects []campaignEffect
 
 	runtimeOperation      simulationRuntimeOperation
@@ -133,10 +133,10 @@ type SimulationResult struct {
 
 type simulationMalformedFact struct {
 	authority        simulationAuthority
-	campaign         campaignEventPayload
+	campaign         simulationCampaignEvent
 	runtimeOperation simulationRuntimeOperation
 	runtimeAdmission simulationAdmission
-	supervisor       supervisorEvent
+	supervisor       simulationSupervisorEvent
 }
 
 // FailureKey is the alpha-normalized semantic identity retained while shrinking.
@@ -595,7 +595,9 @@ func simulationCampaignRecord(
 ) simulationRecord {
 	return simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationCampaignAuthority,
-		campaignEvent: campaignEvent{id: campaignEventID(len(state.trace)), payload: payload}, campaignState: state,
+		campaignEvent: simulationTraceCampaignEvent(campaignEvent{
+			id: campaignEventID(len(state.trace)), payload: payload,
+		}), campaignState: simulationTraceCampaignState(state),
 		campaignEffects: append([]campaignEffect(nil), effects...),
 	}
 }
@@ -716,7 +718,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				return simulationReplayFailure(trace, "runtime state diverged at record %d", index)
 			}
 		case simulationCampaignAuthority:
-			payload := record.campaignEvent.payload
+			payload := record.campaignEvent.production().payload
 			if payload == nil {
 				payload = delivered
 			}
@@ -740,7 +742,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				id: campaignEventID(len(campaign.trace) + 1), payload: payload,
 			})
 			delivered = nil
-			if !reflect.DeepEqual(campaign, record.campaignState) {
+			if !reflect.DeepEqual(simulationTraceCampaignState(campaign), record.campaignState) {
 				return simulationReplayFailure(
 					trace, "campaign state diverged at record %d (%s)", index, payload.campaignEventName(),
 				)
@@ -815,7 +817,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	}
 	switch malformed.authority {
 	case simulationCampaignAuthority:
-		if malformed.campaign == nil {
+		if malformed.campaign.kind == 0 {
 			return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 		}
 	case simulationRuntimeAuthority:
@@ -852,13 +854,14 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 
 	switch malformed.authority {
 	case simulationCampaignAuthority:
+		malformedEvent := malformed.campaign.production()
 		_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
-			id: campaignEventID(len(campaign.trace) + 1), payload: malformed.campaign,
+			id: campaignEventID(len(campaign.trace) + 1), payload: malformedEvent.payload,
 		}, simulationEmergencySweep)
 	case simulationRuntimeAuthority:
 		simulationAdvanceRuntimeGuarded(&runtime, malformed.runtimeAdmission.production())
 	case simulationSupervisorAuthority:
-		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor)
+		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor.production())
 	}
 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}

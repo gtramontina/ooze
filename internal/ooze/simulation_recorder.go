@@ -85,7 +85,8 @@ func (recorder *simulationRecorder) recordCampaign(
 	projectedState := simulationProjectCampaign(state)
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority,
-		campaignEvent: simulationProjectCampaignEvent(event, previous), campaignState: projectedState,
+		campaignEvent:   simulationTraceCampaignEvent(simulationProjectCampaignEvent(event, previous)),
+		campaignState:   simulationTraceCampaignState(projectedState),
 		campaignEffects: simulationProjectCampaignEffects(effects, state),
 	})
 }
