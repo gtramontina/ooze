@@ -820,7 +820,12 @@ func (driver *supervisorDriver) applyRunningSampleFacts(
 
 func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 	leaveRecorder := driver.recorder.enter()
-	defer leaveRecorder()
+	recorderReleased := false
+	defer func() {
+		if !recorderReleased {
+			leaveRecorder()
+		}
+	}()
 	driver.mutex.Lock()
 	index := driver.state.attemptIndex(event.generation)
 	if index < 0 {
@@ -836,6 +841,8 @@ func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 	}
 	actions := driver.reduceLocked(event)
 	driver.mutex.Unlock()
+	leaveRecorder()
+	recorderReleased = true
 	for _, action := range actions {
 		driver.run(action)
 	}
@@ -1001,7 +1008,12 @@ func (driver *supervisorDriver) waitManaged(
 
 func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
 	leaveRecorder := driver.recorder.enter()
-	defer leaveRecorder()
+	recorderReleased := false
+	defer func() {
+		if !recorderReleased {
+			leaveRecorder()
+		}
+	}()
 	driver.mutex.Lock()
 	if driver.emergencyStarted {
 		driver.mutex.Unlock()
@@ -1165,6 +1177,8 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 		}
 	}
 	driver.mutex.Unlock()
+	leaveRecorder()
+	recorderReleased = true
 	for _, action := range remaining {
 		driver.run(action)
 	}
