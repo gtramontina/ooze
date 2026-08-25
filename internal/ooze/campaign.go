@@ -1059,6 +1059,7 @@ func (state campaignState) onAdmissionRejected(
 	if mutantAt >= 0 {
 		state.mutants[mutantAt].primaryStarted = false
 	}
+	var effects []campaignEffect
 	if event.result.decision == admissionRejectedClosed {
 		if event.result.fatalEpoch == 0 {
 			campaignInvariant("reject admission", "closed rejection lacks fatal epoch")
@@ -1067,6 +1068,7 @@ func (state campaignState) onAdmissionRejected(
 		state.drain = campaignDrainIntent{
 			kind: campaignDrainRuntimeEmergency, cause: event.cause, epoch: event.result.fatalEpoch,
 		}
+		effects = state.abortOutstandingAttempts(event.attempt)
 	} else if state.drain.kind == 0 {
 		// The runtime closes the primary gate atomically when it observes an
 		// overlapping deadline. Its rejection can therefore arrive before the
@@ -1076,7 +1078,6 @@ func (state campaignState) onAdmissionRejected(
 	} else if state.drain.kind != campaignDrainConfirm {
 		campaignInvariant("reject admission", "gate rejection contradicts campaign drain intent")
 	}
-	effects := state.abortOutstandingAttempts(event.attempt)
 	effects = append(effects, campaignEffect{
 		kind: campaignEffectReleaseWorkspace, attempt: event.attempt,
 		workspace: state.attempts[attemptAt].workspace,
