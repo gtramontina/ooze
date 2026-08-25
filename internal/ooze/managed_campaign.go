@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -60,16 +61,24 @@ type managedCampaignResult struct {
 
 type managedCampaignRunner struct {
 	managedCampaignConstruction
-	state      campaignState
-	nextEvent  campaignEventID
-	snapshot   TemporaryRepository
-	mutations  map[mutantIdentity]*gomutatedfile.GoMutatedFile
-	workspaces map[string]TemporaryRepository
-	starts     map[attemptGeneration]installedStart
-	owned      map[attemptGeneration]*OwnedAttempt
-	terminals  chan managedTerminalObservation
-	pending    int
-	emergency  bool
+	state        campaignState
+	nextEvent    campaignEventID
+	snapshot     TemporaryRepository
+	mutations    map[mutantIdentity]*gomutatedfile.GoMutatedFile
+	workspaces   map[string]TemporaryRepository
+	starts       map[attemptGeneration]installedStart
+	owned        map[attemptGeneration]*OwnedAttempt
+	authorities  map[campaignAdmission]admissionAuthority
+	attemptFacts map[attemptGeneration]managedAttemptFacts
+	runtimeToken campaignToken
+	terminals    chan managedTerminalObservation
+	pending      int
+	emergency    bool
+}
+
+type managedAttemptFacts struct {
+	kind                       campaignAttemptKind
+	completesConfirmationQueue bool
 }
 
 type managedTerminalObservation struct {
@@ -90,6 +99,8 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		workspaces:                  make(map[string]TemporaryRepository),
 		starts:                      make(map[attemptGeneration]installedStart),
 		owned:                       make(map[attemptGeneration]*OwnedAttempt),
+		authorities:                 make(map[campaignAdmission]admissionAuthority),
+		attemptFacts:                make(map[attemptGeneration]managedAttemptFacts),
 	}
 }
 
@@ -129,12 +140,29 @@ func proposesTerminal(effects []campaignEffect) bool {
 	})
 }
 
+func (runner *managedCampaignRunner) rememberAuthority(authority admissionAuthority) {
+	runner.authorities[campaignAdmissionFact(authority)] = authority
+}
+
+func (runner *managedCampaignRunner) authority(fact campaignAdmission) admissionAuthority {
+	authority, ok := runner.authorities[fact]
+	if !ok {
+		panic("managed admission authority is missing")
+	}
+
+	return authority
+}
+
 func (runner *managedCampaignRunner) needsEmergencySettlement() bool {
-	return !runner.emergency && runner.state.drain.kind == campaignDrainRuntimeEmergency
+	_, requested := runner.state.runtimeEmergencySettlementRequest()
+	return !runner.emergency && requested
 }
 
 func (runner *managedCampaignRunner) settleEmergency() []campaignEffect {
-	epoch := runner.state.drain.epoch
+	epoch, requested := runner.state.runtimeEmergencySettlementRequest()
+	if !requested {
+		panic("managed emergency settlement was not requested")
+	}
 	observed := runner.attempts.emergency(epoch)
 	if observed.epoch != epoch || observed.settlement.epoch != epoch {
 		panic("managed emergency settlement has the wrong epoch")
@@ -142,7 +170,7 @@ func (runner *managedCampaignRunner) settleEmergency() []campaignEffect {
 	runner.emergency = true
 	runner.pending = 0
 
-	return runner.advance(runtimeEmergencySettledEvent{epoch: epoch, settlement: observed.settlement})
+	return runner.advance(runtimeEmergencySettledEvent{epoch: epoch, settlement: campaignSettlement(observed.settlement)})
 }
 
 func (runner *managedCampaignRunner) execute(
@@ -152,18 +180,31 @@ func (runner *managedCampaignRunner) execute(
 	switch effect.kind {
 	case campaignEffectRegister:
 		registration := runner.runtime.registerCampaign(campaignProvenance{lineage: request.lineage})
+		runner.runtimeToken = registration.token
 
 		return runner.advance(campaignRegisteredEvent{registration: registration})
 	case campaignEffectEstablishSnapshot:
-		runner.snapshot = runner.repository.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
+		snapshot, cause := managedBoundary(func() TemporaryRepository {
+			return runner.repository.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
+		})
+		if cause != "" {
+			return runner.advance(campaignPreparationFailedEvent{stage: campaignPreparingSnapshot, cause: cause})
+		}
+		runner.snapshot = snapshot
 
 		return runner.advance(snapshotEstablishedEvent{snapshot: snapshotIdentity(runner.snapshot.Root())})
 	case campaignEffectDiscoverCatalogue:
 		return runner.discover(effect, request)
 	case campaignEffectMaterializeWorkspace:
-		workspace := runner.snapshot.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
-		if mutation := runner.mutations[effect.mutant]; mutation != nil {
-			mutation.WriteTo(workspace)
+		workspace, cause := managedBoundary(func() TemporaryRepository {
+			materialized := runner.snapshot.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
+			if mutation := runner.mutations[effect.mutant]; mutation != nil {
+				mutation.WriteTo(materialized)
+			}
+			return materialized
+		})
+		if cause != "" {
+			return runner.advance(workspaceMaterializationFailedEvent{attempt: effect.attempt, cause: cause})
 		}
 		runner.workspaces[workspace.Root()] = workspace
 
@@ -171,12 +212,13 @@ func (runner *managedCampaignRunner) execute(
 			attempt: effect.attempt, workspace: workspace.Root(), snapshot: effect.snapshot,
 		})
 	case campaignEffectRequestAdmission:
-		await := runner.runtime.requestAdmission(effect.request)
+		await := runner.runtime.requestAdmission(runtimeAdmissionRequest(effect.request))
+		runner.rememberAuthority(await.request)
 		if await.decision != admissionAccepted {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
-				result: admissionResult{
-					decision: await.decision, request: await.request, fatalEpoch: await.fatal,
+				result: campaignAdmissionResult{
+					decision: await.decision, request: campaignAdmissionFact(await.request), fatalEpoch: await.fatal,
 				},
 				cause: "managed admission rejected",
 			})
@@ -185,55 +227,67 @@ func (runner *managedCampaignRunner) execute(
 		if !ok {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
-				result: admissionResult{
-					decision: admissionRejectedClosed, request: await.request,
+				result: campaignAdmissionResult{
+					decision: admissionRejectedClosed, request: campaignAdmissionFact(await.request),
 					fatalEpoch: runner.runtime.fatalEpoch(),
 				},
 				cause: "process runtime entered a fatal epoch while admission waited",
 			})
 		}
+		runner.rememberAuthority(grant)
 
-		return runner.advance(admissionGrantedEvent{attempt: effect.attempt, grant: grant})
+		return runner.advance(admissionGrantedEvent{attempt: effect.attempt, grant: campaignAdmissionFact(grant)})
 	case campaignEffectRequestStartCommitment:
-		prepared := runner.runtime.startCommitted(effect.grant, startInstallation{
-			grant: effect.grant, cell: &pendingStartCell{},
+		grant := runner.authority(effect.grant)
+		prepared := runner.runtime.startCommitted(grant, startInstallation{
+			grant: grant, cell: &pendingStartCell{},
 		})
 		if prepared.result.decision == startCommittedAccepted {
 			runner.starts[prepared.result.generation] = prepared.start
 		}
 
 		return runner.advance(startCommittedEvent{
-			attempt: effect.attempt, grant: effect.grant, result: prepared.result,
+			attempt: effect.attempt, grant: effect.grant, result: campaignStartEvidence(prepared.result),
 		})
 	case campaignEffectLaunchAttempt:
+		runner.attemptFacts[effect.generation] = managedAttemptFacts{
+			kind: effect.attemptKind, completesConfirmationQueue: effect.completesConfirmationQueue,
+		}
 		return runner.launch(effect, request)
 	case campaignEffectStopAttempt:
 		runner.attempts.stop(effect.generation)
 
 		return nil
 	case campaignEffectCancelAdmission:
-		cancelled := runner.runtime.cancelAdmission(effect.request)
+		cancelled := runner.runtime.cancelAdmission(runner.authority(effect.request))
 
 		return runner.advance(admissionCancelledEvent{
-			attempt: effect.attempt, request: effect.request, result: cancelled,
+			attempt: effect.attempt, request: effect.request, result: campaignAdmissionEvidence(cancelled),
 		})
 	case campaignEffectReturnAdmission:
-		returned := runner.runtime.acknowledgeGrantReturn(effect.grant)
+		returned := runner.runtime.acknowledgeGrantReturn(runner.authority(effect.grant))
 
-		return runner.advance(grantReturnAcknowledgedEvent{grant: effect.grant, result: returned})
+		return runner.advance(grantReturnAcknowledgedEvent{
+			grant: effect.grant, result: campaignAdmissionEvidence(returned),
+		})
 	case campaignEffectReleaseWorkspace:
 		workspace := runner.workspaces[effect.workspace]
 		if workspace == nil {
 			panic("managed workspace is missing")
 		}
-		workspace.Remove()
+		_, cause := managedBoundary(func() struct{} { workspace.Remove(); return struct{}{} })
 		delete(runner.workspaces, effect.workspace)
+		if cause != "" {
+			return runner.advance(resourceSettlementFailedEvent{
+				kind: campaignResourceWorkspace, identity: effect.workspace, cause: cause,
+			})
+		}
 
 		return runner.advance(resourceSettledEvent{
 			kind: campaignResourceWorkspace, identity: effect.workspace,
 		})
 	case campaignEffectBindConfirmationBarrier:
-		await := runner.runtime.sealAndBindConfirmationBarrier(effect.binding)
+		await := runner.runtime.sealAndBindConfirmationBarrier(runtimeBarrierBinding(effect.binding))
 		if await.decision != barrierBound {
 			panic("managed confirmation barrier was rejected")
 		}
@@ -241,15 +295,22 @@ func (runner *managedCampaignRunner) execute(
 		if !ok {
 			panic("managed confirmation barrier closed without a grant")
 		}
+		runner.rememberAuthority(await.request)
+		runner.rememberAuthority(grant)
 
 		return runner.advance(confirmationBarrierBoundEvent{
 			attempt: effect.attempt,
-			result: barrierResult{
+			result: campaignBarrierEvidence(barrierResult{
 				decision: await.decision, request: await.request, deliveries: []admissionGrant{grant},
-			},
+			}),
 		})
 	case campaignEffectReleaseSnapshot:
-		runner.snapshot.Remove()
+		_, cause := managedBoundary(func() struct{} { runner.snapshot.Remove(); return struct{}{} })
+		if cause != "" {
+			return runner.advance(resourceSettlementFailedEvent{
+				kind: campaignResourceSnapshot, identity: string(effect.snapshot), cause: cause,
+			})
+		}
 
 		return runner.advance(resourceSettledEvent{
 			kind: campaignResourceSnapshot, identity: string(effect.snapshot),
@@ -257,31 +318,47 @@ func (runner *managedCampaignRunner) execute(
 	case campaignEffectProposeTerminal:
 		committed := terminalResult{}
 		if effect.fatalEpoch != 0 {
-			committed = runner.runtime.authorizeForcedAbort(runner.state.runtimeToken, effect.fatalEpoch)
+			committed = runner.runtime.authorizeForcedAbort(runner.runtimeToken, effect.fatalEpoch)
 		} else {
-			committed = runner.runtime.commitTerminal(runner.state.runtimeToken)
+			committed = runner.runtime.commitTerminal(runner.runtimeToken)
 		}
 
-		return runner.advance(terminalCommittedEvent{result: committed})
+		return runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(committed)})
 	default:
 		panic("managed campaign effect is not implemented")
 	}
+}
+
+func managedBoundary[T any](operation func() T) (value T, cause string) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			cause = fmt.Sprint(recovered)
+		}
+	}()
+
+	return operation(), ""
 }
 
 func (runner *managedCampaignRunner) discover(
 	effect campaignEffect,
 	request managedCampaignRequest,
 ) []campaignEffect {
-	mutants := make([]mutantIdentity, 0)
-	for _, source := range runner.snapshot.ListGoSourceFiles() {
-		for _, virus := range request.viruses {
-			for _, infected := range source.Incubate(virus) {
-				mutation := infected.Mutate()
-				identity := mutantIdentity("mutant-" + strconv.Itoa(len(mutants)+1))
-				mutants = append(mutants, identity)
-				runner.mutations[identity] = mutation
+	mutants, cause := managedBoundary(func() []mutantIdentity {
+		discovered := make([]mutantIdentity, 0)
+		for _, source := range runner.snapshot.ListGoSourceFiles() {
+			for _, virus := range request.viruses {
+				for _, infected := range source.Incubate(virus) {
+					mutation := infected.Mutate()
+					identity := mutantIdentity("mutant-" + strconv.Itoa(len(discovered)+1))
+					discovered = append(discovered, identity)
+					runner.mutations[identity] = mutation
+				}
 			}
 		}
+		return discovered
+	})
+	if cause != "" {
+		return runner.advance(campaignPreparationFailedEvent{stage: campaignPreparingCatalogue, cause: cause})
 	}
 
 	return runner.advance(catalogueDiscoveredEvent{snapshot: effect.snapshot, mutants: mutants})
@@ -310,10 +387,11 @@ func (runner *managedCampaignRunner) launch(
 	}
 	effects := runner.advance(attemptLaunchEvent{
 		attempt: effect.attempt, generation: effect.generation,
-		result: observation, receipt: launched.receipt,
+		result: observation, receipt: campaignReceipt(launched.receipt),
 	})
 	owned := runner.owned[effect.generation]
 	if owned == nil {
+		delete(runner.attemptFacts, effect.generation)
 		return effects
 	}
 	runner.pending++
@@ -332,11 +410,14 @@ func (runner *managedCampaignRunner) settle(
 	request managedCampaignRequest,
 ) []campaignEffect {
 	delete(runner.owned, terminal.generation)
-	attemptAt := runner.state.attemptIndex(terminal.attempt)
+	facts, known := runner.attemptFacts[terminal.generation]
+	delete(runner.attemptFacts, terminal.generation)
+	if !known {
+		panic("managed terminal attempt facts are missing")
+	}
 	observed := terminal.observed
-	if attemptAt >= 0 && runner.state.attempts[attemptAt].kind == campaignAttemptConfirmation &&
-		len(runner.state.drain.provisionals) == 1 {
-		completed := runner.runtime.completeConfirmationQueue(runner.state.runtimeToken)
+	if facts.completesConfirmationQueue {
+		completed := runner.runtime.completeConfirmationQueue(runner.runtimeToken)
 		if completed.decision != confirmationQueueCompleted {
 			panic("managed confirmation queue completion was rejected")
 		}
@@ -344,9 +425,9 @@ func (runner *managedCampaignRunner) settle(
 	}
 	terminalEvent := attemptTerminalEvent{
 		attempt: terminal.attempt, generation: terminal.generation,
-		terminal: observed.terminal, receipt: observed.receipt,
+		terminal: observed.terminal, receipt: campaignReceipt(observed.receipt),
 	}
-	if attemptAt >= 0 && runner.state.attempts[attemptAt].kind == campaignAttemptBaseline {
+	if facts.kind == campaignAttemptBaseline {
 		data := terminalExecutionData(observed.terminal)
 		peers := request.peers
 		if request.profile == SerialProfile {

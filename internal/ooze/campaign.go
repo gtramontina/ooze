@@ -74,19 +74,21 @@ const (
 )
 
 type campaignEffect struct {
-	id         campaignEffectID
-	kind       campaignEffectKind
-	snapshot   snapshotIdentity
-	workspace  string
-	attempt    attemptIdentity
-	mutant     mutantIdentity
-	request    admissionRequest
-	grant      admissionGrant
-	generation attemptGeneration
-	binding    barrierBinding
-	terminal   campaignTerminalCandidate
-	fatalEpoch fatalEpochID
-	spec       Spec
+	id                         campaignEffectID
+	kind                       campaignEffectKind
+	snapshot                   snapshotIdentity
+	workspace                  string
+	attempt                    attemptIdentity
+	mutant                     mutantIdentity
+	request                    campaignAdmission
+	grant                      campaignAdmission
+	generation                 attemptGeneration
+	binding                    campaignBarrierBinding
+	terminal                   campaignTerminalCandidate
+	fatalEpoch                 fatalEpochID
+	attemptKind                campaignAttemptKind
+	completesConfirmationQueue bool
+	spec                       Spec
 }
 
 type campaignTraceRecord struct {
@@ -118,7 +120,7 @@ type campaignState struct {
 	mutationDeadline         time.Duration
 	drain                    campaignDrainIntent
 	confirmationBarrierBound bool
-	pendingGrantReturns      []admissionGrant
+	pendingGrantReturns      []campaignAdmission
 }
 
 type campaignDrainIntentKind uint8
@@ -163,8 +165,8 @@ type campaignAttempt struct {
 	mutant     mutantIdentity
 	stage      campaignAttemptStage
 	workspace  string
-	request    admissionRequest
-	grant      admissionGrant
+	request    campaignAdmission
+	grant      campaignAdmission
 	generation attemptGeneration
 }
 
@@ -202,6 +204,76 @@ type campaignPreparationFailedEvent struct {
 	stage campaignPreparationStage
 	cause string
 }
+
+// Campaign facts deliberately copy runtime authority into a reducer-owned
+// vocabulary. Channels, broker custody, and settlement objects never enter the
+// pure campaign state machine.
+type campaignAdmission struct {
+	campaign campaignToken
+	attempt  attemptIdentity
+	class    admissionClass
+	profile  Profile
+	deadline time.Duration
+}
+
+type campaignAdmissionResult struct {
+	decision   admissionDecision
+	request    campaignAdmission
+	fatalEpoch fatalEpochID
+}
+
+type campaignStartResult struct {
+	decision                                         startCommittedDecision
+	generation                                       attemptGeneration
+	settlementAcknowledged, runtimeClosureInProgress bool
+}
+
+type campaignRuntimeReceipt struct {
+	generation                                      attemptGeneration
+	cancelledWaiting, compensatedGrants             []campaignAdmission
+	settlementAcknowledged, confirmationProvisional bool
+	pressureTransitioned, runtimeClosureInProgress  bool
+	confirmationObserved, confirmationQueueDrained  bool
+	fatalEpoch                                      fatalEpochID
+}
+
+type campaignBarrierBinding struct {
+	campaign campaignToken
+	attempt  attemptIdentity
+	profile  Profile
+	deadline time.Duration
+}
+
+type campaignBarrierResult struct {
+	decision   barrierDecision
+	request    campaignAdmission
+	deliveries []campaignAdmission
+}
+
+type campaignTerminalResult struct {
+	decision terminalDecision
+	epoch    fatalEpochID
+}
+
+type campaignRuntimeClosure struct {
+	epoch                               fatalEpochID
+	cancelledWaiting, compensatedGrants []campaignAdmission
+	residual                            []campaignResidualCustody
+}
+
+type campaignResidualCustody struct {
+	generation  attemptGeneration
+	stage       admissionStage
+	transferred bool
+}
+
+type campaignEmergencySettlement struct {
+	epoch        fatalEpochID
+	owner        campaignToken
+	acknowledged []attemptGeneration
+	residual     []campaignResidualCustody
+}
+
 type resourceSettledEvent struct {
 	kind     campaignResourceKind
 	identity string
@@ -211,7 +283,7 @@ type resourceSettlementFailedEvent struct {
 	identity string
 	cause    string
 }
-type terminalCommittedEvent struct{ result terminalResult }
+type terminalCommittedEvent struct{ result campaignTerminalResult }
 type workspaceMaterializedEvent struct {
 	attempt   attemptIdentity
 	workspace string
@@ -223,28 +295,28 @@ type workspaceMaterializationFailedEvent struct {
 }
 type admissionGrantedEvent struct {
 	attempt attemptIdentity
-	grant   admissionGrant
+	grant   campaignAdmission
 }
 type admissionCancelledEvent struct {
 	attempt attemptIdentity
-	request admissionRequestToken
-	result  admissionResult
+	request campaignAdmission
+	result  campaignAdmissionResult
 }
 type admissionRejectedEvent struct {
 	attempt attemptIdentity
-	result  admissionResult
+	result  campaignAdmissionResult
 	cause   string
 }
 type startCommittedEvent struct {
 	attempt attemptIdentity
-	grant   admissionGrant
-	result  startCommittedResult
+	grant   campaignAdmission
+	result  campaignStartResult
 }
 type attemptLaunchEvent struct {
 	attempt    attemptIdentity
 	generation attemptGeneration
 	result     campaignLaunchObservation
-	receipt    observationResult
+	receipt    campaignRuntimeReceipt
 }
 type campaignLaunchKind uint8
 
@@ -263,23 +335,23 @@ type attemptTerminalEvent struct {
 	attempt                  attemptIdentity
 	generation               attemptGeneration
 	terminal                 Terminal
-	receipt                  observationResult
+	receipt                  campaignRuntimeReceipt
 	resolvedMutationDeadline mutationDeadlineResolution
 }
 type mutationDeadlineResolution struct{ duration time.Duration }
 type confirmationBarrierBoundEvent struct {
 	attempt attemptIdentity
-	result  barrierResult
+	result  campaignBarrierResult
 }
 type grantReturnAcknowledgedEvent struct {
-	grant  admissionGrant
-	result admissionResult
+	grant  campaignAdmission
+	result campaignAdmissionResult
 }
 type runtimeEmergencySettledEvent struct {
 	epoch      fatalEpochID
-	settlement emergencySettlement
+	settlement campaignEmergencySettlement
 }
-type runtimeEmergencyStartedEvent struct{ closure runtimeClosure }
+type runtimeEmergencyStartedEvent struct{ closure campaignRuntimeClosure }
 
 func (campaignRegisteredEvent) campaignEventPayload()             {}
 func (snapshotEstablishedEvent) campaignEventPayload()            {}
@@ -347,8 +419,8 @@ type abortedOutcome struct{ cause string }
 type campaignFailure interface{ campaignFailure() }
 
 type nonEmptyResidualCustody struct {
-	head residualCustody
-	tail []residualCustody
+	head campaignResidualCustody
+	tail []campaignResidualCustody
 }
 
 type cleanupUnconfirmedFault struct{ residual nonEmptyResidualCustody }
@@ -801,7 +873,7 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 		state.obligations = append(state.obligations, campaignObligation{
 			kind: campaignResourceAdmission, identity: string(event.attempt), attempt: event.attempt,
 		})
-		binding := barrierBinding{
+		binding := campaignBarrierBinding{
 			campaign: state.runtimeToken, attempt: event.attempt,
 			profile: state.definition.profile, deadline: deadline,
 		}
@@ -811,7 +883,7 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 			mutant: state.attempts[attemptAt].mutant, binding: binding,
 		})
 	}
-	request := admissionRequest{
+	request := campaignAdmission{
 		campaign: state.runtimeToken, attempt: event.attempt, class: class,
 		profile: state.definition.profile, deadline: deadline,
 	}
@@ -940,7 +1012,7 @@ func (state campaignState) onAdmissionRejected(
 	return state.emitAll(effects)
 }
 
-func (state campaignState) acceptGrant(attemptAt int, grant admissionGrant) (campaignState, []campaignEffect) {
+func (state campaignState) acceptGrant(attemptAt int, grant campaignAdmission) (campaignState, []campaignEffect) {
 	state.attempts[attemptAt].stage = campaignAttemptGranted
 	state.attempts[attemptAt].grant = grant
 	state.obligations = append(state.obligations, campaignObligation{
@@ -1039,6 +1111,9 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 	return state.emit(campaignEffect{
 		kind: campaignEffectLaunchAttempt, attempt: event.attempt, generation: event.result.generation,
 		snapshot: state.snapshot, workspace: state.attempts[attemptAt].workspace,
+		attemptKind: state.attempts[attemptAt].kind,
+		completesConfirmationQueue: state.attempts[attemptAt].kind == campaignAttemptConfirmation &&
+			len(state.drain.provisionals) == 1,
 		spec: spec,
 	})
 }
@@ -1292,10 +1367,11 @@ func (state campaignState) onRuntimeEmergencySettled(
 	event runtimeEmergencySettledEvent,
 ) (campaignState, []campaignEffect) {
 	if state.drain.kind != campaignDrainRuntimeEmergency || event.epoch == 0 ||
-		event.epoch != state.drain.epoch || event.settlement.epoch != event.epoch {
+		event.epoch != state.drain.epoch || event.settlement.epoch != event.epoch ||
+		(len(event.settlement.residual) == 0) != (event.settlement.owner.id == 0) {
 		campaignInvariant("settle runtime emergency", "emergency settlement is stale or wrong")
 	}
-	if len(event.settlement.residual) == 0 {
+	if len(event.settlement.residual) == 0 || event.settlement.owner != state.runtimeToken {
 		effects := make([]campaignEffect, 0, len(event.settlement.acknowledged))
 		for _, generation := range event.settlement.acknowledged {
 			attemptAt := slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool {
@@ -1303,7 +1379,7 @@ func (state campaignState) onRuntimeEmergencySettled(
 					(attempt.stage == campaignAttemptProspective || attempt.stage == campaignAttemptOwned)
 			})
 			if attemptAt < 0 {
-				campaignInvariant("settle runtime emergency", "acknowledged generation is unknown")
+				continue
 			}
 			state.removeAttemptObligation(campaignResourceAdmission, state.attempts[attemptAt].identity, generation)
 			state.removeAttemptObligation(campaignResourceExecutionDomain, state.attempts[attemptAt].identity, generation)
@@ -1339,6 +1415,10 @@ func (state campaignState) proposeTerminal() (campaignState, []campaignEffect) {
 	return state.emit(effect)
 }
 
+func (state campaignState) runtimeEmergencySettlementRequest() (fatalEpochID, bool) {
+	return state.drain.epoch, state.drain.kind == campaignDrainRuntimeEmergency
+}
+
 func (state campaignState) onRuntimeEmergencyStarted(
 	event runtimeEmergencyStartedEvent,
 ) (campaignState, []campaignEffect) {
@@ -1352,14 +1432,14 @@ func (state campaignState) onRuntimeEmergencyStarted(
 	}
 	state.candidate = campaignTerminalCandidate{}
 
-	return state.applyRuntimeCompensations(observationResult{
+	return state.applyRuntimeCompensations(campaignRuntimeReceipt{
 		cancelledWaiting:  event.closure.cancelledWaiting,
 		compensatedGrants: event.closure.compensatedGrants,
 	})
 }
 
 func (state campaignState) applyRuntimeCompensations(
-	receipt observationResult,
+	receipt campaignRuntimeReceipt,
 ) (campaignState, []campaignEffect) {
 	effects := make([]campaignEffect, 0, len(receipt.cancelledWaiting)+len(receipt.compensatedGrants))
 	for _, request := range receipt.cancelledWaiting {
@@ -1401,7 +1481,7 @@ func (state campaignState) applyRuntimeCompensations(
 	return state, effects
 }
 
-func sameAdmissionRequest(left, right admissionRequestToken) bool {
+func sameAdmissionRequest(left, right campaignAdmission) bool {
 	return left.campaign == right.campaign && left.attempt == right.attempt && left.class == right.class &&
 		left.profile == right.profile && left.deadline == right.deadline
 }
@@ -1635,7 +1715,7 @@ func campaignTerminalSummary(terminal Terminal) string {
 	}
 }
 
-func campaignReceiptSummary(receipt observationResult) string {
+func campaignReceiptSummary(receipt campaignRuntimeReceipt) string {
 	summary := "generation=" + strconv.FormatUint(uint64(receipt.generation), 10) +
 		"/settled=" + strconv.FormatBool(receipt.settlementAcknowledged) +
 		"/provisional=" + strconv.FormatBool(receipt.confirmationProvisional) +
@@ -1644,7 +1724,7 @@ func campaignReceiptSummary(receipt observationResult) string {
 		"/confirmation-queue-drained=" + strconv.FormatBool(receipt.confirmationQueueDrained) +
 		"/closing=" + strconv.FormatBool(receipt.runtimeClosureInProgress) +
 		"/epoch=" + strconv.FormatUint(uint64(receipt.fatalEpoch), 10)
-	appendRequests := func(label string, requests []admissionRequestToken) {
+	appendRequests := func(label string, requests []campaignAdmission) {
 		summary += "/" + label + "="
 		for index, request := range requests {
 			if index != 0 {
@@ -1653,7 +1733,6 @@ func campaignReceiptSummary(receipt observationResult) string {
 			summary += string(request.attempt) + ":" + strconv.Itoa(int(request.class))
 		}
 	}
-	appendRequests("deliveries", receipt.deliveries)
 	appendRequests("cancelled", receipt.cancelledWaiting)
 	appendRequests("compensated", receipt.compensatedGrants)
 

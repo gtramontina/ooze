@@ -47,10 +47,24 @@ type ManagedMutationResult struct {
 	Outcome ManagedMutationOutcome
 }
 
+type ManagedResidualStage uint8
+
+const (
+	ManagedResidualProspective ManagedResidualStage = iota + 1
+	ManagedResidualOwned
+)
+
+type ManagedResidualCustody struct {
+	Generation  uint64
+	Stage       ManagedResidualStage
+	Transferred bool
+}
+
 type ManagedReleaseResult struct {
 	Outcome   ManagedOutcome
 	Mutations []ManagedMutationResult
 	Cause     string
+	Residual  []ManagedResidualCustody
 }
 
 type managedProcess struct {
@@ -116,8 +130,26 @@ func presentManagedRelease(result managedCampaignResult) ManagedReleaseResult {
 	case abortedOutcome:
 		return ManagedReleaseResult{Outcome: ManagedAborted, Cause: outcome.cause}
 	case nil:
-		if _, fatal := result.failure.(cleanupUnconfirmedFault); fatal {
-			return ManagedReleaseResult{Outcome: ManagedCleanupUnconfirmed, Cause: "cleanup unconfirmed"}
+		if fatal, ok := result.failure.(cleanupUnconfirmedFault); ok {
+			residual := append([]campaignResidualCustody{fatal.residual.head}, fatal.residual.tail...)
+			presented := make([]ManagedResidualCustody, len(residual))
+			for index, custody := range residual {
+				var stage ManagedResidualStage
+				switch custody.stage {
+				case admissionProspective:
+					stage = ManagedResidualProspective
+				case admissionOwned:
+					stage = ManagedResidualOwned
+				default:
+					panic("managed residual stage is invalid")
+				}
+				presented[index] = ManagedResidualCustody{
+					Generation: uint64(custody.generation), Stage: stage, Transferred: custody.transferred,
+				}
+			}
+			return ManagedReleaseResult{
+				Outcome: ManagedCleanupUnconfirmed, Cause: "cleanup unconfirmed", Residual: presented,
+			}
 		}
 	}
 	panic("managed campaign produced no terminal result")

@@ -151,7 +151,7 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 	return underRuntimeLock(s, "cancel admission", func() (result admissionResult) {
 		if token.delivery == nil {
 			for _, admission := range s.core.admissions {
-				if sameAdmissionRequest(admission.grant, token) {
+				if sameAdmissionRequest(campaignAdmissionFact(admission.grant), campaignAdmissionFact(token)) {
 					token = admission.grant
 
 					break
