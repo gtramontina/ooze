@@ -75,25 +75,25 @@ type simulationRecord struct {
 	runtimeOperationName  string
 	runtimeProvenance     campaignProvenance
 	runtimeCampaign       campaignToken
-	runtimeAdmission      admissionRequest
-	runtimeAdmissionToken admissionRequestToken
-	runtimeGrant          admissionGrant
-	runtimeBarrier        barrierBinding
-	runtimeSweep          emergencySweep
+	runtimeAdmission      simulationAdmission
+	runtimeAdmissionToken simulationAdmission
+	runtimeGrant          simulationAdmission
+	runtimeBarrier        simulationBarrierBinding
+	runtimeSweep          simulationEmergencySweepRecord
 	runtimeFatalCause     runtimeFatalCause
 	runtimeFatalEpoch     fatalEpochID
 	runtimeGeneration     attemptGeneration
-	runtimeObservation    attemptObservation
-	runtimeState          processRuntime
+	runtimeObservation    simulationRuntimeObservation
+	runtimeState          simulationRuntimeState
 	runtimeRegistration   campaignRegistration
-	runtimeAdmissionOut   admissionResult
-	runtimeBarrierOut     barrierResult
-	runtimeQueueOut       confirmationQueueResult
+	runtimeAdmissionOut   simulationAdmissionResult
+	runtimeBarrierOut     simulationBarrierResult
+	runtimeQueueOut       simulationConfirmationQueueResult
 	runtimeStart          startCommittedResult
-	runtimeObservationOut observationResult
-	runtimeEmergencyOut   emergencySettlement
+	runtimeObservationOut simulationObservationResult
+	runtimeEmergencyOut   simulationEmergencySettlement
 	runtimeTerminal       terminalResult
-	runtimeClosure        runtimeClosure
+	runtimeClosure        simulationRuntimeClosure
 
 	supervisorEvent   simulationSupervisorEvent
 	supervisorState   simulationSupervisorState
@@ -149,7 +149,7 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 		sequence: 1, authority: simulationRuntimeAuthority,
 		runtimeOperation:  simulationRegisterCampaign,
 		runtimeProvenance: campaignProvenance{lineage: definition.campaign.lineage},
-		runtimeState:      runtime, runtimeRegistration: registration,
+		runtimeState:      simulationTraceRuntimeState(runtime), runtimeRegistration: registration,
 	})
 
 	payload := campaignEventPayload(campaignRegisteredEvent{registration: registration})
@@ -197,7 +197,7 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
 		runtimeOperation: simulationCommitTerminal, runtimeCampaign: registration.token,
-		runtimeState: runtime, runtimeTerminal: terminal,
+		runtimeState: simulationTraceRuntimeState(runtime), runtimeTerminal: terminal,
 	})
 	payload = terminalCommittedEvent{
 		result: campaignTerminalEvidence(terminal),
@@ -238,8 +238,9 @@ func simulationExploreAttempt(
 	runtime, admission = runtime.requestAdmission(request)
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
-		runtimeOperation: simulationRequestAdmission, runtimeAdmission: request,
-		runtimeState: runtime, runtimeAdmissionOut: admission,
+		runtimeOperation: simulationRequestAdmission, runtimeAdmission: simulationTraceAdmission(request),
+		runtimeState:        simulationTraceRuntimeState(runtime),
+		runtimeAdmissionOut: simulationTraceAdmissionResult(admission),
 	})
 	payload = admissionGrantedEvent{
 		attempt: requestEffect.attempt, grant: campaignAdmissionFact(admission.deliveries[0]),
@@ -253,8 +254,8 @@ func simulationExploreAttempt(
 	runtime, started = runtime.startCommitted(grant)
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
-		runtimeOperation: simulationStartCommitted, runtimeGrant: grant,
-		runtimeState: runtime, runtimeStart: started,
+		runtimeOperation: simulationStartCommitted, runtimeGrant: simulationTraceAdmission(grant),
+		runtimeState: simulationTraceRuntimeState(runtime), runtimeStart: started,
 	})
 	payload = startCommittedEvent{
 		attempt: startEffect.attempt, grant: startEffect.grant, result: campaignStartEvidence(started),
@@ -297,7 +298,9 @@ func simulationExploreAttempt(
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
 		runtimeOperation: simulationObserveAttempt, runtimeGeneration: launchEffect.generation,
-		runtimeObservation: launchOwned{}, runtimeState: runtime, runtimeObservationOut: launchReceipt,
+		runtimeObservation:    simulationTraceObservation(launchOwned{}),
+		runtimeState:          simulationTraceRuntimeState(runtime),
+		runtimeObservationOut: simulationTraceObservationResult(launchReceipt),
 	})
 	payload = attemptLaunchEvent{
 		attempt: launchEffect.attempt, generation: launchEffect.generation,
@@ -371,7 +374,9 @@ func simulationExploreAttempt(
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
 		runtimeOperation: simulationObserveAttempt, runtimeGeneration: launchEffect.generation,
-		runtimeObservation: observation, runtimeState: runtime, runtimeObservationOut: terminalReceipt,
+		runtimeObservation:    simulationTraceObservation(observation),
+		runtimeState:          simulationTraceRuntimeState(runtime),
+		runtimeObservationOut: simulationTraceObservationResult(terminalReceipt),
 	})
 	runtimeCompletion := supervisorRuntimeCompletion{
 		generation: launchEffect.generation,
@@ -418,7 +423,7 @@ func simulationExploreAttempt(
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
 		runtimeOperation: simulationCommitTerminal, runtimeCampaign: registration.token,
-		runtimeState: runtime, runtimeTerminal: committed,
+		runtimeState: simulationTraceRuntimeState(runtime), runtimeTerminal: committed,
 	})
 	payload = terminalCommittedEvent{result: campaignTerminalEvidence(committed)}
 	campaign, effects = simulationAdvanceCampaign(campaign, payload)
@@ -538,12 +543,16 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				effects = nil
 			case simulationRequestAdmission:
 				if len(effects) != 1 || effects[0].kind != campaignEffectRequestAdmission ||
-					!reflect.DeepEqual(runtimeAdmissionRequest(effects[0].request), record.runtimeAdmission) {
+					!reflect.DeepEqual(
+						simulationTraceAdmission(runtimeAdmissionRequest(effects[0].request)),
+						record.runtimeAdmission,
+					) {
 					return simulationReplayFailure(trace, "admission request is not enabled at record %d", index)
 				}
 				var admission admissionResult
-				runtime, admission = runtime.requestAdmission(record.runtimeAdmission)
-				if !reflect.DeepEqual(admission, record.runtimeAdmissionOut) || len(admission.deliveries) != 1 {
+				runtime, admission = runtime.requestAdmission(record.runtimeAdmission.production())
+				if !reflect.DeepEqual(simulationTraceAdmissionResult(admission), record.runtimeAdmissionOut) ||
+					len(admission.deliveries) != 1 {
 					return simulationReplayFailure(trace, "admission decision diverged at record %d", index)
 				}
 				delivered = admissionGrantedEvent{
@@ -552,11 +561,14 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				effects = nil
 			case simulationStartCommitted:
 				if len(effects) != 1 || effects[0].kind != campaignEffectRequestStartCommitment ||
-					!reflect.DeepEqual(record.runtimeGrant, runtimeAdmissionRequest(effects[0].grant)) {
+					!reflect.DeepEqual(
+						record.runtimeGrant,
+						simulationTraceAdmission(runtimeAdmissionRequest(effects[0].grant)),
+					) {
 					return simulationReplayFailure(trace, "start commitment is not enabled at record %d", index)
 				}
 				var started startCommittedResult
-				runtime, started = runtime.startCommitted(record.runtimeGrant)
+				runtime, started = runtime.startCommitted(record.runtimeGrant.production())
 				if !reflect.DeepEqual(started, record.runtimeStart) {
 					return simulationReplayFailure(trace, "start commitment diverged at record %d", index)
 				}
@@ -566,12 +578,14 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				effects = nil
 			case simulationObserveAttempt:
 				var observation observationResult
-				runtime, observation = runtime.observeAttempt(record.runtimeGeneration, record.runtimeObservation)
-				if !reflect.DeepEqual(observation, record.runtimeObservationOut) {
+				runtime, observation = runtime.observeAttempt(
+					record.runtimeGeneration, record.runtimeObservation.production(),
+				)
+				if !reflect.DeepEqual(simulationTraceObservationResult(observation), record.runtimeObservationOut) {
 					return simulationReplayFailure(trace, "attempt observation diverged at record %d", index)
 				}
-				switch record.runtimeObservation.(type) {
-				case launchOwned:
+				switch record.runtimeObservation.kind {
+				case simulationLaunchOwnedObservation:
 					delivered = attemptLaunchEvent{
 						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
 						result:  campaignLaunchObservation{kind: campaignLaunchOwned},
@@ -594,7 +608,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 			default:
 				return simulationReplayFailure(trace, "runtime operation is invalid at record %d", index)
 			}
-			if !reflect.DeepEqual(runtime, record.runtimeState) {
+			if !reflect.DeepEqual(simulationTraceRuntimeState(runtime), record.runtimeState) {
 				return simulationReplayFailure(trace, "runtime state diverged at record %d", index)
 			}
 		case simulationCampaignAuthority:

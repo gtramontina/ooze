@@ -446,12 +446,8 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 	if projection.runtime.admissions[0].grant.delivery != nil {
 		t.Fatal("quiescent projection leaked a delivery channel")
 	}
-	for _, record := range trace.records {
-		for _, admission := range record.runtimeState.admissions {
-			if admission.grant.delivery != nil {
-				t.Fatalf("runtime trace leaked a delivery channel: %#v", record)
-			}
-		}
+	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
+		t.Fatalf("runtime trace leaked a delivery capability at %s", path)
 	}
 }
 
@@ -501,7 +497,7 @@ func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 	}
 }
 
-func TestSimulationTraceCarriesNoProductionTimeValues(t *testing.T) {
+func TestSimulationTraceCarriesNoProductionCapabilities(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
 			identity: "campaign-integer-time", lineage: 82, command: []string{"test"},
@@ -513,7 +509,7 @@ func TestSimulationTraceCarriesNoProductionTimeValues(t *testing.T) {
 		t.Fatalf("exploration failed: %v", explored.failure)
 	}
 	if path := simulationForbiddenValuePath(reflect.ValueOf(explored.trace), "trace"); path != "" {
-		t.Fatalf("canonical trace retains a production time value at %s", path)
+		t.Fatalf("canonical trace retains a production capability at %s", path)
 	}
 }
 
@@ -525,6 +521,8 @@ func simulationForbiddenValuePath(value reflect.Value, path string) string {
 		return path
 	}
 	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return path
 	case reflect.Interface, reflect.Pointer:
 		if !value.IsNil() {
 			return simulationForbiddenValuePath(value.Elem(), path)

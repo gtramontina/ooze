@@ -135,8 +135,9 @@ func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissi
 
 	return underRuntimeLock(s, "request admission", func(result admissionAwait, _ processRuntime) simulationRecord {
 		return simulationRecord{
-			runtimeOperation: simulationRequestAdmission, runtimeAdmission: request,
-			runtimeAdmissionOut: recorded,
+			runtimeOperation:    simulationRequestAdmission,
+			runtimeAdmission:    simulationTraceAdmission(request),
+			runtimeAdmissionOut: simulationTraceAdmissionResult(recorded),
 		}
 	}, func() admissionAwait {
 		delivery := make(chan admissionGrant, 1)
@@ -173,8 +174,9 @@ func (s *processRuntimeShell) emergencySettlementRequired() bool {
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
 	return underRuntimeLock(s, "cancel admission", func(result admissionResult, _ processRuntime) simulationRecord {
 		return simulationRecord{
-			runtimeOperation: simulationCancelAdmission, runtimeAdmissionToken: token,
-			runtimeAdmissionOut: result,
+			runtimeOperation:      simulationCancelAdmission,
+			runtimeAdmissionToken: simulationTraceAdmission(token),
+			runtimeAdmissionOut:   simulationTraceAdmissionResult(result),
 		}
 	}, func() (result admissionResult) {
 		if token.delivery == nil {
@@ -209,8 +211,9 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 
 	return underRuntimeLock(s, "bind confirmation barrier", func(result barrierAwait, _ processRuntime) simulationRecord {
 		return simulationRecord{
-			runtimeOperation: simulationBindConfirmationBarrier, runtimeBarrier: binding,
-			runtimeBarrierOut: recorded,
+			runtimeOperation:  simulationBindConfirmationBarrier,
+			runtimeBarrier:    simulationTraceBarrierBinding(binding),
+			runtimeBarrierOut: simulationTraceBarrierResult(recorded),
 		}
 	}, func() barrierAwait {
 		delivery := make(chan admissionGrant, 1)
@@ -232,7 +235,7 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 	return underRuntimeLock(s, "complete confirmation queue", func(result confirmationQueueResult, _ processRuntime) simulationRecord {
 		return simulationRecord{
 			runtimeOperation: simulationCompleteConfirmationQueue, runtimeCampaign: campaign,
-			runtimeQueueOut: result,
+			runtimeQueueOut: simulationTraceConfirmationQueueResult(result),
 		}
 	}, func() (result confirmationQueueResult) {
 		s.core, result = s.core.completeConfirmationQueue(campaign)
@@ -247,7 +250,7 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation startInstallation) preparedStart {
 	return underRuntimeLock(s, startInstallerOperation, func(result preparedStart, _ processRuntime) simulationRecord {
 		return simulationRecord{
-			runtimeOperation: simulationStartCommitted, runtimeGrant: grant,
+			runtimeOperation: simulationStartCommitted, runtimeGrant: simulationTraceAdmission(grant),
 			runtimeStart: result.result,
 		}
 	}, func() preparedStart {
@@ -293,7 +296,8 @@ func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, obser
 	return underRuntimeLock(s, observeOperation, func(result observationResult, _ processRuntime) simulationRecord {
 		return simulationRecord{
 			runtimeOperation: simulationObserveAttempt, runtimeGeneration: generation,
-			runtimeObservation: observed, runtimeObservationOut: result,
+			runtimeObservation:    simulationTraceObservation(observed),
+			runtimeObservationOut: simulationTraceObservationResult(result),
 		}
 	}, func() (result observationResult) {
 		s.core, result = s.core.observeAttempt(generation, observed)
@@ -330,7 +334,8 @@ func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch
 func (s *processRuntimeShell) closeRuntime(cause runtimeFatalCause) runtimeClosure {
 	return underRuntimeLock(s, "close runtime", func(result runtimeClosure, _ processRuntime) simulationRecord {
 		return simulationRecord{
-			runtimeOperation: simulationCloseRuntime, runtimeFatalCause: cause, runtimeClosure: result,
+			runtimeOperation: simulationCloseRuntime, runtimeFatalCause: cause,
+			runtimeClosure: simulationTraceRuntimeClosure(result),
 		}
 	}, func() runtimeClosure { return s.closeCore(cause) })
 }
@@ -436,11 +441,11 @@ func simulationRuntimeRecord[I, O any](
 		record.runtimeProvenance = any(input).(campaignProvenance)
 		record.runtimeRegistration = any(result).(campaignRegistration)
 	case simulationAcknowledgeGrantReturn:
-		record.runtimeGrant = any(input).(admissionGrant)
-		record.runtimeAdmissionOut = any(result).(admissionResult)
+		record.runtimeGrant = simulationTraceAdmission(any(input).(admissionGrant))
+		record.runtimeAdmissionOut = simulationTraceAdmissionResult(any(result).(admissionResult))
 	case simulationSettleEmergency:
-		record.runtimeSweep = any(input).(emergencySweep)
-		record.runtimeEmergencyOut = any(result).(emergencySettlement)
+		record.runtimeSweep = simulationTraceEmergencySweep(any(input).(emergencySweep))
+		record.runtimeEmergencyOut = simulationTraceEmergencySettlement(any(result).(emergencySettlement))
 	case simulationCommitTerminal:
 		record.runtimeCampaign = any(input).(campaignToken)
 		record.runtimeTerminal = any(result).(terminalResult)
