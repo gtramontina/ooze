@@ -530,19 +530,28 @@ func TestDarwinCapturedIdentityControlDoesNotDependOnGroupDelivery(t *testing.T)
 	first := darwinProcessIdentity{pid: 41, startSec: 7, startUsec: 11}
 	second := darwinProcessIdentity{pid: 42, startSec: 8, startUsec: 12}
 	captured := map[darwinProcessIdentity]struct{}{first: {}, second: {}}
-	for _, groupErr := range []error{nil, syscall.EPERM, syscall.ESRCH} {
-		controlled := make(map[darwinProcessIdentity]struct{})
-		err := signalDarwinCapturedIdentities(
-			captured, 41, syscall.SIGSTOP,
-			func(int, syscall.Signal) error { return groupErr },
-			func(identity darwinProcessIdentity, _ syscall.Signal) error {
-				controlled[identity] = struct{}{}
+	for _, test := range []struct {
+		name     string
+		groupErr error
+	}{
+		{"group_signal_succeeds", nil},
+		{"group_signal_permission_denied", syscall.EPERM},
+		{"group_signal_process_missing", syscall.ESRCH},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controlled := make(map[darwinProcessIdentity]struct{})
+			err := signalDarwinCapturedIdentities(
+				captured, 41, syscall.SIGSTOP,
+				func(int, syscall.Signal) error { return test.groupErr },
+				func(identity darwinProcessIdentity, _ syscall.Signal) error {
+					controlled[identity] = struct{}{}
 
-				return nil
-			},
-		)
-		require.NoError(t, err, "group error %v: exact control = %v, want success", groupErr, err)
-		assert.Equal(t, len(captured), len(controlled), "group error %v: controlled identities = %#v, want %#v", groupErr, controlled, captured)
+					return nil
+				},
+			)
+			require.NoError(t, err, "group error %v: exact control = %v, want success", test.groupErr, err)
+			assert.Equal(t, len(captured), len(controlled), "group error %v: controlled identities = %#v, want %#v", test.groupErr, controlled, captured)
+		})
 	}
 }
 

@@ -2368,34 +2368,42 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 21},
 		action: supervisorAction{kind: supervisorLaunchNative, generation: generation, token: 21},
 	}
-	tests := []simulationEngine{
-		{pending: []simulationEngineMove{launch, stop}},
+	tests := []struct {
+		name   string
+		engine simulationEngine
+	}{
+		{"campaign_launch_pending", simulationEngine{pending: []simulationEngineMove{launch, stop}}},
 		{
-			supervisor: supervisorState{attempts: []supervisorAttemptState{{
-				generation: generation, phase: supervisorLaunchEstablishing,
-			}}},
-			pending: []simulationEngineMove{launchAction, stop},
+			"supervisor_launch_action_pending",
+			simulationEngine{
+				supervisor: supervisorState{attempts: []supervisorAttemptState{{
+					generation: generation, phase: supervisorLaunchEstablishing,
+				}}},
+				pending: []simulationEngineMove{launchAction, stop},
+			},
 		},
 	}
-	for _, engine := range tests {
-		moves := engine.enabledMoves()
-		assert.NotEqual(t, 0, len(moves), "attempt ownership made no progress")
-		for _, move := range moves {
-			assert.NotEqual(t, campaignEffectStopAttempt, move.effect.kind, "enabled stop before supervisor ownership: %#v", moves)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			moves := test.engine.enabledMoves()
+			assert.NotEqual(t, 0, len(moves), "attempt ownership made no progress")
+			for _, move := range moves {
+				assert.NotEqual(t, campaignEffectStopAttempt, move.effect.kind, "enabled stop before supervisor ownership: %#v", moves)
+			}
+		})
+	}
+	t.Run("ownership_acquired", func(t *testing.T) {
+		completed := simulationEngine{
+			launches: map[attemptGeneration]campaignEffect{generation: launch.effect},
+			pending:  []simulationEngineMove{stop},
 		}
-	}
-	completed := simulationEngine{
-		launches: map[attemptGeneration]campaignEffect{generation: launch.effect},
-		pending:  []simulationEngineMove{stop},
-	}
-	moves := completed.enabledMoves()
-	require.EqualValues(t, 1, len(moves), "completed generation retained disabled stop: %#v", moves)
-	assert.Equal(t, campaignEffectStopAttempt, moves[0].effect.kind, "completed generation retained disabled stop: %#v", moves)
-	assert.True(t, completed.consume(moves[0]), "completed generation stop was not pending")
-	{
+		moves := completed.enabledMoves()
+		require.EqualValues(t, 1, len(moves), "completed generation retained disabled stop: %#v", moves)
+		assert.Equal(t, campaignEffectStopAttempt, moves[0].effect.kind, "completed generation retained disabled stop: %#v", moves)
+		assert.True(t, completed.consume(moves[0]), "completed generation stop was not pending")
 		err := completed.apply(moves[0])
 		assert.NoError(t, err, "completed generation stop=%v, want no-op", err)
-	}
+	})
 }
 
 func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {

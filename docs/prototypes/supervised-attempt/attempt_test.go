@@ -235,30 +235,60 @@ func TestInvalidLaunchAndStopInputCannotReachNativeWork(t *testing.T) {
 
 func TestLaunchClassificationUsesTheExactReleaseStage(t *testing.T) {
 	type tuple struct {
+		name      string
 		platform  launchPlatform
 		operation launchOperation
 		code      launchCode
 	}
 	eligible := make([]tuple, 0, 37)
+	platformName := map[launchPlatform]string{
+		platformLinux:   "linux",
+		platformDarwin:  "darwin",
+		platformWindows: "windows",
+	}
+	operationName := map[launchOperation]string{
+		acquireInternalDescriptor:   "acquire_internal_descriptor",
+		startLauncher:               "start_launcher",
+		createExitTracker:           "create_exit_tracker",
+		registerExitTracker:         "register_exit_tracker",
+		execTarget:                  "exec_target",
+		configureWindowsContainment: "configure_windows_containment",
+	}
+	codeName := map[launchCode]string{
+		codeEAGAIN:               "eagain",
+		codeENOMEM:               "enomem",
+		codeEMFILE:               "emfile",
+		codeENFILE:               "enfile",
+		codeWinTooManyOpenFiles:  "too_many_open_files",
+		codeWinNotEnoughMemory:   "not_enough_memory",
+		codeWinOutOfMemory:       "out_of_memory",
+		codeWinNoProcessSlots:    "no_process_slots",
+		codeWinNoSystemResources: "no_system_resources",
+		codeWinCommitmentLimit:   "commitment_limit",
+	}
+	addEligible := func(platform launchPlatform, operation launchOperation, code launchCode) {
+		eligible = append(eligible, tuple{
+			name:     platformName[platform] + "_" + operationName[operation] + "_" + codeName[code],
+			platform: platform, operation: operation, code: code,
+		})
+	}
 	unixFour := []launchCode{codeEAGAIN, codeENOMEM, codeEMFILE, codeENFILE}
 	for _, code := range []launchCode{codeEMFILE, codeENFILE} {
-		eligible = append(eligible, tuple{platformLinux, acquireInternalDescriptor, code})
-		eligible = append(eligible, tuple{platformDarwin, acquireInternalDescriptor, code})
+		addEligible(platformLinux, acquireInternalDescriptor, code)
+		addEligible(platformDarwin, acquireInternalDescriptor, code)
 	}
 	for _, code := range unixFour {
-		eligible = append(eligible, tuple{platformLinux, startLauncher, code})
-		eligible = append(eligible, tuple{platformDarwin, startLauncher, code})
+		addEligible(platformLinux, startLauncher, code)
+		addEligible(platformDarwin, startLauncher, code)
 	}
 	for _, code := range []launchCode{codeEAGAIN, codeENOMEM} {
-		eligible = append(eligible, tuple{platformLinux, execTarget, code})
+		addEligible(platformLinux, execTarget, code)
 	}
 	for _, code := range []launchCode{codeENOMEM, codeEMFILE, codeENFILE} {
-		eligible = append(eligible, tuple{platformDarwin, createExitTracker, code})
+		addEligible(platformDarwin, createExitTracker, code)
 	}
-	eligible = append(eligible,
-		tuple{platformDarwin, registerExitTracker, codeENOMEM},
-		tuple{platformDarwin, execTarget, codeENOMEM},
-	)
+	addEligible(platformDarwin, registerExitTracker, codeENOMEM)
+	addEligible(platformDarwin, execTarget, codeENOMEM)
 	windowsCodes := []launchCode{
 		codeWinTooManyOpenFiles, codeWinNotEnoughMemory, codeWinOutOfMemory,
 		codeWinNoProcessSlots, codeWinNoSystemResources, codeWinCommitmentLimit,
@@ -267,65 +297,74 @@ func TestLaunchClassificationUsesTheExactReleaseStage(t *testing.T) {
 		acquireInternalDescriptor, startLauncher, configureWindowsContainment,
 	} {
 		for _, code := range windowsCodes {
-			eligible = append(eligible, tuple{platformWindows, operation, code})
+			addEligible(platformWindows, operation, code)
 		}
 	}
 	for _, test := range eligible {
-		got := classifyLaunch(nativeLaunchFailure{
-			platform: test.platform, operation: test.operation, stage: preRelease,
-			code: test.code, closureProven: true, duration: time.Millisecond, err: errors.New("launch"),
-		}).(NotReleased)
-		assert.Equal(t, LaunchResourceExhausted, got.Kind, "%#v: want resource exhaustion, got %#v", test, got)
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyLaunch(nativeLaunchFailure{
+				platform: test.platform, operation: test.operation, stage: preRelease,
+				code: test.code, closureProven: true, duration: time.Millisecond, err: errors.New("launch"),
+			}).(NotReleased)
+			assert.Equal(t, LaunchResourceExhausted, got.Kind, "%#v: want resource exhaustion, got %#v", test, got)
+		})
 	}
-	ordinary := classifyLaunch(nativeLaunchFailure{
-		platform: platformLinux, operation: startLauncher, stage: preRelease,
-		code: codeOther, closureProven: true, err: errors.New("ENOENT"),
-	}).(NotReleased)
-	assert.Equal(t, LaunchFailed, ordinary.Kind, "ordinary launch became %#v", ordinary)
-	unclosed := classifyLaunch(nativeLaunchFailure{
-		platform: platformWindows, operation: configureWindowsContainment, stage: preRelease,
-		code: codeWinNoSystemResources, closureProven: false, err: errors.New("cleanup unconfirmed"),
+	t.Run("ordinary_pre_release_failure", func(t *testing.T) {
+		ordinary := classifyLaunch(nativeLaunchFailure{
+			platform: platformLinux, operation: startLauncher, stage: preRelease,
+			code: codeOther, closureProven: true, err: errors.New("ENOENT"),
+		}).(NotReleased)
+		assert.Equal(t, LaunchFailed, ordinary.Kind, "ordinary launch became %#v", ordinary)
 	})
-	{
+	t.Run("pre_release_without_closure_is_unconfirmed", func(t *testing.T) {
+		unclosed := classifyLaunch(nativeLaunchFailure{
+			platform: platformWindows, operation: configureWindowsContainment, stage: preRelease,
+			code: codeWinNoSystemResources, closureProven: false, err: errors.New("cleanup unconfirmed"),
+		})
 		_, ok := unclosed.(LaunchUnconfirmed)
 		require.True(t, ok, "unclosed suspended process became NotReleased: %#v", unclosed)
-	}
-	unknown := classifyLaunch(nativeLaunchFailure{
-		platform: platformDarwin, operation: startLauncher, stage: unknownRelease,
-		code: codeEMFILE, err: errors.New("unknown"),
 	})
-	{
+	t.Run("unknown_release_is_unconfirmed", func(t *testing.T) {
+		unknown := classifyLaunch(nativeLaunchFailure{
+			platform: platformDarwin, operation: startLauncher, stage: unknownRelease,
+			code: codeEMFILE, err: errors.New("unknown"),
+		})
 		_, ok := unknown.(LaunchUnconfirmed)
 		require.True(t, ok, "unknown release manufactured closure: %#v", unknown)
-	}
-	owned := &OwnedAttempt{wait: func(seal func()) Terminal {
-		seal()
-		return Infrastructure{Cause: ReleaseFailed}
-	}}
-	post := classifyLaunch(nativeLaunchFailure{
-		platform: platformDarwin, operation: startLauncher, stage: postRelease,
-		code: codeEMFILE, err: errors.New("after release"), owned: owned,
-	}).(Owned)
-	assert.Equal(t, owned, post.Attempt, "post-release target was not adopted: %#v", post)
+	})
+	t.Run("post_release_is_owned", func(t *testing.T) {
+		owned := &OwnedAttempt{wait: func(seal func()) Terminal {
+			seal()
+			return Infrastructure{Cause: ReleaseFailed}
+		}}
+		post := classifyLaunch(nativeLaunchFailure{
+			platform: platformDarwin, operation: startLauncher, stage: postRelease,
+			code: codeEMFILE, err: errors.New("after release"), owned: owned,
+		}).(Owned)
+		assert.Equal(t, owned, post.Attempt, "post-release target was not adopted: %#v", post)
+	})
 }
 
 func TestLaunchResourceWhitelistsAreFalseNegativeBiasedAndOperationScoped(t *testing.T) {
 	for _, test := range []struct {
+		name      string
 		platform  launchPlatform
 		operation launchOperation
 		code      launchCode
 	}{
-		{platformDarwin, registerExitTracker, codeEMFILE},
-		{platformDarwin, execTarget, codeEAGAIN},
-		{platformWindows, execTarget, codeWinNoSystemResources},
-		{platformWindows, startLauncher, codeOther},
-		{platformLinux, acquireInternalDescriptor, codeENOMEM},
+		{"darwin_register_tracker_emfile", platformDarwin, registerExitTracker, codeEMFILE},
+		{"darwin_exec_eagain", platformDarwin, execTarget, codeEAGAIN},
+		{"windows_exec_no_system_resources", platformWindows, execTarget, codeWinNoSystemResources},
+		{"windows_launcher_other", platformWindows, startLauncher, codeOther},
+		{"linux_internal_descriptor_enomem", platformLinux, acquireInternalDescriptor, codeENOMEM},
 	} {
-		got := classifyLaunch(nativeLaunchFailure{
-			platform: test.platform, operation: test.operation, stage: preRelease,
-			code: test.code, closureProven: true, err: errors.New("excluded"),
-		}).(NotReleased)
-		assert.Equal(t, LaunchFailed, got.Kind, "excluded tuple became resource pressure: %#v -> %#v", test, got)
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyLaunch(nativeLaunchFailure{
+				platform: test.platform, operation: test.operation, stage: preRelease,
+				code: test.code, closureProven: true, err: errors.New("excluded"),
+			}).(NotReleased)
+			assert.Equal(t, LaunchFailed, got.Kind, "excluded tuple became resource pressure: %#v -> %#v", test, got)
+		})
 	}
 }
 
@@ -574,17 +613,21 @@ func TestPriorityAppliesOnlyAtTheExactSameInstant(t *testing.T) {
 
 func TestSameInstantFactsAreCanonicalOrRejected(t *testing.T) {
 	tie := at(time.Second)
-	fuse, _ := chooseIntent(automaticSpec(), 1, t0, tie, []terminalFact{
-		{generation: 1, kind: factFuse, at: tie, rootLive: true, live: 70},
-		{generation: 1, kind: factFuse, at: tie, rootLive: true, live: 90},
+	t.Run("fuse_uses_highest_live_count", func(t *testing.T) {
+		fuse, _ := chooseIntent(automaticSpec(), 1, t0, tie, []terminalFact{
+			{generation: 1, kind: factFuse, at: tie, rootLive: true, live: 70},
+			{generation: 1, kind: factFuse, at: tie, rootLive: true, live: 90},
+		})
+		assert.EqualValues(t, 90, fuse.live, "same-time fuse depends on delivery order: %#v", fuse)
 	})
-	assert.EqualValues(t, 90, fuse.live, "same-time fuse depends on delivery order: %#v", fuse)
-	stop, _ := chooseIntent(automaticSpec(), 1, t0, tie, []terminalFact{
-		{generation: 1, kind: factStop, at: tie, stop: StopRequest{At: tie, DrainBy: at(9 * time.Second)}},
-		{generation: 1, kind: factStop, at: tie, stop: StopRequest{At: tie, DrainBy: at(8 * time.Second)}},
+	t.Run("stop_uses_earliest_drain_bound", func(t *testing.T) {
+		stop, _ := chooseIntent(automaticSpec(), 1, t0, tie, []terminalFact{
+			{generation: 1, kind: factStop, at: tie, stop: StopRequest{At: tie, DrainBy: at(9 * time.Second)}},
+			{generation: 1, kind: factStop, at: tie, stop: StopRequest{At: tie, DrainBy: at(8 * time.Second)}},
+		})
+		assert.True(t, stop.stop.DrainBy.Equal(at(8*time.Second)), "same-time stop depends on delivery order: %#v", stop)
 	})
-	assert.True(t, stop.stop.DrainBy.Equal(at(8*time.Second)), "same-time stop depends on delivery order: %#v", stop)
-	t.Run("duplicate exit", func(t *testing.T) {
+	t.Run("duplicate_exit_is_rejected", func(t *testing.T) {
 		defer expectPanic(t)
 		chooseIntent(automaticSpec(), 1, t0, tie, []terminalFact{
 			{generation: 1, kind: factExit, at: tie},
@@ -594,35 +637,42 @@ func TestSameInstantFactsAreCanonicalOrRejected(t *testing.T) {
 }
 
 func TestFuseSampleRequiresMatchingGenerationAndLiveRoot(t *testing.T) {
-	for _, fact := range []terminalFact{
-		{generation: 2, kind: factFuse, at: at(time.Second), rootLive: true, live: 100},
-		{generation: 1, kind: factFuse, at: at(time.Second), rootLive: false, live: 100},
-		{generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 64},
+	for _, test := range []struct {
+		name string
+		fact terminalFact
+	}{
+		{"stale_generation", terminalFact{generation: 2, kind: factFuse, at: at(time.Second), rootLive: true, live: 100}},
+		{"root_not_live", terminalFact{generation: 1, kind: factFuse, at: at(time.Second), rootLive: false, live: 100}},
+		{"below_threshold", terminalFact{generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 64}},
 	} {
-		{
-			got, ok := chooseIntent(automaticSpec(), 1, t0, at(2*time.Second), []terminalFact{fact})
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := chooseIntent(automaticSpec(), 1, t0, at(2*time.Second), []terminalFact{test.fact})
 			assert.False(t, ok, "invalid fuse selected: %#v", got)
-		}
+		})
 	}
-	{
+	t.Run("serial_profile_ignores_fuse", func(t *testing.T) {
 		got, ok := chooseIntent(serialSpec(), 1, t0, at(2*time.Second), []terminalFact{{
 			generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 100,
 		}})
 		assert.False(t, ok, "serial attempt selected fuse: %#v", got)
-	}
+	})
 }
 
 func TestDeadlineIsInclusiveAndAnObservableExitWinsTheTie(t *testing.T) {
-	{
+	t.Run("before_deadline", func(t *testing.T) {
 		_, ok := chooseIntent(automaticSpec(), 1, t0, at(20*time.Second-time.Nanosecond), nil)
 		assert.False(t, ok, "deadline fired early")
-	}
-	got, _ := chooseIntent(automaticSpec(), 1, t0, at(20*time.Second), nil)
-	assert.Equal(t, factDeadline, got.kind, "deadline missed equality: %#v", got)
-	got, _ = chooseIntent(automaticSpec(), 1, t0, at(20*time.Second), []terminalFact{{
-		generation: 1, kind: factExit, at: at(20 * time.Second), exit: ExitStatus{Code: 1},
-	}})
-	assert.Equal(t, factExit, got.kind, "observable exit lost tie: %#v", got)
+	})
+	t.Run("at_deadline", func(t *testing.T) {
+		got, _ := chooseIntent(automaticSpec(), 1, t0, at(20*time.Second), nil)
+		assert.Equal(t, factDeadline, got.kind, "deadline missed equality: %#v", got)
+	})
+	t.Run("observable_exit_wins_equality", func(t *testing.T) {
+		got, _ := chooseIntent(automaticSpec(), 1, t0, at(20*time.Second), []terminalFact{{
+			generation: 1, kind: factExit, at: at(20 * time.Second), exit: ExitStatus{Code: 1},
+		}})
+		assert.Equal(t, factExit, got.kind, "observable exit lost tie: %#v", got)
+	})
 }
 
 func TestNativeFactUsesItsPostOperationInstant(t *testing.T) {
@@ -802,22 +852,24 @@ func TestAuthoritativeDrainProducesTheLatchedTerminalVariant(t *testing.T) {
 }
 
 func TestTripCountExposureIsVariantSpecific(t *testing.T) {
-	runaway := finishDrained(t, automaticSpec(), []terminalFact{{
-		generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 70,
-	}}, "").(Tripped)
-	assert.EqualValues(t, 70, runaway.Trip.(FuseTrip).Live, "runaway=%#v", runaway)
-	autoTimeout := finishDrained(t, automaticSpec(), []terminalFact{{
-		generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 7,
-	}}, "").(Tripped)
-	{
+	t.Run("fuse_trip_exposes_live", func(t *testing.T) {
+		runaway := finishDrained(t, automaticSpec(), []terminalFact{{
+			generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 70,
+		}}, "").(Tripped)
+		assert.EqualValues(t, 70, runaway.Trip.(FuseTrip).Live, "runaway=%#v", runaway)
+	})
+	t.Run("automatic_deadline_exposes_peak", func(t *testing.T) {
+		autoTimeout := finishDrained(t, automaticSpec(), []terminalFact{{
+			generation: 1, kind: factFuse, at: at(time.Second), rootLive: true, live: 7,
+		}}, "").(Tripped)
 		peak := autoTimeout.Trip.(AutomaticDeadlineTrip).Peak
 		assert.True(t, peak.Present, "timeout=%#v", autoTimeout)
 		assert.EqualValues(t, 7, peak.Value, "timeout=%#v", autoTimeout)
-	}
-	{
+	})
+	t.Run("serial_deadline_has_no_count", func(t *testing.T) {
 		_, ok := finishDrained(t, serialSpec(), nil, "").(Tripped).Trip.(SerialDeadlineTrip)
 		require.True(t, ok, "serial timeout grew count evidence")
-	}
+	})
 }
 
 func TestTerminationControlFailureNeedsDrainageProofForInfrastructure(t *testing.T) {
@@ -1027,22 +1079,28 @@ func TestEmergencyResolutionMustBeStrictlyBeforeTheInclusiveBoundary(t *testing.
 		return ledger
 	}
 
-	before := newLedger().resolve(1, OwnedUndrained, request.DrainBy.Add(-time.Nanosecond))
-	_, result, ready := before.settle(request.DrainBy.Add(-time.Nanosecond))
-	{
+	t.Run("resolved_before_boundary", func(t *testing.T) {
+		before := newLedger().resolve(1, OwnedUndrained, request.DrainBy.Add(-time.Nanosecond))
+		_, result, ready := before.settle(request.DrainBy.Add(-time.Nanosecond))
 		_, ok := result.(SweepDrained)
 		require.True(t, ready, "timely resolution did not drain: ready=%v result=%#v", ready, result)
 		assert.True(t, ok, "timely resolution did not drain: ready=%v result=%#v", ready, result)
-	}
+	})
 
-	for _, when := range []time.Time{request.DrainBy, request.DrainBy.Add(time.Nanosecond)} {
-		late := newLedger().resolve(1, OwnedUndrained, when)
-		_, result, ready = late.settle(when)
-		{
+	for _, test := range []struct {
+		name string
+		when time.Time
+	}{
+		{"resolved_at_boundary_is_unconfirmed", request.DrainBy},
+		{"resolved_after_boundary_is_unconfirmed", request.DrainBy.Add(time.Nanosecond)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			late := newLedger().resolve(1, OwnedUndrained, test.when)
+			_, result, ready := late.settle(test.when)
 			_, ok := result.(SweepUnconfirmed)
-			assert.True(t, ready, "late resolution rewrote inclusive expiry at %s: %#v", when, result)
-			assert.True(t, ok, "late resolution rewrote inclusive expiry at %s: %#v", when, result)
-		}
+			assert.True(t, ready, "late resolution rewrote inclusive expiry at %s: %#v", test.when, result)
+			assert.True(t, ok, "late resolution rewrote inclusive expiry at %s: %#v", test.when, result)
+		})
 	}
 }
 

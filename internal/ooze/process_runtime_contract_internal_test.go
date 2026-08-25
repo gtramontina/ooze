@@ -1096,15 +1096,25 @@ func TestProcessRuntimeDrainUnconfirmedRemainsFatalClosingUntilSweep(t *testing.
 func TestProcessRuntimePrimaryGateAppliesToSharedAndSerialButNotConfirmation(t *testing.T) {
 	runtime := runtimeAtBoundConfirmation(t)
 	campaign := runtime.admissions[runtime.grantedConfirmationIndex()].grant.campaign
-	for _, class := range []admissionClass{sharedAdmission, serialPrimaryAdmission} {
-		_, result := runtime.requestAdmission(admissionRequest{campaign: campaign, attempt: "blocked", class: class})
-		assert.Equal(t, admissionRejectedGateClosed, result.decision, "class %v gate result=%#v", class, result)
+	for _, test := range []struct {
+		name  string
+		class admissionClass
+	}{
+		{"shared_primary_rejected", sharedAdmission},
+		{"serial_primary_rejected", serialPrimaryAdmission},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, result := runtime.requestAdmission(admissionRequest{campaign: campaign, attempt: "blocked", class: test.class})
+			assert.Equal(t, admissionRejectedGateClosed, result.decision, "class %v gate result=%#v", test.class, result)
+		})
 	}
-	_, result := runtime.requestAdmission(admissionRequest{
-		campaign: campaign, attempt: "follow-on", class: confirmationAdmission,
-		profile: AutomaticProfile, deadline: 31 * time.Second,
+	t.Run("confirmation_rejected_by_exclusive_cardinality", func(t *testing.T) {
+		_, result := runtime.requestAdmission(admissionRequest{
+			campaign: campaign, attempt: "follow-on", class: confirmationAdmission,
+			profile: AutomaticProfile, deadline: 31 * time.Second,
+		})
+		assert.Equal(t, admissionRejectedExclusiveOutstanding, result.decision, "confirmation cardinality result=%#v", result)
 	})
-	assert.Equal(t, admissionRejectedExclusiveOutstanding, result.decision, "confirmation cardinality result=%#v", result)
 }
 
 func TestProcessRuntimeAttemptIdentityCannotBeReusedWithAnotherReturnAddress(t *testing.T) {
@@ -1128,39 +1138,47 @@ func TestProcessRuntimeFatalCausesRetainEveryIngressInOrder(t *testing.T) {
 }
 
 func TestProcessRuntimeLaterAttemptFatalSeedsRetainGenerationProvenance(t *testing.T) {
-	for _, owned := range []bool{false, true} {
-		runtime := newProcessRuntime(2)
-		runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
-		generations := make([]attemptGeneration, 0, 2)
-		for _, attempt := range []attemptIdentity{"a", "b"} {
-			var requested admissionResult
-			runtime, requested = runtime.requestAdmission(admissionRequest{
-				campaign: campaign.token, attempt: attempt, class: sharedAdmission,
-			})
-			var started startCommittedResult
-			runtime, started = runtime.startCommitted(requested.deliveries[0])
-			generations = append(generations, started.generation)
-			if owned {
-				runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	for _, test := range []struct {
+		name  string
+		owned bool
+	}{
+		{"launch_unconfirmed_provenance", false},
+		{"drain_unconfirmed_provenance", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := newProcessRuntime(2)
+			runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
+			generations := make([]attemptGeneration, 0, 2)
+			for _, attempt := range []attemptIdentity{"a", "b"} {
+				var requested admissionResult
+				runtime, requested = runtime.requestAdmission(admissionRequest{
+					campaign: campaign.token, attempt: attempt, class: sharedAdmission,
+				})
+				var started startCommittedResult
+				runtime, started = runtime.startCommitted(requested.deliveries[0])
+				generations = append(generations, started.generation)
+				if test.owned {
+					runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+				}
 			}
-		}
-		kind := "launch unconfirmed"
-		for _, generation := range generations {
-			observation := attemptObservation(launchUnconfirmed{})
-			if owned {
-				kind = "drain unconfirmed"
-				observation = drainUnconfirmed{}
+			kind := "launch unconfirmed"
+			for _, generation := range generations {
+				observation := attemptObservation(launchUnconfirmed{})
+				if test.owned {
+					kind = "drain unconfirmed"
+					observation = drainUnconfirmed{}
+				}
+				runtime, _ = runtime.observeAttempt(generation, observation)
+				unchanged := runtime
+				assertInvariantViolation(t, func() { runtime.observeAttempt(generation, observation) })
+				assert.Equal(t, unchanged, runtime, "owned=%t duplicate seed changed state: %#v", test.owned, runtime)
 			}
-			runtime, _ = runtime.observeAttempt(generation, observation)
-			unchanged := runtime
-			assertInvariantViolation(t, func() { runtime.observeAttempt(generation, observation) })
-			assert.Equal(t, unchanged, runtime, "owned=%t duplicate seed changed state: %#v", owned, runtime)
-		}
-		want := []runtimeFatalCause{
-			runtimeFatalCause(fmt.Sprintf("%s generation=%d", kind, generations[0])),
-			runtimeFatalCause(fmt.Sprintf("%s generation=%d", kind, generations[1])),
-		}
-		assert.Equal(t, want, runtime.fatalCauses, "owned=%t fatal causes=%#v, want %#v", owned, runtime.fatalCauses, want)
+			want := []runtimeFatalCause{
+				runtimeFatalCause(fmt.Sprintf("%s generation=%d", kind, generations[0])),
+				runtimeFatalCause(fmt.Sprintf("%s generation=%d", kind, generations[1])),
+			}
+			assert.Equal(t, want, runtime.fatalCauses, "owned=%t fatal causes=%#v, want %#v", test.owned, runtime.fatalCauses, want)
+		})
 	}
 }
 

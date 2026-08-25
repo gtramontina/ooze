@@ -237,24 +237,31 @@ func TestPrimaryFuseTripIsDirectRunawayDespiteRecordedOverlap(t *testing.T) {
 func TestPrimaryUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
 	t.Parallel()
 
-	uncertain := []Terminal{
-		Stopped{},
-		Infrastructure{Cause: CensusFailed, Err: errors.New("census failed")},
+	uncertain := []struct {
+		name    string
+		primary Terminal
+	}{
+		{"stopped_aborts_mutation", Stopped{}},
+		{"infrastructure_aborts_mutation", Infrastructure{Cause: CensusFailed, Err: errors.New("census failed")}},
 	}
-	for _, primary := range uncertain {
-		disposition := ClassifyPrimaryMutation(primary)
-		aborted, ok := disposition.(MutationAborted)
-		require.True(t, ok, "uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
-		assert.Equal(t, primary, aborted.Primary, "uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
-		assert.Nil(t, aborted.Confirmation, "uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
+	for _, test := range uncertain {
+		t.Run(test.name, func(t *testing.T) {
+			disposition := ClassifyPrimaryMutation(test.primary)
+			aborted, ok := disposition.(MutationAborted)
+			require.True(t, ok, "uncertain %T disposition = %#v, want MutationAborted", test.primary, disposition)
+			assert.Equal(t, test.primary, aborted.Primary, "uncertain %T disposition = %#v, want MutationAborted", test.primary, disposition)
+			assert.Nil(t, aborted.Confirmation, "uncertain %T disposition = %#v, want MutationAborted", test.primary, disposition)
+		})
 	}
 
-	primary := DrainUnconfirmed{Residual: OwnedUndrained}
-	disposition := ClassifyPrimaryMutation(primary)
-	fatal, ok := disposition.(MutationFatalUncertainty)
-	require.True(t, ok, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
-	assert.Equal(t, primary, fatal.Primary, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
-	assert.Nil(t, fatal.Confirmation, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+	t.Run("drain_unconfirmed_is_fatal_uncertainty", func(t *testing.T) {
+		primary := DrainUnconfirmed{Residual: OwnedUndrained}
+		disposition := ClassifyPrimaryMutation(primary)
+		fatal, ok := disposition.(MutationFatalUncertainty)
+		require.True(t, ok, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+		assert.Equal(t, primary, fatal.Primary, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+		assert.Nil(t, fatal.Confirmation, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+	})
 }
 
 func TestOrdinaryConfirmationClassifiesOpaqueExitAndValidatesPressure(t *testing.T) {

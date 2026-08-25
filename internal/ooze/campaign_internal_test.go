@@ -249,20 +249,21 @@ func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 
 func TestCampaignBaselineAbortCauseDistinguishesCommandAndInfrastructureTerminals(t *testing.T) {
 	tests := []struct {
+		name     string
 		terminal Terminal
 		want     string
 	}{
-		{Settled{Exit: ExitStatus{Code: 1}}, "baseline did not pass"},
-		{Tripped{Trip: AutomaticDeadlineTrip{}}, "baseline command deadline fired"},
-		{Tripped{Trip: FuseTrip{Live: 65}}, "baseline process fuse fired"},
-		{Stopped{}, "baseline was stopped"},
-		{Infrastructure{Cause: CensusFailed}, "baseline infrastructure uncertainty"},
+		{"nonzero_exit", Settled{Exit: ExitStatus{Code: 1}}, "baseline did not pass"},
+		{"automatic_deadline", Tripped{Trip: AutomaticDeadlineTrip{}}, "baseline command deadline fired"},
+		{"process_fuse", Tripped{Trip: FuseTrip{Live: 65}}, "baseline process fuse fired"},
+		{"stopped", Stopped{}, "baseline was stopped"},
+		{"infrastructure_census", Infrastructure{Cause: CensusFailed}, "baseline infrastructure uncertainty"},
 	}
 	for _, test := range tests {
-		{
+		t.Run(test.name, func(t *testing.T) {
 			got := campaignBaselineAbortCause(test.terminal)
 			assert.Equal(t, test.want, got, "cause for %T = %q, want %q", test.terminal, got, test.want)
-		}
+		})
 	}
 }
 

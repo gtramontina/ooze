@@ -200,21 +200,36 @@ func TestWindowsLaunchResourceExhaustionRequiresExactEvidence(t *testing.T) {
 			return windowsLaunchResourceExhaustedCode(operation, code)
 		})
 	}
-	for _, operation := range []nativeLaunchOperation{
-		nativeLaunchInternalOutput,
-		nativeLaunchLauncherStart,
-		nativeLaunchContainmentPrepare,
+	for _, operation := range []struct {
+		name  string
+		value nativeLaunchOperation
+	}{
+		{"internal_output", nativeLaunchInternalOutput},
+		{"launcher_start", nativeLaunchLauncherStart},
+		{"containment_prepare", nativeLaunchContainmentPrepare},
 	} {
-		for _, code := range []uint32{4, 8, 14, 89, 1450, 1455} {
-			evidence := nativeLaunchFailureEvidence{
-				operation: operation, stage: nativeLaunchPreRelease,
-				err: errors.New("windows launch boundary"), closureProven: true,
+		t.Run(operation.name, func(t *testing.T) {
+			for _, code := range []struct {
+				name  string
+				value uint32
+			}{
+				{"too_many_open_files", 4},
+				{"not_enough_memory", 8},
+				{"out_of_memory", 14},
+				{"no_process_slots", 89},
+				{"no_system_resources", 1450},
+				{"commitment_limit", 1455},
+			} {
+				t.Run(code.name, func(t *testing.T) {
+					evidence := nativeLaunchFailureEvidence{
+						operation: operation.value, stage: nativeLaunchPreRelease,
+						err: errors.New("windows launch boundary"), closureProven: true,
+					}
+					got := classify(evidence, code.value)
+					assert.Equal(t, LaunchResourceExhausted, got, "operation %d code %d classification = %v, want resource exhausted", operation.value, code.value, got)
+				})
 			}
-			{
-				got := classify(evidence, code)
-				assert.Equal(t, LaunchResourceExhausted, got, "operation %d code %d classification = %v, want resource exhausted", operation, code, got)
-			}
-		}
+		})
 	}
 
 	for _, test := range []struct {

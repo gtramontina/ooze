@@ -244,57 +244,66 @@ func TestStartInstallationKeepsLaunchDormantUntilInstalledStart(t *testing.T) {
 }
 
 func TestStartInstallationRejectsCrossPairedGrantBeforeCellMutation(t *testing.T) {
-	for _, reverse := range []bool{false, true} {
-		shell := newProcessRuntimeShell(2)
-		campaignA := shell.registerCampaign(campaignProvenance{lineage: 11})
-		campaignB := shell.registerCampaign(campaignProvenance{lineage: 22})
-		requestA := shell.requestAdmission(admissionRequest{campaign: campaignA.token, attempt: "a", class: sharedAdmission})
-		requestB := shell.requestAdmission(admissionRequest{campaign: campaignB.token, attempt: "b", class: sharedAdmission})
-		grantA, grantB := <-requestA.delivery, <-requestB.delivery
-		cellA, cellB := pendingStartCell{}, pendingStartCell{}
-		emergency := shell.runtimeEmergency()
-		grant, installation := grantA, (startInstallation{grant: grantB, cell: &cellB})
-		if reverse {
-			grant, installation = grantB, startInstallation{grant: grantA, cell: &cellA}
-		}
-		assertInvariantViolation(t, func() { shell.startCommitted(grant, installation) })
-		snapshot := shell.snapshot()
-		indexA, indexB := snapshot.admissionIndex(grantA), snapshot.admissionIndex(grantB)
-		assert.EqualValues(t, 0, cellA.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.EqualValues(t, 0, cellB.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.EqualValues(t, 0, len(snapshot.residualCustody()), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.False(t, indexA < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.False(t, indexB < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.Equal(t, admissionGranted, snapshot.admissions[indexA].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.Equal(t, admissionGranted, snapshot.admissions[indexB].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexA].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexB].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		select {
-		case <-emergency:
-		default:
-			require.FailNow(t, "reverse=%t cross-pair did not broadcast fatal closure", reverse)
-		}
-		{
-			returned := shell.acknowledgeGrantReturn(grantA)
-			assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "reverse=%t grant A return=%#v", reverse, returned)
-		}
-		{
-			returned := shell.acknowledgeGrantReturn(grantB)
-			assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "reverse=%t grant B return=%#v", reverse, returned)
-		}
-		{
-			snapshot = shell.snapshot()
-			assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
-			assert.EqualValues(t, 0, len(snapshot.admissions), "reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
-		}
-		settled := shell.settleEmergency(emergencySweep{})
-		{
-			snapshot = shell.snapshot()
-			assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
-			assert.EqualValues(t, 0, len(settled.acknowledged), "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
-			assert.EqualValues(t, 0, len(settled.residual), "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
-		}
+	for _, test := range []struct {
+		name    string
+		reverse bool
+	}{
+		{"campaign_a_grant_with_campaign_b_installation", false},
+		{"campaign_b_grant_with_campaign_a_installation", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reverse := test.reverse
+			shell := newProcessRuntimeShell(2)
+			campaignA := shell.registerCampaign(campaignProvenance{lineage: 11})
+			campaignB := shell.registerCampaign(campaignProvenance{lineage: 22})
+			requestA := shell.requestAdmission(admissionRequest{campaign: campaignA.token, attempt: "a", class: sharedAdmission})
+			requestB := shell.requestAdmission(admissionRequest{campaign: campaignB.token, attempt: "b", class: sharedAdmission})
+			grantA, grantB := <-requestA.delivery, <-requestB.delivery
+			cellA, cellB := pendingStartCell{}, pendingStartCell{}
+			emergency := shell.runtimeEmergency()
+			grant, installation := grantA, (startInstallation{grant: grantB, cell: &cellB})
+			if reverse {
+				grant, installation = grantB, startInstallation{grant: grantA, cell: &cellA}
+			}
+			assertInvariantViolation(t, func() { shell.startCommitted(grant, installation) })
+			snapshot := shell.snapshot()
+			indexA, indexB := snapshot.admissionIndex(grantA), snapshot.admissionIndex(grantB)
+			assert.EqualValues(t, 0, cellA.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.EqualValues(t, 0, cellB.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.EqualValues(t, 0, len(snapshot.residualCustody()), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.False(t, indexA < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.False(t, indexB < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.Equal(t, admissionGranted, snapshot.admissions[indexA].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.Equal(t, admissionGranted, snapshot.admissions[indexB].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexA].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexB].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			select {
+			case <-emergency:
+			default:
+				require.FailNow(t, "reverse=%t cross-pair did not broadcast fatal closure", reverse)
+			}
+			{
+				returned := shell.acknowledgeGrantReturn(grantA)
+				assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "reverse=%t grant A return=%#v", reverse, returned)
+			}
+			{
+				returned := shell.acknowledgeGrantReturn(grantB)
+				assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "reverse=%t grant B return=%#v", reverse, returned)
+			}
+			{
+				snapshot = shell.snapshot()
+				assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
+				assert.EqualValues(t, 0, len(snapshot.admissions), "reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
+			}
+			settled := shell.settleEmergency(emergencySweep{})
+			{
+				snapshot = shell.snapshot()
+				assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
+				assert.EqualValues(t, 0, len(settled.acknowledged), "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
+				assert.EqualValues(t, 0, len(settled.residual), "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
+			}
+		})
 	}
 }
 
