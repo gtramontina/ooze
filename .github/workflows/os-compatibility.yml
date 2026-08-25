@@ -26,28 +26,41 @@ jobs:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
             acceptance-count: 6
+            toolchain: devbox
+            go-command: devbox run -- go
           - name: macOS 26
             runner: macos-26
             acceptance-count: 9
+            toolchain: devbox
+            go-command: devbox run -- go
           - name: Windows 2025
             runner: windows-2025
             acceptance-count: 8
+            toolchain: raw-go
+            go-command: go
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
       - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
           cache: true
 
       - name: Report Go version
-        run: go version
+        shell: bash
+        run: ${{ matrix.go-command }} version
 
       - name: Test
-        run: go test -race -cover -timeout=60s -shuffle=on ./...
+        shell: bash
+        run: ${{ matrix.go-command }} test -race -cover -timeout=60s -shuffle=on ./...
 
       - name: Native acceptance
         if: ${{ always() }}
@@ -55,9 +68,17 @@ jobs:
           ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
         shell: bash
         run: |
-          selected="$(go test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze | grep -c '^Test')"
+          selected="$(${{ matrix.go-command }} test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze | grep -c '^Test')"
           test "$selected" -eq "${{ matrix.acceptance-count }}"
-          go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze
+          set +e
+          ${{ matrix.go-command }} test -json -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze | tee native-acceptance.json
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          if grep -q '"Action":"skip"' native-acceptance.json; then
+            echo "unexpected skip in required native evidence" >&2
+            exit 1
+          fi
 
   stress:
     name: Stress / ${{ matrix.name }}
@@ -72,23 +93,44 @@ jobs:
         include:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
           - name: macOS 26
             runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
           - name: Windows 2025
             runner: windows-2025
+            toolchain: raw-go
+            go-command: go
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
       - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
           cache: true
 
       - name: Repeat bounded native acceptance
-        run: go test -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/ooze
+        shell: bash
+        run: |
+          set +e
+          ${{ matrix.go-command }} test -json -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze | tee native-stress.json
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          if grep -q '"Action":"skip"' native-stress.json; then
+            echo "unexpected skip in required native evidence" >&2
+            exit 1
+          fi
 
   required:
     name: OS Compatibility
