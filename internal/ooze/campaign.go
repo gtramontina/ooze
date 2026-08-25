@@ -1800,131 +1800,107 @@ func campaignEventSummary(event campaignEvent) string {
 	}
 	summary := "event=" + strconv.FormatUint(uint64(event.id), 10) + " kind=" + event.payload.campaignEventName()
 	switch observed := event.payload.(type) {
-	case snapshotEstablishedEvent:
-		summary += " snapshot=" + string(observed.snapshot)
 	case catalogueDiscoveredEvent:
-		summary += " snapshot=" + string(observed.snapshot) + " mutants=" + strconv.Itoa(len(observed.mutants))
+		summary += " mutants=" + strconv.Itoa(len(observed.mutants))
 	case campaignPreparationFailedEvent:
-		summary += " stage=" + strconv.Itoa(int(observed.stage)) + " cause=" + observed.cause
+		summary += " stage=" + campaignPreparationStageName(observed.stage)
 	case resourceSettledEvent:
-		summary += " resource=" + strconv.Itoa(int(observed.kind)) + ":" + observed.identity
+		summary += " resource=" + campaignResourceName(observed.kind)
 	case resourceSettlementFailedEvent:
-		summary += " resource=" + strconv.Itoa(int(observed.kind)) + ":" + observed.identity +
-			" cause=" + observed.cause
-	case terminalCommittedEvent:
-		summary += " decision=" + strconv.Itoa(int(observed.result.decision)) + " epoch=" +
-			strconv.FormatUint(uint64(observed.result.epoch), 10)
+		summary += " resource=" + campaignResourceName(observed.kind)
 	case workspaceMaterializedEvent:
-		summary += " attempt=" + string(observed.attempt) + " snapshot=" + string(observed.snapshot)
+		summary += " attempt=" + string(observed.attempt)
 	case workspaceMaterializationFailedEvent:
-		summary += " attempt=" + string(observed.attempt) + " cause=" + observed.cause
+		summary += " attempt=" + string(observed.attempt)
 	case admissionGrantedEvent:
 		summary += " attempt=" + string(observed.attempt)
 	case admissionCancelledEvent:
-		summary += " attempt=" + string(observed.attempt) + " decision=" +
-			strconv.Itoa(int(observed.result.decision))
+		summary += " attempt=" + string(observed.attempt)
 	case admissionRejectedEvent:
-		summary += " attempt=" + string(observed.attempt) + " decision=" +
-			strconv.Itoa(int(observed.result.decision)) + " cause=" + observed.cause
+		summary += " attempt=" + string(observed.attempt)
 	case startCommittedEvent:
-		summary += " attempt=" + string(observed.attempt) + " generation=" +
-			strconv.FormatUint(uint64(observed.result.generation), 10)
+		summary += " attempt=" + string(observed.attempt)
 	case attemptLaunchEvent:
-		summary += " attempt=" + string(observed.attempt) + " generation=" +
-			strconv.FormatUint(uint64(observed.generation), 10) + " receipt=" +
-			campaignReceiptSummary(observed.receipt)
+		summary += " attempt=" + string(observed.attempt)
 	case attemptTerminalEvent:
-		summary += " attempt=" + string(observed.attempt) + " generation=" +
-			strconv.FormatUint(uint64(observed.generation), 10) + " resolved-deadline=" +
-			observed.resolvedMutationDeadline.duration.String() + " terminal=" + campaignTerminalSummary(observed.terminal) +
-			" receipt=" + campaignReceiptSummary(observed.receipt)
+		summary += " attempt=" + string(observed.attempt) + " terminal=" + campaignTerminalName(observed.terminal) +
+			" confirmation-provisional=" + strconv.FormatBool(observed.receipt.confirmationProvisional)
 	case confirmationBarrierBoundEvent:
 		summary += " attempt=" + string(observed.attempt)
 	case grantReturnAcknowledgedEvent:
 		summary += " attempt=" + string(observed.grant.attempt)
 	case runtimeEmergencySettledEvent:
-		summary += " epoch=" + strconv.FormatUint(uint64(observed.epoch), 10) +
-			" residual=" + strconv.Itoa(len(observed.settlement.residual))
+		summary += " residual=" + strconv.Itoa(len(observed.settlement.residual))
 	case runtimeEmergencyStartedEvent:
-		summary += " epoch=" + strconv.FormatUint(uint64(observed.closure.epoch), 10) +
-			" residual=" + strconv.Itoa(len(observed.closure.residual))
+		summary += " residual=" + strconv.Itoa(len(observed.closure.residual))
 	}
 
 	return summary
 }
 
-func campaignTerminalSummary(terminal Terminal) string {
+func campaignTerminalName(terminal Terminal) string {
 	switch observed := terminal.(type) {
 	case Settled:
-		return "settled/code=" + strconv.Itoa(observed.Exit.Code) + "/signal=" +
-			strconv.Itoa(observed.Exit.Signal) + "/deadline=" + observed.Deadline.String()
+		return "settled/passed=" + strconv.FormatBool(observed.Exit.Passed())
 	case Tripped:
-		trip := "unknown"
-		switch evidence := observed.Trip.(type) {
+		switch trip := observed.Trip.(type) {
 		case FuseTrip:
-			trip = "fuse/live=" + strconv.Itoa(evidence.Live)
+			return "fuse/live=" + strconv.Itoa(trip.Live)
 		case AutomaticDeadlineTrip:
-			trip = "automatic-deadline/peak=" + strconv.Itoa(evidence.Peak.Value) +
-				"/present=" + strconv.FormatBool(evidence.Peak.Present)
+			if trip.Peak.Present {
+				return "automatic deadline/running-peak=" + strconv.Itoa(trip.Peak.Value)
+			}
+			return "automatic deadline/running-peak=absent"
 		case SerialDeadlineTrip:
-			trip = "serial-deadline"
+			return "serial deadline"
+		default:
+			return "unknown trip"
 		}
-
-		return "tripped/" + trip + "/deadline=" + observed.Deadline.String()
 	case Stopped:
-		return "stopped/deadline=" + observed.Deadline.String()
+		return "stopped"
 	case Infrastructure:
-		return "infrastructure/cause=" + strconv.Itoa(int(observed.Cause)) +
-			"/deadline=" + observed.Deadline.String()
+		return "infrastructure"
 	case DrainUnconfirmed:
-		return "drain-unconfirmed/residual=" + strconv.Itoa(int(observed.Residual)) +
-			"/deadline=" + observed.Deadline.String()
+		return "drain unconfirmed"
 	default:
-		return "nil-or-unknown"
+		return "unknown"
 	}
 }
 
-func campaignReceiptSummary(receipt campaignRuntimeReceipt) string {
-	summary := "generation=" + strconv.FormatUint(uint64(receipt.generation), 10) +
-		"/settled=" + strconv.FormatBool(receipt.settlementAcknowledged) +
-		"/provisional=" + strconv.FormatBool(receipt.confirmationProvisional) +
-		"/pressure=" + strconv.FormatBool(receipt.pressureTransitioned) +
-		"/confirmation-observed=" + strconv.FormatBool(receipt.confirmationObserved) +
-		"/confirmation-queue-drained=" + strconv.FormatBool(receipt.confirmationQueueDrained) +
-		"/closing=" + strconv.FormatBool(receipt.runtimeClosureInProgress) +
-		"/epoch=" + strconv.FormatUint(uint64(receipt.fatalEpoch), 10)
-	appendRequests := func(label string, requests []campaignAdmission) {
-		summary += "/" + label + "="
-		for index, request := range requests {
-			if index != 0 {
-				summary += ","
-			}
-			summary += string(request.attempt) + ":" + strconv.Itoa(int(request.class))
-		}
+func campaignPreparationStageName(stage campaignPreparationStage) string {
+	switch stage {
+	case campaignPreparingSnapshot:
+		return "snapshot"
+	case campaignPreparingCatalogue:
+		return "catalogue"
+	default:
+		return "unknown"
 	}
-	appendRequests("cancelled", receipt.cancelledWaiting)
-	appendRequests("compensated", receipt.compensatedGrants)
+}
 
-	return summary
+func campaignResourceName(kind campaignResourceKind) string {
+	switch kind {
+	case campaignResourceRegistration:
+		return "registration"
+	case campaignResourceSnapshot:
+		return "snapshot"
+	case campaignResourceWorkspace:
+		return "workspace"
+	case campaignResourceAdmission:
+		return "admission"
+	case campaignResourcePendingStart:
+		return "pending start"
+	case campaignResourceExecutionDomain:
+		return "execution domain"
+	default:
+		return "unknown"
+	}
 }
 
 func (state campaignState) stableIdentitySnapshot(event campaignEvent) []string {
 	identities := []string{"campaign=" + string(state.definition.identity)}
-	if state.snapshot != "" {
-		identities = append(identities, "snapshot="+string(state.snapshot))
-	}
-	if state.runtimeToken.id != 0 {
-		identities = append(identities, "campaign-token="+strconv.FormatUint(uint64(state.runtimeToken.id), 10))
-	}
 	for _, attempt := range state.attempts {
-		identity := "attempt=" + string(attempt.identity)
-		if attempt.generation != 0 {
-			identity += "/generation=" + strconv.FormatUint(uint64(attempt.generation), 10)
-		}
-		identities = append(identities, identity)
-	}
-	if state.drain.epoch != 0 {
-		identities = append(identities, "epoch="+strconv.FormatUint(uint64(state.drain.epoch), 10))
+		identities = append(identities, "attempt="+string(attempt.identity))
 	}
 	_ = event
 
@@ -1934,8 +1910,10 @@ func (state campaignState) stableIdentitySnapshot(event campaignEvent) []string 
 func (state campaignState) obligationSnapshot() []string {
 	obligations := make([]string, len(state.obligations))
 	for index, obligation := range state.obligations {
-		obligations[index] = strconv.Itoa(int(obligation.kind)) + ":" + obligation.identity + ":" +
-			string(obligation.attempt) + ":" + strconv.FormatUint(uint64(obligation.generation), 10)
+		obligations[index] = campaignResourceName(obligation.kind)
+		if obligation.attempt != "" {
+			obligations[index] += "/attempt=" + string(obligation.attempt)
+		}
 	}
 
 	return obligations
