@@ -158,6 +158,34 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 	}
 }
 
+func TestManagedCampaignPropagatesAbsoluteTimeoutAndRetainsTimedOutResult(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}}
+	attempts := &managedAttemptFixture{terminals: []Terminal{
+		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		Tripped{Trip: AutomaticDeadlineTrip{}},
+	}}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(1), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, mutationTimeout: 37 * time.Millisecond,
+		viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	completed, ok := result.outcome.(completedOutcome)
+	if !ok || len(completed.mutants) != 1 || completed.mutants[0].kind != mutantTimedOut {
+		t.Fatalf("outcome = %#v, want one timed-out mutant", result.outcome)
+	}
+	if len(attempts.specs) != 2 || attempts.specs[1].Deadline != 37*time.Millisecond {
+		t.Fatalf("attempt specs = %#v, want exact 37ms primary deadline", attempts.specs)
+	}
+}
+
 func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testing.T) {
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
@@ -352,6 +380,15 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 		return managedObservedTerminal{
 			terminal: terminal,
 			receipt:  f.shell.observeAttempt(generation, attemptInfrastructure{cause: terminal.Err.Error()}),
+		}
+	case Tripped:
+		terminal.ExecutionData = data
+
+		return managedObservedTerminal{
+			terminal: terminal,
+			receipt: f.shell.observeAttempt(generation, attemptTripped{
+				kind: deadlineTrip, profile: spec.Profile, deadline: spec.Deadline,
+			}),
 		}
 	case Stopped:
 		if f.stopRelease != nil {

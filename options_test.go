@@ -53,6 +53,12 @@ func TestOptions(t *testing.T) {
 		assert.Equal(t, 37*time.Second, options.MutationTimeout)
 	})
 
+	t.Run("rejects a negative mutation timeout at configuration", func(t *testing.T) {
+		assert.PanicsWithValue(t, "mutation timeout must be positive", func() {
+			ooze.WithMutationTimeout(-time.Nanosecond)(ooze.Options{})
+		})
+	})
+
 	t.Run("can configure source files to ignore", func(t *testing.T) {
 		{
 			options := ooze.IgnoreSourceFiles(".*")(ooze.Options{})
