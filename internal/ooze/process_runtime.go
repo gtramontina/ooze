@@ -16,6 +16,7 @@ type (
 	campaignLineage   uint64
 	attemptIdentity   string
 	attemptGeneration uint64
+	fatalEpochID      uint64
 	runtimeFatalCause string
 )
 
@@ -97,6 +98,7 @@ type admissionResult struct {
 	decision   admissionDecision
 	request    admissionRequestToken
 	deliveries []admissionGrant
+	fatalEpoch fatalEpochID
 }
 
 type registeredCampaign struct {
@@ -151,6 +153,7 @@ type processRuntime struct {
 	mode        admissionMode
 	lifecycle   runtimeLifecycle
 	fatalCauses []runtimeFatalCause
+	fatalEpoch  fatalEpochID
 	campaigns   []registeredCampaign
 	admissions  []admittedAttempt
 }
@@ -224,9 +227,12 @@ type observationResult struct {
 	cancelledWaiting, compensatedGrants             []admissionRequestToken
 	settlementAcknowledged, confirmationProvisional bool
 	pressureTransitioned, runtimeClosureInProgress  bool
+	confirmationObserved, confirmationQueueDrained  bool
+	fatalEpoch                                      fatalEpochID
 }
 
 type runtimeClosure struct {
+	epoch                               fatalEpochID
 	cancelledWaiting, compensatedGrants []admissionRequestToken
 	residual                            []residualCustody
 }
@@ -252,6 +258,7 @@ type emergencyResolution struct {
 type emergencySweep struct{ resolutions []emergencyResolution }
 
 type emergencySettlement struct {
+	epoch        fatalEpochID
 	acknowledged []attemptGeneration
 	residual     []residualCustody
 }
@@ -260,12 +267,16 @@ type terminalDecision uint8
 
 const (
 	terminalCommitted terminalDecision = iota + 1
+	terminalForcedAborted
 	terminalRejectedUnknown
 	terminalRejectedOutstanding
 	terminalRejectedClosed
 )
 
-type terminalResult struct{ decision terminalDecision }
+type terminalResult struct {
+	decision terminalDecision
+	epoch    fatalEpochID
+}
 
 type barrierBinding struct {
 	campaign campaignToken
@@ -287,7 +298,14 @@ type barrierResult struct {
 	deliveries []admissionGrant
 }
 
-type runtimeInvariantViolation struct{ operation, reason string }
+type runtimeInvariantViolation struct {
+	operation, reason  string
+	phase              uint8
+	rejectedEvent      string
+	stableIdentities   []string
+	obligationSnapshot []string
+	traceTail          []string
+}
 
 func newProcessRuntime(capacity int) processRuntime {
 	if capacity <= 0 {
@@ -323,7 +341,9 @@ func (r processRuntime) requestAdmission(request admissionRequest) (processRunti
 		invariant("request admission", "invalid request")
 	}
 	if !r.open() {
-		return r, admissionResult{decision: admissionRejectedClosed, request: token}
+		return r, admissionResult{
+			decision: admissionRejectedClosed, request: token, fatalEpoch: r.fatalEpoch,
+		}
 	}
 	campaignAt := r.campaignIndex(request.campaign)
 	if campaignAt < 0 {
@@ -617,6 +637,7 @@ func (r processRuntime) observeLaunchUnconfirmed(generation attemptGeneration, i
 	index = r.admissionIndexByGeneration(generation)
 	r.admissions[index].disposition = dispositionFatalSeeded
 	result := observationResult{generation: generation, runtimeClosureInProgress: true}
+	result.fatalEpoch = r.fatalEpoch
 	result.cancelledWaiting = closure.cancelledWaiting
 	result.compensatedGrants = closure.compensatedGrants
 
@@ -634,6 +655,7 @@ func (r processRuntime) observeDrainUnconfirmed(generation attemptGeneration, in
 	index = r.admissionIndexByGeneration(generation)
 	r.admissions[index].disposition = dispositionCustodyTransferred
 	result := observationResult{generation: generation, runtimeClosureInProgress: true}
+	result.fatalEpoch = r.fatalEpoch
 	result.cancelledWaiting = closure.cancelledWaiting
 	result.compensatedGrants = closure.compensatedGrants
 
@@ -676,6 +698,8 @@ func (r processRuntime) observeConfirmation(
 	result := observationResult{generation: generation, settlementAcknowledged: true}
 	result.deliveries = deliveries
 	result.pressureTransitioned = transitioned
+	result.confirmationObserved = true
+	result.confirmationQueueDrained = queueDrained
 
 	return r, result
 }
@@ -706,14 +730,16 @@ func (r processRuntime) closeRuntime(cause runtimeFatalCause) (processRuntime, r
 		invariant("close runtime", "fatal cause is empty")
 	}
 	if r.lifecycle == runtimeClosedDrained || r.lifecycle == runtimeClosedUnconfirmed {
-		return r, runtimeClosure{residual: r.residualCustody()}
+		return r, runtimeClosure{epoch: r.fatalEpoch, residual: r.residualCustody()}
 	}
 	next := r.clone()
 	if next.open() {
+		next.nextID++
+		next.fatalEpoch = fatalEpochID(next.nextID)
 		next.lifecycle = runtimeFatalClosing
 	}
 	next.fatalCauses = append(next.fatalCauses, cause)
-	closure := runtimeClosure{}
+	closure := runtimeClosure{epoch: next.fatalEpoch}
 	if !r.open() {
 		closure.residual = next.residualCustody()
 
@@ -778,7 +804,9 @@ func (r processRuntime) settleEmergency(sweep emergencySweep) (processRuntime, e
 	next.lifecycle = runtimeFatalSettledClosing
 	next = next.finalizeFatalClosure()
 
-	return next, emergencySettlement{acknowledged: acknowledged, residual: next.residualCustody()}
+	return next, emergencySettlement{
+		epoch: next.fatalEpoch, acknowledged: acknowledged, residual: next.residualCustody(),
+	}
 }
 
 func (r processRuntime) finalizeFatalClosure() processRuntime {
@@ -802,7 +830,7 @@ func (r processRuntime) finalizeFatalClosure() processRuntime {
 
 func (r processRuntime) commitTerminal(campaign campaignToken) (processRuntime, terminalResult) {
 	if !r.open() {
-		return r, terminalResult{decision: terminalRejectedClosed}
+		return r, terminalResult{decision: terminalRejectedClosed, epoch: r.fatalEpoch}
 	}
 	index := r.campaignIndex(campaign)
 	if index < 0 {
@@ -817,6 +845,25 @@ func (r processRuntime) commitTerminal(campaign campaignToken) (processRuntime, 
 	next.campaigns = slices.Delete(next.campaigns, index, index+1)
 
 	return next, terminalResult{decision: terminalCommitted}
+}
+
+func (r processRuntime) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) (processRuntime, terminalResult) {
+	if epoch == 0 || epoch != r.fatalEpoch || r.lifecycle != runtimeClosedDrained {
+		return r, terminalResult{decision: terminalRejectedClosed}
+	}
+	index := r.campaignIndex(campaign)
+	if index < 0 {
+		return r, terminalResult{decision: terminalRejectedUnknown}
+	}
+	for _, admission := range r.admissions {
+		if admission.grant.campaign == campaign {
+			return r, terminalResult{decision: terminalRejectedOutstanding}
+		}
+	}
+	next := r.clone()
+	next.campaigns = slices.Delete(next.campaigns, index, index+1)
+
+	return next, terminalResult{decision: terminalForcedAborted}
 }
 
 func (r processRuntime) grantAvailable() (processRuntime, []admissionGrant) {
