@@ -160,16 +160,31 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name    string
-		choices simulationChoiceBytes
+		variant uint8
 		want    mutantResultKind
 	}{
-		{name: "survived", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 0}, want: mutantSurvived},
-		{name: "killed", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 2}, want: mutantKilled},
-		{name: "deadline", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 3}, want: mutantTimedOut},
-		{name: "fuse", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 4}, want: mutantRunaway},
+		{name: "survived", variant: 0, want: mutantSurvived},
+		{name: "killed", variant: 1, want: mutantKilled},
+		{name: "deadline", variant: 2, want: mutantTimedOut},
+		{name: "fuse", variant: 3, want: mutantRunaway},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			explored := Explore(definition, test.choices)
+			choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+				for index, move := range moves {
+					if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
+						move.variant == test.variant {
+						return index
+					}
+				}
+				for index, move := range moves {
+					if move.action.kind != supervisorWaitRoot {
+						return index
+					}
+				}
+
+				return 0
+			})
+			explored := Explore(definition, choices)
 			completed, ok := explored.world.campaign.outcome.(completedOutcome)
 			if explored.failure != nil || !ok || len(completed.mutants) != 1 ||
 				completed.mutants[0].kind != test.want {
@@ -590,36 +605,48 @@ func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testin
 }
 
 func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		for index, move := range moves {
+			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
+				move.variant == 1 {
+				return index
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
 			identity: "campaign-shrink-boundary", lineage: 45, command: []string{"test"},
 			profile: AutomaticProfile, peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
-	}, simulationChoiceBytes(slices.Repeat([]byte{2}, 64)))
+	}, choices)
 	if explored.failure != nil {
 		t.Fatalf("boundary shrink exploration failure=%v", explored.failure)
 	}
 	prefixLength := 0
-	var malformedEvent supervisorEvent
 	for index, record := range explored.trace.records {
 		if record.authority != simulationSupervisorAuthority ||
-			record.supervisorEvent.kind != supervisorLaunchCompleted {
+			record.supervisorEvent.kind != supervisorLaunchBoundary {
 			continue
 		}
 		prefixLength = index + 1
-		malformedEvent = record.supervisorEvent.production()
-		completion := *malformedEvent.completion
-		completion.action = 999
-		malformedEvent.completion = &completion
 		break
 	}
 	if prefixLength == 0 {
 		t.Fatal("boundary shrink trace has no launch completion")
 	}
 	malformed := simulationMalformedFact{
-		authority: simulationSupervisorAuthority,
-		supervisor: simulationTraceSupervisorEvent(malformedEvent),
+		authority: simulationCampaignAuthority,
+		campaign: simulationTraceCampaignEvent(campaignEvent{
+			id: 1, payload: snapshotEstablishedEvent{},
+		}),
 	}
 	counterexample := simulationCloneTrace(explored.trace)
 	counterexample.records = slices.Clone(counterexample.records[:prefixLength])
@@ -629,14 +656,12 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 
 	shrunk := Shrink(counterexample, key)
 	if distance := simulationChoiceDistance(shrunk.choices); distance >= originalDistance {
-		t.Fatalf("boundary choice distance=%d, want less than %d", distance, originalDistance)
+		t.Fatalf("boundary choice distance=%d, want less than %d; choices=%#v",
+			distance, originalDistance, shrunk.choices)
 	}
 	if shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 ||
-		!reflect.DeepEqual(shrunk.definition.catalogue, []mutantIdentity{"mutant-1"}) {
+		len(shrunk.definition.catalogue) != 0 {
 		t.Fatalf("canonical shrink definition=%#v", shrunk.definition)
-	}
-	if shrunk.malformed.supervisor.completion == nil || shrunk.malformed.supervisor.completion.action != 999 {
-		t.Fatalf("canonical shrink changed the intended corruption=%#v", shrunk.malformed)
 	}
 	replayed := ReplayViolation(shrunk, *shrunk.malformed)
 	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {

@@ -768,7 +768,7 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 			continue
 		}
 		for selected := 0; selected < choice.selected; selected++ {
-			choices := slices.Clone(shrunk.choices)
+			choices := slices.Clone(shrunk.choices[:choiceAt+1])
 			choices[choiceAt].selected = selected
 			candidate, ok := simulationExploreShrinkCandidateWithChoices(
 				shrunk, shrunk.definition, &simulationShrinkChoiceSource{choices: choices},
@@ -868,8 +868,20 @@ func simulationRepairMalformedCut(
 	if malformed.supervisor.generation == before.supervisorEvent.generation {
 		malformed.supervisor.generation = after.supervisorEvent.generation
 	}
+	if malformed.supervisor.kind == before.supervisorEvent.kind {
+		malformed.supervisor.kind = after.supervisorEvent.kind
+	}
 	if malformed.supervisor.attempt == before.supervisorEvent.attempt {
 		malformed.supervisor.attempt = after.supervisorEvent.attempt
+	}
+	if malformed.supervisor.at == before.supervisorEvent.at {
+		malformed.supervisor.at = after.supervisorEvent.at
+	}
+	if malformed.supervisor.launchBy == before.supervisorEvent.launchBy {
+		malformed.supervisor.launchBy = after.supervisorEvent.launchBy
+	}
+	if malformed.supervisor.drainBy == before.supervisorEvent.drainBy {
+		malformed.supervisor.drainBy = after.supervisorEvent.drainBy
 	}
 	completion := malformed.supervisor.completion
 	beforeCompletion := before.supervisorEvent.completion
@@ -916,7 +928,13 @@ func simulationSameRecordKind(left, right simulationRecord) bool {
 	case simulationRuntimeAuthority:
 		return left.runtimeOperation == right.runtimeOperation
 	case simulationSupervisorAuthority:
-		return left.supervisorEvent.kind == right.supervisorEvent.kind
+		leftKind, rightKind := left.supervisorEvent.kind, right.supervisorEvent.kind
+		if (leftKind == supervisorLaunchCompleted || leftKind == supervisorLaunchBoundary) &&
+			(rightKind == supervisorLaunchCompleted || rightKind == supervisorLaunchBoundary) {
+			return true
+		}
+
+		return leftKind == rightKind
 	default:
 		return false
 	}
