@@ -212,6 +212,9 @@ func writePerformanceSample(t *testing.T, directory string, wall time.Duration) 
 		observed = append(observed, value)
 	}
 	sort.Ints(observed)
+	if len(observed) != 1 || observed[0] != performanceExpectedGOMAXPROCS() {
+		t.Fatalf("observed GOMAXPROCS = %v, want [%d]", observed, performanceExpectedGOMAXPROCS())
+	}
 	mutants := 16
 	sample := performanceSample{
 		Label: os.Getenv("OOZE_PERFORMANCE_LABEL"), Revision: os.Getenv("OOZE_PERFORMANCE_REVISION"),
