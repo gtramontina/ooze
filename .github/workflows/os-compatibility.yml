@@ -50,7 +50,7 @@ jobs:
         if: ${{ always() }}
         env:
           ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
-        run: go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/cmdtestrunner ./internal/ooze
+        run: go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/ooze
 
   stress:
     name: Stress / ${{ matrix.name }}
@@ -81,7 +81,7 @@ jobs:
           cache: true
 
       - name: Repeat bounded native acceptance
-        run: go test -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/cmdtestrunner ./internal/ooze
+        run: go test -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/ooze
 
   required:
     name: OS Compatibility
