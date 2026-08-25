@@ -152,6 +152,7 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 	}
 	var result LaunchResult
 	observed := start.launch(func(generation attemptGeneration) attemptObservation {
+		start.shell.acknowledgeStartRegistration(generation)
 		result = s.launchNative(generation, snapshot)
 
 		return brokerLaunchObservation(result)

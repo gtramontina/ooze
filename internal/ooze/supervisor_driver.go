@@ -179,6 +179,7 @@ func (driver *supervisorDriver) stageLaunch(
 	if len(actions) != 1 || actions[0].kind != supervisorLaunchNative {
 		invariant(supervisorDriverOperation, "prospective registration did not issue native launch")
 	}
+	driver.runtime.acknowledgeStartRegistration(generation)
 	driver.mutex.Lock()
 	driver.requireAttempt(generation).launchAction = actions[0]
 	driver.mutex.Unlock()
@@ -1019,6 +1020,7 @@ func (driver *supervisorDriver) waitManaged(
 }
 
 func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
+	driver.runtime.awaitStartRegistrations()
 	leaveRecorder := driver.recorder.enter()
 	recorderReleased := false
 	defer func() {
