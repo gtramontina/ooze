@@ -724,6 +724,37 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	}
 }
 
+func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-positive-shrink", lineage: 46, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1,
+	}, nil)
+	if explored.failure != nil {
+		t.Fatalf("positive shrink exploration failure=%v", explored.failure)
+	}
+	counterexample := simulationCloneTrace(explored.trace)
+	counterexample.records[0].runtimeState.capacity++
+	replayed := ReplayLegal(counterexample)
+	if replayed.failure == nil || reflect.DeepEqual(replayed.key, FailureKey{}) {
+		t.Fatalf("positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
+	}
+
+	shrunk := Shrink(counterexample, replayed.key)
+	if len(shrunk.records) >= len(counterexample.records) {
+		t.Fatalf("positive record count was not reduced: got=%d input=%d",
+			len(shrunk.records), len(counterexample.records))
+	}
+	first := ReplayLegal(shrunk)
+	second := ReplayLegal(shrunk)
+	if first.failure == nil || !reflect.DeepEqual(first.key, replayed.key) || !reflect.DeepEqual(first, second) {
+		t.Fatalf("positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v",
+			replayed.key, first, second)
+	}
+}
+
 func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
@@ -1307,7 +1338,7 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 	}
 }
 
-func TestSimulationChoiceTranscriptMarksCanonicalRecovery(t *testing.T) {
+func TestSimulationChoiceRecordsMarkCanonicalRecovery(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
 			identity: "campaign-recovery", lineage: 91, command: []string{"test"},
@@ -1333,7 +1364,7 @@ func TestSimulationChoiceTranscriptMarksCanonicalRecovery(t *testing.T) {
 		}
 	}
 	if !seenExploration || !seenRecovery {
-		t.Fatalf("choice transcript=%#v, want exploration followed by recovery", explored.trace.choices)
+		t.Fatalf("choice records=%#v, want exploration followed by recovery", explored.trace.choices)
 	}
 }
 
