@@ -139,6 +139,15 @@ func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissi
 
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
 	return underRuntimeLock(s, "cancel admission", func() (result admissionResult) {
+		if token.delivery == nil {
+			for _, admission := range s.core.admissions {
+				if sameAdmissionRequest(admission.grant, token) {
+					token = admission.grant
+
+					break
+				}
+			}
+		}
 		s.core, result = s.core.cancelAdmission(token)
 		if result.decision == admissionCancelledWaiting {
 			s.closeWaiting([]admissionRequestToken{token})

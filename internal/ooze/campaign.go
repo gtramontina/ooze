@@ -848,7 +848,7 @@ func (state campaignState) onWorkspaceMaterializationFailed(
 func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
-		event.grant != state.attempts[attemptAt].request {
+		!sameAdmissionRequest(event.grant, state.attempts[attemptAt].request) {
 		campaignInvariant("grant admission", "grant is stale or wrong")
 	}
 	if slices.Contains(state.pendingGrantReturns, event.grant) {
@@ -867,7 +867,8 @@ func (state campaignState) onAdmissionCancelled(
 	event admissionCancelledEvent,
 ) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
-	if attemptAt < 0 || event.request != state.attempts[attemptAt].request || event.result.request != event.request {
+	if attemptAt < 0 || !sameAdmissionRequest(event.request, state.attempts[attemptAt].request) ||
+		!sameAdmissionRequest(event.result.request, event.request) {
 		campaignInvariant("cancel admission", "cancellation is stale or wrong")
 	}
 	if event.result.decision == admissionRejectedAlreadyCommitted {
@@ -905,7 +906,7 @@ func (state campaignState) onAdmissionRejected(
 ) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
-		event.result.request != state.attempts[attemptAt].request || event.cause == "" ||
+		!sameAdmissionRequest(event.result.request, state.attempts[attemptAt].request) || event.cause == "" ||
 		event.result.decision == admissionAccepted {
 		campaignInvariant("reject admission", "admission rejection is invalid")
 	}
@@ -1354,7 +1355,7 @@ func (state campaignState) applyRuntimeCompensations(
 	for _, request := range receipt.cancelledWaiting {
 		attemptAt := state.attemptIndex(request.attempt)
 		if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
-			state.attempts[attemptAt].request != request {
+			!sameAdmissionRequest(state.attempts[attemptAt].request, request) {
 			campaignInvariant("compensate cancellation", "cancelled admission is stale or wrong")
 		}
 		state.attempts[attemptAt].stage = campaignAttemptSettled
@@ -1388,6 +1389,11 @@ func (state campaignState) applyRuntimeCompensations(
 	}
 
 	return state, effects
+}
+
+func sameAdmissionRequest(left, right admissionRequestToken) bool {
+	return left.campaign == right.campaign && left.attempt == right.attempt && left.class == right.class &&
+		left.profile == right.profile && left.deadline == right.deadline
 }
 
 func (state campaignState) insertProvisional(mutant mutantIdentity) []mutantIdentity {
