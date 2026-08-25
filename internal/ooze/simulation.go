@@ -1093,15 +1093,6 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 		}
 		width--
 	}
-	if key.kind == simulationReplayFailureKind {
-		first := ReplayLegal(shrunk)
-		second := ReplayLegal(shrunk)
-		if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
-			panic("simulation shrink did not retain a deterministic failure")
-		}
-
-		return shrunk
-	}
 	for index := 0; index < len(shrunk.definition.catalogue); {
 		definition := shrunk.definition
 		definition.catalogue = slices.Delete(slices.Clone(definition.catalogue), index, index+1)
@@ -1159,10 +1150,18 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 	); ok && simulationPreservesFailure(candidate, key) {
 		shrunk = candidate
 	}
-	first := ReplayViolation(shrunk, *shrunk.malformed)
-	second := ReplayViolation(shrunk, *shrunk.malformed)
-	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
-		panic("simulation shrink did not retain a deterministic failure")
+	if key.kind == simulationReplayFailureKind {
+		first := ReplayLegal(shrunk)
+		second := ReplayLegal(shrunk)
+		if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+			panic("simulation shrink did not retain a deterministic failure")
+		}
+	} else {
+		first := ReplayViolation(shrunk, *shrunk.malformed)
+		second := ReplayViolation(shrunk, *shrunk.malformed)
+		if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+			panic("simulation shrink did not retain a deterministic failure")
+		}
 	}
 
 	return shrunk
@@ -1185,6 +1184,7 @@ func simulationExploreShrinkCandidateWithChoices(
 		return simulationTrace{}, false
 	}
 	candidate := explored.trace
+	replayFailure := ReplayLegal(trace)
 	if len(trace.records) == 0 {
 		candidate.records = nil
 	} else {
@@ -1210,6 +1210,11 @@ func simulationExploreShrinkCandidateWithChoices(
 			return simulationTrace{}, false
 		}
 		candidate.records = slices.Clone(candidate.records[:candidateCut+1])
+		if trace.malformed == nil {
+			candidate.records[candidateCut] = simulationRetainRecordedFailure(
+				candidate.records[candidateCut], cut, replayFailure.key.operation,
+			)
+		}
 	}
 	if trace.malformed != nil {
 		malformed := *trace.malformed
@@ -1222,6 +1227,49 @@ func simulationExploreShrinkCandidateWithChoices(
 	}
 
 	return candidate, true
+}
+
+func simulationRetainRecordedFailure(candidate, failing simulationRecord, operation string) simulationRecord {
+	switch candidate.authority {
+	case simulationCampaignAuthority:
+		if operation == "campaign state diverged at record %d (%s)" {
+			candidate.campaignState = failing.campaignState
+		}
+		if operation == "campaign effects diverged at record %d (%s): got=%v want=%v" {
+			candidate.campaignEffects = slices.Clone(failing.campaignEffects)
+		}
+	case simulationRuntimeAuthority:
+		switch operation {
+		case "runtime state diverged at record %d":
+			candidate.runtimeState = failing.runtimeState
+		case "registration diverged at record %d":
+			candidate.runtimeRegistration = failing.runtimeRegistration
+		case "admission decision diverged at record %d", "admission cancellation diverged at record %d",
+			"grant return diverged at record %d":
+			candidate.runtimeAdmissionOut = failing.runtimeAdmissionOut
+		case "confirmation barrier diverged at record %d":
+			candidate.runtimeBarrierOut = failing.runtimeBarrierOut
+		case "confirmation queue completion diverged at record %d":
+			candidate.runtimeQueueOut = failing.runtimeQueueOut
+		case "start commitment diverged at record %d":
+			candidate.runtimeStart = failing.runtimeStart
+		case "attempt observation diverged at record %d":
+			candidate.runtimeObservationOut = failing.runtimeObservationOut
+		case "runtime emergency settlement diverged at record %d":
+			candidate.runtimeEmergencyOut = failing.runtimeEmergencyOut
+		case "terminal commitment diverged at record %d", "forced abort diverged at record %d":
+			candidate.runtimeTerminal = failing.runtimeTerminal
+		case "runtime closure diverged at record %d":
+			candidate.runtimeClosure = failing.runtimeClosure
+		}
+	case simulationSupervisorAuthority:
+		if operation == "supervisor transition diverged at record %d" {
+			candidate.supervisorState = failing.supervisorState
+			candidate.supervisorActions = slices.Clone(failing.supervisorActions)
+		}
+	}
+
+	return candidate
 }
 
 func simulationRepairMalformedCut(

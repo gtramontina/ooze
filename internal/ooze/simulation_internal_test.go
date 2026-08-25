@@ -839,9 +839,9 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
 			identity: "campaign-positive-shrink", lineage: 46, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+			profile: AutomaticProfile, peers: 3,
 		},
-		capacity: 1,
+		capacity: 3, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, nil)
 	if explored.failure != nil {
 		t.Fatalf("positive shrink exploration failure=%v", explored.failure)
@@ -858,11 +858,73 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 		t.Fatalf("positive record count was not reduced: got=%d input=%d",
 			len(shrunk.records), len(counterexample.records))
 	}
+	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 ||
+		len(shrunk.definition.catalogue) != 0 ||
+		shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 {
+		t.Fatalf("positive shrunk definition=%#v", shrunk.definition)
+	}
 	first := ReplayLegal(shrunk)
 	second := ReplayLegal(shrunk)
 	if first.failure == nil || !reflect.DeepEqual(first.key, replayed.key) || !reflect.DeepEqual(first, second) {
 		t.Fatalf("positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v",
 			replayed.key, first, second)
+	}
+}
+
+func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		for index, move := range moves {
+			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
+				move.variant == 1 {
+				return index
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-positive-boundary", lineage: 47, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, choices)
+	if explored.failure != nil {
+		t.Fatalf("positive boundary exploration failure=%v", explored.failure)
+	}
+	counterexample := simulationCloneTrace(explored.trace)
+	cut := -1
+	for index, record := range counterexample.records {
+		if record.authority == simulationSupervisorAuthority &&
+			record.supervisorEvent.kind == supervisorLaunchBoundary {
+			cut = index
+			break
+		}
+	}
+	if cut < 0 {
+		t.Fatal("positive boundary trace has no equality cut")
+	}
+	counterexample.records = slices.Clone(counterexample.records[:cut+1])
+	counterexample.records[cut].supervisorState.nextAction++
+	replayed := ReplayLegal(counterexample)
+	if replayed.failure == nil || replayed.key.kind != simulationReplayFailureKind {
+		t.Fatalf("positive boundary replay=%#v", replayed)
+	}
+	originalDistance := simulationChoiceDistance(counterexample.choices)
+
+	shrunk := Shrink(counterexample, replayed.key)
+	if distance := simulationChoiceDistance(shrunk.choices); distance >= originalDistance {
+		t.Fatalf("positive boundary choice distance=%d, want less than %d", distance, originalDistance)
+	}
+	first := ReplayLegal(shrunk)
+	second := ReplayLegal(shrunk)
+	if first.failure == nil || !reflect.DeepEqual(first.key, replayed.key) || !reflect.DeepEqual(first, second) {
+		t.Fatalf("positive boundary shrunk replay diverged: first=%#v second=%#v", first, second)
 	}
 }
 
