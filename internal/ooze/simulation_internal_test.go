@@ -213,6 +213,43 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
+func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{1, 7, 9})
+	f.Fuzz(func(t *testing.T, source []byte) {
+		definition := simulationDefinition{
+			campaign: campaignDefinition{
+				identity: "campaign-fuzz", lineage: 61, command: []string{"test"},
+				profile: AutomaticProfile, peers: 1,
+			},
+			capacity: 1,
+		}
+		choices := simulationChoiceBytes(nil)
+		if len(source) != 0 && source[0]&1 != 0 {
+			definition.catalogue = []mutantIdentity{"mutant-a"}
+			choices = simulationChoiceBytes{simulationChooseBaselineFailure}
+		}
+		explored := Explore(definition, choices)
+		replayed := ReplayLegal(explored.trace)
+		if explored.failure != nil || replayed.failure != nil ||
+			!reflect.DeepEqual(explored.world, replayed.world) {
+			t.Fatalf("legal replay diverged: explored=%#v replayed=%#v", explored, replayed)
+		}
+		prefix := simulationTrace{
+			definition: explored.trace.definition,
+			records:    append([]simulationRecord(nil), explored.trace.records[:2]...),
+		}
+		malformed := simulationMalformedFact{
+			authority: simulationCampaignAuthority, campaign: snapshotEstablishedEvent{},
+		}
+		first := ReplayViolation(prefix, malformed)
+		second := ReplayViolation(prefix, malformed)
+		if first.failure != nil || !reflect.DeepEqual(first, second) {
+			t.Fatalf("violation replay diverged: first=%#v second=%#v", first, second)
+		}
+	})
+}
+
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))
 	for _, record := range trace.records {

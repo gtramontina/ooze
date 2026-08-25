@@ -346,6 +346,17 @@ func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T
 	)
 }
 
+func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
+	testJob := workflowJob(t, ".github/workflows/ci.yml", "test")
+	requireContract(t, testJob, "CI production simulation contract",
+		`name: "🎲 Production deterministic simulation"`,
+		`devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze`,
+	)
+	if strings.Contains(testJob, "docs/prototypes/deterministic-simulation-contract") {
+		t.Error("CI still presents the throwaway prototype as simulation delivery")
+	}
+}
+
 func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing.T) {
 	configured := ooze.Options{}
 	for _, option := range selfMutationOptions("campaign-runner") {
