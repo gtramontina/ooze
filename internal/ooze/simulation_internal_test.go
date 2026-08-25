@@ -1207,7 +1207,8 @@ func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T
 		if source, ok := choices.(*simulationShrinkChoiceSource); ok {
 			candidate.choices = slices.Clone(source.choices)
 		}
-		if len(definition.catalogue) == 0 {
+		if len(definition.catalogue) < len(trace.definition.catalogue) &&
+			definition.capacity == trace.definition.capacity {
 			return SimulationResult{trace: candidate}
 		}
 
@@ -1219,11 +1220,11 @@ func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T
 
 	shrunk := simulationShrinkLivenessWith(trace, key, evaluate)
 	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 ||
-		len(shrunk.definition.catalogue) != 1 ||
+		len(shrunk.definition.catalogue) != 0 ||
 		shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 {
 		t.Fatalf("liveness shrunk definition=%#v", shrunk.definition)
 	}
-	if len(shrunk.choices) != 1 || shrunk.choices[0].selected != 0 {
+	if len(shrunk.choices) != 0 {
 		t.Fatalf("liveness shrunk choices=%#v", shrunk.choices)
 	}
 }
