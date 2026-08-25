@@ -569,6 +569,37 @@ func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCusto
 	}
 }
 
+func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-runtime-return-violation", lineage: 34, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1,
+	}, nil)
+	prefix := simulationTrace{
+		definition: explored.trace.definition,
+		records:    slices.Clone(explored.trace.records[:2]),
+	}
+	malformed := simulationMalformedFact{
+		authority: simulationRuntimeAuthority, runtimeOperation: simulationAcknowledgeGrantReturn,
+	}
+
+	first := ReplayViolation(prefix, malformed)
+	second := ReplayViolation(prefix, malformed)
+	if first.failure != nil || !reflect.DeepEqual(first, second) {
+		t.Fatalf("stale return replay diverged: first=%#v second=%#v", first, second)
+	}
+	if first.key.authority != simulationRuntimeAuthority ||
+		first.invariant.operation != "acknowledge grant return" ||
+		first.invariant.reason != "grant return authority is stale or wrong" {
+		t.Fatalf("stale return invariant/key=%#v/%#v", first.invariant, first.key)
+	}
+	if first.world.runtime.lifecycle != runtimeClosedDrained || len(first.world.runtime.admissions) != 0 {
+		t.Fatalf("stale return cleanup=%#v", first.world.runtime)
+	}
+}
+
 func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
