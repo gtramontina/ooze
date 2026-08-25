@@ -157,6 +157,8 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 	}{
 		{name: "survived", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 0}, want: mutantSurvived},
 		{name: "killed", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 2}, want: mutantKilled},
+		{name: "deadline", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 3}, want: mutantTimedOut},
+		{name: "fuse", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 4}, want: mutantRunaway},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			explored := Explore(definition, test.choices)
@@ -169,6 +171,10 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 			if explored.world.campaign.commandCount() != 2 || len(explored.world.campaign.obligations) != 0 {
 				t.Fatalf("terminal commands/obligations=%d/%#v",
 					explored.world.campaign.commandCount(), explored.world.campaign.obligations)
+			}
+			replayed := ReplayLegal(explored.trace)
+			if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
+				t.Fatalf("outcome replay diverged: %#v", replayed)
 			}
 		})
 	}
