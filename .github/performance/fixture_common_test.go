@@ -50,6 +50,7 @@ type performanceSample struct {
 	ObservedGOMAXPROCS    []int   `json:"observed_gomaxprocs"`
 	ConfirmationCount     int     `json:"confirmation_count"`
 	ConfirmationTimeMS    int64   `json:"confirmation_time_ms"`
+	SurvivedCount         int     `json:"survived_count,omitempty"`
 }
 
 func TestPerformanceEvidence(t *testing.T) {
@@ -89,12 +90,38 @@ var n15 = 0
 		t.Fatal(err)
 	}
 	command += " -test.run=^TestPerformanceEvidence$"
-	started := time.Now()
-	t.Cleanup(func() {
-		writePerformanceSample(t, events, time.Since(started))
-	})
+	if !performanceRequiresHealthySettlements() {
+		started := time.Now()
+		t.Cleanup(func() {
+			writePerformanceSample(t, events, time.Since(started), 0)
+		})
+		ooze.Release(t, performanceOptions(repository, command)...)
 
+		return
+	}
+	captured, err := os.CreateTemp(t.TempDir(), "performance-report-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = captured
+	t.Cleanup(func() { os.Stdout = originalStdout })
+	started := time.Now()
 	ooze.Release(t, performanceOptions(repository, command)...)
+	wall := time.Since(started)
+	os.Stdout = originalStdout
+	if err := captured.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := os.ReadFile(captured.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	survived := strings.Count(string(report), "Mutant survived:")
+	if survived != 16 {
+		t.Fatalf("nominally healthy mutant outcomes: survived=%d, want 16\n%s", survived, report)
+	}
+	writePerformanceSample(t, events, wall, survived)
 }
 
 func runPerformanceCommandHelper(t *testing.T) {
@@ -170,7 +197,7 @@ func runPerformanceCommandHelper(t *testing.T) {
 	}
 }
 
-func writePerformanceSample(t *testing.T, directory string, wall time.Duration) {
+func writePerformanceSample(t *testing.T, directory string, wall time.Duration, survived int) {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(directory, "*.json"))
 	if err != nil {
@@ -227,6 +254,7 @@ func writePerformanceSample(t *testing.T, directory string, wall time.Duration) 
 		PeakCommandProcesses: peakProcesses, ExpectedPeakProcesses: performanceExpectedPeak(),
 		PeakGoMemorySysBytes: peakMemory,
 		ObservedGOMAXPROCS:   observed, ConfirmationCount: 0, ConfirmationTimeMS: 0,
+		SurvivedCount: survived,
 	}
 	encoded, err := json.Marshal(sample)
 	if err != nil {
