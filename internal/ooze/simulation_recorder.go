@@ -176,12 +176,14 @@ func simulationProjectCampaignEvent(event campaignEvent, state campaignState) ca
 		event.payload = payload
 	case catalogueDiscoveredEvent:
 		payload.snapshot = logicalSnapshot
+		payload.mutants = slices.Clone(payload.mutants)
 		event.payload = payload
 	case workspaceMaterializedEvent:
 		payload.snapshot = logicalSnapshot
 		payload.workspace = simulationLogicalWorkspace(payload.attempt)
 		event.payload = payload
 	case workspaceMaterializationFailedEvent:
+		payload.artifactResidue = slices.Clone(payload.artifactResidue)
 		for index := range payload.artifactResidue {
 			payload.artifactResidue[index] = "artifact-residue"
 		}
@@ -210,6 +212,8 @@ func simulationProjectCampaignEffects(effects []campaignEffect, state campaignSt
 		if effect.spec.Dir != "" {
 			effect.spec.Dir = simulationLogicalWorkspace(effect.attempt)
 		}
+		effect.spec.Command = slices.Clone(effect.spec.Command)
+		effect.spec.Env = slices.Clone(effect.spec.Env)
 	}
 
 	return projected
@@ -340,6 +344,8 @@ func simulationProjectSupervisorActions(actions []supervisorAction) []supervisor
 		actions[index].intent.at = simulationCanonicalTime(actions[index].intent.at)
 		actions[index].intent.drainBy = simulationCanonicalTime(actions[index].intent.drainBy)
 		actions[index].intent.stop = simulationProjectStop(actions[index].intent.stop)
+		actions[index].resolutions = slices.Clone(actions[index].resolutions)
+		actions[index].residuals = slices.Clone(actions[index].residuals)
 	}
 
 	return actions
