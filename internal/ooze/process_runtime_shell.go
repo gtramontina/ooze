@@ -9,6 +9,7 @@ type oneShotAwait[Decision any] struct {
 	decision Decision
 	request  admissionRequestToken
 	delivery <-chan admissionGrant
+	fatal    fatalEpochID
 }
 
 type (
@@ -133,8 +134,17 @@ func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissi
 			close(delivery)
 		}
 
-		return admissionAwait{decision: result.decision, request: result.request, delivery: delivery}
+		return admissionAwait{
+			decision: result.decision, request: result.request, delivery: delivery, fatal: result.fatalEpoch,
+		}
 	})
+}
+
+func (s *processRuntimeShell) fatalEpoch() fatalEpochID {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	return s.core.fatalEpoch
 }
 
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
