@@ -435,7 +435,7 @@ func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireContract(t, string(contents), "lint target",
-		"golangci-lint run --no-config ./...",
+		"lint:\n\t@golangci-lint run --no-config ./...",
 	)
 }
 
