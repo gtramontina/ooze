@@ -588,6 +588,8 @@ type managedAttemptFixture struct {
 
 func (f *managedAttemptFixture) reserveLaunch(*pendingStartCell, Spec) {}
 
+func (f *managedAttemptFixture) discardLaunch(*pendingStartCell) {}
+
 func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
 	f.mutex.Lock()
 	f.launches++
