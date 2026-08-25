@@ -188,7 +188,9 @@ func (runner *managedCampaignRunner) execute(
 			return runner.repository.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
 		})
 		if cause != "" {
-			return runner.advance(campaignPreparationFailedEvent{stage: campaignPreparingSnapshot, cause: cause})
+			return runner.advance(campaignPreparationFailedEvent{
+				stage: campaignPreparingSnapshot, cause: "repository snapshot could not be materialized",
+			})
 		}
 		runner.snapshot = snapshot
 
@@ -205,16 +207,25 @@ func (runner *managedCampaignRunner) execute(
 			return struct{}{}
 		})
 		if cause != "" {
+			var artifactResidue []string
+			cleanupUnconfirmed := false
 			if workspace != nil {
 				root, rootCause := managedBoundary(workspace.Root)
 				_, cleanupCause := managedBoundary(func() struct{} { workspace.Remove(); return struct{}{} })
 				if cleanupCause != "" {
-					cause += fmt.Sprintf("; workspace cleanup unconfirmed root=%q: %s", root, cleanupCause)
-				} else if rootCause != "" {
-					cause += "; workspace root observation failed: " + rootCause
+					cleanupUnconfirmed = true
+					if rootCause == "" && root != "" {
+						artifactResidue = append(artifactResidue, root)
+					}
 				}
 			}
-			return runner.advance(workspaceMaterializationFailedEvent{attempt: effect.attempt, cause: cause})
+			publicCause := "mutation workspace could not be materialized"
+			if cleanupUnconfirmed {
+				publicCause += "; workspace cleanup could not be confirmed"
+			}
+			return runner.advance(workspaceMaterializationFailedEvent{
+				attempt: effect.attempt, cause: publicCause, artifactResidue: artifactResidue,
+			})
 		}
 		runner.workspaces[workspace.Root()] = workspace
 
@@ -289,7 +300,8 @@ func (runner *managedCampaignRunner) execute(
 		delete(runner.workspaces, effect.workspace)
 		if cause != "" {
 			return runner.advance(resourceSettlementFailedEvent{
-				kind: campaignResourceWorkspace, identity: effect.workspace, cause: cause,
+				kind: campaignResourceWorkspace, identity: effect.workspace,
+				cause: "mutation workspace cleanup could not be confirmed",
 			})
 		}
 
@@ -318,7 +330,8 @@ func (runner *managedCampaignRunner) execute(
 		_, cause := managedBoundary(func() struct{} { runner.snapshot.Remove(); return struct{}{} })
 		if cause != "" {
 			return runner.advance(resourceSettlementFailedEvent{
-				kind: campaignResourceSnapshot, identity: string(effect.snapshot), cause: cause,
+				kind: campaignResourceSnapshot, identity: string(effect.snapshot),
+				cause: "repository snapshot cleanup could not be confirmed",
 			})
 		}
 
@@ -368,7 +381,9 @@ func (runner *managedCampaignRunner) discover(
 		return discovered
 	})
 	if cause != "" {
-		return runner.advance(campaignPreparationFailedEvent{stage: campaignPreparingCatalogue, cause: cause})
+		return runner.advance(campaignPreparationFailedEvent{
+			stage: campaignPreparingCatalogue, cause: "mutation catalogue discovery failed",
+		})
 	}
 
 	return runner.advance(catalogueDiscoveredEvent{snapshot: effect.snapshot, mutants: mutants})

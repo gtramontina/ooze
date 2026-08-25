@@ -2,6 +2,7 @@ package ignoredrepository
 
 import (
 	"regexp"
+	"slices"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/ooze"
@@ -14,7 +15,7 @@ type FilteredRepository struct {
 
 func New(patterns []*regexp.Regexp, delegate ooze.Repository) *FilteredRepository {
 	return &FilteredRepository{
-		patterns: patterns,
+		patterns: slices.Clone(patterns),
 		delegate: delegate,
 	}
 }

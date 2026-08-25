@@ -96,13 +96,35 @@ type ManagedReleaseResult struct {
 	Mutations               []ManagedMutationResult
 	Total                   int
 	Baseline                *ManagedAttemptEvidence
-	Cause                   string
+	Cause                   ManagedAbortCause
 	Residual                []ManagedResidualCustody
 	Invariant               *ManagedInvariantEvidence
 	FatalAttempts           []ManagedFatalAttemptEvidence
 	ArtifactResidue         []string
 	SingleAdmissionFallback bool
 }
+
+type ManagedAbortCause uint8
+
+const (
+	ManagedAbortCampaignRegistration ManagedAbortCause = iota + 1
+	ManagedAbortSnapshotMaterialization
+	ManagedAbortCatalogueDiscovery
+	ManagedAbortWorkspaceMaterialization
+	ManagedAbortAdmissionRejected
+	ManagedAbortFatalEpoch
+	ManagedAbortWorkspaceCleanup
+	ManagedAbortSnapshotCleanup
+	ManagedAbortAttemptNotReleased
+	ManagedAbortProspectiveLaunch
+	ManagedAbortDrainageUnconfirmed
+	ManagedAbortBaselineFailed
+	ManagedAbortPrimaryStopped
+	ManagedAbortPrimaryInfrastructure
+	ManagedAbortConfirmationInfrastructure
+	ManagedAbortProcessEmergency
+	ManagedAbortInfrastructure
+)
 
 type ManagedFatalAttemptEvidence struct {
 	Attempt  string
@@ -219,26 +241,15 @@ func presentManagedRelease(result managedCampaignResult) ManagedReleaseResult {
 	case noMutantsOutcome:
 		return ManagedReleaseResult{Outcome: ManagedNoMutants}
 	case completedOutcome:
-		mutations := make([]ManagedMutationResult, len(outcome.mutants))
-		for index, mutant := range outcome.mutants {
-			mutations[index] = ManagedMutationResult{
-				File: result.mutations[mutant.mutant], Outcome: presentManagedMutation(mutant.kind),
-				Primary: presentManagedAttempt(mutant.primary),
-			}
-			if mutant.confirmation.kind != 0 {
-				confirmation := presentManagedAttempt(mutant.confirmation)
-				mutations[index].Confirmation = &confirmation
-			}
-		}
-
 		return ManagedReleaseResult{
-			Outcome: ManagedCompleted, Mutations: mutations,
+			Outcome: ManagedCompleted, Mutations: presentManagedMutations(result, outcome.mutants),
 			SingleAdmissionFallback: outcome.singleAdmissionFallback,
 		}
 	case abortedOutcome:
 		mutations := presentManagedMutations(result, outcome.mutants)
 		presented := ManagedReleaseResult{
-			Outcome: ManagedAborted, Cause: outcome.cause, Mutations: mutations, Total: outcome.total,
+			Outcome: ManagedAborted, Cause: presentManagedAbortCause(outcome.cause),
+			Mutations: mutations, Total: outcome.total,
 			ArtifactResidue:         append([]string(nil), outcome.artifactResidue...),
 			SingleAdmissionFallback: outcome.singleAdmissionFallback,
 		}
@@ -258,12 +269,52 @@ func presentManagedRelease(result managedCampaignResult) ManagedReleaseResult {
 				}
 			}
 			return ManagedReleaseResult{
-				Outcome: ManagedCleanupUnconfirmed, Cause: "cleanup unconfirmed",
+				Outcome:  ManagedCleanupUnconfirmed,
 				Residual: presentManagedResiduals(residual), FatalAttempts: attempts,
 			}
 		}
 	}
 	panic("managed campaign produced no terminal result")
+}
+
+func presentManagedAbortCause(cause string) ManagedAbortCause {
+	switch cause {
+	case "campaign registration rejected":
+		return ManagedAbortCampaignRegistration
+	case "repository snapshot could not be materialized":
+		return ManagedAbortSnapshotMaterialization
+	case "mutation catalogue discovery failed":
+		return ManagedAbortCatalogueDiscovery
+	case "mutation workspace could not be materialized",
+		"mutation workspace could not be materialized; workspace cleanup could not be confirmed":
+		return ManagedAbortWorkspaceMaterialization
+	case "managed admission rejected":
+		return ManagedAbortAdmissionRejected
+	case "process runtime entered a fatal epoch while admission waited", "fatal closure won terminal commitment":
+		return ManagedAbortFatalEpoch
+	case "mutation workspace cleanup could not be confirmed":
+		return ManagedAbortWorkspaceCleanup
+	case "repository snapshot cleanup could not be confirmed":
+		return ManagedAbortSnapshotCleanup
+	case "attempt was not released":
+		return ManagedAbortAttemptNotReleased
+	case "prospective launch unresolved":
+		return ManagedAbortProspectiveLaunch
+	case "execution-domain drainage unconfirmed":
+		return ManagedAbortDrainageUnconfirmed
+	case "baseline did not pass":
+		return ManagedAbortBaselineFailed
+	case "primary stopped":
+		return ManagedAbortPrimaryStopped
+	case "primary infrastructure uncertainty":
+		return ManagedAbortPrimaryInfrastructure
+	case "confirmation infrastructure uncertainty":
+		return ManagedAbortConfirmationInfrastructure
+	case "process runtime emergency":
+		return ManagedAbortProcessEmergency
+	default:
+		return ManagedAbortInfrastructure
+	}
 }
 
 func presentManagedResiduals(residual []campaignResidualCustody) []ManagedResidualCustody {
@@ -310,11 +361,30 @@ func presentManagedMutations(
 
 func presentManagedAttempt(evidence campaignAttemptEvidence) ManagedAttemptEvidence {
 	return ManagedAttemptEvidence{
-		Kind: evidence.kind, Passed: evidence.passed,
+		Kind: presentManagedAttemptKind(evidence.kind), Passed: evidence.passed,
 		Deadline: evidence.deadline, LaunchDuration: evidence.launchDuration,
 		CommandDuration: evidence.commandDuration, BoundFired: evidence.boundFired,
 		Output: evidence.output, Failures: evidence.failures, Count: evidence.count,
 		ConfirmationProvisional: evidence.confirmationProvisional,
+	}
+}
+
+func presentManagedAttemptKind(kind campaignAttemptEvidenceKind) ManagedAttemptKind {
+	switch kind {
+	case campaignEvidenceSettled:
+		return ManagedAttemptSettled
+	case campaignEvidenceDeadline:
+		return ManagedAttemptDeadline
+	case campaignEvidenceFuse:
+		return ManagedAttemptFuse
+	case campaignEvidenceStopped:
+		return ManagedAttemptStopped
+	case campaignEvidenceInfrastructure:
+		return ManagedAttemptInfrastructure
+	case campaignEvidenceDrainUnconfirmed:
+		return ManagedAttemptDrainUnconfirmed
+	default:
+		panic("managed attempt evidence kind is invalid")
 	}
 }
 

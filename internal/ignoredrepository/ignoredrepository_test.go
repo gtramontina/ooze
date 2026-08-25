@@ -11,6 +11,19 @@ import (
 )
 
 func TestIgnoredRepository(t *testing.T) {
+	t.Run("snapshots caller-owned patterns", func(t *testing.T) {
+		patterns := []*regexp.Regexp{regexp.MustCompile("source2")}
+		repository := ignoredrepository.New(patterns, fakerepository.New(fakerepository.FS{
+			"source1.go": []byte("source 1"),
+			"source2.go": []byte("source 2"),
+		}))
+		patterns[0] = regexp.MustCompile("source1")
+
+		assert.Equal(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.New("source1.go", []byte("source 1")),
+		}, repository.ListGoSourceFiles())
+	})
+
 	t.Run("empty repository yields empty results", func(t *testing.T) {
 		repository := ignoredrepository.New(
 			[]*regexp.Regexp{regexp.MustCompile(".*")},

@@ -102,7 +102,7 @@ func main() {
 
 	section("Fatal: invariant violation dominates — different content, one panic")
 	banner(
-		"☠ Internal invariant violated. No campaign in this process is scored.",
+		"☠ Internal invariant violated. This campaign has no score.",
 		"",
 		"  Phase:          Confirming",
 		"  Rejected event: AttemptSettled(attempt 77, generation 2)",
@@ -110,6 +110,7 @@ func main() {
 		"  Trace tail:     … 16 events …",
 		"",
 		"  1 further cause joined this epoch; peer campaigns aborted unscored.",
+		"    owned attempt campaign-1:77 (custody transferred)",
 	)
 	fmt.Println("panic: ooze: invariant violation")
 }
