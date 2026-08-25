@@ -390,9 +390,10 @@ func (driver *supervisorDriver) reduce(event supervisorEvent) []supervisorAction
 }
 
 func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisorAction {
+	reservation := driver.recorder.reserve(simulationSupervisorAuthority)
 	next, actions := reduceSupervisor(driver.state, event)
 	driver.state = next
-	driver.recorder.recordSupervisor(event, next, actions)
+	driver.recorder.recordSupervisor(reservation, event, next, actions)
 
 	return actions
 }

@@ -366,6 +366,37 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
+func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	definition := campaignDefinition{
+		identity: "campaign-recorded-replay", lineage: 52, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	}
+	campaign, _ := beginCampaign(definition)
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+
+	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	runner.advance(campaignRegisteredEvent{registration: registration})
+	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
+	runner.advance(catalogueDiscoveredEvent{snapshot: "private-snapshot"})
+	runner.advance(resourceSettledEvent{
+		kind: campaignResourceSnapshot, identity: "private-snapshot",
+	})
+	terminal := shell.commitTerminal(registration.token)
+	runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
+
+	trace, production := recorder.quiescent(runner, shell, driver)
+	replayed := ReplayLegal(trace)
+	if replayed.failure != nil {
+		t.Fatalf("recorded production trace did not replay: %v", replayed.failure)
+	}
+	if !reflect.DeepEqual(replayed.world, production) {
+		t.Fatalf("recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
+	}
+}
+
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)

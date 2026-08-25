@@ -20,9 +20,16 @@ type simulationRuntimeOperation uint8
 const (
 	simulationRegisterCampaign simulationRuntimeOperation = iota + 1
 	simulationRequestAdmission
+	simulationCancelAdmission
+	simulationAcknowledgeGrantReturn
+	simulationBindConfirmationBarrier
+	simulationCompleteConfirmationQueue
 	simulationStartCommitted
 	simulationObserveAttempt
+	simulationSettleEmergency
 	simulationCommitTerminal
+	simulationAuthorizeForcedAbort
+	simulationCloseRuntime
 )
 
 const simulationChooseBaselineFailure byte = 1
@@ -69,15 +76,24 @@ type simulationRecord struct {
 	runtimeProvenance     campaignProvenance
 	runtimeCampaign       campaignToken
 	runtimeAdmission      admissionRequest
+	runtimeAdmissionToken admissionRequestToken
 	runtimeGrant          admissionGrant
+	runtimeBarrier        barrierBinding
+	runtimeSweep          emergencySweep
+	runtimeFatalCause     runtimeFatalCause
+	runtimeFatalEpoch     fatalEpochID
 	runtimeGeneration     attemptGeneration
 	runtimeObservation    attemptObservation
 	runtimeState          processRuntime
 	runtimeRegistration   campaignRegistration
 	runtimeAdmissionOut   admissionResult
+	runtimeBarrierOut     barrierResult
+	runtimeQueueOut       confirmationQueueResult
 	runtimeStart          startCommittedResult
 	runtimeObservationOut observationResult
+	runtimeEmergencyOut   emergencySettlement
 	runtimeTerminal       terminalResult
+	runtimeClosure        runtimeClosure
 
 	supervisorEvent   supervisorEvent
 	supervisorState   supervisorState
