@@ -169,17 +169,12 @@ func forceNativeDomain(state nativePlatformState, processGroup int, drainBy time
 	}
 	captured := darwinReachableDomain(processes, int32(processGroup), state.domain.tracked)
 	trackDarwinIdentities(state.domain.tracked, captured)
-	if err = signalDarwinProcessGroup(processGroup, syscall.SIGSTOP); err != nil {
-		return err
-	}
 	for {
-		for identity := range captured {
-			process, present := darwinFindIdentity(processes, identity)
-			if present && int(process.group) != processGroup {
-				if err = signalDarwinIdentity(identity, syscall.SIGSTOP); err != nil {
-					return err
-				}
-			}
+		if err = signalDarwinCapturedIdentities(
+			captured, processGroup, syscall.SIGSTOP,
+			signalDarwinProcessGroup, signalDarwinIdentity,
+		); err != nil {
+			return err
 		}
 		if time.Now().After(drainBy) {
 			return fmt.Errorf("freeze Darwin managed-attempt closure before %s: deadline exceeded", drainBy)
@@ -197,16 +192,34 @@ func forceNativeDomain(state nativePlatformState, processGroup int, drainBy time
 		}
 		captured = next
 	}
-	if err = signalDarwinProcessGroup(processGroup, syscall.SIGKILL); err != nil {
+	if err = signalDarwinCapturedIdentities(
+		captured, processGroup, syscall.SIGKILL,
+		signalDarwinProcessGroup, signalDarwinIdentity,
+	); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+func signalDarwinCapturedIdentities(
+	captured map[darwinProcessIdentity]struct{},
+	processGroup int,
+	signal syscall.Signal,
+	signalGroup func(int, syscall.Signal) error,
+	signalIdentity func(darwinProcessIdentity, syscall.Signal) error,
+) error {
+	// Group delivery is only a bulk optimization. Exact identities remain the
+	// authoritative control boundary even when the group signal succeeds.
+	groupErr := signalGroup(processGroup, signal)
+	var identityErr error
 	for identity := range captured {
-		process, present := darwinFindIdentity(processes, identity)
-		if present && int(process.group) != processGroup {
-			if err = signalDarwinIdentity(identity, syscall.SIGKILL); err != nil {
-				return err
-			}
+		if err := signalIdentity(identity, signal); err != nil {
+			identityErr = errors.Join(identityErr, err)
 		}
+	}
+	if identityErr != nil {
+		return errors.Join(groupErr, identityErr)
 	}
 
 	return nil

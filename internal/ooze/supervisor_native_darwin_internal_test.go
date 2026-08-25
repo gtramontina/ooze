@@ -3,6 +3,7 @@
 package ooze
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -535,6 +536,57 @@ func TestDarwinCapturedIdentitiesRemainTrackedBeforeControl(t *testing.T) {
 	}
 	if _, ok := tracked[second]; !ok {
 		t.Fatal("new Darwin identity was not retained before control")
+	}
+}
+
+func TestDarwinCapturedIdentityControlDoesNotDependOnGroupDelivery(t *testing.T) {
+	first := darwinProcessIdentity{pid: 41, startSec: 7, startUsec: 11}
+	second := darwinProcessIdentity{pid: 42, startSec: 8, startUsec: 12}
+	captured := map[darwinProcessIdentity]struct{}{first: {}, second: {}}
+	for _, groupErr := range []error{nil, syscall.EPERM, syscall.ESRCH} {
+		controlled := make(map[darwinProcessIdentity]struct{})
+		err := signalDarwinCapturedIdentities(
+			captured, 41, syscall.SIGSTOP,
+			func(int, syscall.Signal) error { return groupErr },
+			func(identity darwinProcessIdentity, _ syscall.Signal) error {
+				controlled[identity] = struct{}{}
+
+				return nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("group error %v: exact control = %v, want success", groupErr, err)
+		}
+		if len(controlled) != len(captured) {
+			t.Fatalf("group error %v: controlled identities = %#v, want %#v", groupErr, controlled, captured)
+		}
+	}
+}
+
+func TestDarwinCapturedIdentityControlFailsClosed(t *testing.T) {
+	first := darwinProcessIdentity{pid: 41, startSec: 7, startUsec: 11}
+	second := darwinProcessIdentity{pid: 42, startSec: 8, startUsec: 12}
+	captured := map[darwinProcessIdentity]struct{}{first: {}, second: {}}
+	groupErr := syscall.EPERM
+	exactErr := errors.New("exact identity control denied")
+	controlled := make(map[darwinProcessIdentity]struct{})
+	err := signalDarwinCapturedIdentities(
+		captured, 41, syscall.SIGKILL,
+		func(int, syscall.Signal) error { return groupErr },
+		func(identity darwinProcessIdentity, _ syscall.Signal) error {
+			controlled[identity] = struct{}{}
+			if identity == first {
+				return exactErr
+			}
+
+			return nil
+		},
+	)
+	if !errors.Is(err, groupErr) || !errors.Is(err, exactErr) {
+		t.Fatalf("control error = %v, want group and exact identity evidence", err)
+	}
+	if len(controlled) != len(captured) {
+		t.Fatalf("controlled identities = %#v, want every captured identity attempted", controlled)
 	}
 }
 
