@@ -292,6 +292,7 @@ func (driver *supervisorDriver) requireLaunchWake(generation attemptGeneration) 
 }
 
 func (driver *supervisorDriver) executeLaunch(action supervisorAction) {
+	defer driver.recorder.recordSupervisorAction(action)
 	event := driver.execute(action)
 	if event == nil || event.completion == nil {
 		invariant(supervisorDriverOperation, "native launch returned no completion")
@@ -407,6 +408,12 @@ func (driver *supervisorDriver) apply(event supervisorEvent) {
 }
 
 func (driver *supervisorDriver) run(action supervisorAction) {
+	switch action.kind {
+	case supervisorLaunchNative, supervisorWaitRoot, supervisorSampleRunning,
+		supervisorDeliverTerminal, supervisorDeliverEmergencySettlement:
+	default:
+		defer driver.recorder.recordSupervisorAction(action)
+	}
 	switch action.kind {
 	case supervisorRevokeLaunchRelease:
 		if event := driver.execute(action); event != nil {
@@ -570,6 +577,10 @@ func (driver *supervisorDriver) monitor(
 	sampleAction supervisorAction,
 	deadlineAt time.Time,
 ) {
+	defer driver.recorder.recordSupervisorAction(waitAction)
+	if sampleAction.token != 0 {
+		defer driver.recorder.recordSupervisorAction(sampleAction)
+	}
 	if driver.recheckRoot == nil {
 		driver.executeAction(waitAction)
 
