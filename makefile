@@ -2,7 +2,7 @@ PATH := $(PWD)/.bin:$(PATH)
 SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 STRESS_COUNT ?= 10
-ACCEPTANCE_TESTS := ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$$
+ACCEPTANCE_TESTS := ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$$
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
 .git/.hooks.log:
@@ -29,7 +29,7 @@ test.adversarial: $(pre-reqs)
 
 # One bounded pull-request acceptance pass through every native contract seam.
 test.acceptance: $(pre-reqs)
-	@case "$$(go env GOOS)" in darwin) expected=6 ;; linux) expected=5 ;; windows) expected=7 ;; *) expected=3 ;; esac; \
+	@case "$$(go env GOOS)" in darwin) expected=9 ;; linux) expected=6 ;; windows) expected=8 ;; *) expected=4 ;; esac; \
 		selected="$$(go test -tags=adversarial -list '$(ACCEPTANCE_TESTS)' ./internal/ooze | grep -c '^Test')"; \
 		test "$$selected" -eq "$$expected"
 	@gotestsum --format=testname -- -race -count=1 -timeout=3m -shuffle=on -tags=adversarial \
