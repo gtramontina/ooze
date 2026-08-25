@@ -53,22 +53,31 @@ three ordinary suites; no waiver was used.
 
 ## Deliberate broken-instrument evidence
 
-At the final Linux matrix shape, `nativeDomainEmpty` was deliberately changed to
-return `true` without reading the Linux guardian. The command was compiled
-through Devbox and run on a live Linux arm64 kernel. All four matrix rows failed
-at the post-root observation (`Linux matrix did not observe the post-root
-subreaper state`) under shuffle seed `1787617568240919997`. Restoring the exact
-production instrument returned the matrix to green and left no production
-diff.
+Signed mutation `05a6ce59d21c087e0e989104cbc91d1bc936a0ed`
+stopped Linux cleanup after its first depth-one sweep. In
+[run 32796561108](https://github.com/gtramontina/ooze/actions/runs/32796561108),
+the native acceptance command
+`go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run
+"$ACCEPTANCE_TESTS" ./internal/cmdtestrunner ./internal/ooze` failed the exact
+`session_escapee_behind_a_live_middle` row: terminal settlement was
+`DrainUnconfirmed{Residual: 2}` rather than success. The other platforms stayed
+green. The mutation was isolated from the candidate; the restored production
+sweeps pass in run 32796096480.
 
 The unchanged #66 absence fixtures retain their named proof: enabling Windows
 breakaway fails the required `ERROR_ACCESS_DENIED` evidence in
 [run 32731491570](https://github.com/gtramontina/ooze/actions/runs/32731491570),
 and disabling Windows Job termination fails nested containment in
 [run 32732358150](https://github.com/gtramontina/ooze/actions/runs/32732358150).
-The new kill-on-close fixture additionally proves positive subject liveness
-before close and authoritative exit afterward through a separately retained
-process handle; `CloseHandle` success alone is not its oracle.
+Signed mutation `2bdd8dd8a279a62da96848bb3380d40310cd46f4` disabled
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. In
+[run 32796592704](https://github.com/gtramontina/ooze/actions/runs/32796592704),
+both the ordinary and native commands failed only the exact
+`TestWindowsNativeJobKillOnCloseStopsExactSubject` fixture: the separately
+retained subject handle returned wait status 258 rather than becoming
+signaled. Linux and Darwin stayed green. The restored flag makes the same test
+pass in run 32796096480, proving positive subject liveness before close and
+authoritative exit afterward; `CloseHandle` success alone is not its oracle.
 
 ## Allocated landing evidence
 
