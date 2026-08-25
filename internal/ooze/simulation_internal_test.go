@@ -3,6 +3,7 @@ package ooze
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +189,68 @@ func TestSimulationExploresEveryCatalogueMemberInStableOrder(t *testing.T) {
 	}
 	if explored.world.campaign.commandCount() != 3 {
 		t.Fatalf("command count=%d, want baseline plus two primaries", explored.world.campaign.commandCount())
+	}
+}
+
+func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-overlap", lineage: 25, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, simulationChoiceBytes{0})
+	if explored.failure != nil {
+		t.Fatalf("overlap exploration failed: %v", explored.failure)
+	}
+	found := false
+	for _, record := range explored.trace.records {
+		if record.authority != simulationRuntimeAuthority || len(record.runtimeState.admissions) != 2 {
+			continue
+		}
+		if record.runtimeState.admissions[0].overlapped && record.runtimeState.admissions[1].overlapped {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("two emitted primary effects never reached overlapping start commitments")
+	}
+	replayed := ReplayLegal(explored.trace)
+	if replayed.failure != nil {
+		t.Fatalf("overlap replay failed: %v", replayed.failure)
+	}
+	if !reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("overlap replay world diverged:\n got=%#v\nwant=%#v", replayed.world, explored.world)
+	}
+}
+
+func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-resource", lineage: 26, command: []string{"test"},
+			profile: SerialProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, simulationChoiceBytes{0})
+	if explored.failure != nil {
+		t.Fatalf("resource exploration failed: %v", explored.failure)
+	}
+	trace := explored.trace
+	trace.records = slices.Clone(trace.records)
+	for index, record := range trace.records {
+		settled, ok := record.campaignEvent.payload.(resourceSettledEvent)
+		if !ok || settled.kind != campaignResourceWorkspace {
+			continue
+		}
+		settled.identity = "workspace-not-released"
+		trace.records[index].campaignEvent.payload = settled
+		break
+	}
+
+	replayed := ReplayLegal(trace)
+	if replayed.failure == nil || !strings.Contains(replayed.failure.Error(), "external campaign fact is not enabled") {
+		t.Fatalf("wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
 	}
 }
 
