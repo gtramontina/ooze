@@ -95,9 +95,9 @@ type simulationRecord struct {
 	runtimeTerminal       terminalResult
 	runtimeClosure        runtimeClosure
 
-	supervisorEvent   supervisorEvent
-	supervisorState   supervisorState
-	supervisorActions []supervisorAction
+	supervisorEvent   simulationSupervisorEvent
+	supervisorState   simulationSupervisorState
+	supervisorActions []simulationSupervisorActionRecord
 }
 
 type simulationWorld struct {
@@ -450,8 +450,9 @@ func simulationRecordSupervisor(
 	next, actions := reduceSupervisor(state, event)
 	trace.records = append(trace.records, simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationSupervisorAuthority,
-		supervisorEvent: event, supervisorState: next,
-		supervisorActions: append([]supervisorAction(nil), actions...),
+		supervisorEvent:   simulationTraceSupervisorEvent(event),
+		supervisorState:   simulationTraceSupervisorState(next),
+		supervisorActions: simulationTraceSupervisorActions(actions),
 	})
 
 	return next, actions
@@ -616,18 +617,19 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				return simulationReplayFailure(trace, "campaign transition diverged at record %d", index)
 			}
 		case simulationSupervisorAuthority:
+			event := record.supervisorEvent.production()
 			if record.supervisorEvent.kind == supervisorProspectiveRegistered {
 				if len(effects) != 1 || effects[0].kind != campaignEffectLaunchAttempt ||
-					!simulationSupervisorRegistrationMatches(effects[0], record.supervisorEvent) {
+					!simulationSupervisorRegistrationMatches(effects[0], event) {
 					return simulationReplayFailure(trace, "supervisor launch is not enabled at record %d", index)
 				}
 				activeLaunch = effects[0]
 				effects = nil
 			}
 			var actions []supervisorAction
-			supervisor, actions = reduceSupervisor(supervisor, record.supervisorEvent)
-			if !reflect.DeepEqual(supervisor, record.supervisorState) ||
-				!reflect.DeepEqual(actions, record.supervisorActions) {
+			supervisor, actions = reduceSupervisor(supervisor, event)
+			if !reflect.DeepEqual(simulationTraceSupervisorState(supervisor), record.supervisorState) ||
+				!reflect.DeepEqual(simulationTraceSupervisorActions(actions), record.supervisorActions) {
 				return simulationReplayFailure(trace, "supervisor transition diverged at record %d", index)
 			}
 			if record.supervisorEvent.kind == supervisorRuntimeCompleted {

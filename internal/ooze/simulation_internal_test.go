@@ -113,12 +113,12 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 			for _, record := range explored.trace.records {
 				if record.authority == simulationSupervisorAuthority &&
 					record.supervisorEvent.kind == supervisorProspectiveRegistered {
-					launchBy = record.supervisorEvent.launchBy
+					launchBy = record.supervisorEvent.launchBy.production()
 				}
 				if record.authority == simulationSupervisorAuthority &&
 					(record.supervisorEvent.kind == supervisorLaunchCompleted ||
 						record.supervisorEvent.kind == supervisorLaunchBoundary) {
-					launch = record.supervisorEvent
+					launch = record.supervisorEvent.production()
 					break
 				}
 			}
@@ -244,7 +244,7 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 		if record.authority == simulationSupervisorAuthority &&
 			record.supervisorEvent.kind == supervisorProspectiveRegistered {
 			prefixLength = index + 1
-			registered = record.supervisorEvent
+			registered = record.supervisorEvent.production()
 			break
 		}
 	}
@@ -361,7 +361,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		t.Fatalf("production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
 	}
 	if !reflect.DeepEqual(trace.records[1].campaignEffects, wantEffects) ||
-		!reflect.DeepEqual(trace.records[2].supervisorActions, simulationProjectSupervisorActions(wantActions)) {
+		!reflect.DeepEqual(trace.records[2].supervisorActions, simulationTraceSupervisorActions(wantActions)) {
 		t.Fatalf("recorded ordered outputs diverged: %#v", trace.records)
 	}
 }
@@ -493,13 +493,61 @@ func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 	recorder.mutex.Lock()
 	record := recorder.records[0]
 	recorder.mutex.Unlock()
-	if record.supervisorEvent.at.Location() != time.UTC ||
-		record.supervisorState.attempts[0].registeredAt.Location() != time.UTC {
-		t.Fatalf("supervisor trace retained host locations: %#v", record)
+	if got := record.supervisorEvent.at.production(); !got.Equal(registeredAt) || got.Location() != time.UTC {
+		t.Fatalf("canonical instant changed: got=%s want=%s", got, registeredAt)
 	}
-	if !record.supervisorEvent.at.Equal(registeredAt) {
-		t.Fatalf("canonical instant changed: got=%s want=%s", record.supervisorEvent.at, registeredAt)
+	if got := record.supervisorState.attempts[0].registeredAt.production(); !got.Equal(registeredAt) || got.Location() != time.UTC {
+		t.Fatalf("canonical state instant changed: got=%s want=%s", got, registeredAt)
 	}
+}
+
+func TestSimulationTraceCarriesNoProductionTimeValues(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-integer-time", lineage: 82, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, simulationChoiceBytes{0})
+	if explored.failure != nil {
+		t.Fatalf("exploration failed: %v", explored.failure)
+	}
+	if path := simulationForbiddenValuePath(reflect.ValueOf(explored.trace), "trace"); path != "" {
+		t.Fatalf("canonical trace retains a production time value at %s", path)
+	}
+}
+
+func simulationForbiddenValuePath(value reflect.Value, path string) string {
+	if !value.IsValid() {
+		return ""
+	}
+	if value.Type() == reflect.TypeOf(time.Time{}) {
+		return path
+	}
+	switch value.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if !value.IsNil() {
+			return simulationForbiddenValuePath(value.Elem(), path)
+		}
+	case reflect.Struct:
+		for index := 0; index < value.NumField(); index++ {
+			if found := simulationForbiddenValuePath(
+				value.Field(index), path+"."+value.Type().Field(index).Name,
+			); found != "" {
+				return found
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for index := 0; index < value.Len(); index++ {
+			if found := simulationForbiddenValuePath(
+				value.Index(index), fmt.Sprintf("%s[%d]", path, index),
+			); found != "" {
+				return found
+			}
+		}
+	}
+
+	return ""
 }
 
 func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {

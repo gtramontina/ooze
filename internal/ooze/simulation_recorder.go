@@ -81,9 +81,9 @@ func (recorder *simulationRecorder) recordSupervisor(
 	}
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority,
-		supervisorEvent:   simulationProjectSupervisorEvent(event),
-		supervisorState:   simulationProjectSupervisorState(state),
-		supervisorActions: simulationProjectSupervisorActions(actions),
+		supervisorEvent:   simulationTraceSupervisorEvent(event),
+		supervisorState:   simulationTraceSupervisorState(state),
+		supervisorActions: simulationTraceSupervisorActions(actions),
 	})
 }
 
