@@ -80,6 +80,7 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 
 			aliveWalk := linuxMatrixDescendants(t, root)
 			aliveWaitable := linuxMatrixDirectChildren(t, guardian)
+			assertLinuxMatrixProductionCensus(t, "root alive", root, true, uint64(len(aliveWalk)))
 			assertLinuxMatrixVisibility(t, "root alive", subject,
 				shape.walkFromRoot[0], aliveWalk, shape.waitable[0], aliveWaitable)
 			assertLinuxMatrixParentage(t, shape.role, guardian, root, middle, subject)
@@ -99,6 +100,7 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("Linux matrix did not observe the post-root subreaper state")
 			}
+			assertLinuxMatrixProductionCensus(t, "root exited", root, false, 0)
 			assertLinuxMatrixVisibility(t, "root exited", subject,
 				shape.walkFromRoot[1], map[int]bool{}, shape.waitable[1], pidSet(exitedWaitable))
 			seed := subject
@@ -302,6 +304,24 @@ func assertLinuxMatrixVisibility(
 	if waitable[subject] != wantWaitable {
 		t.Fatalf("%s subreaper wait4 visibility for subject %d = %t, want %t (children=%v)",
 			state, subject, waitable[subject], wantWaitable, waitable)
+	}
+}
+
+func assertLinuxMatrixProductionCensus(
+	t *testing.T,
+	state string,
+	root int,
+	wantRootLive bool,
+	wantDescendants uint64,
+) {
+	t.Helper()
+	rootLive, descendants, err := linuxDescendantCount(root)
+	if err != nil {
+		t.Fatalf("%s production parent walk: %v", state, err)
+	}
+	if rootLive != wantRootLive || descendants != wantDescendants {
+		t.Fatalf("%s production parent walk = root live %t, descendants %d; want %t, %d",
+			state, rootLive, descendants, wantRootLive, wantDescendants)
 	}
 }
 
