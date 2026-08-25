@@ -40,6 +40,7 @@ type simulationEngine struct {
 	registration campaignRegistration
 	launches     map[attemptGeneration]campaignEffect
 	receipts     map[attemptGeneration]observationResult
+	emergency    emergencySettlement
 	attempts     int
 }
 
@@ -75,7 +76,7 @@ func simulationExploreEngine(
 	recoverySteps := 0
 	recoveryBound := 32 * (1 + 2*max(1, len(definition.catalogue)))
 	seenRecovery := make(map[string]struct{})
-	for engine.campaign.outcome == nil {
+	for engine.campaign.outcome == nil && engine.campaign.failure == nil {
 		moves := engine.enabledMoves()
 		if len(moves) == 0 {
 			return SimulationResult{trace: engine.trace, failure: simulationLivenessFailure{
@@ -331,10 +332,15 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 	case supervisorObserveEmptiness:
 		at := action.drainBy.Add(-time.Nanosecond)
+		kind := supervisorDrainObservedEmpty
+		if move.variant == 1 {
+			at = action.drainBy
+			kind = supervisorDrainObservedResidual
+		}
 		completion := supervisorDrainCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
-			at:         at, kind: supervisorDrainObservedEmpty,
+			at:         at, kind: kind,
 		}
 		return engine.applySupervisor(move.source, supervisorEvent{
 			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
@@ -362,6 +368,60 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		}
 		return engine.applySupervisor(move.source, supervisorEvent{
 			kind: supervisorReleaseCompleted, generation: action.generation, at: action.at, release: &completion,
+		})
+	case supervisorTransferResidualCustody:
+		var receipt observationResult
+		engine.runtime, receipt = engine.runtime.observeAttempt(action.generation, drainUnconfirmed{})
+		engine.receipts[action.generation] = receipt
+		closure := runtimeClosure{
+			epoch: receipt.fatalEpoch, cancelledWaiting: receipt.cancelledWaiting,
+			compensatedGrants: receipt.compensatedGrants, residual: engine.runtime.residualCustody(),
+		}
+		sequence := engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
+			runtimeObservation:    simulationTraceObservation(drainUnconfirmed{}),
+			runtimeState:          simulationTraceRuntimeState(engine.runtime),
+			runtimeObservationOut: simulationTraceObservationResult(receipt),
+			runtimeClosure:        simulationTraceRuntimeClosure(closure),
+		})
+		engine.enqueueDelivery(sequence, runtimeEmergencyStartedEvent{closure: campaignClosure(closure)})
+		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
+			kind: supervisorRuntimeCompleted, generation: action.generation,
+			runtime: &supervisorRuntimeCompletion{
+				generation: action.generation,
+				action:     supervisorPendingAction{kind: action.kind, token: action.token},
+				kind:       supervisorRuntimeClosurePending,
+			},
+		})
+		emergencyAt := action.at.Add(time.Nanosecond)
+		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
+			kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
+			emergencySnapshots: simulationEmergencySnapshots(engine.supervisor),
+		})
+	case supervisorSettleEmergency:
+		resolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(action.resolutions)
+		var settlement emergencySettlement
+		engine.runtime, settlement = engine.runtime.settleEmergency(emergencySweep{resolutions: resolutions})
+		validateSupervisorRuntimeSettlement(settlement, acknowledged, residuals)
+		engine.emergency = settlement
+		sequence := engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation: simulationSettleEmergency,
+			runtimeSweep: simulationTraceEmergencySweep(emergencySweep{resolutions: resolutions}),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
+			runtimeEmergencyOut: simulationTraceEmergencySettlement(settlement),
+		})
+		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
+			kind: supervisorEmergencySettlementCompleted,
+			emergencySettlement: &supervisorEmergencySettlementCompletion{
+				action: engine.supervisor.emergency.pendingAction,
+				acknowledged: acknowledged, residuals: residuals,
+			},
+		})
+	case supervisorDeliverEmergencySettlement:
+		return engine.applyCampaign(move.source, runtimeEmergencySettledEvent{
+			epoch: engine.emergency.epoch, settlement: campaignSettlement(engine.emergency),
 		})
 	case supervisorSettleRuntime:
 		observation := terminalObservation(action.terminal)
@@ -585,7 +645,7 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 			continue
 		}
 		switch move.action.kind {
-		case supervisorLaunchNative, supervisorWaitRoot:
+		case supervisorLaunchNative, supervisorWaitRoot, supervisorObserveEmptiness:
 			alternative := move
 			alternative.variant = 1
 			moves = append(moves, alternative)
@@ -644,4 +704,15 @@ func simulationCampaignAttemptMutant(state campaignState, identity attemptIdenti
 		}
 	}
 	panic("simulation campaign attempt is absent")
+}
+
+func simulationEmergencySnapshots(state supervisorState) []supervisorEmergencySnapshot {
+	snapshots := make([]supervisorEmergencySnapshot, 0, len(state.attempts))
+	for _, attempt := range state.attempts {
+		if attempt.phase != supervisorLaunchClosedNotReleased {
+			snapshots = append(snapshots, supervisorEmergencySnapshot{generation: attempt.generation})
+		}
+	}
+
+	return snapshots
 }

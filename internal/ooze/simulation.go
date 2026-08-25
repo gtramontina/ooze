@@ -389,6 +389,16 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 						result:  campaignLaunchObservation{kind: campaignLaunchOwned},
 						receipt: campaignReceipt(observation),
 					}
+				case simulationDrainUnconfirmedObservation:
+					terminalReceipts[record.runtimeGeneration] = observation
+					closure := runtimeClosure{
+						epoch: observation.fatalEpoch, cancelledWaiting: observation.cancelledWaiting,
+						compensatedGrants: observation.compensatedGrants, residual: runtime.residualCustody(),
+					}
+					if !reflect.DeepEqual(simulationTraceRuntimeClosure(closure), record.runtimeClosure) {
+						return simulationReplayFailure(trace, "runtime emergency closure diverged at record %d", index)
+					}
+					delivered = runtimeEmergencyStartedEvent{closure: campaignClosure(closure)}
 				default:
 					terminalReceipts[record.runtimeGeneration] = observation
 				}
@@ -552,6 +562,26 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					kind: simulationSupervisorActionSource, identity: uint64(deliver.token),
 				}], terminalEvent)
 				delivered = terminalEvent
+			}
+			if record.supervisorEvent.kind == supervisorEmergencySettlementCompleted {
+				deliverAt := slices.IndexFunc(actions, func(action supervisorAction) bool {
+					return action.kind == supervisorDeliverEmergencySettlement
+				})
+				candidates := pendingDeliveries[record.source]
+				settlementAt := slices.IndexFunc(candidates, func(candidate campaignEventPayload) bool {
+					_, ok := candidate.(runtimeEmergencySettledEvent)
+
+					return ok
+				})
+				if deliverAt < 0 || settlementAt < 0 {
+					return simulationReplayFailure(trace, "emergency settlement has no causal delivery at record %d", index)
+				}
+				settlement := candidates[settlementAt]
+				pendingDeliveries[record.source] = slices.Delete(candidates, settlementAt, settlementAt+1)
+				source := simulationCausalSource{
+					kind: simulationSupervisorActionSource, identity: uint64(actions[deliverAt].token),
+				}
+				pendingDeliveries[source] = append(pendingDeliveries[source], settlement)
 			}
 		default:
 			return simulationReplayFailure(trace, "authority is invalid at record %d", index)
