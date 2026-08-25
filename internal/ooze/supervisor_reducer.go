@@ -1016,7 +1016,7 @@ func reduceRunningBundle(
 
 		return state, nil
 	}
-	if attempt.phase != supervisorRunning || event.at.Before(attempt.lastEventAt) {
+	if attempt.phase != supervisorRunning {
 		invariant(supervisorReducerOperation, "running bundle is outside the active running interval")
 	}
 	state, selected := reduceRunningSnapshot(state, index, event.at, event.drainBy, *event.running)
