@@ -959,6 +959,50 @@ func TestCampaignBindsFreshBarrierForEachConfirmationClosure(t *testing.T) {
 	assertCampaignEffects(t, effects, campaignEffectBindConfirmationBarrier)
 }
 
+func TestCampaignClearsConfirmationClosureBeforeOrdinaryPrimariesResume(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(
+		t, []mutantIdentity{"mutant-a", "mutant-b", "mutant-c", "mutant-d", "mutant-e"}, 2,
+	)
+	deadline := harness.state.mutationDeadline
+	trip := Tripped{
+		Trip: AutomaticDeadlineTrip{},
+		ExecutionData: ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		},
+	}
+	killed := Settled{
+		Exit: ExitStatus{Code: 1},
+		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	}
+
+	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	peer := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
+	harness.settleAttempt(t, first, trip, 0)
+	harness.settleAttempt(t, peer, killed, 0)
+	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
+	effects := harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-b",
+	})
+	confirmation := harness.launchConfirmation(t, effects[0], "workspace-confirm-a")
+	harness.settleConfirmation(t, confirmation, trip)
+	effects = harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-confirm-a",
+	})
+	assertCampaignEffects(t, effects, campaignEffectMaterializeWorkspace, campaignEffectMaterializeWorkspace)
+	third := harness.launchMaterialized(t, effects[0], "workspace-c")
+	fourth := harness.launchMaterialized(t, effects[1], "workspace-d")
+	harness.settleAttempt(t, third, killed, 0)
+	harness.settleAttempt(t, fourth, killed, 0)
+	effects = harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-c"})
+	assertCampaignEffects(t, effects, campaignEffectMaterializeWorkspace)
+	effects = harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-d",
+	})
+	if len(effects) != 0 {
+		t.Fatalf("second resumed workspace settlement effects=%#v, want none", effects)
+	}
+}
+
 func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(
 		t, []mutantIdentity{"mutant-a", "mutant-b", "mutant-c"}, 3,
