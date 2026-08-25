@@ -165,12 +165,13 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 	tests := []struct {
 		name    string
 		action  supervisorActionKind
-		variant uint8
+		variant simulationMoveVariant
 		outcome func(simulationWorld) bool
 		observe func(simulationTrace) bool
 	}{
 		{
-			name: "launch after", action: supervisorLaunchNative, variant: 2,
+			name: "launch after", action: supervisorLaunchNative,
+			variant: simulationMoveVariant{launch: simulationLaunchAfterBoundary},
 			outcome: func(world simulationWorld) bool {
 				_, aborted := world.campaign.outcome.(abortedOutcome)
 
@@ -195,7 +196,8 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			},
 		},
 		{
-			name: "deadline after", action: supervisorWaitRoot, variant: 4,
+			name: "deadline after", action: supervisorWaitRoot,
+			variant: simulationMoveVariant{running: simulationRunningAfterDeadline},
 			outcome: func(world simulationWorld) bool {
 				completed, ok := world.campaign.outcome.(completedOutcome)
 
@@ -221,7 +223,8 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			},
 		},
 		{
-			name: "drain after", action: supervisorObserveEmptiness, variant: 2,
+			name: "drain after", action: supervisorObserveEmptiness,
+			variant: simulationMoveVariant{drain: simulationDrainAfterBoundary},
 			outcome: func(world simulationWorld) bool {
 				_, failed := world.campaign.failure.(cleanupUnconfirmedFault)
 
@@ -298,19 +301,19 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name    string
-		variant uint8
+		variant simulationRunningVariant
 		want    mutantResultKind
 	}{
-		{name: "survived", variant: 0, want: mutantSurvived},
-		{name: "killed", variant: 1, want: mutantKilled},
-		{name: "deadline", variant: 2, want: mutantTimedOut},
-		{name: "fuse", variant: 3, want: mutantRunaway},
+		{name: "survived", want: mutantSurvived},
+		{name: "killed", variant: simulationRunningFailed, want: mutantKilled},
+		{name: "deadline", variant: simulationRunningAtDeadline, want: mutantTimedOut},
+		{name: "fuse", variant: simulationRunningFuse, want: mutantRunaway},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 				for index, move := range moves {
 					if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
-						move.variant == test.variant {
+						move.variant.running == test.variant {
 						return index
 					}
 				}
@@ -462,7 +465,7 @@ func TestSimulationFocusedRepeatedIntrinsicDeadlinesDoNotChangeAdmission(t *test
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
 			if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
-				move.variant == 2 {
+				move.variant.running == simulationRunningAtDeadline {
 				return index
 			}
 		}
@@ -512,7 +515,8 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 			}
 			if peerReady {
 				for index, move := range moves {
-					if move.action.kind == supervisorWaitRoot && move.variant == 2 &&
+					if move.action.kind == supervisorWaitRoot &&
+						move.variant.running == simulationRunningAtDeadline &&
 						move.attemptKind == campaignAttemptPrimary && move.mutant == "mutant-a" {
 						timedOut = true
 
@@ -570,7 +574,8 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 				}
 				for index, move := range moves {
 					if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
-						move.mutant == mutant && move.variant == 2 {
+						move.mutant == mutant &&
+						move.variant.running == simulationRunningAtDeadline {
 						timedOut[mutant] = true
 
 						return index
@@ -635,7 +640,8 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	expired := false
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorObserveEmptiness && move.variant == 1 &&
+			if move.action.kind == supervisorObserveEmptiness &&
+				move.variant.drain == simulationDrainAtBoundary &&
 				move.attemptKind == campaignAttemptPrimary {
 				expired = true
 
@@ -913,7 +919,8 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorLaunchNative && move.variant == 1 {
+			if move.action.kind == supervisorLaunchNative &&
+				move.variant.launch == simulationLaunchAtBoundary {
 				return index
 			}
 		}
@@ -1241,7 +1248,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
 			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
-				move.variant == 2 {
+				move.variant.launch == simulationLaunchAfterBoundary {
 				return index
 			}
 		}
@@ -1330,6 +1337,33 @@ func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
 		t.Fatalf("simple/rich payload measures=%v/%v",
 			simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near))
 	}
+
+	uncanonical := simulationTrace{definition: simulationDefinition{
+		campaign: campaignDefinition{identity: "a", lineage: 1, peers: 1}, capacity: 1,
+	}}
+	canonical := simulationCloneTrace(uncanonical)
+	canonical.definition.campaign.identity = "campaign-1"
+	if !simulationShrinkMeasureLess(
+		simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical),
+	) {
+		t.Fatalf("canonical/short identity measures=%v/%v",
+			simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical))
+	}
+}
+
+func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *testing.T) {
+	candidate := simulationRecord{authority: simulationRuntimeAuthority}
+	failing := simulationRecord{
+		authority:    simulationRuntimeAuthority,
+		runtimeState: simulationRuntimeState{capacity: 3},
+	}
+	key := simulationReplayDivergenceFailure(
+		simulationTrace{}, simulationRuntimeStateDivergence, "rewritten diagnostic",
+	).key
+	retained := simulationRetainRecordedFailure(candidate, failing, key.divergence)
+	if retained.runtimeState.capacity != 3 {
+		t.Fatalf("typed replay divergence retained state=%#v", retained.runtimeState)
+	}
 }
 
 func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testing.T) {
@@ -1374,7 +1408,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
 			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
-				move.variant == 2 {
+				move.variant.launch == simulationLaunchAfterBoundary {
 				return index
 			}
 		}
