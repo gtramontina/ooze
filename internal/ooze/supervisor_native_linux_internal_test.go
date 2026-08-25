@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const linuxEscapeFixtureRole = "OOZE_LINUX_ESCAPE_FIXTURE_ROLE"
@@ -23,16 +26,17 @@ func TestLinuxNativeSupervisorSettlesTargetStatusThroughGuardian(t *testing.T) {
 		Dir:     t.TempDir(), Env: os.Environ(), Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	terminal := owned.Attempt.Wait()
 	settled, ok := terminal.(Settled)
-	if !ok || settled.Exit != (ExitStatus{Code: 17}) || settled.Output.Bytes != "linux-native-output" {
-		t.Fatalf("terminal = %#v, want exact target status and output", terminal)
-	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeOpen || len(snapshot.admissions) != 0 {
-		t.Fatalf("runtime after Linux settlement = %#v", snapshot)
+	require.True(t, ok, "terminal = %#v, want exact target status and output", terminal)
+	assert.Equal(t, (ExitStatus{Code: 17}), settled.Exit, "terminal = %#v, want exact target status and output", terminal)
+	assert.EqualValues(t, "linux-native-output", settled.Output.Bytes, "terminal = %#v, want exact target status and output", terminal)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeOpen, snapshot.lifecycle, "runtime after Linux settlement = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after Linux settlement = %#v", snapshot)
 	}
 }
 
@@ -43,16 +47,16 @@ func TestLinuxNativeSupervisorForcesGuardianDomainAtDeadline(t *testing.T) {
 		Dir: t.TempDir(), Env: os.Environ(), Profile: SerialProfile, Deadline: 50 * time.Millisecond,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	terminal := owned.Attempt.Wait()
 	tripped, ok := terminal.(Tripped)
-	if !ok || tripped.BoundFired != CommandDeadlineFired || tripped.CommandDuration != 50*time.Millisecond {
-		t.Fatalf("terminal = %#v, want exact Linux command deadline", terminal)
-	}
-	if _, ok := tripped.Trip.(SerialDeadlineTrip); !ok {
-		t.Fatalf("trip = %#v, want SerialDeadlineTrip", tripped.Trip)
+	require.True(t, ok, "terminal = %#v, want exact Linux command deadline", terminal)
+	assert.Equal(t, CommandDeadlineFired, tripped.BoundFired, "terminal = %#v, want exact Linux command deadline", terminal)
+	assert.Equal(t, 50*time.Millisecond, tripped.CommandDuration, "terminal = %#v, want exact Linux command deadline", terminal)
+	{
+		_, ok := tripped.Trip.(SerialDeadlineTrip)
+		require.True(t, ok, "trip = %#v, want SerialDeadlineTrip", tripped.Trip)
 	}
 }
 
@@ -64,11 +68,12 @@ func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 		Dir: directory, Env: os.Environ(), Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	notReleased, ok := result.(NotReleased)
-	if !ok || notReleased.Kind != LaunchFailed || notReleased.Err == nil {
-		t.Fatalf("launch = %#v, want proven typed target exec failure", result)
-	}
-	if snapshot := shell.snapshot(); len(snapshot.admissions) != 0 {
-		t.Fatalf("typed target exec failure retained custody: %#v", snapshot)
+	require.True(t, ok, "launch = %#v, want proven typed target exec failure", result)
+	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want proven typed target exec failure", result)
+	assert.NotNil(t, notReleased.Err, "launch = %#v, want proven typed target exec failure", result)
+	{
+		snapshot := shell.snapshot()
+		assert.EqualValues(t, 0, len(snapshot.admissions), "typed target exec failure retained custody: %#v", snapshot)
 	}
 }
 
@@ -96,12 +101,11 @@ func TestLinuxRevokedPreReleaseGuardianCleanupIsBounded(t *testing.T) {
 	}()
 	select {
 	case event := <-completed:
-		if event == nil || event.completion == nil ||
-			event.completion.kind != supervisorLaunchProvenNotReleased {
-			t.Fatalf("revoked Linux launch completion = %#v, want proven not released", event)
-		}
+		require.NotNil(t, event, "revoked Linux launch completion = %#v, want proven not released", event)
+		require.NotNil(t, event.completion, "revoked Linux launch completion = %#v, want proven not released", event)
+		assert.Equal(t, supervisorLaunchProvenNotReleased, event.completion.kind, "revoked Linux launch completion = %#v, want proven not released", event)
 	case <-time.After(3 * time.Second):
-		t.Fatal("revoked stopped Linux guardian cleanup did not resolve")
+		require.FailNow(t, "revoked stopped Linux guardian cleanup did not resolve")
 	}
 }
 
@@ -128,33 +132,23 @@ func TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian(t *testing.T) 
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
-	if terminal := owned.Attempt.Wait(); terminal == nil {
-		t.Fatal("Linux escape fixture returned no terminal")
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
+	{
+		terminal := owned.Attempt.Wait()
+		assert.NotNil(t, terminal, "Linux escape fixture returned no terminal")
 	}
 	pidBytes, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	escapee, err := strconv.Atoi(string(pidBytes))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = syscall.Kill(escapee, syscall.SIGKILL) }()
 	before, err := os.Stat(markerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 	after, err := os.Stat(markerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Size() != before.Size() {
-		t.Fatalf("guardian drainage returned while orphaned escapee %d remained executable", escapee)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, before.Size(), after.Size(), "guardian drainage returned while orphaned escapee %d remained executable", escapee)
 }
 
 func newLinuxNativeSupervisorForTest(
@@ -188,31 +182,31 @@ func runLinuxEscapeFixture(t *testing.T, role string) {
 	case "root":
 		command := exec.Command(os.Args[0], "-test.run=^TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian$")
 		command.Env = linuxEscapeFixtureEnvironment("escapee")
-		if err := command.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := command.Start()
+			assert.NoError(t, err)
 		}
 		awaitLinuxEscapeFixtureFile(t, pidPath)
 	case "escapee":
-		if err := syscall.Setpgid(0, 0); err != nil {
-			t.Fatal(err)
+		{
+			err := syscall.Setpgid(0, 0)
+			assert.NoError(t, err)
 		}
-		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-			t.Fatal(err)
+		{
+			err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600)
+			assert.NoError(t, err)
 		}
 		for {
 			file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			_, err = fmt.Fprintln(file, time.Now().UnixNano())
 			closeErr := file.Close()
-			if err != nil || closeErr != nil {
-				t.Fatal(err, closeErr)
-			}
+			require.NoError(t, err, "write fixture marker; close error=%v", closeErr)
+			assert.NoError(t, closeErr, "close fixture marker")
 			time.Sleep(5 * time.Millisecond)
 		}
 	default:
-		t.Fatalf("unknown Linux escape fixture role %q", role)
+		require.FailNow(t, "unknown Linux escape fixture role %q", role)
 	}
 }
 
@@ -238,5 +232,5 @@ func awaitLinuxEscapeFixtureFile(t *testing.T, path string) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("timed out awaiting Linux escape fixture file %s", path)
+	require.FailNow(t, "timed out awaiting Linux escape fixture file %s", path)
 }

@@ -3,13 +3,15 @@
 package ooze
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWindowsNativeClassifierExtractsWrappedResourceStatus(t *testing.T) {
@@ -18,9 +20,7 @@ func TestWindowsNativeClassifierExtractsWrappedResourceStatus(t *testing.T) {
 		operation: nativeLaunchInternalOutput, stage: nativeLaunchPreRelease,
 		err: err, closureProven: true,
 	})
-	if got != LaunchResourceExhausted {
-		t.Fatalf("classification = %v, want resource exhausted", got)
-	}
+	assert.Equal(t, LaunchResourceExhausted, got, "classification = %v, want resource exhausted", got)
 }
 
 func TestWindowsNativeOutputFaultPublishesResourceExhaustedThroughPublicLaunch(t *testing.T) {
@@ -56,11 +56,9 @@ func TestWindowsNativeOutputFaultPublishesResourceExhaustedThroughPublicLaunch(t
 		Profile: SerialProfile, Deadline: time.Second,
 	})
 	notReleased, ok := result.(NotReleased)
-	if !ok || notReleased.Kind != LaunchResourceExhausted || notReleased.Err == nil ||
-		!strings.Contains(notReleased.Err.Error(), fault.Error()) {
-		t.Fatalf("launch = %#v, want immutable Windows resource-exhausted fault", result)
-	}
-	if errors.Is(notReleased.Err, syscall.Errno(8)) {
-		t.Fatalf("public launch error retained mutable native identity: %v", notReleased.Err)
-	}
+	require.True(t, ok, "launch = %#v, want immutable Windows resource-exhausted fault", result)
+	assert.Equal(t, LaunchResourceExhausted, notReleased.Kind, "launch = %#v, want immutable Windows resource-exhausted fault", result)
+	require.NotNil(t, notReleased.Err, "launch = %#v, want immutable Windows resource-exhausted fault", result)
+	assert.True(t, strings.Contains(notReleased.Err.Error(), fault.Error()), "launch = %#v, want immutable Windows resource-exhausted fault", result)
+	assert.NotErrorIs(t, notReleased.Err, syscall.Errno(8), "public launch error retained mutable native identity: %v", notReleased.Err)
 }

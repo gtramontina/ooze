@@ -4,7 +4,6 @@ package ooze
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
 
@@ -57,34 +58,33 @@ func TestWindowsJobVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 				Profile: SerialProfile, Deadline: 10 * time.Second,
 			})
 			owned, ok := launched.(Owned)
-			if !ok || owned.Attempt == nil {
-				t.Fatalf("launch = %#v, want Owned", launched)
-			}
+			require.True(t, ok, "launch = %#v, want Owned", launched)
+			require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 			stopWindowsFixtureOnFailure(t, owned.Attempt)
 
 			identities := strings.Fields(string(awaitWindowsFixtureFile(t, readyPath, 3*time.Second)))
-			if len(identities) < 2 {
-				t.Fatalf("Windows matrix identities = %q, want root and exact subject", identities)
-			}
+			require.False(t, len(identities) < 2, "Windows matrix identities = %q, want root and exact subject", identities)
 			root, rootErr := strconv.Atoi(identities[0])
 			subject, subjectErr := strconv.Atoi(identities[len(identities)-1])
-			if rootErr != nil || subjectErr != nil || root <= 0 || subject <= 0 || root == subject {
-				t.Fatalf("Windows matrix root/subject = %q/%q: %v/%v",
-					identities[0], identities[len(identities)-1], rootErr, subjectErr)
-			}
+			require.NoError(t, rootErr, "Windows matrix root/subject = %q/%q: %v/%v", identities[0], identities[len(identities)-1], rootErr, subjectErr)
+			assert.NoError(t, subjectErr, "Windows matrix root/subject = %q/%q: %v/%v", identities[0], identities[len(identities)-1], rootErr, subjectErr)
+			assert.False(t, root <= 0, "Windows matrix root/subject = %q/%q: %v/%v", identities[0], identities[len(identities)-1], rootErr, subjectErr)
+			assert.False(t, subject <= 0, "Windows matrix root/subject = %q/%q: %v/%v", identities[0], identities[len(identities)-1], rootErr, subjectErr)
+			assert.NotEqual(t, subject, root, "Windows matrix root/subject = %q/%q: %v/%v", identities[0], identities[len(identities)-1], rootErr, subjectErr)
 			subjectProcess := retainWindowsFixtureProcess(t, subject)
 			aliveMembers := windowsMatrixMembers(t, executor)
 			assertWindowsMatrixMember(t, "root alive", uint32(root), aliveMembers)
 			assertWindowsMatrixMember(t, "root alive", uint32(subject), aliveMembers)
 
-			if err := os.WriteFile(releasePath, []byte("release"), 0o600); err != nil {
-				t.Fatal(err)
+			{
+				err := os.WriteFile(releasePath, []byte("release"), 0o600)
+				require.NoError(t, err)
 			}
 			var exitedMembers []uint32
 			select {
 			case exitedMembers = <-postRootMembers:
 			case <-time.After(5 * time.Second):
-				t.Fatal("Windows matrix did not observe parent-Job membership after root exit")
+				require.FailNow(t, "Windows matrix did not observe parent-Job membership after root exit")
 			}
 			// A terminated root may remain in Job accounting while a retained
 			// process handle exists. The supervisor's accepted root-exit fact,
@@ -94,9 +94,8 @@ func TestWindowsJobVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 
 			terminal := waitWindowsFixtureTerminal(t, owned.Attempt)
 			settled, settledOK := terminal.(Settled)
-			if !settledOK || settled.Exit.Code != 0 {
-				t.Fatalf("terminal = %#v, want successful root after transitive Job drainage", terminal)
-			}
+			assert.True(t, settledOK, "terminal = %#v, want successful root after transitive Job drainage", terminal)
+			assert.EqualValues(t, 0, settled.Exit.Code, "terminal = %#v, want successful root after transitive Job drainage", terminal)
 			assertWindowsFixtureProcessStopped(t, subjectProcess, subject)
 		})
 	}
@@ -123,23 +122,19 @@ func TestWindowsNativeSupervisorRejectsBreakawayFromJob(t *testing.T) {
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	stopWindowsFixtureOnFailure(t, owned.Attempt)
 	terminal := waitWindowsFixtureTerminal(t, owned.Attempt)
 	settled, ok := terminal.(Settled)
-	if !ok || settled.Exit.Code != 0 {
-		t.Fatalf("terminal = %#v, want successful breakaway-contract fixture", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want successful breakaway-contract fixture", terminal)
+	assert.EqualValues(t, 0, settled.Exit.Code, "terminal = %#v, want successful breakaway-contract fixture", terminal)
 	fields := strings.Fields(string(awaitWindowsFixtureFile(t, statusPath, 2*time.Second)))
-	if len(fields) != 2 || fields[1] != strconv.Itoa(int(windows.ERROR_ACCESS_DENIED)) {
-		t.Fatalf("breakaway subject evidence = %q, want positive root PID and ERROR_ACCESS_DENIED", fields)
-	}
+	require.EqualValues(t, 2, len(fields), "breakaway subject evidence = %q, want positive root PID and ERROR_ACCESS_DENIED", fields)
+	assert.Equal(t, strconv.Itoa(int(windows.ERROR_ACCESS_DENIED)), fields[1], "breakaway subject evidence = %q, want positive root PID and ERROR_ACCESS_DENIED", fields)
 	root, err := strconv.Atoi(fields[0])
-	if err != nil || root <= 0 {
-		t.Fatalf("breakaway subject root identity = %q: %v", fields[0], err)
-	}
+	assert.NoError(t, err, "breakaway subject root identity = %q: %v", fields[0], err)
+	assert.False(t, root <= 0, "breakaway subject root identity = %q: %v", fields[0], err)
 }
 
 func TestWindowsNativeSupervisorDrainsChildInNestedJob(t *testing.T) {
@@ -167,32 +162,30 @@ func TestWindowsNativeSupervisorDrainsChildInNestedJob(t *testing.T) {
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	stopWindowsFixtureOnFailure(t, owned.Attempt)
 
 	identities := strings.Fields(string(awaitWindowsFixtureFile(t, readyPath, 3*time.Second)))
-	if len(identities) != 2 {
-		t.Fatalf("nested-job subject evidence = %q, want root and child identities", identities)
-	}
+	require.EqualValues(t, 2, len(identities), "nested-job subject evidence = %q, want root and child identities", identities)
 	root, rootErr := strconv.Atoi(identities[0])
 	child, childErr := strconv.Atoi(identities[1])
-	if rootErr != nil || childErr != nil || root <= 0 || child <= 0 || root == child {
-		t.Fatalf("nested-job identities root=%q child=%q errors=(%v, %v)",
-			identities[0], identities[1], rootErr, childErr)
-	}
+	require.NoError(t, rootErr, "nested-job identities root=%q child=%q errors=(%v, %v)", identities[0], identities[1], rootErr, childErr)
+	assert.NoError(t, childErr, "nested-job identities root=%q child=%q errors=(%v, %v)", identities[0], identities[1], rootErr, childErr)
+	assert.False(t, root <= 0, "nested-job identities root=%q child=%q errors=(%v, %v)", identities[0], identities[1], rootErr, childErr)
+	assert.False(t, child <= 0, "nested-job identities root=%q child=%q errors=(%v, %v)", identities[0], identities[1], rootErr, childErr)
+	assert.NotEqual(t, child, root, "nested-job identities root=%q child=%q errors=(%v, %v)", identities[0], identities[1], rootErr, childErr)
 	childProcess := retainWindowsFixtureProcess(t, child)
 
 	awaitWindowsFixtureFile(t, markerPath, 2*time.Second)
-	if err := os.WriteFile(releasePath, []byte("release"), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(releasePath, []byte("release"), 0o600)
+		require.NoError(t, err)
 	}
 	terminal := waitWindowsFixtureTerminal(t, owned.Attempt)
 	settled, ok := terminal.(Settled)
-	if !ok || settled.Exit.Code != 0 {
-		t.Fatalf("terminal = %#v, want successful nested-job root", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want successful nested-job root", terminal)
+	assert.EqualValues(t, 0, settled.Exit.Code, "terminal = %#v, want successful nested-job root", terminal)
 	assertWindowsFixtureProcessStopped(t, childProcess, child)
 }
 
@@ -209,29 +202,31 @@ func TestWindowsNativeJobKillOnCloseStopsExactSubject(t *testing.T) {
 	command.Env = windowsJobFixtureEnvironment("kill-on-close-subject",
 		"OOZE_WINDOWS_NESTED_MARKER="+markerPath)
 	state, err := prepareNativeCommand(command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	closed := false
 	t.Cleanup(func() {
 		if !closed {
 			_ = closeNativeDomain(state)
 		}
 	})
-	if err = command.Start(); err != nil {
-		t.Fatal(err)
+	{
+		err = command.Start()
+		require.NoError(t, err)
 	}
-	if _, err = releaseNativeCommand(command, state); err != nil {
-		t.Fatal(err)
+	{
+		_, err = releaseNativeCommand(command, state)
+		require.NoError(t, err)
 	}
 	subject := command.Process.Pid
 	subjectProcess := retainWindowsFixtureProcess(t, subject)
-	if err = command.Process.Release(); err != nil {
-		t.Fatal(err)
+	{
+		err = command.Process.Release()
+		require.NoError(t, err)
 	}
 	awaitWindowsFixtureFile(t, markerPath, 2*time.Second)
-	if err = closeNativeDomain(state); err != nil {
-		t.Fatal(err)
+	{
+		err = closeNativeDomain(state)
+		require.NoError(t, err)
 	}
 	closed = true
 	assertWindowsFixtureProcessStopped(t, subjectProcess, subject)
@@ -247,12 +242,11 @@ func runWindowsJobFixture(t *testing.T, role string) {
 		command.Env = windowsJobFixtureEnvironment("breakaway-child")
 		command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB}
 		err := command.Run()
-		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			t.Fatalf("breakaway creation = %v, want ERROR_ACCESS_DENIED", err)
-		}
+		assert.ErrorIs(t, err, windows.ERROR_ACCESS_DENIED, "breakaway creation = %v, want ERROR_ACCESS_DENIED", err)
 		status := fmt.Sprintf("%d %d", os.Getpid(), windows.ERROR_ACCESS_DENIED)
-		if err = os.WriteFile(os.Getenv("OOZE_WINDOWS_BREAKAWAY_STATUS"), []byte(status), 0o600); err != nil {
-			t.Fatal(err)
+		{
+			err = os.WriteFile(os.Getenv("OOZE_WINDOWS_BREAKAWAY_STATUS"), []byte(status), 0o600)
+			assert.NoError(t, err)
 		}
 	case "breakaway-child":
 		return
@@ -269,7 +263,7 @@ func runWindowsJobFixture(t *testing.T, role string) {
 	case "matrix-subject":
 		awaitWindowsFixtureFile(t, os.Getenv("OOZE_WINDOWS_MATRIX_SUBJECT_RELEASE"), 8*time.Second)
 	default:
-		t.Fatalf("unknown Windows job fixture role %q", role)
+		require.FailNow(t, "unknown Windows job fixture role %q", role)
 	}
 }
 
@@ -286,24 +280,24 @@ func runWindowsMatrixRoot(t *testing.T, role string) {
 		subject = awaitWindowsMatrixSubjectIdentity(t)
 	case "matrix-nested-root":
 		job, err := windows.CreateJobObject(nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		assert.NoError(t, err)
 		defer func() {
-			if closeErr := windows.CloseHandle(job); closeErr != nil {
-				t.Errorf("close Windows matrix nested job: %v", closeErr)
+			{
+				closeErr := windows.CloseHandle(job)
+				assert.NoError(t, closeErr, "close Windows matrix nested job: %v", closeErr)
 			}
 		}()
 		subject = startWindowsMatrixProcessInJob(t, job, "matrix-subject")
 	default:
-		t.Fatalf("unknown Windows matrix root role %q", role)
+		require.FailNow(t, "unknown Windows matrix root role %q", role)
 	}
 	identity := fmt.Sprintf("%d %d", root, subject)
 	if middle > 0 {
 		identity = fmt.Sprintf("%d %d %d", root, middle, subject)
 	}
-	if err := os.WriteFile(os.Getenv("OOZE_WINDOWS_MATRIX_READY"), []byte(identity), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(os.Getenv("OOZE_WINDOWS_MATRIX_READY"), []byte(identity), 0o600)
+		require.NoError(t, err)
 	}
 	awaitWindowsFixtureFile(t, os.Getenv("OOZE_WINDOWS_MATRIX_RELEASE"), 8*time.Second)
 }
@@ -311,9 +305,10 @@ func runWindowsMatrixRoot(t *testing.T, role string) {
 func runWindowsMatrixMiddle(t *testing.T) {
 	t.Helper()
 	subject := startWindowsMatrixProcess(t, "matrix-subject")
-	if err := os.WriteFile(os.Getenv("OOZE_WINDOWS_MATRIX_SUBJECT_PID"),
-		[]byte(strconv.Itoa(subject)), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(os.Getenv("OOZE_WINDOWS_MATRIX_SUBJECT_PID"),
+			[]byte(strconv.Itoa(subject)), 0o600)
+		require.NoError(t, err)
 	}
 	awaitWindowsFixtureFile(t, os.Getenv("OOZE_WINDOWS_MATRIX_SUBJECT_RELEASE"), 8*time.Second)
 }
@@ -328,8 +323,9 @@ func startWindowsMatrixProcess(t *testing.T, role string) int {
 		"OOZE_WINDOWS_MATRIX_SUBJECT_PID="+windowsMatrixSiblingPath("matrix.subject.pid"),
 		"OOZE_WINDOWS_MATRIX_SUBJECT_RELEASE="+windowsMatrixSiblingPath("matrix.subject.release"),
 	)
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
+	{
+		err := command.Start()
+		require.NoError(t, err)
 	}
 	process := command.Process.Pid
 	releaseWindowsFixtureProcess(t, command.Process)
@@ -344,8 +340,9 @@ func startWindowsMatrixProcessInJob(t *testing.T, job windows.Handle, role strin
 	command.Env = windowsJobFixtureEnvironment(role,
 		"OOZE_WINDOWS_MATRIX_SUBJECT_RELEASE="+windowsMatrixSiblingPath("matrix.subject.release"))
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
+	{
+		err := command.Start()
+		require.NoError(t, err)
 	}
 	releaseWindowsFixtureProcess(t, command.Process)
 	processID := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit values.
@@ -353,17 +350,15 @@ func startWindowsMatrixProcessInJob(t *testing.T, job windows.Handle, role strin
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
 		false, processID,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = windows.CloseHandle(process) }()
-	if err = windows.AssignProcessToJobObject(job, process); err != nil {
-		t.Fatal(err)
+	{
+		err = windows.AssignProcessToJobObject(job, process)
+		require.NoError(t, err)
 	}
 	released, err := resumeNativeProcess(processID)
-	if err != nil || !released {
-		t.Fatalf("release Windows matrix nested subject = (%t, %v)", released, err)
-	}
+	require.NoError(t, err, "release Windows matrix nested subject = (%t, %v)", released, err)
+	assert.True(t, released, "release Windows matrix nested subject = (%t, %v)", released, err)
 
 	return int(processID)
 }
@@ -373,9 +368,8 @@ func awaitWindowsMatrixSubjectIdentity(t *testing.T) int {
 	path := windowsMatrixSiblingPath("matrix.subject.pid")
 	contents := awaitWindowsFixtureFile(t, path, 3*time.Second)
 	process, err := strconv.Atoi(strings.TrimSpace(string(contents)))
-	if err != nil || process <= 0 {
-		t.Fatalf("Windows matrix subject identity = %q: %v", contents, err)
-	}
+	require.NoError(t, err, "Windows matrix subject identity = %q: %v", contents, err)
+	assert.False(t, process <= 0, "Windows matrix subject identity = %q: %v", contents, err)
 
 	return process
 }
@@ -443,22 +437,18 @@ func windowsMatrixMembers(t *testing.T, executor *supervisorNativeExecutor) []ui
 	defer executor.mutex.Unlock()
 	for _, attempt := range executor.attempts {
 		members, err := nativeJobProcessIDs(attempt.platform.job)
-		if err != nil {
-			t.Fatalf("inspect Windows parent Job members: %v", err)
-		}
+		require.NoError(t, err, "inspect Windows parent Job members: %v", err)
 
 		return members
 	}
-	t.Fatal("Windows matrix has no native attempt")
+	require.FailNow(t, "Windows matrix has no native attempt")
 
 	return nil
 }
 
 func assertWindowsMatrixMember(t *testing.T, state string, process uint32, members []uint32) {
 	t.Helper()
-	if !containsWindowsProcess(members, process) {
-		t.Fatalf("%s parent-Job members = %v, want exact process %d", state, members, process)
-	}
+	assert.True(t, containsWindowsProcess(members, process), "%s parent-Job members = %v, want exact process %d", state, members, process)
 }
 
 func containsWindowsProcess(processes []uint32, wanted uint32) bool {
@@ -474,20 +464,20 @@ func containsWindowsProcess(processes []uint32, wanted uint32) bool {
 func runWindowsNestedJobRoot(t *testing.T) {
 	t.Helper()
 	job, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() {
-		if closeErr := windows.CloseHandle(job); closeErr != nil {
-			t.Errorf("close nested fixture job: %v", closeErr)
+		{
+			closeErr := windows.CloseHandle(job)
+			assert.NoError(t, closeErr, "close nested fixture job: %v", closeErr)
 		}
 	}()
 	command := exec.Command(os.Args[0], "-test.run=^TestWindowsNativeSupervisorDrainsChildInNestedJob$")
 	command.Env = windowsJobFixtureEnvironment("nested-child",
 		"OOZE_WINDOWS_NESTED_MARKER="+os.Getenv("OOZE_WINDOWS_NESTED_MARKER"),
 	)
-	if err = command.Start(); err != nil {
-		t.Fatal(err)
+	{
+		err = command.Start()
+		require.NoError(t, err)
 	}
 	releaseWindowsFixtureProcess(t, command.Process)
 	child := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit values.
@@ -496,24 +486,25 @@ func runWindowsNestedJobRoot(t *testing.T) {
 		false,
 		child,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() {
-		if closeErr := windows.CloseHandle(process); closeErr != nil {
-			t.Errorf("close nested fixture process handle: %v", closeErr)
+		{
+			closeErr := windows.CloseHandle(process)
+			assert.NoError(t, closeErr, "close nested fixture process handle: %v", closeErr)
 		}
 	}()
-	if err = windows.AssignProcessToJobObject(job, process); err != nil {
-		t.Fatal(err)
+	{
+		err = windows.AssignProcessToJobObject(job, process)
+		require.NoError(t, err)
 	}
 	members, err := nativeJobProcessIDs(job)
-	if err != nil || len(members) != 1 || members[0] != child {
-		t.Fatalf("nested job members = %v, error=%v, want exact child %d", members, err, child)
-	}
+	require.NoError(t, err, "nested job members = %v, error=%v, want exact child %d", members, err, child)
+	require.Len(t, members, 1, "nested job members = %v, error=%v, want exact child %d", members, err, child)
+	assert.Equal(t, child, members[0], "nested job members = %v, error=%v, want exact child %d", members, err, child)
 	evidence := fmt.Sprintf("%d %d", os.Getpid(), child)
-	if err = os.WriteFile(os.Getenv("OOZE_WINDOWS_NESTED_READY"), []byte(evidence), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err = os.WriteFile(os.Getenv("OOZE_WINDOWS_NESTED_READY"), []byte(evidence), 0o600)
+		require.NoError(t, err)
 	}
 	awaitWindowsFixtureFile(t, os.Getenv("OOZE_WINDOWS_NESTED_RELEASE"), 5*time.Second)
 }
@@ -524,14 +515,11 @@ func runWindowsNestedJobChild(t *testing.T) {
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		_, writeErr := fmt.Fprintln(file, time.Now().UnixNano())
 		closeErr := file.Close()
-		if writeErr != nil || closeErr != nil {
-			t.Fatal(writeErr, closeErr)
-		}
+		require.NoError(t, writeErr, "write Windows fixture marker; close error=%v", closeErr)
+		assert.NoError(t, closeErr, "close Windows fixture marker")
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -567,7 +555,7 @@ func waitWindowsFixtureTerminal(t *testing.T, attempt *OwnedAttempt) Terminal {
 	case terminal := <-completed:
 		return terminal
 	case <-time.After(5 * time.Second):
-		t.Fatal("Windows job fixture exceeded its independent five-second wait bound")
+		require.FailNow(t, "Windows job fixture exceeded its independent five-second wait bound")
 
 		return nil
 	}
@@ -590,9 +578,7 @@ func awaitWindowsFixtureFile(t *testing.T, path string, timeout time.Duration) [
 		if err == nil && len(contents) > 0 {
 			return contents
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("fixture file %q was not populated within %s: %v", path, timeout, err)
-		}
+		assert.False(t, time.Now().After(deadline), "fixture file %q was not populated within %s: %v", path, timeout, err)
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -600,8 +586,9 @@ func awaitWindowsFixtureFile(t *testing.T, path string, timeout time.Duration) [
 func releaseWindowsFixtureProcess(t *testing.T, process *os.Process) {
 	t.Helper()
 	t.Cleanup(func() {
-		if err := process.Release(); err != nil {
-			t.Errorf("release nested fixture process capability: %v", err)
+		{
+			err := process.Release()
+			assert.NoError(t, err, "release nested fixture process capability: %v", err)
 		}
 	})
 }
@@ -613,30 +600,25 @@ func retainWindowsFixtureProcess(t *testing.T, processID int) windows.Handle {
 		false,
 		uint32(processID), //nolint:gosec // Windows process IDs are 32-bit values.
 	)
-	if err != nil {
-		t.Fatalf("retain nested-job child %d: %v", processID, err)
-	}
+	require.NoError(t, err, "retain nested-job child %d: %v", processID, err)
 	t.Cleanup(func() {
 		defer func() {
-			if closeErr := windows.CloseHandle(process); closeErr != nil {
-				t.Errorf("close retained nested-job child %d: %v", processID, closeErr)
+			{
+				closeErr := windows.CloseHandle(process)
+				assert.NoError(t, closeErr, "close retained nested-job child %d: %v", processID, closeErr)
 			}
 		}()
 
 		var exitCode uint32
 		queryErr := windows.GetExitCodeProcess(process, &exitCode)
-		if queryErr != nil {
-			t.Errorf("query retained nested-job child %d: %v", processID, queryErr)
-		}
+		assert.NoError(t, queryErr, "query retained nested-job child %d: %v", processID, queryErr)
 		var terminateErr error
 		if queryErr != nil || exitCode == windowsStillActive {
 			terminateErr = windows.TerminateProcess(process, 1)
 		}
 		result, waitErr := windows.WaitForSingleObject(process, 2_000)
-		if waitErr != nil || result != windows.WAIT_OBJECT_0 {
-			t.Errorf("drain retained nested-job child %d: terminate=%v wait=(%d, %v)",
-				processID, terminateErr, result, waitErr)
-		}
+		assert.NoError(t, waitErr, "drain retained nested-job child %d: terminate=%v wait=(%d, %v)", processID, terminateErr, result, waitErr)
+		assert.Equal(t, windows.WAIT_OBJECT_0, result, "drain retained nested-job child %d: terminate=%v wait=(%d, %v)", processID, terminateErr, result, waitErr)
 	})
 
 	return process
@@ -645,9 +627,8 @@ func retainWindowsFixtureProcess(t *testing.T, processID int) windows.Handle {
 func assertWindowsFixtureProcessStopped(t *testing.T, process windows.Handle, processID int) {
 	t.Helper()
 	result, err := windows.WaitForSingleObject(process, 2_000)
-	if err != nil || result != windows.WAIT_OBJECT_0 {
-		t.Fatalf("nested-job child %d exit proof = (%d, %v), want exact retained handle signaled", processID, result, err)
-	}
+	assert.NoError(t, err, "nested-job child %d exit proof = (%d, %v), want exact retained handle signaled", processID, result, err)
+	assert.Equal(t, windows.WAIT_OBJECT_0, result, "nested-job child %d exit proof = (%d, %v), want exact retained handle signaled", processID, result, err)
 }
 
 func windowsJobFixtureEnvironment(role string, additions ...string) []string {

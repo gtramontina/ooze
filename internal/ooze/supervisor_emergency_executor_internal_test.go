@@ -1,8 +1,10 @@
 package ooze
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSupervisorEmergencyExecutorNormalizesRuntimeCustodyIntoCanonicalGenerationOrder(t *testing.T) {
@@ -42,9 +44,7 @@ func TestSupervisorEmergencyExecutorNormalizesRuntimeCustodyIntoCanonicalGenerat
 	executor := supervisorEmergencyExecutor{
 		settleEmergency: func(got emergencySweep) emergencySettlement {
 			settleCalls++
-			if !reflect.DeepEqual(got, wantSweep) {
-				t.Fatalf("runtime sweep = %#v, want %#v", got, wantSweep)
-			}
+			assert.Equal(t, wantSweep, got, "runtime sweep = %#v, want %#v", got, wantSweep)
 
 			return raw
 		},
@@ -62,12 +62,10 @@ func TestSupervisorEmergencyExecutorNormalizesRuntimeCustodyIntoCanonicalGenerat
 			},
 		},
 	}
-	if settleCalls != 1 || !reflect.DeepEqual(event, wantEvent) {
-		t.Fatalf("settle calls/event = %d/%#v, want 1/%#v", settleCalls, event, wantEvent)
-	}
-	if !reflect.DeepEqual(action, originalAction) || !reflect.DeepEqual(raw, originalRaw) {
-		t.Fatalf("executor mutated input: action=%#v raw=%#v", action, raw)
-	}
+	assert.EqualValues(t, 1, settleCalls, "settle calls/event = %d/%#v, want 1/%#v", settleCalls, event, wantEvent)
+	assert.Equal(t, wantEvent, event, "settle calls/event = %d/%#v, want 1/%#v", settleCalls, event, wantEvent)
+	assert.Equal(t, originalAction, action, "executor mutated input: action=%#v raw=%#v", action, raw)
+	assert.Equal(t, originalRaw, raw, "executor mutated input: action=%#v raw=%#v", action, raw)
 }
 
 func TestSupervisorEmergencyExecutorDeliversExactCanonicalResidualsOnce(t *testing.T) {
@@ -95,12 +93,10 @@ func TestSupervisorEmergencyExecutorDeliversExactCanonicalResidualsOnce(t *testi
 	}
 
 	event := executor.execute(state, action)
-	if event != nil || deliveries != 1 || !reflect.DeepEqual(delivered, action.residuals) {
-		t.Fatalf("delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
-	}
-	if !reflect.DeepEqual(action, original) {
-		t.Fatalf("delivery mutated action: %#v, want %#v", action, original)
-	}
+	assert.Nil(t, event, "delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
+	assert.EqualValues(t, 1, deliveries, "delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
+	assert.Equal(t, action.residuals, delivered, "delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
+	assert.Equal(t, original, action, "delivery mutated action: %#v, want %#v", action, original)
 }
 
 func TestSupervisorEmergencyExecutorRejectsStaleSettlementActionBeforeRuntime(t *testing.T) {
@@ -122,9 +118,7 @@ func TestSupervisorEmergencyExecutorRejectsStaleSettlementActionBeforeRuntime(t 
 	}
 
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
-	if settleCalls != 0 {
-		t.Fatalf("stale action reached runtime %d times", settleCalls)
-	}
+	assert.EqualValues(t, 0, settleCalls, "stale action reached runtime %d times", settleCalls)
 }
 
 func TestSupervisorEmergencyExecutorRejectsMismatchedRuntimeSettlementFacts(t *testing.T) {
@@ -257,9 +251,8 @@ func TestSupervisorEmergencyExecutorRejectsCrossKindPayloadBeforeEffects(t *test
 
 	assertInvariantViolation(t, func() { executor.execute(settling, settle) })
 	assertInvariantViolation(t, func() { executor.execute(delivering, deliver) })
-	if settleCalls != 0 || deliveryCalls != 0 {
-		t.Fatalf("cross-kind payload reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
-	}
+	assert.EqualValues(t, 0, settleCalls, "cross-kind payload reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
+	assert.EqualValues(t, 0, deliveryCalls, "cross-kind payload reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
 }
 
 func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrder(t *testing.T) {
@@ -275,9 +268,7 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 	high := startOwned(shell, <-admittedHigh.delivery)
 	// The second admission starts first, so generation order and the raw
 	// admission ledger order disagree.
-	if high.generation <= low.generation {
-		t.Fatalf("start generations = high %d low %d", high.generation, low.generation)
-	}
+	assert.False(t, high.generation <= low.generation, "start generations = high %d low %d", high.generation, low.generation)
 	shell.observeAttempt(high.generation, drainUnconfirmed{})
 	shell.observeAttempt(low.generation, drainUnconfirmed{})
 	action := supervisorAction{
@@ -302,16 +293,15 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 		{generation: low.generation, kind: supervisorEmergencyResidualOwned},
 		{generation: high.generation, kind: supervisorEmergencyResidualOwned},
 	}
-	if event == nil || event.emergencySettlement == nil ||
-		!reflect.DeepEqual(event.emergencySettlement.residuals, wantResiduals) {
-		t.Fatalf("normalized runtime completion = %#v", event)
-	}
+	require.NotNil(t, event, "normalized runtime completion = %#v", event)
+	require.NotNil(t, event.emergencySettlement, "normalized runtime completion = %#v", event)
+	assert.Equal(t, wantResiduals, event.emergencySettlement.residuals, "normalized runtime completion = %#v", event)
 	runtime := shell.snapshot()
 	rawResidual := runtime.residualCustody()
-	if runtime.lifecycle != runtimeClosedUnconfirmed || len(rawResidual) != 2 ||
-		rawResidual[0].generation != high.generation || rawResidual[1].generation != low.generation {
-		t.Fatalf("settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
-	}
+	assert.Equal(t, runtimeClosedUnconfirmed, runtime.lifecycle, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
+	require.Len(t, rawResidual, 2, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
+	assert.Equal(t, high.generation, rawResidual[0].generation, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
+	assert.Equal(t, low.generation, rawResidual[1].generation, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
 }
 
@@ -365,9 +355,8 @@ func TestSupervisorEmergencyExecutorRejectsWrongActionTokensBeforeEffects(t *tes
 			}
 
 			assertInvariantViolation(t, func() { executor.execute(test.state, test.action) })
-			if settleCalls != 0 || deliveryCalls != 0 {
-				t.Fatalf("wrong token reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
-			}
+			assert.EqualValues(t, 0, settleCalls, "wrong token reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
+			assert.EqualValues(t, 0, deliveryCalls, "wrong token reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
 		})
 	}
 }
@@ -392,9 +381,8 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 			action: state.emergency.pendingAction,
 		},
 	}
-	if !reflect.DeepEqual(event, want) || shell.snapshot().lifecycle != runtimeClosedDrained {
-		t.Fatalf("empty executor event/runtime = %#v/%#v", event, shell.snapshot())
-	}
+	assert.Equal(t, want, event, "empty executor event/runtime = %#v/%#v", event, shell.snapshot())
+	assert.Equal(t, runtimeClosedDrained, shell.snapshot().lifecycle, "empty executor event/runtime = %#v/%#v", event, shell.snapshot())
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
 }
 

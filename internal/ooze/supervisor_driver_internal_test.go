@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"reflect"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *testing.T) {
@@ -29,7 +31,7 @@ func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *te
 		launchProgress: time.Second, drainEpoch: 5 * time.Second,
 		execute: func(action supervisorAction) *supervisorEvent {
 			nativeCalls++
-			t.Fatalf("pre-registered emergency executed native action: %#v", action)
+			assert.Fail(t, "pre-registered emergency executed native action", "action=%#v", action)
 
 			return nil
 		},
@@ -45,13 +47,13 @@ func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *te
 	shell.closeRuntime(runtimeFatalCause("committed start registration race"))
 
 	settlement := driver.emergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
-	if _, ok := settlement.(SweepDrained); !ok {
-		t.Fatalf("pre-registration emergency settlement = %#v, want SweepDrained", settlement)
+	{
+		_, ok := settlement.(SweepDrained)
+		require.True(t, ok, "pre-registration emergency settlement = %#v, want SweepDrained", settlement)
 	}
 	launch := driver.launchManaged(prepared.start, spec)
-	if launch.result != (NotReleased{Kind: LaunchFailed}) || nativeCalls != 0 {
-		t.Fatalf("preempted launch/calls = %#v/%d, want not released/zero", launch.result, nativeCalls)
-	}
+	assert.Equal(t, (NotReleased{Kind: LaunchFailed}), launch.result, "preempted launch/calls = %#v/%d, want not released/zero", launch.result, nativeCalls)
+	assert.EqualValues(t, 0, nativeCalls, "preempted launch/calls = %#v/%d, want not released/zero", launch.result, nativeCalls)
 }
 
 func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment(t *testing.T) {
@@ -65,7 +67,7 @@ func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment
 		runtime: shell, now: func() time.Time { return time.Unix(6_000, 0) },
 		launchProgress: time.Second, drainEpoch: 5 * time.Second,
 		execute: func(action supervisorAction) *supervisorEvent {
-			t.Fatalf("rejected start executed native action: %#v", action)
+			assert.Fail(t, "rejected start executed native action", "action=%#v", action)
 
 			return nil
 		},
@@ -80,13 +82,10 @@ func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment
 	}
 	driver.reserveLaunch(&cell, spec)
 	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
-	if prepared.result.decision != startCommittedRejectedClosed {
-		t.Fatalf("start decision = %v, want closed rejection", prepared.result.decision)
-	}
+	assert.Equal(t, startCommittedRejectedClosed, prepared.result.decision, "start decision = %v, want closed rejection", prepared.result.decision)
 	driver.discardLaunch(&cell)
-	if len(driver.reservations) != 0 || cell.installedGeneration() != 0 {
-		t.Fatalf("rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.installedGeneration())
-	}
+	assert.EqualValues(t, 0, len(driver.reservations), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.installedGeneration())
+	assert.EqualValues(t, 0, cell.installedGeneration(), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.installedGeneration())
 }
 
 func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSettlesLateNoRelease(t *testing.T) {
@@ -111,9 +110,7 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 		runtime: shell,
 		now:     func() time.Time { return registeredAt },
 		launchBoundary: func(got time.Time) <-chan time.Time {
-			if !got.Equal(launchBy) {
-				t.Fatalf("launch boundary = %v, want %v", got, launchBy)
-			}
+			assert.True(t, got.Equal(launchBy), "launch boundary = %v, want %v", got, launchBy)
 
 			return boundary
 		},
@@ -140,7 +137,7 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 			case supervisorRevokeLaunchRelease:
 				return nil
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -165,9 +162,8 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 	}()
 	<-nativeStarted
 	closure := shell.closeRuntime(runtimeFatalCause("prospective launch emergency"))
-	if len(closure.residual) != 1 || closure.residual[0].generation == 0 {
-		t.Fatalf("runtime closure = %#v, want exact prospective generation", closure)
-	}
+	require.Len(t, closure.residual, 1, "runtime closure = %#v, want exact prospective generation", closure)
+	assert.NotEqual(t, 0, closure.residual[0].generation, "runtime closure = %#v, want exact prospective generation", closure)
 	settled := make(chan SweepResult, 1)
 	go func() {
 		settled <- supervisor.EmergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
@@ -175,25 +171,25 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 
 	select {
 	case result := <-launched:
-		if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
-			t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", result)
-		}
+		assert.Equal(t, (LaunchUnconfirmed{Residual: ProspectiveUnresolved}), result, "launch = %#v, want prospective LaunchUnconfirmed", result)
 	case <-time.After(time.Second):
-		t.Fatal("pre-Owned emergency did not release the launch callback")
+		require.FailNow(t, "pre-Owned emergency did not release the launch callback")
 	}
 
 	close(nativeDone)
 	select {
 	case settlement := <-settled:
-		if _, ok := settlement.(SweepDrained); !ok {
-			t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
+		{
+			_, ok := settlement.(SweepDrained)
+			require.True(t, ok, "emergency settlement = %#v, want SweepDrained", settlement)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("late no-release did not complete emergency settlement")
+		require.FailNow(t, "late no-release did not complete emergency settlement")
 	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
-		len(snapshot.admissions) != 0 {
-		t.Fatalf("prospective emergency final runtime = %#v", snapshot)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "prospective emergency final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "prospective emergency final runtime = %#v", snapshot)
 	}
 }
 
@@ -238,7 +234,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 			case supervisorRevokeLaunchRelease:
 				return nil
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -248,9 +244,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			grant, ok := grants[attempt]
-			if !ok {
-				t.Fatalf("unexpected attempt %q", attempt)
-			}
+			assert.True(t, ok, "unexpected attempt %q", attempt)
 
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
 		},
@@ -268,9 +262,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	}
 	pending := []pendingLaunch{<-started, <-started}
 	closure := shell.closeRuntime(runtimeFatalCause("multi prospective emergency"))
-	if len(closure.residual) != 2 {
-		t.Fatalf("runtime closure residuals = %#v, want two prospective generations", closure.residual)
-	}
+	assert.EqualValues(t, 2, len(closure.residual), "runtime closure residuals = %#v, want two prospective generations", closure.residual)
 	settled := make(chan SweepResult, 1)
 	go func() {
 		settled <- supervisor.EmergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
@@ -278,11 +270,9 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	for range 2 {
 		select {
 		case result := <-results:
-			if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
-				t.Fatalf("launch = %#v, want LaunchUnconfirmed", result)
-			}
+			assert.Equal(t, (LaunchUnconfirmed{Residual: ProspectiveUnresolved}), result, "launch = %#v, want LaunchUnconfirmed", result)
 		case <-time.After(time.Second):
-			t.Fatal("multi-prospective emergency did not release every callback")
+			require.FailNow(t, "multi-prospective emergency did not release every callback")
 		}
 	}
 	for _, launch := range pending {
@@ -290,14 +280,17 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	}
 	select {
 	case settlement := <-settled:
-		if _, ok := settlement.(SweepDrained); !ok {
-			t.Fatalf("settlement = %#v, want SweepDrained", settlement)
+		{
+			_, ok := settlement.(SweepDrained)
+			require.True(t, ok, "settlement = %#v, want SweepDrained", settlement)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("equality no-release completions did not settle one emergency epoch")
+		require.FailNow(t, "equality no-release completions did not settle one emergency epoch")
 	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 {
-		t.Fatalf("multi-prospective final runtime = %#v", snapshot)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "multi-prospective final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "multi-prospective final runtime = %#v", snapshot)
 	}
 }
 
@@ -407,7 +400,7 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 					at: completion.at, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -444,15 +437,14 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 		}
 		select {
 		case <-deadline:
-			t.Fatal("released completion was not published while launch callback was held")
+			require.FailNow(t, "released completion was not published while launch callback was held")
 		default:
 			runtime.Gosched()
 		}
 	}
 	closure := shell.closeRuntime(runtimeFatalCause("released prospective emergency"))
-	if len(closure.residual) != 1 || closure.residual[0].generation == 0 {
-		t.Fatalf("runtime closure = %#v, want exact prospective generation", closure)
-	}
+	require.Len(t, closure.residual, 1, "runtime closure = %#v, want exact prospective generation", closure)
+	assert.NotEqual(t, 0, closure.residual[0].generation, "runtime closure = %#v, want exact prospective generation", closure)
 	settled := make(chan SweepResult, 1)
 	go func() {
 		settled <- supervisor.EmergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
@@ -463,23 +455,24 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 	select {
 	case result := <-launched:
 		owned, ok := result.(Owned)
-		if !ok || owned.Attempt == nil {
-			t.Fatalf("launch = %#v, want emergency-adopted Owned", result)
-		}
+		require.True(t, ok, "launch = %#v, want emergency-adopted Owned", result)
+		require.NotNil(t, owned.Attempt, "launch = %#v, want emergency-adopted Owned", result)
 	case <-time.After(time.Second):
-		t.Fatal("released pre-Owned emergency did not release the launch callback")
+		require.FailNow(t, "released pre-Owned emergency did not release the launch callback")
 	}
 	select {
 	case settlement := <-settled:
-		if _, ok := settlement.(SweepDrained); !ok {
-			t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
+		{
+			_, ok := settlement.(SweepDrained)
+			require.True(t, ok, "emergency settlement = %#v, want SweepDrained", settlement)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("released pre-Owned emergency did not settle")
+		require.FailNow(t, "released pre-Owned emergency did not settle")
 	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
-		len(snapshot.admissions) != 0 {
-		t.Fatalf("released prospective emergency final runtime = %#v", snapshot)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "released prospective emergency final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "released prospective emergency final runtime = %#v", snapshot)
 	}
 }
 
@@ -541,9 +534,7 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 		readDiagnostic: func(ref supervisorDiagnosticRef) error {
-			if ref != 19 {
-				t.Fatalf("launch diagnostic ref = %d, want 19", ref)
-			}
+			assert.EqualValues(t, 19, ref, "launch diagnostic ref = %d, want 19", ref)
 
 			return launchErr
 		},
@@ -562,11 +553,12 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	notReleased, ok := result.(NotReleased)
-	if !ok || notReleased.Kind != LaunchFailed || !errors.Is(notReleased.Err, launchErr) {
-		t.Fatalf("launch = %#v, want equality NotReleased", result)
-	}
-	if snapshot := shell.snapshot(); len(snapshot.admissions) != 0 {
-		t.Fatalf("equality completion retained prospective custody: %#v", snapshot)
+	require.True(t, ok, "launch = %#v, want equality NotReleased", result)
+	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want equality NotReleased", result)
+	assert.ErrorIs(t, notReleased.Err, launchErr, "launch = %#v, want equality NotReleased", result)
+	{
+		snapshot := shell.snapshot()
+		assert.EqualValues(t, 0, len(snapshot.admissions), "equality completion retained prospective custody: %#v", snapshot)
 	}
 }
 
@@ -575,8 +567,9 @@ func TestSupervisorLaunchBoundaryUsesTheAbsoluteLaunchBy(t *testing.T) {
 	time.Sleep(40 * time.Millisecond)
 	started := time.Now()
 	<-waitForSupervisorLaunchBoundary(launchBy)
-	if elapsed := time.Since(started); elapsed > 20*time.Millisecond {
-		t.Fatalf("expired absolute launch boundary waited %v", elapsed)
+	{
+		elapsed := time.Since(started)
+		assert.False(t, elapsed > 20*time.Millisecond, "expired absolute launch boundary waited %v", elapsed)
 	}
 }
 
@@ -663,7 +656,7 @@ func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
 					at: drainBy, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 				return nil
 			}
 		},
@@ -680,17 +673,16 @@ func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
 	select {
 	case <-monitorStarted:
 	case <-time.After(time.Second):
-		t.Fatal("owned root monitoring did not start before Wait")
+		require.FailNow(t, "owned root monitoring did not start before Wait")
 	}
 	close(allowExit)
-	if terminal := owned.Attempt.Wait(); terminal == nil {
-		t.Fatal("owned attempt returned no terminal after autonomous monitor completion")
+	{
+		terminal := owned.Attempt.Wait()
+		assert.NotNil(t, terminal, "owned attempt returned no terminal after autonomous monitor completion")
 	}
 }
 
@@ -732,7 +724,7 @@ func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T
 	select {
 	case <-reentered:
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("native action could not enter a recorder owner cut")
+		require.FailNow(t, "native action could not enter a recorder owner cut")
 	}
 	<-returned
 }
@@ -756,9 +748,7 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 		runtime: shell,
 		now:     func() time.Time { return registeredAt },
 		launchBoundary: func(got time.Time) <-chan time.Time {
-			if !got.Equal(launchBy) {
-				t.Fatalf("launch boundary = %v, want %v", got, launchBy)
-			}
+			assert.True(t, got.Equal(launchBy), "launch boundary = %v, want %v", got, launchBy)
 
 			return boundary
 		},
@@ -784,7 +774,7 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 			case supervisorRevokeLaunchRelease:
 				return nil
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -810,11 +800,9 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	boundary <- launchBy
 	select {
 	case result := <-launched:
-		if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
-			t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", result)
-		}
+		assert.Equal(t, (LaunchUnconfirmed{Residual: ProspectiveUnresolved}), result, "launch = %#v, want prospective LaunchUnconfirmed", result)
 	case <-time.After(time.Second):
-		t.Fatal("Launch remained blocked after LaunchBy")
+		require.FailNow(t, "Launch remained blocked after LaunchBy")
 	}
 
 	close(nativeDone)
@@ -826,7 +814,7 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("late not-released completion retained custody: %#v", snapshot)
+			require.FailNow(t, "late not-released completion retained custody: %#v", snapshot)
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -903,16 +891,14 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 
 				return &supervisorEvent{kind: supervisorReleaseCompleted, generation: action.generation, at: nextAt, release: &completion}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 		readDiagnostic: func(ref supervisorDiagnosticRef) error {
-			if ref != 23 {
-				t.Fatalf("release diagnostic ref = %d, want 23", ref)
-			}
+			assert.EqualValues(t, 23, ref, "release diagnostic ref = %d, want 23", ref)
 
 			return releaseErr
 		},
@@ -927,17 +913,18 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 		Attempt: "driver-release-unknown", Command: []string{"unknown-release"}, Dir: "/tmp",
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
-	if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
-		t.Fatalf("launch = %#v, want LaunchUnconfirmed", result)
-	}
+	assert.Equal(t, (LaunchUnconfirmed{Residual: ProspectiveUnresolved}), result, "launch = %#v, want LaunchUnconfirmed", result)
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: releaseAt.Add(time.Second), DrainBy: releaseAt.Add(6 * time.Second),
 	})
-	if _, ok := settlement.(SweepDrained); !ok {
-		t.Fatalf("release-unknown settlement = %#v, want SweepDrained", settlement)
+	{
+		_, ok := settlement.(SweepDrained)
+		require.True(t, ok, "release-unknown settlement = %#v, want SweepDrained", settlement)
 	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 {
-		t.Fatalf("release-unknown final runtime = %#v", snapshot)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "release-unknown final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "release-unknown final runtime = %#v", snapshot)
 	}
 }
 
@@ -1050,7 +1037,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 					at: nextAt, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -1075,9 +1062,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 	}()
 	boundary <- launchBy
 	result := <-launched
-	if result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
-		t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", result)
-	}
+	assert.Equal(t, (LaunchUnconfirmed{Residual: ProspectiveUnresolved}), result, "launch = %#v, want prospective LaunchUnconfirmed", result)
 
 	close(nativeDone)
 	deadline := time.After(time.Second)
@@ -1090,8 +1075,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("late released attempt did not await emergency settlement: phase=%d runtime=%#v",
-				phase, shell.snapshot())
+			require.FailNow(t, "late released attempt did not await emergency settlement: phase=%d runtime=%#v", phase, shell.snapshot())
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -1100,12 +1084,14 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
 	})
-	if _, ok := settlement.(SweepDrained); !ok {
-		t.Fatalf("late adoption emergency settlement = %#v, want SweepDrained", settlement)
+	{
+		_, ok := settlement.(SweepDrained)
+		require.True(t, ok, "late adoption emergency settlement = %#v, want SweepDrained", settlement)
 	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
-		len(snapshot.admissions) != 0 {
-		t.Fatalf("late adoption final runtime = %#v", snapshot)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "late adoption final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "late adoption final runtime = %#v", snapshot)
 	}
 }
 
@@ -1225,7 +1211,7 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 					release:    &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -1234,9 +1220,7 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			if attempt != grant.attempt {
-				t.Fatalf("start attempt = %q, want %q", attempt, grant.attempt)
-			}
+			assert.Equal(t, grant.attempt, attempt, "start attempt = %q, want %q", attempt, grant.attempt)
 			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
@@ -1249,22 +1233,18 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	launched := shell.snapshot()
-	if len(launched.admissions) != 1 || launched.admissions[0].stage != admissionOwned {
-		t.Fatalf("Owned published before runtime ownership: %#v", launched)
-	}
+	require.Len(t, launched.admissions, 1, "Owned published before runtime ownership: %#v", launched)
+	assert.Equal(t, admissionOwned, launched.admissions[0].stage, "Owned published before runtime ownership: %#v", launched)
 	terminal := owned.Attempt.Wait()
 	settled, ok := terminal.(Settled)
-	if !ok {
-		t.Fatalf("terminal = %#v, want Settled", terminal)
-	}
-	if settled.Exit != (ExitStatus{Code: 17}) || settled.Output.Bytes != "bad" ||
-		settled.Deadline != 10*time.Second || settled.CommandDuration != 2*time.Second {
-		t.Fatalf("settled evidence = %#v", settled)
-	}
+	require.True(t, ok, "terminal = %#v, want Settled", terminal)
+	assert.Equal(t, (ExitStatus{Code: 17}), settled.Exit, "settled evidence = %#v", settled)
+	assert.EqualValues(t, "bad", settled.Output.Bytes, "settled evidence = %#v", settled)
+	assert.Equal(t, 10*time.Second, settled.Deadline, "settled evidence = %#v", settled)
+	assert.Equal(t, 2*time.Second, settled.CommandDuration, "settled evidence = %#v", settled)
 	wantActions := []supervisorActionKind{
 		supervisorLaunchNative,
 		supervisorWaitRoot,
@@ -1272,11 +1252,11 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 		supervisorCaptureOutput,
 		supervisorReleaseDomain,
 	}
-	if !reflect.DeepEqual(executed, wantActions) {
-		t.Fatalf("native actions = %v, want %v", executed, wantActions)
-	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeOpen || len(snapshot.admissions) != 0 {
-		t.Fatalf("runtime after terminal delivery = %#v", snapshot)
+	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeOpen, snapshot.lifecycle, "runtime after terminal delivery = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after terminal delivery = %#v", snapshot)
 	}
 }
 
@@ -1349,9 +1329,7 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 					at: completion.at, drain: &completion,
 				}
 			case supervisorForceOwned:
-				if observations != 1 {
-					t.Fatalf("force followed %d emptiness observations, want 1", observations)
-				}
+				assert.EqualValues(t, 1, observations, "force followed %d emptiness observations, want 1", observations)
 				completion := supervisorDrainCompletion{
 					generation: action.generation,
 					action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -1377,7 +1355,7 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 					at: completion.at, output: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -1396,16 +1374,13 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	terminalReady := make(chan Terminal, 1)
 	go func() { terminalReady <- owned.Attempt.Wait() }()
 	<-captureEntered
 	closure := shell.closeRuntime(runtimeFatalCause("emergency during residual output capture"))
-	if len(closure.residual) != 1 {
-		t.Fatalf("runtime closure = %#v, want one owned residual", closure)
-	}
+	assert.EqualValues(t, 1, len(closure.residual), "runtime closure = %#v, want one owned residual", closure)
 	settlementReady := make(chan SweepResult, 1)
 	go func() {
 		settlementReady <- supervisor.EmergencyDrain(EmergencyRequest{
@@ -1422,7 +1397,7 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 		}
 		select {
 		case <-deadline:
-			t.Fatal("emergency did not snapshot in-flight output capture")
+			require.FailNow(t, "emergency did not snapshot in-flight output capture")
 		default:
 			runtime.Gosched()
 		}
@@ -1430,17 +1405,16 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	close(captureDone)
 	terminal := <-terminalReady
 	unconfirmed, ok := terminal.(DrainUnconfirmed)
-	if !ok || unconfirmed.Residual != OwnedUndrained || unconfirmed.Output.Bytes != "partial" ||
-		unconfirmed.Output.Final {
-		t.Fatalf("terminal = %#v, want partial DrainUnconfirmed", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want partial DrainUnconfirmed", terminal)
+	assert.Equal(t, OwnedUndrained, unconfirmed.Residual, "terminal = %#v, want partial DrainUnconfirmed", terminal)
+	assert.EqualValues(t, "partial", unconfirmed.Output.Bytes, "terminal = %#v, want partial DrainUnconfirmed", terminal)
+	assert.False(t, unconfirmed.Output.Final, "terminal = %#v, want partial DrainUnconfirmed", terminal)
 	settlement := <-settlementReady
 	residuals, ok := settlement.(SweepUnconfirmed)
-	if !ok || !reflect.DeepEqual(residuals.Residuals(), []ResidualRef{{
+	require.True(t, ok, "emergency settlement = %#v, want exact owned residual", settlement)
+	assert.Equal(t, []ResidualRef{{
 		Attempt: "driver-residual", Kind: OwnedUndrained,
-	}}) {
-		t.Fatalf("emergency settlement = %#v, want exact owned residual", settlement)
-	}
+	}}, residuals.Residuals(), "emergency settlement = %#v, want exact owned residual", settlement)
 }
 
 func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *testing.T) {
@@ -1522,7 +1496,7 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 					at: nextAt, output: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 				return nil
 			}
 		},
@@ -1539,35 +1513,32 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	terminal := owned.Attempt.Wait()
 	unconfirmed, ok := terminal.(DrainUnconfirmed)
-	if !ok || unconfirmed.Residual != OwnedUndrained || unconfirmed.Output.Bytes != "partial" ||
-		unconfirmed.Output.Final {
-		t.Fatalf("terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
+	assert.Equal(t, OwnedUndrained, unconfirmed.Residual, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
+	assert.EqualValues(t, "partial", unconfirmed.Output.Bytes, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
+	assert.False(t, unconfirmed.Output.Final, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
 	select {
 	case <-shell.runtimeEmergency():
 	default:
-		t.Fatal("local residual custody transfer did not broadcast runtime emergency")
+		require.FailNow(t, "local residual custody transfer did not broadcast runtime emergency")
 	}
 	snapshot := shell.snapshot()
-	if snapshot.lifecycle != runtimeFatalClosing || len(snapshot.admissions) != 1 ||
-		snapshot.admissions[0].disposition != dispositionCustodyTransferred {
-		t.Fatalf("runtime after local residual transfer = %#v", snapshot)
-	}
+	require.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "runtime after local residual transfer = %#v", snapshot)
+	require.Len(t, snapshot.admissions, 1, "runtime after local residual transfer = %#v", snapshot)
+	assert.Equal(t, dispositionCustodyTransferred, snapshot.admissions[0].disposition, "runtime after local residual transfer = %#v", snapshot)
 	emergencyAt := drainBy.Add(time.Second)
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
 	})
 	residuals, ok := settlement.(SweepUnconfirmed)
-	if !ok || !reflect.DeepEqual(residuals.Residuals(), []ResidualRef{{
+	require.True(t, ok, "local residual emergency settlement = %#v", settlement)
+	assert.Equal(t, []ResidualRef{{
 		Attempt: "driver-local-residual", Kind: OwnedUndrained,
-	}}) {
-		t.Fatalf("local residual emergency settlement = %#v", settlement)
-	}
+	}}, residuals.Residuals(), "local residual emergency settlement = %#v", settlement)
 }
 
 func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testing.T) {
@@ -1669,7 +1640,7 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 					at: completion.at, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -1682,7 +1653,7 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 			case 12:
 				return terminationErr
 			default:
-				t.Fatalf("diagnostic ref = %d, want 11 or 12", ref)
+				assert.Fail(t, "unexpected diagnostic reference", "ref=%d, want 11 or 12", ref)
 			}
 
 			return nil
@@ -1699,17 +1670,15 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	terminal := owned.Attempt.Wait()
 	infrastructure, ok := terminal.(Infrastructure)
-	if !ok || infrastructure.Cause != TerminationControlFailed ||
-		!errors.Is(infrastructure.Err, terminationErr) ||
-		infrastructure.Failures.Wait != waitErr.Error() ||
-		infrastructure.Failures.Termination != terminationErr.Error() {
-		t.Fatalf("terminal = %#v, want independent wait and primary termination failures", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want independent wait and primary termination failures", terminal)
+	assert.Equal(t, TerminationControlFailed, infrastructure.Cause, "terminal = %#v, want independent wait and primary termination failures", terminal)
+	assert.ErrorIs(t, infrastructure.Err, terminationErr, "terminal = %#v, want independent wait and primary termination failures", terminal)
+	assert.Equal(t, waitErr.Error(), infrastructure.Failures.Wait, "terminal = %#v, want independent wait and primary termination failures", terminal)
+	assert.Equal(t, terminationErr.Error(), infrastructure.Failures.Termination, "terminal = %#v, want independent wait and primary termination failures", terminal)
 }
 
 func TestSupervisorDriverPromotesConfirmedDrainCensusFailureToInfrastructure(t *testing.T) {
@@ -1816,16 +1785,14 @@ func TestSupervisorDriverPromotesConfirmedDrainCensusFailureToInfrastructure(t *
 					at: completion.at, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 		readDiagnostic: func(ref supervisorDiagnosticRef) error {
-			if ref != 31 {
-				t.Fatalf("diagnostic ref = %d, want 31", ref)
-			}
+			assert.EqualValues(t, 31, ref, "diagnostic ref = %d, want 31", ref)
 
 			return drainErr
 		},
@@ -1841,33 +1808,32 @@ func TestSupervisorDriverPromotesConfirmedDrainCensusFailureToInfrastructure(t *
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	terminal := owned.Attempt.Wait()
 	infrastructure, ok := terminal.(Infrastructure)
-	if !ok || infrastructure.Cause != CensusFailed || !errors.Is(infrastructure.Err, drainErr) ||
-		infrastructure.Failures.DrainCensus != drainErr.Error() {
-		t.Fatalf("terminal = %#v, want confirmed drain census infrastructure", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want confirmed drain census infrastructure", terminal)
+	assert.Equal(t, CensusFailed, infrastructure.Cause, "terminal = %#v, want confirmed drain census infrastructure", terminal)
+	assert.ErrorIs(t, infrastructure.Err, drainErr, "terminal = %#v, want confirmed drain census infrastructure", terminal)
+	assert.Equal(t, drainErr.Error(), infrastructure.Failures.DrainCensus, "terminal = %#v, want confirmed drain census infrastructure", terminal)
 }
 
 func TestSupervisorDriverPromotesForceTimeWaitFailureToInfrastructure(t *testing.T) {
 	terminal, waitErr, _ := runSupervisorDriverLateWaitFailure(t, false)
 	infrastructure, ok := terminal.(Infrastructure)
-	if !ok || infrastructure.Cause != WaitFailed || infrastructure.Err == nil ||
-		infrastructure.Err.Error() != waitErr.Error() || infrastructure.Failures.Wait != waitErr.Error() {
-		t.Fatalf("terminal = %#v, want force-time wait infrastructure", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want force-time wait infrastructure", terminal)
+	assert.Equal(t, WaitFailed, infrastructure.Cause, "terminal = %#v, want force-time wait infrastructure", terminal)
+	require.NotNil(t, infrastructure.Err, "terminal = %#v, want force-time wait infrastructure", terminal)
+	assert.Equal(t, waitErr.Error(), infrastructure.Err.Error(), "terminal = %#v, want force-time wait infrastructure", terminal)
+	assert.Equal(t, waitErr.Error(), infrastructure.Failures.Wait, "terminal = %#v, want force-time wait infrastructure", terminal)
 }
 
 func TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound(t *testing.T) {
 	terminal, waitErr, terminationErr := runSupervisorDriverLateWaitFailure(t, true)
 	unconfirmed, ok := terminal.(DrainUnconfirmed)
-	if !ok || unconfirmed.Failures.Wait != waitErr.Error() ||
-		unconfirmed.Failures.Termination != terminationErr.Error() {
-		t.Fatalf("terminal = %#v, want late wait and termination failures", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want late wait and termination failures", terminal)
+	assert.Equal(t, waitErr.Error(), unconfirmed.Failures.Wait, "terminal = %#v, want late wait and termination failures", terminal)
+	assert.Equal(t, terminationErr.Error(), unconfirmed.Failures.Termination, "terminal = %#v, want late wait and termination failures", terminal)
 }
 
 func runSupervisorDriverLateWaitFailure(
@@ -1961,9 +1927,7 @@ func runSupervisorDriverLateWaitFailure(
 
 				return nativeExecutor.force(action)
 			case supervisorObserveEmptiness:
-				if afterDrainBound {
-					t.Fatalf("expired force unexpectedly observed emptiness")
-				}
+				assert.False(t, afterDrainBound, "expired force unexpectedly observed emptiness")
 
 				return nativeExecutor.observeEmpty(action)
 			case supervisorCaptureOutput:
@@ -1987,7 +1951,7 @@ func runSupervisorDriverLateWaitFailure(
 					at: completion.at, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -2006,9 +1970,8 @@ func runSupervisorDriverLateWaitFailure(
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	owned.Attempt.Stop(StopRequest{At: stopAt, DrainBy: drainBy})
 	terminal := owned.Attempt.Wait()
 	close(waitReleased)
@@ -2020,41 +1983,33 @@ func TestSupervisorDriverDueAutomaticFuseBeatsLaterWaitFailureRegardlessOfReadin
 	for iteration := range 100 {
 		terminal, _ := runDueAutomaticFuseWaitFailureRace(t, iteration, time.Nanosecond)
 		tripped, ok := terminal.(Tripped)
-		if !ok {
-			t.Fatalf("iteration %d terminal = %#v, want due FuseTrip instead of WaitFailed", iteration, terminal)
-		}
+		require.True(t, ok, "iteration %d terminal = %#v, want due FuseTrip instead of WaitFailed", iteration, terminal)
 		fuse, ok := tripped.Trip.(FuseTrip)
-		if !ok || fuse.Live != 65 {
-			t.Fatalf("iteration %d fuse evidence = %#v, want exact count", iteration, tripped)
-		}
+		require.True(t, ok, "iteration %d fuse evidence = %#v, want exact count", iteration, tripped)
+		assert.EqualValues(t, 65, fuse.Live, "iteration %d fuse evidence = %#v, want exact count", iteration, tripped)
 	}
 }
 
 func TestSupervisorDriverEqualAutomaticFuseRetainsWaitFailureDiagnostic(t *testing.T) {
 	terminal, waitErr := runDueAutomaticFuseWaitFailureRace(t, 0, 0)
 	tripped, ok := terminal.(Tripped)
-	if !ok {
-		t.Fatalf("equal-time terminal = %#v, want FuseTrip", terminal)
+	require.True(t, ok, "equal-time terminal = %#v, want FuseTrip", terminal)
+	{
+		fuse, ok := tripped.Trip.(FuseTrip)
+		require.True(t, ok, "equal-time fuse evidence = %#v, want exact count", tripped.Trip)
+		assert.EqualValues(t, 65, fuse.Live, "equal-time fuse evidence = %#v, want exact count", tripped.Trip)
 	}
-	if fuse, ok := tripped.Trip.(FuseTrip); !ok || fuse.Live != 65 {
-		t.Fatalf("equal-time fuse evidence = %#v, want exact count", tripped.Trip)
-	}
-	if tripped.Failures.Wait != waitErr.Error() {
-		t.Fatalf("equal-time wait diagnostic = %q, want %q", tripped.Failures.Wait, waitErr)
-	}
+	assert.Equal(t, waitErr.Error(), tripped.Failures.Wait, "equal-time wait diagnostic = %q, want %q", tripped.Failures.Wait, waitErr)
 }
 
 func TestSupervisorDriverRetainsAutomaticPeakThroughReadyDeadline(t *testing.T) {
 	for iteration := range 100 {
 		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration, 9, false)
 		tripped, ok := terminal.(Tripped)
-		if !ok {
-			t.Fatalf("iteration %d terminal = %#v, want automatic deadline", iteration, terminal)
-		}
+		require.True(t, ok, "iteration %d terminal = %#v, want automatic deadline", iteration, terminal)
 		deadline, ok := tripped.Trip.(AutomaticDeadlineTrip)
-		if !ok || deadline.Peak != (ObservedCount{Value: 9, Present: true}) {
-			t.Fatalf("iteration %d deadline evidence = %#v, want inclusive-boundary peak 9", iteration, tripped)
-		}
+		require.True(t, ok, "iteration %d deadline evidence = %#v, want inclusive-boundary peak 9", iteration, tripped)
+		assert.Equal(t, (ObservedCount{Value: 9, Present: true}), deadline.Peak, "iteration %d deadline evidence = %#v, want inclusive-boundary peak 9", iteration, tripped)
 	}
 }
 
@@ -2062,13 +2017,10 @@ func TestSupervisorDriverEqualAutomaticFuseBeatsReadyDeadline(t *testing.T) {
 	for iteration := range 100 {
 		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration, 65, false)
 		tripped, ok := terminal.(Tripped)
-		if !ok {
-			t.Fatalf("iteration %d terminal = %#v, want equal-time fuse", iteration, terminal)
-		}
+		require.True(t, ok, "iteration %d terminal = %#v, want equal-time fuse", iteration, terminal)
 		fuse, ok := tripped.Trip.(FuseTrip)
-		if !ok || fuse.Live != 65 {
-			t.Fatalf("iteration %d terminal = %#v, want equal-time fuse count 65", iteration, terminal)
-		}
+		require.True(t, ok, "iteration %d terminal = %#v, want equal-time fuse count 65", iteration, terminal)
+		assert.EqualValues(t, 65, fuse.Live, "iteration %d terminal = %#v, want equal-time fuse count 65", iteration, terminal)
 	}
 }
 
@@ -2076,9 +2028,8 @@ func TestSupervisorDriverReadyEarlierRootExitBeatsDeadlineAndSamples(t *testing.
 	for iteration := range 100 {
 		terminal := automaticDeadlineTerminalWithReadyPeak(t, iteration, 9, true)
 		settled, ok := terminal.(Settled)
-		if !ok || settled.Exit.Code != 23 {
-			t.Fatalf("iteration %d terminal = %#v, want earlier root exit", iteration, terminal)
-		}
+		require.True(t, ok, "iteration %d terminal = %#v, want earlier root exit", iteration, terminal)
+		assert.EqualValues(t, 23, settled.Exit.Code, "iteration %d terminal = %#v, want earlier root exit", iteration, terminal)
 	}
 }
 
@@ -2214,7 +2165,7 @@ func automaticDeadlineTerminalWithReadyPeak(
 					at: nextAt, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -2250,16 +2201,15 @@ func automaticDeadlineTerminalWithReadyPeak(
 		Profile: AutomaticProfile, Deadline: 3 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	terminalReady := make(chan Terminal, 1)
 	go func() { terminalReady <- owned.Attempt.Wait() }()
 	var terminal Terminal
 	select {
 	case terminal = <-terminalReady:
 	case <-time.After(time.Second):
-		t.Fatalf("iteration %d owned attempt wait did not settle", iteration)
+		require.FailNow(t, "iteration %d owned attempt wait did not settle", iteration)
 	}
 	close(waitReleased)
 
@@ -2375,7 +2325,7 @@ func runDueAutomaticFuseWaitFailureRace(
 					at: nextAt, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 				return nil
 			}
 		},
@@ -2385,9 +2335,7 @@ func runDueAutomaticFuseWaitFailureRace(
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 		readDiagnostic: func(ref supervisorDiagnosticRef) error {
-			if ref != 1 {
-				t.Fatalf("diagnostic ref = %d, want 1", ref)
-			}
+			assert.EqualValues(t, 1, ref, "diagnostic ref = %d, want 1", ref)
 			return waitErr
 		},
 	})
@@ -2402,9 +2350,8 @@ func runDueAutomaticFuseWaitFailureRace(
 		Profile: AutomaticProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 
 	return owned.Attempt.Wait(), waitErr
 }
@@ -2446,10 +2393,9 @@ func TestPublicTerminalPreservesEveryIndependentInfrastructureDiagnostic(t *test
 				return diagnostics[ref]
 			}, supervisorRuntimeAcknowledged)
 			infrastructure, ok := terminal.(Infrastructure)
-			if !ok || infrastructure.Cause != test.cause ||
-				!errors.Is(infrastructure.Err, diagnostics[test.primary]) {
-				t.Fatalf("terminal = %#v, want primary diagnostic %d", terminal, test.primary)
-			}
+			require.True(t, ok, "terminal = %#v, want primary diagnostic %d", terminal, test.primary)
+			assert.Equal(t, test.cause, infrastructure.Cause, "terminal = %#v, want primary diagnostic %d", terminal, test.primary)
+			assert.ErrorIs(t, infrastructure.Err, diagnostics[test.primary], "terminal = %#v, want primary diagnostic %d", terminal, test.primary)
 			want := FailureDiagnostics{
 				Wait: diagnostics[1].Error(), DrainCensus: diagnostics[3].Error(),
 				Termination: diagnostics[4].Error(),
@@ -2458,9 +2404,8 @@ func TestPublicTerminalPreservesEveryIndependentInfrastructureDiagnostic(t *test
 			if runningDiagnostic != 0 {
 				want.RunningCensus = diagnostics[2].Error()
 			}
-			if infrastructure.Failures != want || infrastructure.Output.Bytes != "partial" {
-				t.Fatalf("immutable diagnostics = %#v, want %#v", infrastructure, want)
-			}
+			assert.Equal(t, want, infrastructure.Failures, "immutable diagnostics = %#v, want %#v", infrastructure, want)
+			assert.EqualValues(t, "partial", infrastructure.Output.Bytes, "immutable diagnostics = %#v, want %#v", infrastructure, want)
 		})
 	}
 }
@@ -2573,7 +2518,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 					at: completion.at, release: &completion,
 				}
 			default:
-				t.Fatalf("unexpected native action: %#v", action)
+				assert.Fail(t, "unexpected native action", "action=%#v", action)
 
 				return nil
 			}
@@ -2585,9 +2530,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			if attempt != grant.attempt {
-				t.Fatalf("start attempt = %q, want %q", attempt, grant.attempt)
-			}
+			assert.Equal(t, grant.attempt, attempt, "start attempt = %q, want %q", attempt, grant.attempt)
 			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
@@ -2600,27 +2543,26 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 		Profile: SerialProfile, Deadline: 2 * time.Second,
 	})
 	owned, ok := result.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", result)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", result)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	<-waitEntered
 	closure := shell.closeRuntime(runtimeFatalCause("test emergency"))
-	if len(closure.residual) != 1 || closure.residual[0].generation == 0 {
-		t.Fatalf("runtime closure = %#v", closure)
-	}
+	require.Len(t, closure.residual, 1, "runtime closure = %#v", closure)
+	assert.NotEqual(t, 0, closure.residual[0].generation, "runtime closure = %#v", closure)
 
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
-	if _, ok := settlement.(SweepDrained); !ok {
-		t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
+	{
+		_, ok := settlement.(SweepDrained)
+		require.True(t, ok, "emergency settlement = %#v, want SweepDrained", settlement)
 	}
 	terminal := owned.Attempt.Wait()
 	tripped, ok := terminal.(Tripped)
-	if !ok || tripped.CommandDuration != 2*time.Second ||
-		tripped.BoundFired != CommandDeadlineFired {
-		t.Fatalf("emergency terminal = %#v, want inclusive command-deadline Tripped", terminal)
-	}
-	if _, ok := tripped.Trip.(SerialDeadlineTrip); !ok {
-		t.Fatalf("emergency trip = %#v, want SerialDeadlineTrip", tripped.Trip)
+	require.True(t, ok, "emergency terminal = %#v, want inclusive command-deadline Tripped", terminal)
+	assert.Equal(t, 2*time.Second, tripped.CommandDuration, "emergency terminal = %#v, want inclusive command-deadline Tripped", terminal)
+	assert.Equal(t, CommandDeadlineFired, tripped.BoundFired, "emergency terminal = %#v, want inclusive command-deadline Tripped", terminal)
+	{
+		_, ok := tripped.Trip.(SerialDeadlineTrip)
+		require.True(t, ok, "emergency trip = %#v, want SerialDeadlineTrip", tripped.Trip)
 	}
 	wantActions := []supervisorActionKind{
 		supervisorLaunchNative,
@@ -2630,11 +2572,8 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 		supervisorCaptureOutput,
 		supervisorReleaseDomain,
 	}
-	if !reflect.DeepEqual(executed, wantActions) {
-		t.Fatalf("native actions = %v, want %v", executed, wantActions)
-	}
+	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
 	snapshot := shell.snapshot()
-	if snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 {
-		t.Fatalf("runtime after emergency settlement = %#v", snapshot)
-	}
+	assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "runtime after emergency settlement = %#v", snapshot)
+	assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after emergency settlement = %#v", snapshot)
 }

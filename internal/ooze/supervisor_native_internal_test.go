@@ -6,6 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const nativeDrainExpiryFixtureRole = "OOZE_NATIVE_DRAIN_EXPIRY_FIXTURE"
@@ -18,9 +21,7 @@ func newNativeSupervisorDriverForTest(
 ) *supervisorDriver {
 	t.Helper()
 	driver, err := newNativeSupervisorDriver(runtime, launchProgress, drainEpoch)
-	if err != nil {
-		t.Fatalf("construct native supervisor driver: %v", err)
-	}
+	require.NoError(t, err, "construct native supervisor driver: %v", err)
 
 	return driver
 }
@@ -61,8 +62,9 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		defer executor.mutex.Unlock()
 		for _, nativeAttempt := range executor.attempts {
 			cleanupNativeFixtureOutput(t, nativeAttempt.output)
-			if err := closeNativeDomain(nativeAttempt.platform); err != nil {
-				t.Errorf("close retained native fixture domain: %v", err)
+			{
+				err := closeNativeDomain(nativeAttempt.platform)
+				assert.NoError(t, err, "close retained native fixture domain: %v", err)
 			}
 		}
 	})
@@ -94,9 +96,8 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		Profile: SerialProfile, Deadline: 5 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 
 	terminalResult := make(chan Terminal, 1)
 	go func() { terminalResult <- owned.Attempt.Wait() }()
@@ -104,22 +105,22 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 	select {
 	case terminal = <-terminalResult:
 	case <-time.After(2 * time.Second):
-		t.Fatal("drain-expiry fixture exceeded its independent two-second bound")
+		require.FailNow(t, "drain-expiry fixture exceeded its independent two-second bound")
 	}
-	if _, ok = terminal.(DrainUnconfirmed); !ok {
-		t.Fatalf("terminal = %#v, want DrainUnconfirmed", terminal)
+	{
+		_, ok = terminal.(DrainUnconfirmed)
+		require.True(t, ok, "terminal = %#v, want DrainUnconfirmed", terminal)
 	}
-	if observedRoot.Load() <= 0 || observations.Load() < 2 {
-		t.Fatalf("emptiness fixture observed root %d across %d samples, want one positive identity and repeated samples",
-			observedRoot.Load(), observations.Load())
-	}
+	assert.False(t, observedRoot.Load() <= 0, "emptiness fixture observed root %d across %d samples, want one positive identity and repeated samples", observedRoot.Load(), observations.Load())
+	assert.False(t, observations.Load() < 2, "emptiness fixture observed root %d across %d samples, want one positive identity and repeated samples", observedRoot.Load(), observations.Load())
 
 	allowEmpty.Store(true)
 	now := time.Now()
-	if _, ok = supervisor.EmergencyDrain(EmergencyRequest{
-		At: now, DrainBy: now.Add(time.Second),
-	}).(SweepUnconfirmed); !ok {
-		t.Fatal("expired local custody was rewritten instead of remaining an emergency residual")
+	{
+		_, ok = supervisor.EmergencyDrain(EmergencyRequest{
+			At: now, DrainBy: now.Add(time.Second),
+		}).(SweepUnconfirmed)
+		assert.True(t, ok, "expired local custody was rewritten instead of remaining an emergency residual")
 	}
 }
 
@@ -129,11 +130,15 @@ func cleanupNativeFixtureOutput(t *testing.T, output *os.File) {
 		return
 	}
 	path := output.Name()
-	if err := output.Close(); err != nil {
-		t.Errorf("close retained native fixture output %q: %v", path, err)
+	{
+		err := output.Close()
+		assert.NoError(t, err, "close retained native fixture output %q: %v", path, err)
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("remove retained native fixture output %q: %v", path, err)
+	{
+		err := os.Remove(path)
+		if err != nil {
+			assert.ErrorIs(t, err, os.ErrNotExist, "remove retained native fixture output %q", path)
+		}
 	}
 }
 
@@ -153,15 +158,15 @@ func TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic(t *testing.T
 		kind: supervisorCaptureOutput, generation: 1, token: 7, at: time.Unix(1, 0),
 	}
 	event := executor.captureOutput(action)
-	if event == nil || event.output == nil {
-		t.Fatal("capture returned no output completion")
-	}
+	require.NotNil(t, event, "capture returned no output completion")
+	require.NotNil(t, event.output, "capture returned no output completion")
 	completion := event.output
-	if completion.ref == 0 || completion.cutoff != 10 || completion.prefixLength != 5 ||
-		completion.diagnostic == 0 || executor.readOutput(completion.ref) != "short" ||
-		executor.readDiagnostic(completion.diagnostic).Error() != readErr.Error() {
-		t.Fatalf("partial output completion = %#v", completion)
-	}
+	assert.NotEqual(t, 0, completion.ref, "partial output completion = %#v", completion)
+	assert.EqualValues(t, 10, completion.cutoff, "partial output completion = %#v", completion)
+	assert.EqualValues(t, 5, completion.prefixLength, "partial output completion = %#v", completion)
+	assert.NotEqual(t, 0, completion.diagnostic, "partial output completion = %#v", completion)
+	assert.EqualValues(t, "short", executor.readOutput(completion.ref), "partial output completion = %#v", completion)
+	assert.Equal(t, readErr.Error(), executor.readDiagnostic(completion.diagnostic).Error(), "partial output completion = %#v", completion)
 }
 
 func TestWindowsResumeCutRequiresExactPriorCountOne(t *testing.T) {
@@ -183,9 +188,8 @@ func TestWindowsResumeCutRequiresExactPriorCountOne(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			released, err := windowsResumeCut(test.prior, test.resumeErr, test.cleanup)
-			if released != test.released || !errors.Is(err, test.wantErr) {
-				t.Fatalf("resume cut = (%v, %v), want (%v, %v)", released, err, test.released, test.wantErr)
-			}
+			assert.Equal(t, test.released, released, "resume cut = (%v, %v), want (%v, %v)", released, err, test.released, test.wantErr)
+			assert.ErrorIs(t, err, test.wantErr, "resume cut = (%v, %v), want (%v, %v)", released, err, test.released, test.wantErr)
 		})
 	}
 }
@@ -206,8 +210,9 @@ func TestWindowsLaunchResourceExhaustionRequiresExactEvidence(t *testing.T) {
 				operation: operation, stage: nativeLaunchPreRelease,
 				err: errors.New("windows launch boundary"), closureProven: true,
 			}
-			if got := classify(evidence, code); got != LaunchResourceExhausted {
-				t.Fatalf("operation %d code %d classification = %v, want resource exhausted", operation, code, got)
+			{
+				got := classify(evidence, code)
+				assert.Equal(t, LaunchResourceExhausted, got, "operation %d code %d classification = %v, want resource exhausted", operation, code, got)
 			}
 		}
 	}
@@ -267,8 +272,9 @@ func TestWindowsLaunchResourceExhaustionRequiresExactEvidence(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := classify(test.evidence, test.code); got != LaunchFailed {
-				t.Fatalf("classification = %v, want launch failed", got)
+			{
+				got := classify(test.evidence, test.code)
+				assert.Equal(t, LaunchFailed, got, "classification = %v, want launch failed", got)
 			}
 		})
 	}

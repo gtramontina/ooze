@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
 
@@ -26,12 +28,14 @@ const (
 
 func TestDarwinManagedCensusInstrumentsPerDescendantShape(t *testing.T) {
 	if os.Getenv(darwinCensusFixtureRole) == "setsid" {
-		if _, err := syscall.Setsid(); err != nil {
-			t.Fatal(err)
+		{
+			_, err := syscall.Setsid()
+			require.NoError(t, err)
 		}
-		if err := os.WriteFile(os.Getenv(darwinCensusFixtureShape),
-			[]byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-			t.Fatal(err)
+		{
+			err := os.WriteFile(os.Getenv(darwinCensusFixtureShape),
+				[]byte(strconv.Itoa(os.Getpid())), 0o600)
+			require.NoError(t, err)
 		}
 		time.Sleep(30 * time.Second)
 
@@ -112,8 +116,9 @@ func TestDarwinManagedPlatformLimitsRemainExplicit(t *testing.T) {
 			darwinLimitFixtureRelease+"="+release,
 		)
 		root.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} //nolint:exhaustruct // OS defaults are intentional.
-		if err := root.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := root.Start()
+			require.NoError(t, err)
 		}
 		t.Cleanup(func() {
 			_ = unix.Kill(-root.Process.Pid, unix.SIGKILL)
@@ -124,11 +129,13 @@ func TestDarwinManagedPlatformLimitsRemainExplicit(t *testing.T) {
 		t.Cleanup(func() { _ = unix.Kill(descendant, unix.SIGKILL) })
 		waitManagedDarwinParent(t, descendant, root.Process.Pid, "init")
 		assertDarwinLimitOutsideManagedReach(t, root.Process.Pid, descendant)
-		if err := os.WriteFile(release, []byte("release"), 0o600); err != nil {
-			t.Fatal(err)
+		{
+			err := os.WriteFile(release, []byte("release"), 0o600)
+			require.NoError(t, err)
 		}
-		if err := root.Wait(); err != nil {
-			t.Fatal(err)
+		{
+			err := root.Wait()
+			require.NoError(t, err)
 		}
 		assertDarwinLimitOutsideManagedReach(t, root.Process.Pid, descendant)
 	})
@@ -142,8 +149,9 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 	case "root":
 		command := exec.Command(os.Args[0], "-test.run=^TestDarwinManagedPlatformLimitsRemainExplicit$")
 		command.Env = replaceDarwinLimitRole("middle")
-		if err := command.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := command.Start()
+			assert.NoError(t, err)
 		}
 		awaitDarwinLimitFile(t, shape)
 		awaitDarwinLimitFile(t, release)
@@ -151,16 +159,18 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 		command := exec.Command(os.Args[0], "-test.run=^TestDarwinManagedPlatformLimitsRemainExplicit$")
 		command.Env = replaceDarwinLimitRole("session")
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true} //nolint:exhaustruct // The session escape is the fixture.
-		if err := command.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := command.Start()
+			assert.NoError(t, err)
 		}
 	case "session":
-		if err := os.WriteFile(shape, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-			t.Fatal(err)
+		{
+			err := os.WriteFile(shape, []byte(strconv.Itoa(os.Getpid())), 0o600)
+			assert.NoError(t, err)
 		}
 		time.Sleep(30 * time.Second)
 	default:
-		t.Fatalf("unknown Darwin limit fixture role %q", role)
+		require.FailNow(t, "unknown Darwin limit fixture role %q", role)
 	}
 }
 
@@ -184,38 +194,30 @@ func awaitDarwinLimitFile(t *testing.T, path string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("Darwin limit fixture did not create %s", path)
+	require.FailNow(t, "Darwin limit fixture did not create %s", path)
 }
 
 func readDarwinLimitIdentity(t *testing.T, path string) int {
 	t.Helper()
 	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	identity, err := strconv.Atoi(strings.TrimSpace(string(contents)))
-	if err != nil || identity <= 0 {
-		t.Fatalf("invalid Darwin process identity %q: %v", contents, err)
-	}
+	require.NoError(t, err, "invalid Darwin process identity %q: %v", contents, err)
+	assert.False(t, identity <= 0, "invalid Darwin process identity %q: %v", contents, err)
 	return identity
 }
 
 func assertDarwinLimitOutsideManagedReach(t *testing.T, root, descendant int) {
 	t.Helper()
 	processes, err := darwinProcessCensus()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	identity, present := darwinIdentityForPID(processes, descendant)
-	if !present {
-		t.Fatalf("escaped descendant %d is not live", descendant)
-	}
-	if int(identity.group) == root {
-		t.Fatalf("escaped descendant %d remained in root process group %d", descendant, root)
-	}
+	assert.True(t, present, "escaped descendant %d is not live", descendant)
+	assert.NotEqual(t, root, int(identity.group), "escaped descendant %d remained in root process group %d", descendant, root)
 	managed := darwinReachableDomain(processes, int32(root), nil)
-	if _, contained := managed[identity.identity]; contained {
-		t.Fatalf("platform-limit descendant %d was unexpectedly reachable", descendant)
+	{
+		_, contained := managed[identity.identity]
+		assert.False(t, contained, "platform-limit descendant %d was unexpectedly reachable", descendant)
 	}
 }
 
@@ -236,9 +238,7 @@ func assertManagedDarwinCensus(
 ) {
 	t.Helper()
 	processes, err := darwinProcessCensus()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	groupOccupied := false
 	for _, process := range processes {
 		groupOccupied = groupOccupied || (int(process.group) == root && int(process.identity.pid) != root)
@@ -249,15 +249,13 @@ func assertManagedDarwinCensus(
 	for identity := range managed {
 		managedPIDs[identity.pid] = true
 	}
-	if groupOccupied != wantGroup || fromRoot[int32(descendant)] != wantRoot ||
-		managedPIDs[int32(descendant)] != wantManaged { //nolint:gosec // Kernel process IDs are signed 32-bit values.
-		t.Fatalf("census group/root/managed=%t/%t/%t, want %t/%t/%t",
-			groupOccupied, fromRoot[int32(descendant)], managedPIDs[int32(descendant)],
-			wantGroup, wantRoot, wantManaged)
-	}
+	assert.Equal(t, wantGroup, groupOccupied, "census group/root/managed=%t/%t/%t, want %t/%t/%t", groupOccupied, fromRoot[int32(descendant)], managedPIDs[int32(descendant)], wantGroup, wantRoot, wantManaged)
+	assert.Equal(t, wantRoot, fromRoot[int32(descendant)], "census group/root/managed=%t/%t/%t, want %t/%t/%t", groupOccupied, fromRoot[int32(descendant)], managedPIDs[int32(descendant)], wantGroup, wantRoot, wantManaged)
+	assert.Equal(t, wantManaged, managedPIDs[int32(descendant)], "census group/root/managed=%t/%t/%t, want %t/%t/%t", groupOccupied, fromRoot[int32(descendant)], managedPIDs[int32(descendant)], wantGroup, wantRoot, wantManaged)
 	brokenGroupOccupied := fromRoot[int32(descendant)]
-	if rejected := brokenGroupOccupied != wantGroup; rejected != wantRejectConflated {
-		t.Fatalf("conflated root/group instrument rejected=%t, want %t", rejected, wantRejectConflated)
+	{
+		rejected := brokenGroupOccupied != wantGroup
+		assert.Equal(t, wantRejectConflated, rejected, "conflated root/group instrument rejected=%t, want %t", rejected, wantRejectConflated)
 	}
 }
 
@@ -288,11 +286,10 @@ func plantManagedDarwinShape(t *testing.T, plant, parent string) (*exec.Cmd, int
 	root := exec.Command("/bin/sh", "-c", script)          //nolint:gosec,noctx // Fixed executable; bounded below.
 	root.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} //nolint:exhaustruct // OS defaults are intentional.
 	stdin, err := root.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = root.Start(); err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		err = root.Start()
+		require.NoError(t, err)
 	}
 	t.Cleanup(func() {
 		_ = unix.Kill(-root.Process.Pid, unix.SIGKILL)
@@ -309,9 +306,7 @@ func plantManagedDarwinShape(t *testing.T, plant, parent string) (*exec.Cmd, int
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if shape <= 0 {
-		t.Fatal("descendant shape did not report its process ID")
-	}
+	assert.False(t, shape <= 0, "descendant shape did not report its process ID")
 	t.Cleanup(func() { _ = unix.Kill(shape, unix.SIGKILL) })
 	waitManagedDarwinParent(t, shape, root.Process.Pid, parent)
 
@@ -323,9 +318,8 @@ func waitManagedDarwinParent(t *testing.T, shape, root int, parent string) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		processes, err := unix.SysctlKinfoProcSlice("kern.proc.pid", shape)
-		if err != nil || len(processes) != 1 {
-			t.Fatalf("observe descendant parent: %v/%d", err, len(processes))
-		}
+		require.NoError(t, err, "observe descendant parent: %v/%d", err, len(processes))
+		require.Len(t, processes, 1, "observe descendant parent: %v/%d", err, len(processes))
 		observed := int(processes[0].Eproc.Ppid)
 		if (parent == "root" && observed == root) || (parent == "init" && observed == 1) ||
 			(parent == "middle" && observed != root && observed != 1) {
@@ -333,27 +327,27 @@ func waitManagedDarwinParent(t *testing.T, shape, root int, parent string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("descendant did not settle to %s parentage", parent)
+	require.FailNow(t, "descendant did not settle to %s parentage", parent)
 }
 
 func releaseManagedDarwinRoot(t *testing.T, root *exec.Cmd, release io.Closer) {
 	t.Helper()
-	if err := release.Close(); err != nil {
-		t.Fatal(err)
+	{
+		err := release.Close()
+		require.NoError(t, err)
 	}
-	if err := root.Wait(); err != nil {
-		t.Fatal(err)
+	{
+		err := root.Wait()
+		require.NoError(t, err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		processes, err := unix.SysctlKinfoProcSlice("kern.proc.pid", root.Process.Pid)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if len(processes) == 0 {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("root never left the process table")
+	require.FailNow(t, "root never left the process table")
 }

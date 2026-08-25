@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const darwinEscapeFixtureRole = "OOZE_DARWIN_ESCAPE_FIXTURE_ROLE"
@@ -21,34 +24,38 @@ func TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease(t *testing.T) {
 	marker := t.TempDir() + "/released"
 	command := exec.Command("/usr/bin/touch", marker)
 	state, err := prepareNativeCommand(command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err = command.Start(); err != nil {
-		t.Fatal(err)
+	{
+		err = command.Start()
+		require.NoError(t, err)
 	}
 	defer func() {
 		_ = forceNativeDomain(state, command.Process.Pid, time.Now().Add(5*time.Second))
 		_, _ = command.Process.Wait()
 		_ = closeNativeDomain(state)
 	}()
-	if err = confirmNativeCommandStopped(command, state); err != nil {
-		t.Fatal(err)
+	{
+		err = confirmNativeCommandStopped(command, state)
+		require.NoError(t, err)
 	}
 	time.Sleep(20 * time.Millisecond)
-	if _, err = os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("target executed before release: stat error=%v", err)
+	{
+		_, err = os.Stat(marker)
+		require.True(t, os.IsNotExist(err), "target executed before release: stat error=%v", err)
 	}
-	if _, err = releaseNativeCommand(command, state); err != nil {
-		t.Fatal(err)
+	{
+		_, err = releaseNativeCommand(command, state)
+		require.NoError(t, err)
 	}
-	if _, err = command.Process.Wait(); err != nil {
-		t.Fatal(err)
+	{
+		_, err = command.Process.Wait()
+		require.NoError(t, err)
 	}
-	if _, err = os.Stat(marker); err != nil {
-		t.Fatalf("released target did not execute: %v", err)
+	{
+		_, err = os.Stat(marker)
+		assert.NoError(t, err, "released target did not execute: %v", err)
 	}
 }
 
@@ -87,9 +94,7 @@ func TestDarwinNativeLaunchResourceExhaustionRequiresExactPreReleaseEvidence(t *
 			got := classifyNativeLaunchFailure(nativeLaunchFailureEvidence{
 				operation: test.operation, stage: test.stage, err: test.err, closureProven: test.closed,
 			})
-			if got != test.want {
-				t.Fatalf("classification = %v, want %v", got, test.want)
-			}
+			assert.Equal(t, test.want, got, "classification = %v, want %v", got, test.want)
 		})
 	}
 }
@@ -115,11 +120,12 @@ func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) 
 		Dir: directory, Env: os.Environ(), Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	notReleased, ok := result.(NotReleased)
-	if !ok || notReleased.Kind != LaunchFailed || notReleased.Err == nil {
-		t.Fatalf("launch = %#v, want immutable NotReleased error", result)
-	}
-	if snapshot := shell.snapshot(); len(snapshot.admissions) != 0 {
-		t.Fatalf("proven no-release retained runtime custody: %#v", snapshot)
+	require.True(t, ok, "launch = %#v, want immutable NotReleased error", result)
+	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want immutable NotReleased error", result)
+	assert.NotNil(t, notReleased.Err, "launch = %#v, want immutable NotReleased error", result)
+	{
+		snapshot := shell.snapshot()
+		assert.EqualValues(t, 0, len(snapshot.admissions), "proven no-release retained runtime custody: %#v", snapshot)
 	}
 }
 
@@ -162,35 +168,25 @@ func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	terminal := owned.Attempt.Wait()
-	if _, ok := terminal.(Settled); !ok {
-		t.Fatalf("terminal = %#v, want Settled", terminal)
+	{
+		_, ok := terminal.(Settled)
+		require.True(t, ok, "terminal = %#v, want Settled", terminal)
 	}
 
 	pidBytes, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	escapee, err := strconv.Atoi(string(pidBytes))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = syscall.Kill(escapee, syscall.SIGKILL) }()
 	before, err := os.Stat(markerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 	after, err := os.Stat(markerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Size() != before.Size() {
-		t.Fatalf("drainage returned while captured escapee %d remained executable", escapee)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, before.Size(), after.Size(), "drainage returned while captured escapee %d remained executable", escapee)
 }
 
 func runDarwinEscapeFixture(t *testing.T, role string) {
@@ -201,41 +197,42 @@ func runDarwinEscapeFixture(t *testing.T, role string) {
 	case "root":
 		command := exec.Command(os.Args[0], "-test.run=^TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember$")
 		command.Env = darwinEscapeFixtureEnvironment("intermediate")
-		if err := command.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := command.Start()
+			assert.NoError(t, err)
 		}
 		awaitDarwinEscapeFixtureFile(t, pidPath)
 	case "intermediate":
 		command := exec.Command(os.Args[0], "-test.run=^TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember$")
 		command.Env = darwinEscapeFixtureEnvironment("escapee")
-		if err := command.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := command.Start()
+			assert.NoError(t, err)
 		}
 		awaitDarwinEscapeFixtureFile(t, pidPath)
 		for {
 			time.Sleep(time.Second)
 		}
 	case "escapee":
-		if err := syscall.Setpgid(0, 0); err != nil {
-			t.Fatal(err)
+		{
+			err := syscall.Setpgid(0, 0)
+			assert.NoError(t, err)
 		}
-		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-			t.Fatal(err)
+		{
+			err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600)
+			assert.NoError(t, err)
 		}
 		for {
 			file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			_, err = fmt.Fprintln(file, time.Now().UnixNano())
 			closeErr := file.Close()
-			if err != nil || closeErr != nil {
-				t.Fatal(err, closeErr)
-			}
+			require.NoError(t, err, "write fixture marker; close error=%v", closeErr)
+			assert.NoError(t, closeErr, "close fixture marker")
 			time.Sleep(5 * time.Millisecond)
 		}
 	default:
-		t.Fatalf("unknown Darwin escape fixture role %q", role)
+		require.FailNow(t, "unknown Darwin escape fixture role %q", role)
 	}
 }
 
@@ -260,7 +257,7 @@ func awaitDarwinEscapeFixtureFile(t *testing.T, path string) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("timed out awaiting Darwin escape fixture file %s", path)
+	require.FailNow(t, "timed out awaiting Darwin escape fixture file %s", path)
 }
 
 func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *testing.T) {
@@ -275,9 +272,7 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			if attempt != grant.attempt {
-				t.Fatalf("start attempt = %q, want %q", attempt, grant.attempt)
-			}
+			assert.Equal(t, grant.attempt, attempt, "start attempt = %q, want %q", attempt, grant.attempt)
 			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
@@ -294,20 +289,19 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 		Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	terminal := owned.Attempt.Wait()
 	settled, ok := terminal.(Settled)
-	if !ok {
-		t.Fatalf("terminal = %#v, want Settled", terminal)
-	}
-	if settled.Exit != (ExitStatus{Code: 17}) || settled.Output.Bytes != "native-output" ||
-		!settled.Output.CompleteThroughCutoff || !settled.Output.Final {
-		t.Fatalf("settled native evidence = %#v", settled)
-	}
-	if snapshot := shell.snapshot(); snapshot.lifecycle != runtimeOpen || len(snapshot.admissions) != 0 {
-		t.Fatalf("runtime after native settlement = %#v", snapshot)
+	require.True(t, ok, "terminal = %#v, want Settled", terminal)
+	assert.Equal(t, (ExitStatus{Code: 17}), settled.Exit, "settled native evidence = %#v", settled)
+	assert.EqualValues(t, "native-output", settled.Output.Bytes, "settled native evidence = %#v", settled)
+	assert.True(t, settled.Output.CompleteThroughCutoff, "settled native evidence = %#v", settled)
+	assert.True(t, settled.Output.Final, "settled native evidence = %#v", settled)
+	{
+		snapshot := shell.snapshot()
+		assert.Equal(t, runtimeOpen, snapshot.lifecycle, "runtime after native settlement = %#v", snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after native settlement = %#v", snapshot)
 	}
 }
 
@@ -337,22 +331,21 @@ func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T
 		Deadline: 50 * time.Millisecond,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	started := time.Now()
 	terminal := owned.Attempt.Wait()
-	if elapsed := time.Since(started); elapsed >= 5*time.Second {
-		t.Fatalf("deadline terminal took %s", elapsed)
+	{
+		elapsed := time.Since(started)
+		assert.False(t, elapsed >= 5*time.Second, "deadline terminal took %s", elapsed)
 	}
 	tripped, ok := terminal.(Tripped)
-	if !ok {
-		t.Fatalf("terminal = %#v, want Tripped", terminal)
-	}
-	if _, ok := tripped.Trip.(SerialDeadlineTrip); !ok ||
-		tripped.BoundFired != CommandDeadlineFired ||
-		tripped.CommandDuration != 50*time.Millisecond {
-		t.Fatalf("serial deadline evidence = %#v", tripped)
+	require.True(t, ok, "terminal = %#v, want Tripped", terminal)
+	{
+		_, ok := tripped.Trip.(SerialDeadlineTrip)
+		require.True(t, ok, "serial deadline evidence = %#v", tripped)
+		assert.Equal(t, CommandDeadlineFired, tripped.BoundFired, "serial deadline evidence = %#v", tripped)
+		assert.Equal(t, 50*time.Millisecond, tripped.CommandDuration, "serial deadline evidence = %#v", tripped)
 	}
 }
 
@@ -370,9 +363,7 @@ func TestDarwinNativeSupervisorReturnsRuntimeProvedOverlapDeadlineForClassificat
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			grant, ok := grants[attempt]
-			if !ok {
-				t.Fatalf("start attempt = %q, want registered overlap attempt", attempt)
-			}
+			require.True(t, ok, "start attempt = %q, want registered overlap attempt", attempt)
 
 			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
 		},
@@ -384,26 +375,25 @@ func TestDarwinNativeSupervisorReturnsRuntimeProvedOverlapDeadlineForClassificat
 		Dir: t.TempDir(), Env: os.Environ(), Profile: AutomaticProfile, Deadline: 500 * time.Millisecond,
 	})
 	primary, ok := primaryLaunch.(Owned)
-	if !ok || primary.Attempt == nil {
-		t.Fatalf("primary launch = %#v, want Owned", primaryLaunch)
-	}
+	require.True(t, ok, "primary launch = %#v, want Owned", primaryLaunch)
+	assert.NotNil(t, primary.Attempt, "primary launch = %#v, want Owned", primaryLaunch)
 	peerLaunch := supervisor.Launch(Spec{
 		Attempt: "darwin-overlap-peer", Command: []string{"/bin/sh", "-c", "sleep 1"},
 		Dir: t.TempDir(), Env: os.Environ(), Profile: AutomaticProfile, Deadline: 2 * time.Second,
 	})
 	peer, ok := peerLaunch.(Owned)
-	if !ok || peer.Attempt == nil {
-		t.Fatalf("peer launch = %#v, want Owned", peerLaunch)
-	}
+	require.True(t, ok, "peer launch = %#v, want Owned", peerLaunch)
+	assert.NotNil(t, peer.Attempt, "peer launch = %#v, want Owned", peerLaunch)
 
 	terminal := primary.Attempt.Wait()
 	disposition := ClassifyPrimaryMutation(terminal)
 	provisional, ok := disposition.(MutationNeedsConfirmation)
-	if !ok || provisional.Primary() != terminal {
-		t.Fatalf("overlapped public terminal = %#v, want MutationNeedsConfirmation", disposition)
-	}
-	if settled, ok := peer.Attempt.Wait().(Settled); !ok || !settled.Exit.Passed() {
-		t.Fatalf("overlap peer terminal = %#v, want passing Settled", settled)
+	require.True(t, ok, "overlapped public terminal = %#v, want MutationNeedsConfirmation", disposition)
+	assert.Equal(t, terminal, provisional.Primary(), "overlapped public terminal = %#v, want MutationNeedsConfirmation", disposition)
+	{
+		settled, ok := peer.Attempt.Wait().(Settled)
+		require.True(t, ok, "overlap peer terminal = %#v, want passing Settled", settled)
+		assert.True(t, settled.Exit.Passed(), "overlap peer terminal = %#v, want passing Settled", settled)
 	}
 }
 
@@ -434,18 +424,15 @@ func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 		Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	terminal := owned.Attempt.Wait()
 	tripped, ok := terminal.(Tripped)
-	if !ok {
-		t.Fatalf("terminal = %#v, want Tripped", terminal)
-	}
+	require.True(t, ok, "terminal = %#v, want Tripped", terminal)
 	fuse, ok := tripped.Trip.(FuseTrip)
-	if !ok || fuse.Live < 65 || tripped.BoundFired != NoBoundFired {
-		t.Fatalf("automatic fuse evidence = %#v", tripped)
-	}
+	require.True(t, ok, "automatic fuse evidence = %#v", tripped)
+	assert.False(t, fuse.Live < 65, "automatic fuse evidence = %#v", tripped)
+	assert.Equal(t, NoBoundFired, tripped.BoundFired, "automatic fuse evidence = %#v", tripped)
 }
 
 func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
@@ -472,22 +459,21 @@ func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 		Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	emergencyAt := time.Now()
 	shell.closeRuntime(runtimeFatalCause("native emergency test"))
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
 	})
-	if _, ok := settlement.(SweepDrained); !ok {
-		t.Fatalf("emergency settlement = %#v, want SweepDrained", settlement)
+	{
+		_, ok := settlement.(SweepDrained)
+		require.True(t, ok, "emergency settlement = %#v, want SweepDrained", settlement)
 	}
 	terminal := owned.Attempt.Wait()
 	stopped, ok := terminal.(Stopped)
-	if !ok || stopped.BoundFired != NoBoundFired {
-		t.Fatalf("emergency terminal = %#v, want Stopped", terminal)
-	}
+	require.True(t, ok, "emergency terminal = %#v, want Stopped", terminal)
+	assert.Equal(t, NoBoundFired, stopped.BoundFired, "emergency terminal = %#v, want Stopped", terminal)
 }
 
 func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
@@ -514,16 +500,15 @@ func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
 		Deadline: 10 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	stopAt := time.Now()
 	owned.Attempt.Stop(StopRequest{At: stopAt, DrainBy: stopAt.Add(5 * time.Second)})
 	terminal := owned.Attempt.Wait()
 	stopped, ok := terminal.(Stopped)
-	if !ok || stopped.BoundFired != NoBoundFired || stopped.CommandDuration <= 0 {
-		t.Fatalf("stop terminal = %#v, want Stopped", terminal)
-	}
+	require.True(t, ok, "stop terminal = %#v, want Stopped", terminal)
+	assert.Equal(t, NoBoundFired, stopped.BoundFired, "stop terminal = %#v, want Stopped", terminal)
+	assert.False(t, stopped.CommandDuration <= 0, "stop terminal = %#v, want Stopped", terminal)
 }
 
 func TestDarwinCapturedIdentitiesRemainTrackedBeforeControl(t *testing.T) {
@@ -531,11 +516,13 @@ func TestDarwinCapturedIdentitiesRemainTrackedBeforeControl(t *testing.T) {
 	second := darwinProcessIdentity{pid: 42, startSec: 8, startUsec: 12}
 	tracked := map[darwinProcessIdentity]struct{}{first: {}}
 	trackDarwinIdentities(tracked, map[darwinProcessIdentity]struct{}{second: {}})
-	if _, ok := tracked[first]; !ok {
-		t.Fatal("existing Darwin identity was discarded")
+	{
+		_, ok := tracked[first]
+		require.True(t, ok, "existing Darwin identity was discarded")
 	}
-	if _, ok := tracked[second]; !ok {
-		t.Fatal("new Darwin identity was not retained before control")
+	{
+		_, ok := tracked[second]
+		assert.True(t, ok, "new Darwin identity was not retained before control")
 	}
 }
 
@@ -554,12 +541,8 @@ func TestDarwinCapturedIdentityControlDoesNotDependOnGroupDelivery(t *testing.T)
 				return nil
 			},
 		)
-		if err != nil {
-			t.Fatalf("group error %v: exact control = %v, want success", groupErr, err)
-		}
-		if len(controlled) != len(captured) {
-			t.Fatalf("group error %v: controlled identities = %#v, want %#v", groupErr, controlled, captured)
-		}
+		require.NoError(t, err, "group error %v: exact control = %v, want success", groupErr, err)
+		assert.Equal(t, len(captured), len(controlled), "group error %v: controlled identities = %#v, want %#v", groupErr, controlled, captured)
 	}
 }
 
@@ -582,12 +565,9 @@ func TestDarwinCapturedIdentityControlFailsClosed(t *testing.T) {
 			return nil
 		},
 	)
-	if !errors.Is(err, groupErr) || !errors.Is(err, exactErr) {
-		t.Fatalf("control error = %v, want group and exact identity evidence", err)
-	}
-	if len(controlled) != len(captured) {
-		t.Fatalf("controlled identities = %#v, want every captured identity attempted", controlled)
-	}
+	require.ErrorIs(t, err, groupErr, "control error = %v, want group and exact identity evidence", err)
+	assert.ErrorIs(t, err, exactErr, "control error = %v, want group and exact identity evidence", err)
+	assert.Equal(t, len(captured), len(controlled), "controlled identities = %#v, want every captured identity attempted", controlled)
 }
 
 func TestDarwinStaleTrackedIdentityDoesNotSeedPidReusedDescendants(t *testing.T) {
@@ -598,7 +578,8 @@ func TestDarwinStaleTrackedIdentityDoesNotSeedPidReusedDescendants(t *testing.T)
 		{identity: reused, parent: 1, group: 99},
 		{identity: unrelated, parent: 41, group: 99},
 	}, 77, map[darwinProcessIdentity]struct{}{stale: {}})
-	if _, ok := reached[unrelated]; ok {
-		t.Fatal("PID reuse allowed a stale tracked identity to capture an unrelated descendant")
+	{
+		_, ok := reached[unrelated]
+		assert.False(t, ok, "PID reuse allowed a stale tracked identity to capture an unrelated descendant")
 	}
 }

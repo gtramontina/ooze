@@ -2,10 +2,12 @@ package ooze
 
 import (
 	"errors"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func validSupervisorSpec() Spec {
@@ -51,9 +53,8 @@ func TestSupervisorRejectsInvalidSpecBeforeStartCommit(t *testing.T) {
 		})
 	}
 
-	if startCalls != 0 || nativeCalls != 0 {
-		t.Fatalf("invalid specs reached start/native work: start=%d native=%d", startCalls, nativeCalls)
-	}
+	assert.EqualValues(t, 0, startCalls, "invalid specs reached start/native work: start=%d native=%d", startCalls, nativeCalls)
+	assert.EqualValues(t, 0, nativeCalls, "invalid specs reached start/native work: start=%d native=%d", startCalls, nativeCalls)
 }
 
 func TestSupervisorConstructionRejectsUnsupportedPlatform(t *testing.T) {
@@ -71,12 +72,10 @@ func TestSupervisorConstructionRejectsUnsupportedPlatform(t *testing.T) {
 		},
 	})
 
-	if !errors.Is(err, ErrUnsupportedPlatform) || supervisor != nil {
-		t.Fatalf("unsupported construction = %#v, %v", supervisor, err)
-	}
-	if startCalls != 0 || nativeCalls != 0 {
-		t.Fatalf("unsupported construction reached start/native work: start=%d native=%d", startCalls, nativeCalls)
-	}
+	require.ErrorIs(t, err, ErrUnsupportedPlatform, "unsupported construction = %#v, %v", supervisor, err)
+	assert.Nil(t, supervisor, "unsupported construction = %#v, %v", supervisor, err)
+	assert.EqualValues(t, 0, startCalls, "unsupported construction reached start/native work: start=%d native=%d", startCalls, nativeCalls)
+	assert.EqualValues(t, 0, nativeCalls, "unsupported construction reached start/native work: start=%d native=%d", startCalls, nativeCalls)
 }
 
 func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranches(t *testing.T) {
@@ -104,14 +103,10 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 			supervisor := newSupervisorForTest(
 				func(attempt attemptIdentity, pending *pendingStartCell) installedStart {
 					order = append(order, "start-committed")
-					if attempt != attemptIdentity(spec.Attempt) {
-						t.Fatalf("start attempt = %q, want %q", attempt, spec.Attempt)
-					}
+					assert.Equal(t, attemptIdentity(spec.Attempt), attempt, "start attempt = %q, want %q", attempt, spec.Attempt)
 					cell = pending
 					prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: pending})
-					if prepared.result.decision != startCommittedAccepted {
-						t.Fatalf("start committed = %#v", prepared.result)
-					}
+					assert.Equal(t, startCommittedAccepted, prepared.result.decision, "start committed = %#v", prepared.result)
 					generation = prepared.result.generation
 
 					return prepared.start
@@ -120,14 +115,13 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 					order = append(order, "native")
 					snapshot := shell.snapshot()
 					index := snapshot.admissionIndexByGeneration(observed)
-					if observed == 0 || observed != generation || cell == nil ||
-						cell.installedGeneration() != observed || index < 0 ||
-						snapshot.admissions[index].stage != admissionProspective {
-						t.Fatalf("native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
-					}
-					if spec.Attempt != validSupervisorSpec().Attempt {
-						t.Fatalf("native spec attempt = %q", spec.Attempt)
-					}
+					assert.NotEqual(t, 0, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					assert.Equal(t, generation, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					require.NotNil(t, cell, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					assert.Equal(t, observed, cell.installedGeneration(), "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					assert.False(t, index < 0, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					assert.Equal(t, validSupervisorSpec().Attempt, spec.Attempt, "native spec attempt = %q", spec.Attempt)
 					spec.Command[0] = "mutated-by-native"
 					spec.Env[0] = "MUTATED=1"
 
@@ -136,15 +130,10 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 			)
 
 			got := supervisor.Launch(spec)
-			if !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("launch = %#v, want %#v", got, test.want)
-			}
-			if spec.Command[0] != "go" || spec.Env[0] != "GOMAXPROCS=1" {
-				t.Fatalf("caller slices mutated through launch snapshot: command=%v env=%v", spec.Command, spec.Env)
-			}
-			if !reflect.DeepEqual(order, []string{"start-committed", "native"}) {
-				t.Fatalf("launch order = %v", order)
-			}
+			assert.Equal(t, test.want, got, "launch = %#v, want %#v", got, test.want)
+			assert.EqualValues(t, "go", spec.Command[0], "caller slices mutated through launch snapshot: command=%v env=%v", spec.Command, spec.Env)
+			assert.EqualValues(t, "GOMAXPROCS=1", spec.Env[0], "caller slices mutated through launch snapshot: command=%v env=%v", spec.Command, spec.Env)
+			assert.Equal(t, []string{"start-committed", "native"}, order, "launch order = %v", order)
 		})
 	}
 }
@@ -180,13 +169,10 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			enteredStart <- attempt
 			<-releaseStart
 			grant, ok := grants[attempt]
-			if !ok || grant.attempt != attempt {
-				t.Fatalf("start grant for %q = %#v", attempt, grant)
-			}
+			assert.True(t, ok, "start grant for %q = %#v", attempt, grant)
+			assert.Equal(t, attempt, grant.attempt, "start grant for %q = %#v", attempt, grant)
 			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
-			if prepared.result.decision != startCommittedAccepted {
-				t.Fatalf("start committed for %q = %#v", attempt, prepared.result)
-			}
+			assert.Equal(t, startCommittedAccepted, prepared.result.decision, "start committed for %q = %#v", attempt, prepared.result)
 			observedMu.Lock()
 			cells[attempt] = cell
 			generations[attempt] = prepared.result.generation
@@ -203,12 +189,13 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			observedMu.Unlock()
 			snapshot := shell.snapshot()
 			index := snapshot.admissionIndexByGeneration(generation)
-			if cell == nil || generation == 0 || generation != wantGeneration ||
-				cell.installedGeneration() != generation || index < 0 ||
-				snapshot.admissions[index].grant.attempt != attempt ||
-				snapshot.admissions[index].stage != admissionProspective {
-				t.Fatalf("native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
-			}
+			assert.NotNil(t, cell, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			assert.NotEqual(t, 0, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			assert.Equal(t, wantGeneration, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			assert.Equal(t, generation, cell.installedGeneration(), "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			assert.False(t, index < 0, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			assert.Equal(t, attempt, snapshot.admissions[index].grant.attempt, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			if attempt == attemptIdentity(first.Attempt) {
 				spec.Command[0] = "mutated-first-snapshot"
 				spec.Env[0] = "MUTATED=1"
@@ -222,13 +209,12 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 	go func() { results <- supervisor.Launch(first) }()
 	go func() { results <- supervisor.Launch(second) }()
 	startedA, startedB := <-enteredStart, <-enteredStart
-	if startedA == startedB {
-		t.Fatalf("concurrent starts used one attempt: %q/%q", startedA, startedB)
-	}
+	assert.NotEqual(t, startedB, startedA, "concurrent starts used one attempt: %q/%q", startedA, startedB)
 	close(releaseStart)
 	for range 2 {
-		if _, ok := (<-results).(Owned); !ok {
-			t.Fatalf("concurrent launch was not owned")
+		{
+			_, ok := (<-results).(Owned)
+			require.True(t, ok, "concurrent launch was not owned")
 		}
 	}
 
@@ -239,21 +225,23 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 	firstCalls := nativeCalls[attemptIdentity(first.Attempt)]
 	secondCalls := nativeCalls[attemptIdentity(second.Attempt)]
 	observedMu.Unlock()
-	if firstCell == nil || secondCell == nil || firstCell == secondCell ||
-		firstGeneration == 0 || secondGeneration == 0 || firstGeneration == secondGeneration ||
-		firstCalls != 1 || secondCalls != 1 {
-		t.Fatalf("cells/generations/native calls = %p/%p %d/%d %d/%d",
-			firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
-	}
-	if first.Command[0] != "go" || first.Env[0] != "GOMAXPROCS=1" ||
-		second.Command[0] != "go" || second.Env[0] != "GOMAXPROCS=2" {
-		t.Fatalf("caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
-	}
+	assert.NotNil(t, firstCell, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.NotNil(t, secondCell, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.NotEqual(t, secondCell, firstCell, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.NotEqual(t, 0, firstGeneration, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.NotEqual(t, 0, secondGeneration, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.NotEqual(t, secondGeneration, firstGeneration, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.EqualValues(t, 1, firstCalls, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.EqualValues(t, 1, secondCalls, "cells/generations/native calls = %p/%p %d/%d %d/%d", firstCell, secondCell, firstGeneration, secondGeneration, firstCalls, secondCalls)
+	assert.EqualValues(t, "go", first.Command[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
+	assert.EqualValues(t, "GOMAXPROCS=1", first.Env[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
+	assert.EqualValues(t, "go", second.Command[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
+	assert.EqualValues(t, "GOMAXPROCS=2", second.Env[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
 	snapshot := shell.snapshot()
-	if snapshot.lifecycle != runtimeOpen || len(snapshot.admissions) != 2 ||
-		snapshot.admissions[0].stage != admissionOwned || snapshot.admissions[1].stage != admissionOwned {
-		t.Fatalf("concurrent launch runtime = %#v", snapshot)
-	}
+	assert.Equal(t, runtimeOpen, snapshot.lifecycle, "concurrent launch runtime = %#v", snapshot)
+	require.Len(t, snapshot.admissions, 2, "concurrent launch runtime = %#v", snapshot)
+	assert.Equal(t, admissionOwned, snapshot.admissions[0].stage, "concurrent launch runtime = %#v", snapshot)
+	assert.Equal(t, admissionOwned, snapshot.admissions[1].stage, "concurrent launch runtime = %#v", snapshot)
 }
 
 func TestSupervisorOwnedAttemptWaitIsIdempotentAndStopIsConcurrent(t *testing.T) {
@@ -293,13 +281,13 @@ func TestSupervisorOwnedAttemptWaitIsIdempotentAndStopIsConcurrent(t *testing.T)
 	callers.Wait()
 	close(results)
 
-	if got := <-stopped; got != request {
-		t.Fatalf("stop = %#v, want %#v", got, request)
+	{
+		got := <-stopped
+		assert.Equal(t, request, got, "stop = %#v, want %#v", got, request)
 	}
 	first, second := <-results, <-results
-	if waits != 1 || !reflect.DeepEqual(first, second) {
-		t.Fatalf("waits/results = %d/%#v/%#v", waits, first, second)
-	}
+	assert.EqualValues(t, 1, waits, "waits/results = %d/%#v/%#v", waits, first, second)
+	assert.Equal(t, second, first, "waits/results = %d/%#v/%#v", waits, first, second)
 }
 
 func newOwnedAttemptForTest() *OwnedAttempt {
@@ -316,9 +304,8 @@ func assertPanicsWith(t *testing.T, target error, action func()) {
 	defer func() {
 		recovered := recover()
 		err, ok := recovered.(error)
-		if !ok || !errors.Is(err, target) {
-			t.Fatalf("panic = %#v, want error matching %v", recovered, target)
-		}
+		require.True(t, ok, "panic = %#v, want error matching %v", recovered, target)
+		assert.ErrorIs(t, err, target, "panic = %#v, want error matching %v", recovered, target)
 	}()
 	action()
 }

@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -56,12 +59,12 @@ func TestNativeSupervisorDrainsWideFanout(t *testing.T) {
 		Profile: SerialProfile, Deadline: 15 * time.Second,
 	})
 	owned, ok := launched.(Owned)
-	if !ok || owned.Attempt == nil {
-		t.Fatalf("launch = %#v, want Owned", launched)
-	}
+	require.True(t, ok, "launch = %#v, want Owned", launched)
+	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	terminal := owned.Attempt.Wait()
-	if _, ok = terminal.(Settled); !ok {
-		t.Fatalf("terminal = %#v, want Settled", terminal)
+	{
+		_, ok = terminal.(Settled)
+		require.True(t, ok, "terminal = %#v, want Settled", terminal)
 	}
 
 	root := readNativeFanoutIdentity(t, filepath.Join(directory, "root"))
@@ -69,11 +72,10 @@ func TestNativeSupervisorDrainsWideFanout(t *testing.T) {
 	before := make([]int64, nativeFanoutBreadth)
 	for index := range nativeFanoutBreadth {
 		pid, parent := readNativeFanoutPair(t, filepath.Join(directory, fmt.Sprintf("ready-%02d", index)))
-		if parent != root {
-			t.Fatalf("leaf %d parent = %d, want exact root %d", pid, parent, root)
-		}
-		if _, duplicate := pids[pid]; duplicate {
-			t.Fatalf("fanout reused process identity %d", pid)
+		assert.Equal(t, root, parent, "leaf %d parent = %d, want exact root %d", pid, parent, root)
+		{
+			_, duplicate := pids[pid]
+			assert.False(t, duplicate, "fanout reused process identity %d", pid)
 		}
 		pids[pid] = struct{}{}
 		process, findErr := os.FindProcess(pid)
@@ -84,8 +86,9 @@ func TestNativeSupervisorDrainsWideFanout(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	for index := range nativeFanoutBreadth {
-		if after := nativeFanoutMarkerSize(t, directory, index); after != before[index] {
-			t.Fatalf("leaf %d marker grew from %d to %d after drainage", index, before[index], after)
+		{
+			after := nativeFanoutMarkerSize(t, directory, index)
+			assert.Equal(t, before[index], after, "leaf %d marker grew from %d to %d after drainage", index, before[index], after)
 		}
 	}
 }
@@ -93,8 +96,9 @@ func TestNativeSupervisorDrainsWideFanout(t *testing.T) {
 func runNativeFanoutRoot(t *testing.T) {
 	t.Helper()
 	directory := os.Getenv(nativeFanoutFixtureDir)
-	if err := os.WriteFile(filepath.Join(directory, "root"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(filepath.Join(directory, "root"), []byte(strconv.Itoa(os.Getpid())), 0o600)
+		require.NoError(t, err)
 	}
 	for index := range nativeFanoutBreadth {
 		command := exec.Command(os.Args[0], "-test.run=^TestNativeSupervisorDrainsWideFanout$")
@@ -102,8 +106,9 @@ func runNativeFanoutRoot(t *testing.T) {
 			nativeFanoutFixtureRole+"=leaf",
 			nativeFanoutFixtureLeaf+"="+strconv.Itoa(index),
 		)
-		if err := command.Start(); err != nil {
-			t.Fatal(err)
+		{
+			err := command.Start()
+			assert.NoError(t, err)
 		}
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -116,25 +121,21 @@ func runNativeFanoutLeaf(t *testing.T) {
 	t.Helper()
 	directory := os.Getenv(nativeFanoutFixtureDir)
 	index, err := strconv.Atoi(os.Getenv(nativeFanoutFixtureLeaf))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	identity := fmt.Sprintf("%d %d", os.Getpid(), os.Getppid())
-	if err = os.WriteFile(filepath.Join(directory, fmt.Sprintf("ready-%02d", index)), []byte(identity), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err = os.WriteFile(filepath.Join(directory, fmt.Sprintf("ready-%02d", index)), []byte(identity), 0o600)
+		require.NoError(t, err)
 	}
 	marker := filepath.Join(directory, fmt.Sprintf("marker-%02d", index))
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		file, openErr := os.OpenFile(marker, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if openErr != nil {
-			t.Fatal(openErr)
-		}
+		require.NoError(t, openErr)
 		_, writeErr := file.WriteString("x")
 		closeErr := file.Close()
-		if writeErr != nil || closeErr != nil {
-			t.Fatal(writeErr, closeErr)
-		}
+		require.NoError(t, writeErr, "write fanout fixture marker; close error=%v", closeErr)
+		assert.NoError(t, closeErr, "close fanout fixture marker")
 		time.Sleep(5 * time.Millisecond)
 	}
 }
@@ -147,45 +148,37 @@ func awaitNativeFanoutFile(t *testing.T, path string, deadline time.Time) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("fanout fixture did not create %s", path)
+	require.FailNow(t, "fanout fixture did not create %s", path)
 }
 
 func readNativeFanoutIdentity(t *testing.T, path string) int {
 	t.Helper()
 	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	identity, err := strconv.Atoi(strings.TrimSpace(string(contents)))
-	if err != nil || identity <= 0 {
-		t.Fatalf("invalid process identity %q: %v", contents, err)
-	}
+	require.NoError(t, err, "invalid process identity %q: %v", contents, err)
+	assert.False(t, identity <= 0, "invalid process identity %q: %v", contents, err)
 	return identity
 }
 
 func readNativeFanoutPair(t *testing.T, path string) (int, int) {
 	t.Helper()
 	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fields := strings.Fields(string(contents))
-	if len(fields) != 2 {
-		t.Fatalf("invalid fanout identity pair %q", contents)
-	}
+	require.EqualValues(t, 2, len(fields), "invalid fanout identity pair %q", contents)
 	pid, pidErr := strconv.Atoi(fields[0])
 	parent, parentErr := strconv.Atoi(fields[1])
-	if pidErr != nil || parentErr != nil || pid <= 0 || parent <= 0 {
-		t.Fatalf("invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
-	}
+	require.NoError(t, pidErr, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
+	assert.NoError(t, parentErr, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
+	assert.False(t, pid <= 0, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
+	assert.False(t, parent <= 0, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
 	return pid, parent
 }
 
 func nativeFanoutMarkerSize(t *testing.T, directory string, index int) int64 {
 	t.Helper()
 	info, err := os.Stat(filepath.Join(directory, fmt.Sprintf("marker-%02d", index)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return info.Size()
 }
