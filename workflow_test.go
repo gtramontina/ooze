@@ -42,8 +42,75 @@ func requireContract(t *testing.T, subject, contract string, required ...string)
 	}
 }
 
+func workflowMatrixRows(t *testing.T, job string) map[string]map[string]string {
+	t.Helper()
+	rows := make(map[string]map[string]string)
+	var row map[string]string
+	for _, line := range strings.Split(job, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(line, "          - ") {
+			row = make(map[string]string)
+			trimmed = strings.TrimPrefix(trimmed, "- ")
+		}
+		if row == nil || !strings.HasPrefix(line, "            ") && !strings.HasPrefix(line, "          - ") {
+			continue
+		}
+		key, value, found := strings.Cut(trimmed, ": ")
+		if !found {
+			continue
+		}
+		row[key] = value
+		if name := row["name"]; name != "" {
+			rows[name] = row
+		}
+	}
+	return rows
+}
+
+func requireMatrixRow(t *testing.T, job, name string, want map[string]string) {
+	t.Helper()
+	row := workflowMatrixRows(t, job)[name]
+	if row == nil {
+		t.Fatalf("matrix has no %q row", name)
+	}
+	for key, value := range want {
+		if row[key] != value {
+			t.Errorf("matrix %q %s = %q, want %q", name, key, row[key], value)
+		}
+	}
+}
+
+func requireMatrixRunner(t *testing.T, job, runner string, want map[string]string) {
+	t.Helper()
+	for name, row := range workflowMatrixRows(t, job) {
+		if row["runner"] == runner {
+			for key, value := range want {
+				if row[key] != value {
+					t.Errorf("matrix %q %s = %q, want %q", name, key, row[key], value)
+				}
+			}
+			return
+		}
+	}
+	t.Fatalf("matrix has no row for runner %q", runner)
+}
+
+func requireNativeToolchains(t *testing.T, job string) {
+	t.Helper()
+	requireMatrixRunner(t, job, "ubuntu-24.04", map[string]string{
+		"toolchain": "devbox", "go-command": "devbox run -- go",
+	})
+	requireMatrixRunner(t, job, "macos-26", map[string]string{
+		"toolchain": "devbox", "go-command": "devbox run -- go",
+	})
+	requireMatrixRunner(t, job, "windows-2025", map[string]string{
+		"toolchain": "raw-go", "go-command": "go",
+	})
+}
+
 func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "test")
+	requireNativeToolchains(t, testJob)
 	requireContract(t, testJob, "native test job",
 		"toolchain: devbox",
 		"toolchain: raw-go",
@@ -56,6 +123,7 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 		"unexpected skip in required native evidence",
 	)
 	stressJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "stress")
+	requireNativeToolchains(t, stressJob)
 	requireContract(t, stressJob, "native stress job",
 		"github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
 		"-count=10", `grep -q '"Action":"skip"'`, "unexpected skip in required native evidence",
@@ -64,6 +132,11 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 
 func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/mutation.yml", "mutation")
+	requireNativeToolchains(t, mutationJob)
+	for _, name := range []string{"Ubuntu 24.04", "macOS 26"} {
+		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "devbox run -- go test"})
+	}
+	requireMatrixRow(t, mutationJob, "Windows 2025", map[string]string{"test-command": "go test"})
 	requireContract(t, mutationJob, "mutation job",
 		"toolchain: devbox",
 		"toolchain: raw-go",
@@ -77,6 +150,7 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 
 func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T) {
 	performanceJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "performance")
+	requireNativeToolchains(t, performanceJob)
 	requireContract(t, performanceJob, "performance job",
 		"PERFORMANCE_SAMPLES: 10",
 		"github.event_name == 'workflow_dispatch'",
@@ -112,6 +186,7 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithoutCrossingItsOwnFuse(t *te
 
 func TestManualNativeWorkflowRunsExactCandidateMutationGate(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "mutation-evidence")
+	requireNativeToolchains(t, mutationJob)
 	requireContract(t, mutationJob, "manual mutation evidence job",
 		"Mutation evidence / ${{ matrix.name }}",
 		"Mutation campaign acceptance",
