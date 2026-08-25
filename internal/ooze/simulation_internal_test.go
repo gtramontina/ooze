@@ -811,6 +811,30 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
+func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	activeCampaign := shell.registerCampaign(campaignProvenance{lineage: 512})
+	waitingCampaign := shell.registerCampaign(campaignProvenance{lineage: 513})
+	active := shell.requestAdmission(admissionRequest{
+		campaign: activeCampaign.token, attempt: "active", class: sharedAdmission,
+	})
+	waiting := shell.requestAdmission(admissionRequest{
+		campaign: waitingCampaign.token, attempt: "waiting", class: sharedAdmission,
+	})
+
+	shell.cancelAdmission(<-active.delivery)
+	grant := <-waiting.delivery
+	event := admissionGrantedEvent{attempt: grant.attempt, grant: campaignAdmissionFact(grant)}
+	recorder.mutex.Lock()
+	cancelSequence := recorder.records[len(recorder.records)-1].sequence
+	recorder.mutex.Unlock()
+	if source := recorder.campaignSource(event); source.kind != simulationOwnerDeliverySource ||
+		source.identity != cancelSequence {
+		t.Fatalf("queued grant source=%#v, want cancellation cut %d", source, cancelSequence)
+	}
+}
+
 func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
