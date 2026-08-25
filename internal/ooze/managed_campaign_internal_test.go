@@ -208,6 +208,44 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 	}
 }
 
+func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	heldCampaign := shell.registerCampaign(campaignProvenance{lineage: 99})
+	held := shell.requestAdmission(admissionRequest{
+		campaign: heldCampaign.token, attempt: "held", class: exclusiveAdmission,
+		profile: AutomaticProfile, deadline: baselineBootstrapDeadline,
+	})
+	heldGrant := <-held.delivery
+	prepared := shell.startCommitted(heldGrant, startInstallation{grant: heldGrant, cell: &pendingStartCell{}})
+	prepared.start.launch(func(attemptGeneration) attemptObservation { return launchOwned{} })
+	shell.observeAttempt(prepared.result.generation, launchOwned{})
+
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}}
+	attempts := &managedAttemptFixture{shell: shell, emergencyGeneration: prepared.result.generation}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: shell, repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+	go func() {
+		deadline := time.Now().Add(time.Second)
+		for len(shell.snapshot().admissions) < 2 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		shell.observeAttempt(prepared.result.generation, drainUnconfirmed{})
+	}()
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-waiting", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if _, ok := result.failure.(cleanupUnconfirmedFault); !ok || attempts.emergencies != 1 {
+		t.Fatalf("failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	}
+}
+
 type managedMemoryRepository struct {
 	files            []*gosourcefile.GoSourceFile
 	materializations int
@@ -250,19 +288,20 @@ func (d *managedTemporaryDirectory) New() string {
 }
 
 type managedAttemptFixture struct {
-	mutex            sync.Mutex
-	launches         int
-	specs            []Spec
-	terminals        []Terminal
-	shell            *processRuntimeShell
-	byGeneration     map[attemptGeneration]Spec
-	terminalByGen    map[attemptGeneration]Terminal
-	waitStarted      chan Spec
-	releasePrimaries <-chan struct{}
-	stopRelease      chan struct{}
-	stops            int
-	emergencies      int
-	drainGeneration  attemptGeneration
+	mutex               sync.Mutex
+	launches            int
+	specs               []Spec
+	terminals           []Terminal
+	shell               *processRuntimeShell
+	byGeneration        map[attemptGeneration]Spec
+	terminalByGen       map[attemptGeneration]Terminal
+	waitStarted         chan Spec
+	releasePrimaries    <-chan struct{}
+	stopRelease         chan struct{}
+	stops               int
+	emergencies         int
+	drainGeneration     attemptGeneration
+	emergencyGeneration attemptGeneration
 }
 
 func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
@@ -348,6 +387,9 @@ func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEme
 	f.mutex.Lock()
 	f.emergencies++
 	generation := f.drainGeneration
+	if f.emergencyGeneration != 0 {
+		generation = f.emergencyGeneration
+	}
 	f.mutex.Unlock()
 	settlement := f.shell.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
 		generation: generation, disposition: emergencyCustodyTransferred,

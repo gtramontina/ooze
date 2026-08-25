@@ -167,13 +167,22 @@ func (runner *managedCampaignRunner) execute(
 		if await.decision != admissionAccepted {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
-				result:  admissionResult{decision: await.decision, request: await.request},
-				cause:   "managed admission rejected",
+				result: admissionResult{
+					decision: await.decision, request: await.request, fatalEpoch: await.fatal,
+				},
+				cause: "managed admission rejected",
 			})
 		}
 		grant, ok := <-await.delivery
 		if !ok {
-			panic("managed admission closed without a grant")
+			return runner.advance(admissionRejectedEvent{
+				attempt: effect.attempt,
+				result: admissionResult{
+					decision: admissionRejectedClosed, request: await.request,
+					fatalEpoch: runner.runtime.fatalEpoch(),
+				},
+				cause: "process runtime entered a fatal epoch while admission waited",
+			})
 		}
 
 		return runner.advance(admissionGrantedEvent{attempt: effect.attempt, grant: grant})
