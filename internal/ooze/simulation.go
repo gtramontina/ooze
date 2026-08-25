@@ -895,13 +895,24 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 		panic("simulation shrink requires one malformed fact")
 	}
 	shrunk := simulationCloneTrace(trace)
-	for len(shrunk.records) != 0 {
-		candidate := simulationCloneTrace(shrunk)
-		candidate.records = candidate.records[:len(candidate.records)-1]
-		if !simulationPreservesFailure(candidate, key) {
+	for width := len(shrunk.records); width > 0; {
+		accepted := false
+		for start := 0; start+width <= len(shrunk.records); start++ {
+			candidate := simulationCloneTrace(shrunk)
+			candidate.records = slices.Delete(candidate.records, start, start+width)
+			simulationRenumberRecords(candidate.records)
+			if !simulationPreservesFailure(candidate, key) {
+				continue
+			}
+			shrunk = candidate
+			accepted = true
 			break
 		}
-		shrunk = candidate
+		if accepted {
+			width = min(width, len(shrunk.records))
+			continue
+		}
+		width--
 	}
 	for index := 0; index < len(shrunk.definition.catalogue); {
 		candidate := simulationCloneTrace(shrunk)
@@ -912,6 +923,22 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 		}
 		index++
 	}
+	for capacity := 1; capacity < shrunk.definition.capacity; capacity++ {
+		candidate := simulationCloneTrace(shrunk)
+		candidate.definition.capacity = capacity
+		if simulationPreservesFailure(candidate, key) {
+			shrunk = candidate
+			break
+		}
+	}
+	for peers := 1; peers < shrunk.definition.campaign.peers; peers++ {
+		candidate := simulationCloneTrace(shrunk)
+		candidate.definition.campaign.peers = peers
+		if simulationPreservesFailure(candidate, key) {
+			shrunk = candidate
+			break
+		}
+	}
 	first := ReplayViolation(shrunk, *shrunk.malformed)
 	second := ReplayViolation(shrunk, *shrunk.malformed)
 	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
@@ -919,6 +946,12 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 	}
 
 	return shrunk
+}
+
+func simulationRenumberRecords(records []simulationRecord) {
+	for index := range records {
+		records[index].sequence = uint64(index + 1)
+	}
 }
 
 func simulationCloneTrace(trace simulationTrace) simulationTrace {
