@@ -672,6 +672,134 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	}
 }
 
+func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T) {
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		for index, move := range moves {
+			if move.action.kind == supervisorLaunchNative && move.variant == 1 {
+				return index
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-supervisor-corruption-families", lineage: 321, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, choices)
+	if explored.failure != nil {
+		t.Fatalf("supervisor corruption exploration failure=%v", explored.failure)
+	}
+	registeredAt, boundaryAt := -1, -1
+	var registered simulationRecord
+	for index, record := range explored.trace.records {
+		if record.authority != simulationSupervisorAuthority {
+			continue
+		}
+		if registeredAt < 0 && record.supervisorEvent.kind == supervisorProspectiveRegistered {
+			registeredAt, registered = index, record
+		}
+		if registeredAt >= 0 && record.supervisorEvent.kind == supervisorLaunchBoundary &&
+			record.supervisorEvent.generation == registered.supervisorEvent.generation {
+			boundaryAt = index
+			break
+		}
+	}
+	if registeredAt < 0 || boundaryAt < 0 {
+		t.Fatalf("supervisor corruption cuts registration/boundary=%d/%d", registeredAt, boundaryAt)
+	}
+	launchAction := registered.supervisorActions[0].token
+	registrationPrefix := simulationTrace{
+		definition: explored.trace.definition,
+		records:    slices.Clone(explored.trace.records[:registeredAt+1]),
+	}
+	boundaryPrefix := simulationTrace{
+		definition: explored.trace.definition,
+		records:    slices.Clone(explored.trace.records[:boundaryAt+1]),
+	}
+	registeredEvent := registered.supervisorEvent.production()
+	completionAt := registeredEvent.launchBy.Add(-time.Nanosecond)
+	tests := []struct {
+		name      string
+		prefix    simulationTrace
+		malformed supervisorEvent
+		reason    string
+	}{
+		{
+			name: "duplicate registration",
+			prefix: registrationPrefix, malformed: registeredEvent,
+			reason: "prospective registration is incomplete or duplicated",
+		},
+		{
+			name: "wrong event kind",
+			prefix: registrationPrefix,
+			malformed: supervisorEvent{generation: registeredEvent.generation, at: completionAt},
+			reason: "event kind is invalid",
+		},
+		{
+			name: "contradictory released completion",
+			prefix: registrationPrefix,
+			malformed: supervisorEvent{
+				kind: supervisorLaunchCompleted, generation: registeredEvent.generation, at: completionAt,
+				completion: &supervisorLaunchCompletion{
+					generation: registeredEvent.generation, action: launchAction, at: completionAt,
+					kind: supervisorLaunchReleased, failure: LaunchFailed,
+				},
+			},
+			reason: "released completion carries a launch failure",
+		},
+		{
+			name: "output completion in launch phase",
+			prefix: registrationPrefix,
+			malformed: supervisorEvent{
+				kind: supervisorOutputCompleted, generation: registeredEvent.generation, at: completionAt,
+				output: &supervisorOutputCompletion{
+					generation: registeredEvent.generation,
+					action: supervisorPendingAction{kind: supervisorCaptureOutput, token: launchAction},
+					at: completionAt, ref: 1,
+				},
+			},
+			reason: "output completion correlation, evidence, or shape is invalid",
+		},
+		{
+			name: "late release after boundary revocation",
+			prefix: boundaryPrefix,
+			malformed: supervisorEvent{
+				kind: supervisorLaunchCompleted, generation: registeredEvent.generation,
+				at: registeredEvent.launchBy.Add(time.Nanosecond),
+				completion: &supervisorLaunchCompletion{
+					generation: registeredEvent.generation, action: launchAction,
+					at: registeredEvent.launchBy.Add(time.Nanosecond), kind: supervisorLaunchReleased,
+				},
+			},
+			reason: "launch completion was duplicated after closure",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			malformed := simulationMalformedFact{
+				authority: simulationSupervisorAuthority,
+				supervisor: simulationTraceSupervisorEvent(test.malformed),
+			}
+			first := ReplayViolation(test.prefix, malformed)
+			second := ReplayViolation(test.prefix, malformed)
+			if first.failure != nil || !reflect.DeepEqual(first, second) {
+				t.Fatalf("supervisor corruption replay diverged: first=%#v second=%#v", first, second)
+			}
+			if first.invariant.operation != supervisorReducerOperation || first.invariant.reason != test.reason {
+				t.Fatalf("supervisor corruption invariant=%#v", first.invariant)
+			}
+		})
+	}
+}
+
 func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCustody(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
@@ -2052,6 +2180,21 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 			campaign: simulationTraceCampaignEvent(campaignEvent{
 				id: 1, payload: snapshotEstablishedEvent{},
 			}),
+		}
+		if len(source) != 0 {
+			switch source[0] % 3 {
+			case 1:
+				malformed = simulationMalformedFact{
+					authority: simulationRuntimeAuthority, runtimeOperation: simulationRequestAdmission,
+				}
+			case 2:
+				malformed = simulationMalformedFact{
+					authority: simulationSupervisorAuthority,
+					supervisor: simulationTraceSupervisorEvent(supervisorEvent{
+						kind: supervisorProspectiveRegistered,
+					}),
+				}
+			}
 		}
 		first := ReplayViolation(prefix, malformed)
 		second := ReplayViolation(prefix, malformed)
