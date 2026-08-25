@@ -50,7 +50,7 @@ func main() {
 	fmt.Println("     primary and confirmation both timed out")
 	fmt.Println("☢  Runaway:   internal/cmdtestrunner/cmdtestrunner.go:29 → Loop Condition")
 	fmt.Println("     64 live descendants")
-	fmt.Println("✓  Killed:    internal/prettydiff/prettydiff.go:52 → Range Break")
+	fmt.Println("✓  Killed:    internal/gotextdiff/gotextdiff.go:52 → Range Break")
 	fmt.Println("     primary timed out at 39.4s with peer overlap; confirmation failed in 2.8s")
 	fmt.Println("   (a killed mutant is otherwise silent; this line exists only because it was confirmed)")
 
@@ -95,7 +95,7 @@ func main() {
 		"",
 		"  The process runtime is closed for the remainder of this process.",
 		"  2 execution-domain obligations remain unresolved:",
-		"    attempt 41  internal/prettydiff/prettydiff.go:52 → Range Break",
+		"    attempt 41  internal/gotextdiff/gotextdiff.go:52 → Range Break",
 		"    attempt 77  internal/iologger/iologger.go:19 → Integer Decrement",
 	)
 	fmt.Println("panic: ooze: cleanup unconfirmed")
