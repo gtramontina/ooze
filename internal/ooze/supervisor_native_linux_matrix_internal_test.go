@@ -41,7 +41,7 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 		},
 		{
 			name: "double-forked session orphan", role: "orphan-root",
-			walkFromRoot: [2]bool{false, false}, waitable: [2]bool{true, true}, postRootSeed: "subject",
+			walkFromRoot: [2]bool{true, false}, waitable: [2]bool{false, true}, postRootSeed: "subject",
 		},
 		{
 			name: "session escapee whose parent is the root", role: "escape-root",
@@ -77,15 +77,18 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 			subject := readLinuxMatrixPID(t, filepath.Join(directory, "subject.pid"))
 			middle := readOptionalLinuxMatrixPID(t, filepath.Join(directory, "middle.pid"))
 			guardian := linuxMatrixGuardianPID(t, executor)
-			if shape.role == "orphan-root" {
-				awaitLinuxMatrixParent(t, subject, guardian, 5*time.Second)
-			}
 
 			aliveWalk := linuxMatrixDescendants(t, root)
 			aliveWaitable := linuxMatrixDirectChildren(t, guardian)
 			assertLinuxMatrixVisibility(t, "root alive", subject,
 				shape.walkFromRoot[0], aliveWalk, shape.waitable[0], aliveWaitable)
 			assertLinuxMatrixParentage(t, shape.role, guardian, root, middle, subject)
+			if shape.role == "orphan-root" {
+				if err := os.WriteFile(filepath.Join(directory, "adopt"), []byte("adopt"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				awaitLinuxMatrixParent(t, subject, guardian, 5*time.Second)
+			}
 
 			if err := os.WriteFile(filepath.Join(directory, "release"), []byte("release"), 0o600); err != nil {
 				t.Fatal(err)
@@ -201,7 +204,9 @@ func runLinuxMatrixFixture(t *testing.T, role string) {
 	case "exiting-middle", "lingering-middle":
 		writeLinuxMatrixPID(t, filepath.Join(directory, "middle.pid"), os.Getpid())
 		startLinuxMatrixChild(t, directory, "subject", true)
-		if role == "lingering-middle" {
+		if role == "exiting-middle" {
+			awaitLinuxMatrixFile(t, filepath.Join(directory, "adopt"), 8*time.Second)
+		} else {
 			runBoundedLinuxMatrixSubject()
 		}
 	case "subject":
@@ -309,8 +314,9 @@ func assertLinuxMatrixParentage(t *testing.T, role string, guardian, root, middl
 			t.Fatalf("subject %d parent = %d, want live root %d", subject, subjectParent, root)
 		}
 	case "orphan-root":
-		if subjectParent != guardian {
-			t.Fatalf("orphan %d parent = %d, want subreaper %d", subject, subjectParent, guardian)
+		if middle <= 0 || subjectParent != middle || linuxMatrixParent(t, middle) != root {
+			t.Fatalf("subject/middle/root parentage = %d/%d/%d, want future orphan %d behind live middle %d behind root %d",
+				subjectParent, linuxMatrixParent(t, middle), linuxMatrixParent(t, root), subject, middle, root)
 		}
 	case "escape-middle-root":
 		if middle <= 0 || subjectParent != middle || linuxMatrixParent(t, middle) != root {

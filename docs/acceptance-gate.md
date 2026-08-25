@@ -87,16 +87,19 @@ Darwin one. Its exact depth-one subreaper/`wait4` visibility is:
 | subject | waitable, root alive | waitable, root exited |
 | --- | --- | --- |
 | plain child | no | yes |
-| double-forked session orphan | yes | yes |
+| double-forked session orphan | no; root remains the live seed | yes |
 | session escapee parented by root | no | yes |
 | session escapee behind live middle | no | no; middle is the visible seed |
 
 The live-root parent walk is retained as a separate automatic-fuse instrument:
-after the exact PPid instrument confirms orphan adoption, it sees the plain
-child and both live-ancestry escapees, misses the adopted subject, and sees none
-after root exit. Repeated depth-one kill/reap sweeps must reveal and reap the
-final row after its middle dies, then reach `ECHILD`. Stopping after one sweep
-or replacing adoption with a root walk is the required deliberate mutation.
+it sees all four subjects while the root is alive and sees none after root
+exit. For the future orphan row, a fixture handshake holds the intermediate
+alive during the first observation: the root walk reaches the subject, while
+the guardian can wait only on its direct root. The handshake then releases the
+intermediate and exact PPid confirms adoption before root exit. Repeated
+depth-one kill/reap sweeps must reveal and reap the final row after its middle
+dies, then reach `ECHILD`. Stopping after one sweep or replacing adoption with
+a root walk is the required deliberate mutation.
 
 ### Windows
 
