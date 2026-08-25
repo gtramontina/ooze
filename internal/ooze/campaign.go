@@ -789,8 +789,12 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 
 			return state.releaseSnapshot(campaignTerminalCompleted)
 		}
-		if state.drain.kind == campaignDrainConfirm && len(state.attempts) == 0 {
-			return state.materializeConfirmation()
+		if state.drain.kind == campaignDrainConfirm {
+			if len(state.attempts) == 0 {
+				return state.materializeConfirmation()
+			}
+
+			return state, nil
 		}
 
 		return state.materializePrimaryBatch()

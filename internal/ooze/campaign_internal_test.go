@@ -947,6 +947,12 @@ func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *tes
 	assertCampaignEffects(
 		t, effects, campaignEffectStopAttempt, campaignEffectStopAttempt, campaignEffectReleaseWorkspace,
 	)
+	effects = harness.advance(resourceSettledEvent{
+		kind: campaignResourceWorkspace, identity: "workspace-c",
+	})
+	if len(effects) != 0 {
+		t.Fatalf("rejected workspace settlement effects=%#v, want drain pause", effects)
+	}
 
 	effects = harness.advance(attemptTerminalEvent{
 		attempt: first.attempt, generation: first.generation,
