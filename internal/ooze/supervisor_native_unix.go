@@ -269,25 +269,18 @@ func forceNativeDomain(state nativePlatformState, _ int, drainBy time.Time) erro
 
 		return nil
 	}
-	for {
-		children, err := linuxGuardianChildProcessIDs(state.guardian.command.Process.Pid)
-		if err != nil {
-			return err
-		}
-		if len(children) == 0 {
-			return nil
-		}
-		for _, processID := range children {
-			err = syscall.Kill(processID, syscall.SIGKILL)
-			if err != nil && !errors.Is(err, syscall.ESRCH) {
-				return fmt.Errorf("terminate Linux guardian child %d: %w", processID, err)
-			}
-		}
-		if time.Now().After(drainBy) {
-			return fmt.Errorf("terminate Linux guardian children before %s: deadline exceeded", drainBy)
-		}
-		time.Sleep(time.Millisecond)
+	children, err := linuxGuardianChildProcessIDs(state.guardian.command.Process.Pid)
+	if err != nil {
+		return err
 	}
+	for _, processID := range children {
+		err = syscall.Kill(processID, syscall.SIGKILL)
+		if err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("terminate Linux guardian child %d: %w", processID, err)
+		}
+	}
+
+	return nil
 }
 
 func closeNativeDomain(state nativePlatformState) error {
