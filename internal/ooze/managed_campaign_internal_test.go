@@ -325,6 +325,8 @@ type managedAttemptFixture struct {
 	terminalByGen       map[attemptGeneration]Terminal
 	waitStarted         chan Spec
 	releasePrimaries    <-chan struct{}
+	waitAll             <-chan struct{}
+	launchStarted       chan Spec
 	stopRelease         chan struct{}
 	stops               int
 	emergencies         int
@@ -344,6 +346,9 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	f.byGeneration[start.generation] = spec
 	f.terminalByGen[start.generation] = f.terminals[f.launches-1]
 	f.mutex.Unlock()
+	if f.launchStarted != nil {
+		f.launchStarted <- spec
+	}
 	var result LaunchResult
 	observed := start.launch(func(attemptGeneration) attemptObservation {
 		result = Owned{Attempt: newOwnedAttempt(func(StopRequest) {}, func() Terminal { return nil })}
@@ -359,6 +364,9 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 	terminal := f.terminalByGen[generation]
 	spec := f.byGeneration[generation]
 	f.mutex.Unlock()
+	if f.waitAll != nil {
+		<-f.waitAll
+	}
 	if f.waitStarted != nil && spec.Deadline != baselineBootstrapDeadline {
 		f.waitStarted <- spec
 		<-f.releasePrimaries
