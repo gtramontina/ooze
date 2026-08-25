@@ -429,6 +429,16 @@ func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 	}
 }
 
+func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
+	contents, err := os.ReadFile("makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireContract(t, string(contents), "lint target",
+		"golangci-lint run --no-config ./...",
+	)
+}
+
 func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing.T) {
 	configured := ooze.Options{}
 	for _, option := range selfMutationOptions("campaign-runner") {

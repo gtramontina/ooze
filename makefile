@@ -56,5 +56,5 @@ test.crosscompile: $(pre-reqs)
 .PHONY: test.crosscompile
 
 lint: $(pre-reqs)
-	@golangci-lint -v run
+	@golangci-lint run --no-config ./...
 .PHONY: lint
