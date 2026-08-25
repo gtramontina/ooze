@@ -170,6 +170,7 @@ type simulationFailureKind uint8
 const (
 	simulationInvariantFailureKind simulationFailureKind = iota + 1
 	simulationLivenessFailureKind
+	simulationReplayFailureKind
 )
 
 type FailureKey struct {
@@ -1051,8 +1052,8 @@ func simulationEmergencySweep(runtime processRuntime, closure runtimeClosure) em
 
 // Shrink removes semantic records and definition members while retaining one typed failure.
 func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
-	if trace.malformed == nil {
-		panic("simulation shrink requires one malformed fact")
+	if trace.malformed == nil && key.kind != simulationReplayFailureKind {
+		panic("simulation shrink requires a reproducible failure")
 	}
 	shrunk := simulationCloneTrace(trace)
 	for width := len(shrunk.records); width > 0; {
@@ -1073,6 +1074,15 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 			continue
 		}
 		width--
+	}
+	if key.kind == simulationReplayFailureKind {
+		first := ReplayLegal(shrunk)
+		second := ReplayLegal(shrunk)
+		if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+			panic("simulation shrink did not retain a deterministic failure")
+		}
+
+		return shrunk
 	}
 	for index := 0; index < len(shrunk.definition.catalogue); {
 		definition := shrunk.definition
@@ -1299,6 +1309,11 @@ func simulationCloneTrace(trace simulationTrace) simulationTrace {
 }
 
 func simulationPreservesFailure(trace simulationTrace, key FailureKey) bool {
+	if key.kind == simulationReplayFailureKind {
+		result := ReplayLegal(trace)
+
+		return result.failure != nil && reflect.DeepEqual(result.key, key)
+	}
 	result := ReplayViolation(trace, *trace.malformed)
 
 	return result.failure == nil && reflect.DeepEqual(result.key, key)
@@ -1390,5 +1405,19 @@ func simulationEffectKinds(effects []campaignEffect) []campaignEffectKind {
 }
 
 func simulationReplayFailure(trace simulationTrace, format string, arguments ...any) SimulationResult {
-	return SimulationResult{trace: trace, failure: fmt.Errorf(format, arguments...)}
+	authority := simulationAuthority(0)
+	if len(arguments) != 0 {
+		if index, ok := arguments[0].(int); ok && index >= 0 && index < len(trace.records) {
+			authority = trace.records[index].authority
+		}
+	}
+
+	return SimulationResult{
+		trace: trace,
+		key: FailureKey{
+			property: "ReplayLegal", kind: simulationReplayFailureKind,
+			authority: authority, operation: format,
+		},
+		failure: fmt.Errorf(format, arguments...),
+	}
 }
