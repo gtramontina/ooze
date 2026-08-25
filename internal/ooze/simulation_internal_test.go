@@ -699,6 +699,39 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 		t.Fatalf("drain-expiry replay failure=%v world-equal=%v",
 			replayed.failure, reflect.DeepEqual(replayed.world, explored.world))
 	}
+
+	var repeatedEmergency simulationSupervisorEvent
+	var settledAt int
+	for index, record := range explored.trace.records {
+		if record.authority != simulationSupervisorAuthority {
+			continue
+		}
+		if record.supervisorEvent.kind == supervisorEmergencyStarted {
+			repeatedEmergency = record.supervisorEvent
+		}
+		if record.supervisorEvent.kind == supervisorEmergencySettlementCompleted {
+			settledAt = index + 1
+		}
+	}
+	if repeatedEmergency.kind == 0 || settledAt == 0 {
+		t.Fatalf("fatal trace lacks emergency start/settlement: start=%v settlement=%d",
+			repeatedEmergency.kind, settledAt)
+	}
+
+	malformed := simulationMalformedFact{
+		authority:  simulationSupervisorAuthority,
+		supervisor: repeatedEmergency,
+	}
+	firstViolation := ReplayViolation(explored.trace, malformed)
+	secondViolation := ReplayViolation(explored.trace, malformed)
+	if firstViolation.failure != nil ||
+		firstViolation.invariant.operation != supervisorReducerOperation ||
+		firstViolation.invariant.reason != "emergency epoch is invalid, duplicated, or conflicting" ||
+		!reflect.DeepEqual(firstViolation, secondViolation) ||
+		!reflect.DeepEqual(firstViolation.world.campaign.outcome, explored.world.campaign.outcome) ||
+		!reflect.DeepEqual(firstViolation.world.campaign.failure, explored.world.campaign.failure) {
+		t.Fatalf("repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	}
 }
 
 func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
@@ -1208,7 +1241,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
 			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
-				move.variant == 1 {
+				move.variant == 2 {
 				return index
 			}
 		}
@@ -1234,7 +1267,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	cut := -1
 	for index, record := range counterexample.records {
 		if record.authority == simulationSupervisorAuthority &&
-			record.supervisorEvent.kind == supervisorLaunchBoundary {
+			record.supervisorEvent.kind == supervisorLaunchCompleted {
 			cut = index
 			break
 		}
@@ -1248,16 +1281,54 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	if replayed.failure == nil || replayed.key.kind != simulationReplayFailureKind {
 		t.Fatalf("positive boundary replay=%#v", replayed)
 	}
-	originalDistance := simulationChoiceDistance(counterexample.choices)
+	originalMeasure := simulationTraceShrinkMeasure(counterexample)
 
 	shrunk := Shrink(counterexample, replayed.key)
-	if distance := simulationChoiceDistance(shrunk.choices); distance >= originalDistance {
-		t.Fatalf("positive boundary choice distance=%d, want less than %d", distance, originalDistance)
+	if measure := simulationTraceShrinkMeasure(shrunk); !simulationShrinkMeasureLess(measure, originalMeasure) {
+		t.Fatalf("positive boundary measure=%v, want less than %v", measure, originalMeasure)
 	}
 	first := ReplayLegal(shrunk)
 	second := ReplayLegal(shrunk)
 	if first.failure == nil || !reflect.DeepEqual(first.key, replayed.key) || !reflect.DeepEqual(first, second) {
 		t.Fatalf("positive boundary shrunk replay diverged: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
+	deadline := simulationTraceInstant(time.Unix(10, 0))
+	near := simulationTrace{
+		records: []simulationRecord{{
+			authority: simulationSupervisorAuthority,
+			supervisorEvent: simulationSupervisorEvent{
+				kind: supervisorRunningObserved,
+				running: &simulationSupervisorRunningBundle{
+					exitRecheck: simulationSupervisorExitRecheck{performed: true, at: deadline},
+					facts: []simulationSupervisorRunningFact{{
+						kind: supervisorRunningRootExited,
+						at:   simulationTraceInstant(time.Unix(10, 1)),
+					}},
+				},
+			},
+		}},
+		choices: []simulationChoiceRecord{{selected: 9}},
+	}
+	far := simulationCloneTrace(near)
+	farRunning := *near.records[0].supervisorEvent.running
+	farRunning.facts = slices.Clone(farRunning.facts)
+	far.records[0].supervisorEvent.running = &farRunning
+	far.records[0].supervisorEvent.running.facts[0].at = simulationTraceInstant(time.Unix(10, 9))
+	far.choices[0].selected = 0
+	if !simulationShrinkMeasureLess(simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far)) {
+		t.Fatalf("near/far shrink measures=%v/%v", simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far))
+	}
+
+	simple := simulationCloneTrace(near)
+	simpleRunning := *near.records[0].supervisorEvent.running
+	simple.records[0].supervisorEvent.running = &simpleRunning
+	simple.records[0].supervisorEvent.running.facts = nil
+	if !simulationShrinkMeasureLess(simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near)) {
+		t.Fatalf("simple/rich payload measures=%v/%v",
+			simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near))
 	}
 }
 
@@ -1303,7 +1374,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
 			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
-				move.variant == 1 {
+				move.variant == 2 {
 				return index
 			}
 		}
@@ -1328,7 +1399,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	prefixLength := 0
 	for index, record := range explored.trace.records {
 		if record.authority != simulationSupervisorAuthority ||
-			record.supervisorEvent.kind != supervisorLaunchBoundary {
+			record.supervisorEvent.kind != supervisorLaunchCompleted {
 			continue
 		}
 		prefixLength = index + 1
@@ -1347,12 +1418,11 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	counterexample.records = slices.Clone(counterexample.records[:prefixLength])
 	counterexample.malformed = &malformed
 	key := ReplayViolation(counterexample, malformed).key
-	originalDistance := simulationChoiceDistance(counterexample.choices)
+	originalMeasure := simulationTraceShrinkMeasure(counterexample)
 
 	shrunk := Shrink(counterexample, key)
-	if distance := simulationChoiceDistance(shrunk.choices); distance >= originalDistance {
-		t.Fatalf("boundary choice distance=%d, want less than %d; choices=%#v",
-			distance, originalDistance, shrunk.choices)
+	if measure := simulationTraceShrinkMeasure(shrunk); !simulationShrinkMeasureLess(measure, originalMeasure) {
+		t.Fatalf("boundary measure=%v, want less than %v", measure, originalMeasure)
 	}
 	if shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 ||
 		len(shrunk.definition.catalogue) != 0 {
@@ -1362,15 +1432,6 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {
 		t.Fatalf("boundary shrink replay=%#v, want key %#v", replayed, key)
 	}
-}
-
-func simulationChoiceDistance(choices []simulationChoiceRecord) int {
-	distance := 0
-	for _, choice := range choices {
-		distance += choice.selected
-	}
-
-	return distance
 }
 
 func TestSimulationLivenessFailureKeyIgnoresRawOwnerIdentities(t *testing.T) {

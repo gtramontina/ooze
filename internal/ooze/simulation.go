@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"time"
 )
 
 type simulationAuthority uint8
@@ -1018,9 +1019,7 @@ func simulationAdvanceRuntimeGuarded(
 		if !ok {
 			violation = runtimeInvariantViolation{operation: operation, reason: "unexpected panic"}
 		}
-		var closure runtimeClosure
-		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
-		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(*runtime, closure))
+		simulationSettleInvariantCleanup(runtime, violation)
 		panic(violation)
 	}()
 
@@ -1043,13 +1042,20 @@ func simulationAdvanceSupervisorGuarded(
 				operation: supervisorReducerOperation, reason: "unexpected panic",
 			}
 		}
-		var closure runtimeClosure
-		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
-		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(*runtime, closure))
+		simulationSettleInvariantCleanup(runtime, violation)
 		panic(violation)
 	}()
 
 	_, _ = reduceSupervisor(state, event)
+}
+
+func simulationSettleInvariantCleanup(runtime *processRuntime, violation runtimeInvariantViolation) {
+	defer func() {
+		_ = recover()
+	}()
+	var closure runtimeClosure
+	*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
+	*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(*runtime, closure))
 }
 
 func simulationEmergencySweep(runtime processRuntime, closure runtimeClosure) emergencySweep {
@@ -1096,7 +1102,7 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 			candidate := simulationCloneTrace(shrunk)
 			candidate.records = slices.Delete(candidate.records, start, start+width)
 			simulationRenumberRecords(candidate.records)
-			if !simulationPreservesFailure(candidate, key) {
+			if !simulationPreservesFailure(candidate, key) || !simulationTraceShrinks(candidate, shrunk) {
 				continue
 			}
 			shrunk = candidate
@@ -1117,7 +1123,7 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 			index++
 			continue
 		}
-		if simulationPreservesFailure(candidate, key) {
+		if simulationPreservesFailure(candidate, key) && simulationTraceShrinks(candidate, shrunk) {
 			shrunk = candidate
 			continue
 		}
@@ -1131,7 +1137,7 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 		if !ok {
 			continue
 		}
-		if simulationPreservesFailure(candidate, key) {
+		if simulationPreservesFailure(candidate, key) && simulationTraceShrinks(candidate, shrunk) {
 			shrunk = candidate
 			break
 		}
@@ -1147,7 +1153,7 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 			candidate, ok := simulationExploreShrinkCandidateWithChoices(
 				shrunk, shrunk.definition, &simulationShrinkChoiceSource{choices: choices},
 			)
-			if !ok || !simulationPreservesFailure(candidate, key) {
+			if !ok || !simulationPreservesFailure(candidate, key) || !simulationTraceShrinks(candidate, shrunk) {
 				continue
 			}
 			shrunk = candidate
@@ -1163,7 +1169,7 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 	}
 	if candidate, ok := simulationExploreShrinkCandidateWithChoices(
 		shrunk, canonical, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)},
-	); ok && simulationPreservesFailure(candidate, key) {
+	); ok && simulationPreservesFailure(candidate, key) && simulationTraceShrinks(candidate, shrunk) {
 		shrunk = candidate
 	}
 	if key.kind == simulationReplayFailureKind {
@@ -1218,7 +1224,7 @@ func simulationShrinkLivenessOnceWith(
 		for start := 0; start+width <= len(shrunk.choices); start++ {
 			choices := slices.Delete(slices.Clone(shrunk.choices), start, start+width)
 			candidate, ok := preserves(shrunk.definition, choices)
-			if !ok {
+			if !ok || !simulationTraceShrinks(candidate, shrunk) {
 				continue
 			}
 			shrunk = candidate
@@ -1235,7 +1241,7 @@ func simulationShrinkLivenessOnceWith(
 		definition := shrunk.definition
 		definition.catalogue = slices.Delete(slices.Clone(definition.catalogue), index, index+1)
 		candidate, ok := preserves(definition, shrunk.choices)
-		if !ok {
+		if !ok || !simulationTraceShrinks(candidate, shrunk) {
 			index++
 			continue
 		}
@@ -1246,7 +1252,7 @@ func simulationShrinkLivenessOnceWith(
 		definition.capacity = parallelism
 		definition.campaign.peers = parallelism
 		candidate, ok := preserves(definition, shrunk.choices)
-		if !ok {
+		if !ok || !simulationTraceShrinks(candidate, shrunk) {
 			continue
 		}
 		shrunk = candidate
@@ -1261,7 +1267,7 @@ func simulationShrinkLivenessOnceWith(
 			choices := slices.Clone(shrunk.choices[:choiceAt+1])
 			choices[choiceAt].selected = selected
 			candidate, ok := preserves(shrunk.definition, choices)
-			if !ok {
+			if !ok || !simulationTraceShrinks(candidate, shrunk) {
 				continue
 			}
 			shrunk = candidate
@@ -1275,7 +1281,7 @@ func simulationShrinkLivenessOnceWith(
 	for index := range canonical.catalogue {
 		canonical.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
 	}
-	if candidate, ok := preserves(canonical, shrunk.choices); ok {
+	if candidate, ok := preserves(canonical, shrunk.choices); ok && simulationTraceShrinks(candidate, shrunk) {
 		shrunk = candidate
 	}
 	first := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
@@ -1289,8 +1295,8 @@ func simulationShrinkLivenessOnceWith(
 
 func simulationTraceShrinkMeasure(trace simulationTrace) [4]int {
 	return [4]int{
-		len(trace.definition.catalogue), len(trace.records), trace.definition.capacity,
-		simulationShrinkChoiceDistance(trace.choices),
+		len(trace.definition.catalogue) + trace.definition.capacity + trace.definition.campaign.peers,
+		len(trace.records), simulationTracePayloadRank(trace), simulationTraceBoundaryDistance(trace),
 	}
 }
 
@@ -1304,13 +1310,129 @@ func simulationShrinkMeasureLess(left, right [4]int) bool {
 	return false
 }
 
-func simulationShrinkChoiceDistance(choices []simulationChoiceRecord) int {
+func simulationTraceShrinks(candidate, current simulationTrace) bool {
+	return simulationShrinkMeasureLess(
+		simulationTraceShrinkMeasure(candidate), simulationTraceShrinkMeasure(current),
+	)
+}
+
+func simulationTracePayloadRank(trace simulationTrace) int {
+	rank := simulationPayloadRank(reflect.ValueOf(trace.definition))
+	for _, record := range trace.records {
+		rank += simulationPayloadRank(reflect.ValueOf(record))
+	}
+
+	return rank
+}
+
+func simulationPayloadRank(value reflect.Value) int {
+	if !value.IsValid() {
+		return 0
+	}
+	if value.Type() == reflect.TypeOf(simulationInstant{}) {
+		return 0
+	}
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if value.IsNil() {
+			return 0
+		}
+
+		return 1 + simulationPayloadRank(value.Elem())
+	case reflect.Struct:
+		rank := 0
+		for index := 0; index < value.NumField(); index++ {
+			rank += simulationPayloadRank(value.Field(index))
+		}
+
+		return rank
+	case reflect.Slice, reflect.Array:
+		rank := value.Len()
+		for index := 0; index < value.Len(); index++ {
+			rank += simulationPayloadRank(value.Index(index))
+		}
+
+		return rank
+	case reflect.Map:
+		return value.Len()
+	case reflect.Bool:
+		if value.Bool() {
+			return 1
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if value.Int() != 0 {
+			return 1
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		if value.Uint() != 0 {
+			return 1
+		}
+	case reflect.String:
+		return value.Len()
+	}
+
+	return 0
+}
+
+func simulationTraceBoundaryDistance(trace simulationTrace) int {
 	distance := 0
-	for _, choice := range choices {
-		distance += choice.selected
+	drainBy := make(map[supervisorActionToken]simulationInstant)
+	for _, record := range trace.records {
+		for _, action := range record.supervisorActions {
+			if action.drainBy.set {
+				drainBy[action.token] = action.drainBy
+			}
+		}
+		if record.authority != simulationSupervisorAuthority {
+			continue
+		}
+		event := record.supervisorEvent
+		attemptAt := slices.IndexFunc(record.supervisorState.attempts, func(attempt simulationSupervisorAttemptState) bool {
+			return attempt.generation == event.generation
+		})
+		if attemptAt >= 0 {
+			attempt := record.supervisorState.attempts[attemptAt]
+			switch event.kind {
+			case supervisorLaunchCompleted, supervisorLaunchBoundary:
+				distance += simulationInstantDistance(event.at, attempt.launchBy)
+			}
+		}
+		if event.kind == supervisorRunningObserved && event.running != nil {
+			boundary := simulationInstant{}
+			if event.running.exitRecheck.performed {
+				boundary = event.running.exitRecheck.at
+			} else if attemptAt >= 0 {
+				boundary = record.supervisorState.attempts[attemptAt].deadlineAt
+			}
+			for _, fact := range event.running.facts {
+				distance += simulationInstantDistance(fact.at, boundary)
+			}
+		}
+		if event.kind == supervisorDrainCompleted && event.drain != nil {
+			distance += simulationInstantDistance(event.at, drainBy[event.drain.action.token])
+		}
 	}
 
 	return distance
+}
+
+func simulationInstantDistance(left, right simulationInstant) int {
+	if !left.set || !right.set {
+		return 0
+	}
+	distance := left.production().Sub(right.production())
+	if distance == time.Duration(-1<<63) {
+		return int(^uint(0) >> 1)
+	}
+	if distance < 0 {
+		distance = -distance
+	}
+	maximum := int(^uint(0) >> 1)
+	if uint64(distance) > uint64(maximum) {
+		return maximum
+	}
+
+	return int(distance)
 }
 
 func simulationExploreShrinkCandidate(
