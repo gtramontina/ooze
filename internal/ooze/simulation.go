@@ -153,11 +153,15 @@ type SimulationResult struct {
 }
 
 type simulationMalformedFact struct {
-	authority        simulationAuthority
-	campaign         simulationCampaignEvent
-	runtimeOperation simulationRuntimeOperation
-	runtimeAdmission simulationAdmission
-	supervisor       simulationSupervisorEvent
+	authority          simulationAuthority
+	campaign           simulationCampaignEvent
+	runtimeOperation   simulationRuntimeOperation
+	runtimeAdmission   simulationAdmission
+	runtimeGeneration  attemptGeneration
+	runtimeObservation simulationRuntimeObservation
+	runtimeSweep       simulationEmergencySweepRecord
+	runtimeFatalCause  runtimeFatalCause
+	supervisor         simulationSupervisorEvent
 }
 
 // FailureKey is the alpha-normalized semantic identity retained while shrinking.
@@ -897,7 +901,10 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 		}
 	case simulationRuntimeAuthority:
 		if malformed.runtimeOperation != simulationRequestAdmission &&
-			malformed.runtimeOperation != simulationAcknowledgeGrantReturn {
+			malformed.runtimeOperation != simulationAcknowledgeGrantReturn &&
+			malformed.runtimeOperation != simulationObserveAttempt &&
+			malformed.runtimeOperation != simulationSettleEmergency &&
+			malformed.runtimeOperation != simulationCloseRuntime {
 			return ViolationResult{failure: fmt.Errorf("malformed runtime operation is not implemented")}
 		}
 	case simulationSupervisorAuthority:
@@ -947,6 +954,26 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 		case simulationAcknowledgeGrantReturn:
 			simulationAdvanceRuntimeGuarded(&runtime, "acknowledge grant return", func(state processRuntime) processRuntime {
 				next, _ := state.acknowledgeGrantReturn(malformed.runtimeAdmission.production())
+
+				return next
+			})
+		case simulationObserveAttempt:
+			simulationAdvanceRuntimeGuarded(&runtime, observeOperation, func(state processRuntime) processRuntime {
+				next, _ := state.observeAttempt(
+					malformed.runtimeGeneration, malformed.runtimeObservation.production(),
+				)
+
+				return next
+			})
+		case simulationSettleEmergency:
+			simulationAdvanceRuntimeGuarded(&runtime, settleEmergencyOperation, func(state processRuntime) processRuntime {
+				next, _ := state.settleEmergency(malformed.runtimeSweep.production())
+
+				return next
+			})
+		case simulationCloseRuntime:
+			simulationAdvanceRuntimeGuarded(&runtime, "close runtime", func(state processRuntime) processRuntime {
+				next, _ := state.closeRuntime(malformed.runtimeFatalCause)
 
 				return next
 			})

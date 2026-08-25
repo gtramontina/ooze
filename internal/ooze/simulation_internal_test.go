@@ -622,6 +622,63 @@ func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *tes
 	}
 }
 
+func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFamilies(t *testing.T) {
+	prefix := simulationTrace{definition: simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-runtime-families", lineage: 35, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1,
+	}}
+	tests := []struct {
+		name      string
+		malformed simulationMalformedFact
+		operation string
+		reason    string
+	}{
+		{
+			name: "unknown generation observation",
+			malformed: simulationMalformedFact{
+				authority: simulationRuntimeAuthority, runtimeOperation: simulationObserveAttempt,
+				runtimeGeneration:  99,
+				runtimeObservation: simulationRuntimeObservation{kind: simulationLaunchOwnedObservation},
+			},
+			operation: observeOperation, reason: "generation is not live",
+		},
+		{
+			name: "emergency settlement while open",
+			malformed: simulationMalformedFact{
+				authority: simulationRuntimeAuthority, runtimeOperation: simulationSettleEmergency,
+			},
+			operation: settleEmergencyOperation, reason: "resolution cardinality is invalid",
+		},
+		{
+			name: "empty fatal cause",
+			malformed: simulationMalformedFact{
+				authority: simulationRuntimeAuthority, runtimeOperation: simulationCloseRuntime,
+			},
+			operation: "close runtime", reason: "fatal cause is empty",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			first := ReplayViolation(prefix, test.malformed)
+			second := ReplayViolation(prefix, test.malformed)
+			if first.failure != nil || !reflect.DeepEqual(first, second) {
+				t.Fatalf("runtime violation replay diverged: first=%#v second=%#v", first, second)
+			}
+			if first.key.authority != simulationRuntimeAuthority ||
+				first.invariant.operation != test.operation || first.invariant.reason != test.reason {
+				t.Fatalf("runtime invariant/key=%#v/%#v", first.invariant, first.key)
+			}
+			if first.world.runtime.lifecycle != runtimeClosedDrained ||
+				len(first.world.runtime.admissions) != 0 {
+				t.Fatalf("runtime violation cleanup=%#v", first.world.runtime)
+			}
+		})
+	}
+}
+
 func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
