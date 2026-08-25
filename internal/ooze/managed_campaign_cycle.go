@@ -1,0 +1,67 @@
+package ooze
+
+import "slices"
+
+func (runner *managedCampaignRunner) run(request managedCampaignRequest) managedCampaignResult {
+	request.env = managedExecutionEnvironment(request.env, request.profile, request.peers)
+	runner.terminals = make(chan managedTerminalObservation, request.peers+1)
+	definition := campaignDefinition{
+		identity: request.identity, lineage: request.lineage,
+		command: request.command, env: request.env, profile: request.profile, peers: request.peers,
+	}
+	var effects []campaignEffect
+	runner.state, effects = beginCampaign(definition)
+	for len(effects) != 0 || runner.pending != 0 || runner.needsEmergencySettlement() {
+		if runner.needsEmergencySettlement() && (len(effects) == 0 || proposesTerminal(effects)) {
+			effects = runner.settleEmergency()
+		}
+		var next []campaignEffect
+		for _, effect := range effects {
+			next = append(next, runner.execute(effect, request)...)
+		}
+		effects = next
+		if len(effects) == 0 && runner.pending != 0 {
+			terminal := <-runner.terminals
+			runner.pending--
+			effects = runner.settle(terminal, request)
+		}
+	}
+
+	return managedCampaignResult{
+		outcome: runner.state.outcome, failure: runner.state.failure, mutations: runner.mutations,
+	}
+}
+
+func proposesTerminal(effects []campaignEffect) bool {
+	return slices.ContainsFunc(effects, func(effect campaignEffect) bool {
+		return effect.kind == campaignEffectProposeTerminal
+	})
+}
+
+func (runner *managedCampaignRunner) needsEmergencySettlement() bool {
+	_, requested := runner.state.runtimeEmergencySettlementRequest()
+	return !runner.emergency && requested
+}
+
+func (runner *managedCampaignRunner) settleEmergency() []campaignEffect {
+	epoch, requested := runner.state.runtimeEmergencySettlementRequest()
+	if !requested {
+		panic("managed emergency settlement was not requested")
+	}
+	observed := runner.attempts.emergency(epoch)
+	if observed.epoch != epoch || observed.settlement.epoch != epoch {
+		panic("managed emergency settlement has the wrong epoch")
+	}
+	runner.emergency = true
+	runner.pending = 0
+
+	return runner.advance(runtimeEmergencySettledEvent{epoch: epoch, settlement: campaignSettlement(observed.settlement)})
+}
+
+func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
+	runner.nextEvent++
+	var effects []campaignEffect
+	runner.state, effects = advanceCampaign(runner.state, campaignEvent{id: runner.nextEvent, payload: payload})
+
+	return effects
+}
