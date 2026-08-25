@@ -1,16 +1,15 @@
 package verbosetemporarydir
 
 import (
-	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
 )
 
 type VerboseTemporaryDir struct {
 	logger   ooze.Logger
-	delegate laboratory.TemporaryDirectory
+	delegate ooze.ManagedTemporaryDirectory
 }
 
-func New(logger ooze.Logger, delegate laboratory.TemporaryDirectory) *VerboseTemporaryDir {
+func New(logger ooze.Logger, delegate ooze.ManagedTemporaryDirectory) *VerboseTemporaryDir {
 	return &VerboseTemporaryDir{
 		logger:   logger,
 		delegate: delegate,
