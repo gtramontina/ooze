@@ -1,7 +1,9 @@
 package ooze
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -244,6 +246,30 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 				t.Fatalf("runtime trace leaked a delivery channel: %#v", record)
 			}
 		}
+	}
+}
+
+func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	definition := campaignDefinition{
+		identity: "campaign-paths", lineage: 81, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	}
+	campaign, _ := beginCampaign(definition)
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	runner.advance(campaignRegisteredEvent{registration: registration})
+	runner.advance(snapshotEstablishedEvent{snapshot: "/private/repository/snapshot-937"})
+
+	trace, projection := recorder.quiescent(runner, shell, driver)
+	projected := fmt.Sprintf("%#v %#v", trace, projection)
+	if strings.Contains(projected, "/private/repository") {
+		t.Fatalf("simulation projection leaked a filesystem path: %s", projected)
+	}
+	if projection.campaign.snapshot != "snapshot:campaign-paths" {
+		t.Fatalf("logical snapshot identity=%q", projection.campaign.snapshot)
 	}
 }
 
