@@ -1553,6 +1553,25 @@ func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testin
 	}
 }
 
+func TestSimulationReplayLegalityKeyIsIndependentOfDiagnostic(t *testing.T) {
+	trace := simulationTrace{records: []simulationRecord{{authority: simulationRuntimeAuthority}}}
+	first := simulationReplayFailure(
+		trace, simulationReplayEnablednessFailure, "registration is not enabled at record %d", 0,
+	).key
+	second := simulationReplayFailure(
+		trace, simulationReplayEnablednessFailure, "rewritten enabledness diagnostic for record %d", 0,
+	).key
+	if !reflect.DeepEqual(first, second) || first.operation != "" {
+		t.Fatalf("replay legality key depends on diagnostics: %#v/%#v", first, second)
+	}
+	different := simulationReplayFailure(
+		trace, simulationReplayCausalityFailure, "rewritten causal diagnostic for record %d", 0,
+	).key
+	if reflect.DeepEqual(first, different) {
+		t.Fatalf("distinct replay legality categories share key %#v", first)
+	}
+}
+
 func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
