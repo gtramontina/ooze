@@ -967,12 +967,55 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
 		t.Fatalf("managed trace retained a production capability at %s", path)
 	}
+	for index, record := range trace.records {
+		if record.source.kind == 0 || record.source.identity == 0 {
+			t.Fatalf("managed production record %d has no causal source: %#v", index, record)
+		}
+		if want := simulationExpectedProductionSourceKind(record); record.source.kind != want {
+			t.Fatalf("managed production record %d source kind=%v, want %v", index, record.source.kind, want)
+		}
+	}
 	replayed := ReplayLegal(trace)
 	if replayed.failure != nil {
 		t.Fatalf("non-empty production trace did not replay: %v", replayed.failure)
 	}
 	if !reflect.DeepEqual(replayed.world, production) {
 		t.Fatalf("non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
+	}
+}
+
+func simulationExpectedProductionSourceKind(record simulationRecord) simulationCausalSourceKind {
+	switch record.authority {
+	case simulationRuntimeAuthority:
+		switch record.runtimeOperation {
+		case simulationObserveAttempt, simulationCompleteConfirmationQueue, simulationSettleEmergency:
+			return simulationSupervisorActionSource
+		default:
+			return simulationCampaignEffectSource
+		}
+	case simulationCampaignAuthority:
+		switch record.campaignEvent.kind {
+		case simulationCampaignRegistered, simulationAdmissionGranted, simulationAdmissionCancelled,
+			simulationAdmissionRejected, simulationStartCommittedEvent, simulationAttemptLaunched,
+			simulationConfirmationBarrierBound, simulationGrantReturnAcknowledged,
+			simulationRuntimeEmergencyStarted, simulationTerminalCommitted:
+			return simulationOwnerDeliverySource
+		case simulationAttemptTerminal, simulationRuntimeEmergencySettled:
+			return simulationSupervisorActionSource
+		default:
+			return simulationCampaignEffectSource
+		}
+	case simulationSupervisorAuthority:
+		switch record.supervisorEvent.kind {
+		case supervisorProspectiveRegistered:
+			return simulationCampaignEffectSource
+		case supervisorRuntimeCompleted, supervisorEmergencyStarted, supervisorEmergencySettlementCompleted:
+			return simulationOwnerDeliverySource
+		default:
+			return simulationSupervisorActionSource
+		}
+	default:
+		panic("simulation production record authority is invalid")
 	}
 }
 

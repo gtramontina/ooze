@@ -9,14 +9,22 @@ import (
 )
 
 type simulationRecorder struct {
-	gate        sync.RWMutex
-	mutex       sync.Mutex
-	next        atomic.Uint64
-	records     []simulationRecord
-	barriers    []simulationQuiescentBarrier
-	actionMutex sync.Mutex
-	actions     map[supervisorActionToken]simulationInFlightAction
-	actionWake  chan struct{}
+	gate         sync.RWMutex
+	mutex        sync.Mutex
+	next         atomic.Uint64
+	records      []simulationRecord
+	barriers     []simulationQuiescentBarrier
+	actionMutex  sync.Mutex
+	actions      map[supervisorActionToken]simulationInFlightAction
+	actionWake   chan struct{}
+	causalMutex  sync.Mutex
+	activeEffect campaignEffect
+	runtimeCuts  []simulationRecordedRuntimeCut
+}
+
+type simulationRecordedRuntimeCut struct {
+	sequence uint64
+	record   simulationRecord
 }
 
 type simulationInFlightAction struct {
@@ -53,6 +61,29 @@ func (recorder *simulationRecorder) reserve(authority simulationAuthority) simul
 	return simulationReservation{sequence: recorder.next.Add(1), authority: authority}
 }
 
+func (recorder *simulationRecorder) executeEffect(effect campaignEffect) func() {
+	if recorder == nil {
+		return func() {}
+	}
+	recorder.causalMutex.Lock()
+	if recorder.activeEffect.id != 0 {
+		recorder.causalMutex.Unlock()
+		panic("simulation recorder campaign effects overlap")
+	}
+	recorder.activeEffect = effect
+	recorder.causalMutex.Unlock()
+
+	return func() {
+		recorder.causalMutex.Lock()
+		if recorder.activeEffect.id != effect.id {
+			recorder.causalMutex.Unlock()
+			panic("simulation recorder campaign effect completion is stale")
+		}
+		recorder.activeEffect = campaignEffect{}
+		recorder.causalMutex.Unlock()
+	}
+}
+
 func (recorder *simulationRecorder) recordRuntime(
 	reservation simulationReservation,
 	record simulationRecord,
@@ -63,8 +94,14 @@ func (recorder *simulationRecorder) recordRuntime(
 	}
 	record.sequence = reservation.sequence
 	record.authority = reservation.authority
+	record.source = recorder.runtimeSource(record)
 	record.runtimeState = simulationTraceRuntimeState(state)
 	recorder.append(record)
+	recorder.causalMutex.Lock()
+	recorder.runtimeCuts = append(recorder.runtimeCuts, simulationRecordedRuntimeCut{
+		sequence: record.sequence, record: record,
+	})
+	recorder.causalMutex.Unlock()
 }
 
 func (recorder *simulationRecorder) recordCampaign(
@@ -77,15 +114,18 @@ func (recorder *simulationRecorder) recordCampaign(
 	if recorder == nil {
 		return
 	}
+	var source simulationCausalSource
 	switch payload := event.payload.(type) {
 	case attemptTerminalEvent:
-		recorder.recordSupervisorDelivery(supervisorDeliverTerminal, payload.generation)
+		source = recorder.recordSupervisorDelivery(supervisorDeliverTerminal, payload.generation)
 	case runtimeEmergencySettledEvent:
-		recorder.recordSupervisorDelivery(supervisorDeliverEmergencySettlement, 0)
+		source = recorder.recordSupervisorDelivery(supervisorDeliverEmergencySettlement, 0)
+	default:
+		source = recorder.campaignSource(payload)
 	}
 	projectedState := simulationProjectCampaign(state)
 	recorder.append(simulationRecord{
-		sequence: reservation.sequence, authority: reservation.authority,
+		sequence: reservation.sequence, authority: reservation.authority, source: source,
 		campaignEvent:   simulationTraceCampaignEvent(simulationProjectCampaignEvent(event, previous)),
 		campaignState:   simulationTraceCampaignState(projectedState),
 		campaignEffects: simulationProjectCampaignEffects(effects, state),
@@ -102,12 +142,192 @@ func (recorder *simulationRecorder) recordSupervisor(
 		return
 	}
 	recorder.recordSupervisorActions(actions)
+	source := recorder.supervisorSource(event)
 	recorder.append(simulationRecord{
-		sequence: reservation.sequence, authority: reservation.authority,
+		sequence: reservation.sequence, authority: reservation.authority, source: source,
 		supervisorEvent:   simulationTraceSupervisorEvent(event),
 		supervisorState:   simulationTraceSupervisorState(state),
 		supervisorActions: simulationTraceSupervisorActions(actions),
 	})
+}
+
+func (recorder *simulationRecorder) runtimeSource(record simulationRecord) simulationCausalSource {
+	if source := recorder.runtimeActionSource(record); source.kind != 0 {
+		return source
+	}
+	recorder.causalMutex.Lock()
+	effect := recorder.activeEffect
+	recorder.causalMutex.Unlock()
+	if effect.id != 0 {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
+	}
+	if record.runtimeOperation == simulationRegisterCampaign {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: 1}
+	}
+
+	return simulationCausalSource{}
+}
+
+func (recorder *simulationRecorder) runtimeActionSource(record simulationRecord) simulationCausalSource {
+	recorder.actionMutex.Lock()
+	defer recorder.actionMutex.Unlock()
+	var matched supervisorActionToken
+	for token, action := range recorder.actions {
+		matches := false
+		switch record.runtimeOperation {
+		case simulationObserveAttempt:
+			matches = action.generation == record.runtimeGeneration &&
+				(action.kind == supervisorPublishOwned || action.kind == supervisorSettleRuntime ||
+					action.kind == supervisorTransferResidualCustody)
+		case simulationCompleteConfirmationQueue:
+			matches = action.kind == supervisorDeliverTerminal
+		case simulationSettleEmergency:
+			matches = action.kind == supervisorSettleEmergency
+		}
+		if !matches {
+			continue
+		}
+		if matched != 0 {
+			panic("simulation recorder runtime action source is ambiguous")
+		}
+		matched = token
+	}
+	if matched == 0 {
+		return simulationCausalSource{}
+	}
+
+	return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(matched)}
+}
+
+func (recorder *simulationRecorder) campaignSource(payload campaignEventPayload) simulationCausalSource {
+	if source := recorder.takeRuntimeCut(func(record simulationRecord) bool {
+		return simulationRuntimeCutEnablesCampaign(record, payload)
+	}); source.kind != 0 {
+		return source
+	}
+	recorder.causalMutex.Lock()
+	effect := recorder.activeEffect
+	recorder.causalMutex.Unlock()
+	if effect.id != 0 && simulationEffectEnablesExternalFact(effect, payload) {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
+	}
+
+	return simulationCausalSource{}
+}
+
+func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campaignEventPayload) bool {
+	switch event := payload.(type) {
+	case campaignRegisteredEvent:
+		return record.runtimeOperation == simulationRegisterCampaign &&
+			record.runtimeRegistration == event.registration
+	case admissionGrantedEvent:
+		if record.runtimeOperation != simulationRequestAdmission {
+			return false
+		}
+		return slices.ContainsFunc(record.runtimeAdmissionOut.deliveries, func(delivery simulationAdmission) bool {
+			return campaignAdmissionFact(delivery.production()) == event.grant
+		})
+	case admissionRejectedEvent:
+		return record.runtimeOperation == simulationRequestAdmission &&
+			record.runtimeAdmissionOut.decision == event.result.decision &&
+			campaignAdmissionFact(record.runtimeAdmissionOut.request.production()) == event.result.request
+	case startCommittedEvent:
+		return record.runtimeOperation == simulationStartCommitted && record.runtimeStart == startCommittedResult(event.result)
+	case attemptLaunchEvent:
+		return record.runtimeOperation == simulationObserveAttempt &&
+			record.runtimeObservation.kind == simulationLaunchOwnedObservation &&
+			record.runtimeGeneration == event.generation
+	case confirmationBarrierBoundEvent:
+		return record.runtimeOperation == simulationBindConfirmationBarrier &&
+			record.runtimeBarrierOut.decision == event.result.decision &&
+			campaignAdmissionFact(record.runtimeBarrierOut.request.production()) == event.result.request &&
+			slices.EqualFunc(record.runtimeBarrierOut.deliveries, event.result.deliveries,
+				func(left simulationAdmission, right campaignAdmission) bool {
+					return campaignAdmissionFact(left.production()) == right
+				})
+	case grantReturnAcknowledgedEvent:
+		return record.runtimeOperation == simulationAcknowledgeGrantReturn &&
+			record.runtimeAdmissionOut.decision == event.result.decision
+	case terminalCommittedEvent:
+		return record.runtimeOperation == simulationCommitTerminal &&
+			record.runtimeTerminal == terminalResult(event.result)
+	default:
+		return false
+	}
+}
+
+func (recorder *simulationRecorder) supervisorSource(event supervisorEvent) simulationCausalSource {
+	if token := simulationSupervisorEventAction(event); token != 0 {
+		return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(token)}
+	}
+	if event.kind == supervisorRuntimeCompleted {
+		return recorder.takeRuntimeCut(func(record simulationRecord) bool {
+			return record.runtimeOperation == simulationObserveAttempt && record.runtimeGeneration == event.generation
+		})
+	}
+	recorder.causalMutex.Lock()
+	effect := recorder.activeEffect
+	recorder.causalMutex.Unlock()
+	if event.kind == supervisorProspectiveRegistered && effect.kind == campaignEffectLaunchAttempt {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
+	}
+
+	return simulationCausalSource{}
+}
+
+func simulationSupervisorEventAction(event supervisorEvent) supervisorActionToken {
+	switch event.kind {
+	case supervisorLaunchCompleted, supervisorLaunchBoundary:
+		if event.completion != nil {
+			return event.completion.action
+		}
+	case supervisorRunningObserved:
+		if event.running != nil {
+			if event.running.waitAction != 0 {
+				return event.running.waitAction
+			}
+			return event.running.sampleAction
+		}
+	case supervisorDrainCompleted:
+		if event.drain != nil {
+			return event.drain.action.token
+		}
+	case supervisorOutputCompleted:
+		if event.output != nil {
+			return event.output.action.token
+		}
+	case supervisorStopAdmissionSealed:
+		if event.seal != nil {
+			return event.seal.action.token
+		}
+	case supervisorReleaseCompleted:
+		if event.release != nil {
+			return event.release.action.token
+		}
+	case supervisorEmergencySettlementCompleted:
+		if event.emergencySettlement != nil {
+			return event.emergencySettlement.action.token
+		}
+	}
+
+	return 0
+}
+
+func (recorder *simulationRecorder) takeRuntimeCut(
+	match func(simulationRecord) bool,
+) simulationCausalSource {
+	recorder.causalMutex.Lock()
+	defer recorder.causalMutex.Unlock()
+	for index, cut := range recorder.runtimeCuts {
+		if !match(cut.record) {
+			continue
+		}
+		recorder.runtimeCuts = slices.Delete(recorder.runtimeCuts, index, index+1)
+
+		return simulationCausalSource{kind: simulationOwnerDeliverySource, identity: cut.sequence}
+	}
+
+	return simulationCausalSource{}
 }
 
 func (recorder *simulationRecorder) append(record simulationRecord) {
@@ -158,9 +378,9 @@ func (recorder *simulationRecorder) recordSupervisorAction(action supervisorActi
 func (recorder *simulationRecorder) recordSupervisorDelivery(
 	kind supervisorActionKind,
 	generation attemptGeneration,
-) {
+) simulationCausalSource {
 	if recorder == nil {
-		return
+		return simulationCausalSource{}
 	}
 	recorder.actionMutex.Lock()
 	var matched supervisorActionToken
@@ -184,6 +404,8 @@ func (recorder *simulationRecorder) recordSupervisorDelivery(
 	case recorder.actionWake <- struct{}{}:
 	default:
 	}
+
+	return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(matched)}
 }
 
 func (recorder *simulationRecorder) quiescent(
