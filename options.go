@@ -18,6 +18,7 @@ type Option func(Options) Options
 type Options struct {
 	Repository                ooze.Repository
 	TestRunner                laboratory.TestRunner
+	TestCommand               []string
 	TemporaryDir              laboratory.TemporaryDirectory
 	MinimumThreshold          float32
 	Serial                    bool
@@ -44,6 +45,7 @@ func WithRepositoryRoot(repositoryRoot string) func(Options) Options {
 func WithTestCommand(testCommand string) func(Options) Options {
 	return func(options Options) Options {
 		testCommandParts := strings.Split(testCommand, " ")
+		options.TestCommand = append([]string(nil), testCommandParts...)
 		options.TestRunner = cmdtestrunner.New(testCommandParts[0], testCommandParts[1:]...)
 
 		return options

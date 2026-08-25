@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,99 @@ func TestManagedCampaignEmptyCatalogueRunsNoCommands(t *testing.T) {
 	}
 	if attempts.launches != 0 || repository.materializations != 1 || !repository.snapshot.removed {
 		t.Fatalf("launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
+	}
+}
+
+func TestManagedCampaignLazilyOverlapsAutomaticPrimariesUpToCapacity(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
+	}}
+	started := make(chan Spec, 2)
+	release := make(chan struct{})
+	attempts := &managedAttemptFixture{
+		waitStarted: started, releasePrimaries: release,
+		terminals: []Terminal{
+			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		},
+	}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(2), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+	completed := make(chan managedCampaignResult, 1)
+	go func() {
+		completed <- runner.run(managedCampaignRequest{
+			identity: "campaign-a", lineage: 11, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
+		})
+	}()
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("automatic primaries did not overlap before settlement")
+		}
+	}
+	close(release)
+	select {
+	case result := <-completed:
+		outcome, ok := result.outcome.(completedOutcome)
+		if !ok || len(outcome.mutants) != 2 {
+			t.Fatalf("outcome = %#v", result.outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("overlapped campaign did not complete")
+	}
+}
+
+func TestManagedCampaignSerialPrimariesAreExclusiveWithDetectedCapacityProfile(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
+	}}
+	started := make(chan Spec, 2)
+	release := make(chan struct{})
+	attempts := &managedAttemptFixture{
+		waitStarted: started, releasePrimaries: release,
+		terminals: []Terminal{
+			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		},
+	}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(3), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+	completed := make(chan managedCampaignResult, 1)
+	go func() {
+		completed <- runner.run(managedCampaignRequest{
+			identity: "campaign-a", lineage: 11, command: []string{"test"},
+			profile: SerialProfile, peers: 3, viruses: []viruses.Virus{integerincrement.New()},
+		})
+	}()
+
+	first := <-started
+	if !slices.Contains(first.Env, "GOMAXPROCS=3") {
+		t.Fatalf("serial environment = %#v", first.Env)
+	}
+	select {
+	case second := <-started:
+		close(release)
+		t.Fatalf("serial primary overlapped: %#v", second)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case result := <-completed:
+		if outcome, ok := result.outcome.(completedOutcome); !ok || len(outcome.mutants) != 2 {
+			t.Fatalf("outcome = %#v", result.outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serial campaign did not complete")
 	}
 }
 
@@ -105,14 +199,18 @@ func (d *managedTemporaryDirectory) New() string {
 }
 
 type managedAttemptFixture struct {
-	launches     int
-	specs        []Spec
-	terminals    []Terminal
-	shell        *processRuntimeShell
-	byGeneration map[attemptGeneration]Spec
+	mutex            sync.Mutex
+	launches         int
+	specs            []Spec
+	terminals        []Terminal
+	shell            *processRuntimeShell
+	byGeneration     map[attemptGeneration]Spec
+	waitStarted      chan Spec
+	releasePrimaries <-chan struct{}
 }
 
 func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
+	f.mutex.Lock()
 	f.launches++
 	f.specs = append(f.specs, spec)
 	f.shell = start.shell
@@ -120,6 +218,7 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 		f.byGeneration = make(map[attemptGeneration]Spec)
 	}
 	f.byGeneration[start.generation] = spec
+	f.mutex.Unlock()
 	var result LaunchResult
 	observed := start.launch(func(attemptGeneration) attemptObservation {
 		result = Owned{Attempt: newOwnedAttempt(func(StopRequest) {}, func() Terminal { return nil })}
@@ -131,10 +230,16 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	return managedObservedLaunch{result: result, receipt: receipt}
 }
 func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttempt) managedObservedTerminal {
+	f.mutex.Lock()
 	terminal := f.terminals[0]
 	f.terminals = f.terminals[1:]
-	data := terminalExecutionData(terminal)
 	spec := f.byGeneration[generation]
+	f.mutex.Unlock()
+	if f.waitStarted != nil && spec.Deadline != baselineBootstrapDeadline {
+		f.waitStarted <- spec
+		<-f.releasePrimaries
+	}
+	data := terminalExecutionData(terminal)
 	data.Deadline = spec.Deadline
 	data.profile = spec.Profile
 	switch terminal := terminal.(type) {
