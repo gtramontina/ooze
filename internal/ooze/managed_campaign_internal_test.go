@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -157,6 +158,33 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 	}
 }
 
+func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
+	}}
+	attempts := &managedAttemptFixture{
+		stopRelease: make(chan struct{}),
+		terminals: []Terminal{
+			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			Infrastructure{Cause: CensusFailed, Err: errors.New("census failed")},
+			Stopped{},
+		},
+	}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(2), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if _, ok := result.outcome.(abortedOutcome); !ok || attempts.stops != 1 {
+		t.Fatalf("outcome/stops = %#v/%d, want aborted after one peer stop", result.outcome, attempts.stops)
+	}
+}
+
 type managedMemoryRepository struct {
 	files            []*gosourcefile.GoSourceFile
 	materializations int
@@ -205,8 +233,11 @@ type managedAttemptFixture struct {
 	terminals        []Terminal
 	shell            *processRuntimeShell
 	byGeneration     map[attemptGeneration]Spec
+	terminalByGen    map[attemptGeneration]Terminal
 	waitStarted      chan Spec
 	releasePrimaries <-chan struct{}
+	stopRelease      chan struct{}
+	stops            int
 }
 
 func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
@@ -216,8 +247,10 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	f.shell = start.shell
 	if f.byGeneration == nil {
 		f.byGeneration = make(map[attemptGeneration]Spec)
+		f.terminalByGen = make(map[attemptGeneration]Terminal)
 	}
 	f.byGeneration[start.generation] = spec
+	f.terminalByGen[start.generation] = f.terminals[f.launches-1]
 	f.mutex.Unlock()
 	var result LaunchResult
 	observed := start.launch(func(attemptGeneration) attemptObservation {
@@ -231,8 +264,7 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 }
 func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttempt) managedObservedTerminal {
 	f.mutex.Lock()
-	terminal := f.terminals[0]
-	f.terminals = f.terminals[1:]
+	terminal := f.terminalByGen[generation]
 	spec := f.byGeneration[generation]
 	f.mutex.Unlock()
 	if f.waitStarted != nil && spec.Deadline != baselineBootstrapDeadline {
@@ -250,11 +282,33 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 			terminal: terminal,
 			receipt:  f.shell.observeAttempt(generation, attemptSettled{profile: spec.Profile, deadline: spec.Deadline}),
 		}
+	case Infrastructure:
+		terminal.ExecutionData = data
+
+		return managedObservedTerminal{
+			terminal: terminal,
+			receipt:  f.shell.observeAttempt(generation, attemptInfrastructure{cause: terminal.Err.Error()}),
+		}
+	case Stopped:
+		if f.stopRelease != nil {
+			<-f.stopRelease
+		}
+		terminal.ExecutionData = data
+
+		return managedObservedTerminal{
+			terminal: terminal,
+			receipt:  f.shell.observeAttempt(generation, attemptStopped{}),
+		}
 	default:
 		panic("unsupported fixture terminal")
 	}
 }
-func (*managedAttemptFixture) stop(attemptGeneration) { panic("unexpected attempt stop") }
+func (f *managedAttemptFixture) stop(attemptGeneration) {
+	f.mutex.Lock()
+	f.stops++
+	close(f.stopRelease)
+	f.mutex.Unlock()
+}
 func (*managedAttemptFixture) emergency(fatalEpochID) managedObservedEmergency {
 	panic("unexpected emergency")
 }
