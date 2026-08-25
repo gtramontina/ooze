@@ -912,6 +912,58 @@ func TestCampaignReturnsKnownGrantDeliveredAfterPrimaryClosure(t *testing.T) {
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 }
 
+func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(
+		t, []mutantIdentity{"mutant-a", "mutant-b", "mutant-c"}, 3,
+	)
+	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
+
+	deadline := harness.state.mutationDeadline
+	var receipt observationResult
+	harness.runtime, receipt = harness.runtime.observeAttempt(first.generation, attemptTripped{
+		kind: deadlineTrip, profile: AutomaticProfile, deadline: deadline,
+	})
+	if !receipt.confirmationProvisional {
+		t.Fatalf("deadline receipt=%#v", receipt)
+	}
+
+	effects := harness.advance(workspaceMaterializedEvent{
+		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
+	})
+	var rejected admissionResult
+	harness.runtime, rejected = harness.runtime.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	if rejected.decision != admissionRejectedGateClosed {
+		t.Fatalf("pending primary admission=%#v", rejected)
+	}
+	effects = harness.advance(admissionRejectedEvent{
+		attempt: primaryEffects[2].attempt,
+		result:  campaignAdmissionEvidence(rejected),
+		cause:   "primary gate closed",
+	})
+	if harness.state.phase != campaignDraining || harness.state.drain.kind != campaignDrainConfirm {
+		t.Fatalf("phase/drain=%v/%#v", harness.state.phase, harness.state.drain)
+	}
+	assertCampaignEffects(
+		t, effects, campaignEffectStopAttempt, campaignEffectStopAttempt, campaignEffectReleaseWorkspace,
+	)
+
+	effects = harness.advance(attemptTerminalEvent{
+		attempt: first.attempt, generation: first.generation,
+		terminal: Tripped{
+			Trip: AutomaticDeadlineTrip{},
+			ExecutionData: ExecutionData{
+				Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+			},
+		},
+		receipt: campaignReceipt(receipt),
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	if !reflect.DeepEqual(harness.state.drain.provisionals, []mutantIdentity{"mutant-a"}) {
+		t.Fatalf("confirmation provisionals=%#v", harness.state.drain.provisionals)
+	}
+}
+
 func TestCampaignAdoptsStartCommittedBeforeClosureWhoseFactArrivesAfterClosure(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
