@@ -213,6 +213,40 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
+func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	registration := shell.registerCampaign(campaignProvenance{lineage: 71})
+	await := shell.requestAdmission(admissionRequest{
+		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
+		profile: AutomaticProfile,
+	})
+	if await.decision != admissionAccepted {
+		t.Fatalf("admission decision=%v", await.decision)
+	}
+	campaign, _ := beginCampaign(campaignDefinition{
+		identity: "campaign-projection", lineage: 71, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	})
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+
+	trace, projection := recorder.quiescent(runner, shell, driver)
+	if shell.core.admissions[0].grant.delivery == nil {
+		t.Fatal("fixture did not retain the shell-only delivery capability")
+	}
+	if projection.runtime.admissions[0].grant.delivery != nil {
+		t.Fatal("quiescent projection leaked a delivery channel")
+	}
+	for _, record := range trace.records {
+		for _, admission := range record.runtimeState.admissions {
+			if admission.grant.delivery != nil {
+				t.Fatalf("runtime trace leaked a delivery channel: %#v", record)
+			}
+		}
+	}
+}
+
 func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{1, 7, 9})

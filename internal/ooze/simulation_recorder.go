@@ -31,7 +31,7 @@ func (recorder *simulationRecorder) recordRuntime(operation string, state proces
 	}
 	record := simulationRecord{
 		sequence: recorder.next.Add(1), authority: simulationRuntimeAuthority,
-		runtimeOperationName: operation, runtimeState: state.clone(),
+		runtimeOperationName: operation, runtimeState: simulationProjectRuntime(state),
 	}
 	if operation == "register campaign" && len(state.campaigns) != 0 {
 		token := state.campaigns[len(state.campaigns)-1].token
@@ -93,7 +93,7 @@ func (recorder *simulationRecorder) quiescent(
 	})
 
 	runtime.mutex.Lock()
-	runtimeState := runtime.core.clone()
+	runtimeState := simulationProjectRuntime(runtime.core)
 	runtime.mutex.Unlock()
 	driver.mutex.Lock()
 	supervisorState := cloneSupervisorState(driver.state)
@@ -109,4 +109,13 @@ func (recorder *simulationRecorder) quiescent(
 		}, simulationWorld{
 			campaign: campaignState, runtime: runtimeState, supervisor: supervisorState,
 		}
+}
+
+func simulationProjectRuntime(state processRuntime) processRuntime {
+	state = state.clone()
+	for index := range state.admissions {
+		state.admissions[index].grant.delivery = nil
+	}
+
+	return state
 }
