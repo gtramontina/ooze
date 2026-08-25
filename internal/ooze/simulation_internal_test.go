@@ -331,11 +331,11 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 	}
 }
 
-func TestSimulationFocusedRepeatedFuseTripsDoNotChangeAdmission(t *testing.T) {
+func TestSimulationFocusedRepeatedIntrinsicDeadlinesDoNotChangeAdmission(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
 			if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
-				move.variant == 3 {
+				move.variant == 2 {
 				return index
 			}
 		}
@@ -349,27 +349,28 @@ func TestSimulationFocusedRepeatedFuseTripsDoNotChangeAdmission(t *testing.T) {
 	})
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
-			identity: "campaign-repeated-fuse", lineage: 2512, command: []string{"test"},
+			identity: "campaign-repeated-intrinsic-deadline", lineage: 2512, command: []string{"test"},
 			profile: AutomaticProfile, peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
 	completed, ok := explored.world.campaign.outcome.(completedOutcome)
 	if explored.failure != nil || !ok || len(completed.mutants) != 2 {
-		t.Fatalf("repeated-fuse exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+		t.Fatalf("repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
 	}
 	for _, mutant := range completed.mutants {
-		if mutant.kind != mutantRunaway || mutant.confirmation.kind != campaignAttemptEvidenceKind(0) {
-			t.Fatalf("repeated-fuse mutant=%#v, want direct runaway without confirmation", mutant)
+		if mutant.kind != mutantTimedOut || mutant.primary.kind != campaignEvidenceDeadline ||
+			mutant.confirmation.kind != campaignAttemptEvidenceKind(0) {
+			t.Fatalf("repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
 		}
 	}
 	if explored.world.runtime.mode != fullAutomatic || completed.singleAdmissionFallback {
-		t.Fatalf("repeated-fuse admission mode/fallback=%v/%v",
+		t.Fatalf("repeated-deadline admission mode/fallback=%v/%v",
 			explored.world.runtime.mode, completed.singleAdmissionFallback)
 	}
 	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
 		!reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("repeated-fuse replay=%#v", replayed)
+		t.Fatalf("repeated-deadline replay=%#v", replayed)
 	}
 }
 
