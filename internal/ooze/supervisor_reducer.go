@@ -997,15 +997,15 @@ func reduceRunningBundle(
 ) (supervisorState, []supervisorAction) {
 	index := state.requireAttempt(event.generation)
 	attempt := state.attempts[index]
-	if event.at.Before(attempt.lastEventAt) {
-		event.at = attempt.lastEventAt
-	}
 	if event.running == nil || event.at.IsZero() || event.drainBy.IsZero() ||
 		!event.attemptIsZero() || !event.launchBy.IsZero() || event.completion != nil ||
 		event.drain != nil || event.output != nil || event.seal != nil || event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 || event.commandDeadline != 0 ||
 		!event.running.drainBy.IsZero() {
 		invariant(supervisorReducerOperation, "running bundle shape or action correlation is invalid")
+	}
+	if event.at.Before(attempt.lastEventAt) {
+		event.at = attempt.lastEventAt
 	}
 	validateRunningBundleCorrelation(attempt, event.running)
 	if attempt.phase == supervisorIntentLatched || attempt.phase == supervisorEmergencyDraining {
