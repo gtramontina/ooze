@@ -17,7 +17,9 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 		}
 		var next []campaignEffect
 		for _, effect := range effects {
+			complete := runner.recorder.executeEffect(effect)
 			next = append(next, runner.execute(effect, request)...)
+			complete()
 		}
 		effects = next
 		if len(effects) == 0 && runner.pending != 0 {
