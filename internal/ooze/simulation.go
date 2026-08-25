@@ -3,6 +3,7 @@ package ooze
 import (
 	"fmt"
 	"reflect"
+	"time"
 )
 
 type simulationAuthority uint8
@@ -17,8 +18,13 @@ type simulationRuntimeOperation uint8
 
 const (
 	simulationRegisterCampaign simulationRuntimeOperation = iota + 1
+	simulationRequestAdmission
+	simulationStartCommitted
+	simulationObserveAttempt
 	simulationCommitTerminal
 )
+
+const simulationChooseBaselineFailure byte = 1
 
 type simulationDefinition struct {
 	campaign  campaignDefinition
@@ -41,12 +47,23 @@ type simulationRecord struct {
 	campaignState   campaignState
 	campaignEffects []campaignEffect
 
-	runtimeOperation    simulationRuntimeOperation
-	runtimeProvenance   campaignProvenance
-	runtimeCampaign     campaignToken
-	runtimeState        processRuntime
-	runtimeRegistration campaignRegistration
-	runtimeTerminal     terminalResult
+	runtimeOperation      simulationRuntimeOperation
+	runtimeProvenance     campaignProvenance
+	runtimeCampaign       campaignToken
+	runtimeAdmission      admissionRequest
+	runtimeGrant          admissionGrant
+	runtimeGeneration     attemptGeneration
+	runtimeObservation    attemptObservation
+	runtimeState          processRuntime
+	runtimeRegistration   campaignRegistration
+	runtimeAdmissionOut   admissionResult
+	runtimeStart          startCommittedResult
+	runtimeObservationOut observationResult
+	runtimeTerminal       terminalResult
+
+	supervisorEvent   supervisorEvent
+	supervisorState   supervisorState
+	supervisorActions []supervisorAction
 }
 
 type simulationWorld struct {
@@ -63,7 +80,7 @@ type SimulationResult struct {
 }
 
 // Explore expands choices only through facts enabled by the production owners.
-func Explore(definition simulationDefinition, _ simulationChoiceBytes) SimulationResult {
+func Explore(definition simulationDefinition, choices simulationChoiceBytes) SimulationResult {
 	definition.catalogue = append([]mutantIdentity(nil), definition.catalogue...)
 	state, effects := beginCampaign(definition.campaign)
 	runtime := newProcessRuntime(definition.capacity)
@@ -93,7 +110,11 @@ func Explore(definition simulationDefinition, _ simulationChoiceBytes) Simulatio
 	state, effects = simulationAdvanceCampaign(state, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, state, effects, payload))
 	if len(definition.catalogue) != 0 {
-		return SimulationResult{trace: trace, failure: fmt.Errorf("non-empty simulation catalogue is not implemented")}
+		if len(choices) == 0 || choices[0]&simulationChooseBaselineFailure == 0 {
+			return SimulationResult{trace: trace, failure: fmt.Errorf("selected supervised outcome is not implemented")}
+		}
+
+		return simulationExploreBaselineFailure(definition, trace, state, effects, runtime, registration)
 	}
 	simulationRequireOnlyEffect(effects, campaignEffectReleaseSnapshot)
 	payload = resourceSettledEvent{
@@ -122,10 +143,251 @@ func Explore(definition simulationDefinition, _ simulationChoiceBytes) Simulatio
 	}
 }
 
+func simulationExploreBaselineFailure(
+	definition simulationDefinition,
+	trace simulationTrace,
+	campaign campaignState,
+	effects []campaignEffect,
+	runtime processRuntime,
+	registration campaignRegistration,
+) SimulationResult {
+	materialize := simulationOnlyEffect(effects, campaignEffectMaterializeWorkspace)
+	payload := campaignEventPayload(workspaceMaterializedEvent{
+		attempt: materialize.attempt, workspace: "workspace-baseline", snapshot: materialize.snapshot,
+	})
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+
+	requestEffect := simulationOnlyEffect(effects, campaignEffectRequestAdmission)
+	request := runtimeAdmissionRequest(requestEffect.request)
+	var admission admissionResult
+	runtime, admission = runtime.requestAdmission(request)
+	trace.records = append(trace.records, simulationRecord{
+		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
+		runtimeOperation: simulationRequestAdmission, runtimeAdmission: request,
+		runtimeState: runtime, runtimeAdmissionOut: admission,
+	})
+	payload = admissionGrantedEvent{
+		attempt: requestEffect.attempt, grant: campaignAdmissionFact(admission.deliveries[0]),
+	}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+
+	startEffect := simulationOnlyEffect(effects, campaignEffectRequestStartCommitment)
+	grant := admission.deliveries[0]
+	var started startCommittedResult
+	runtime, started = runtime.startCommitted(grant)
+	trace.records = append(trace.records, simulationRecord{
+		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
+		runtimeOperation: simulationStartCommitted, runtimeGrant: grant,
+		runtimeState: runtime, runtimeStart: started,
+	})
+	payload = startCommittedEvent{
+		attempt: startEffect.attempt, grant: startEffect.grant, result: campaignStartEvidence(started),
+	}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+
+	launchEffect := simulationOnlyEffect(effects, campaignEffectLaunchAttempt)
+	supervisor := supervisorState{}
+	registeredAt := time.Unix(1_000, 0)
+	launchBy := registeredAt.Add(time.Second)
+	var actions []supervisorAction
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: launchEffect.generation,
+		attempt: launchEffect.attempt, at: registeredAt, launchBy: launchBy,
+		profile: launchEffect.spec.Profile, commandDeadline: launchEffect.spec.Deadline,
+	})
+	launch := simulationOnlySupervisorAction(actions, supervisorLaunchNative)
+	completedAt := launchBy.Add(-time.Nanosecond)
+	completion := supervisorLaunchCompletion{
+		generation: launchEffect.generation, action: launch.token, at: completedAt,
+		kind: supervisorLaunchReleased,
+	}
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorLaunchCompleted, generation: launchEffect.generation,
+		at: completedAt, completion: &completion,
+	})
+	wait := simulationSupervisorAction(actions, supervisorWaitRoot)
+	sample := simulationSupervisorAction(actions, supervisorSampleRunning)
+
+	var launchReceipt observationResult
+	runtime, launchReceipt = runtime.observeAttempt(launchEffect.generation, launchOwned{})
+	trace.records = append(trace.records, simulationRecord{
+		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
+		runtimeOperation: simulationObserveAttempt, runtimeGeneration: launchEffect.generation,
+		runtimeObservation: launchOwned{}, runtimeState: runtime, runtimeObservationOut: launchReceipt,
+	})
+	payload = attemptLaunchEvent{
+		attempt: launchEffect.attempt, generation: launchEffect.generation,
+		result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceipt(launchReceipt),
+	}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+	if len(effects) != 0 {
+		return SimulationResult{trace: trace, failure: fmt.Errorf("owned launch emitted campaign effects")}
+	}
+
+	rootAt := completedAt.Add(time.Second)
+	drainBy := rootAt.Add(5 * time.Second)
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorRunningObserved, generation: launchEffect.generation, at: rootAt, drainBy: drainBy,
+		running: &supervisorRunningBundle{
+			generation: launchEffect.generation, sampleAction: sample.token, waitAction: wait.token,
+			facts: []supervisorRunningFact{{
+				generation: launchEffect.generation, action: wait.token,
+				kind: supervisorRunningRootExited, at: rootAt, exitCode: 1,
+			}},
+		},
+	})
+	drain := simulationOnlySupervisorAction(actions, supervisorObserveEmptiness)
+	drainAt := rootAt.Add(time.Nanosecond)
+	drainCompletion := supervisorDrainCompletion{
+		generation: launchEffect.generation,
+		action:     supervisorPendingAction{kind: drain.kind, token: drain.token},
+		at:         drainAt, kind: supervisorDrainObservedEmpty,
+	}
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorDrainCompleted, generation: launchEffect.generation,
+		at: drainAt, drain: &drainCompletion,
+	})
+	capture := simulationOnlySupervisorAction(actions, supervisorCaptureOutput)
+	outputAt := drainAt.Add(time.Nanosecond)
+	outputCompletion := supervisorOutputCompletion{
+		generation: launchEffect.generation,
+		action:     supervisorPendingAction{kind: capture.kind, token: capture.token},
+		at:         outputAt, ref: 1,
+	}
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorOutputCompleted, generation: launchEffect.generation,
+		at: outputAt, output: &outputCompletion,
+	})
+	seal := simulationOnlySupervisorAction(actions, supervisorSealStopAdmission)
+	sealAt := outputAt.Add(time.Nanosecond)
+	sealCompletion := supervisorStopSealCompletion{
+		generation: launchEffect.generation,
+		action:     supervisorPendingAction{kind: seal.kind, token: seal.token}, at: sealAt,
+	}
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorStopAdmissionSealed, generation: launchEffect.generation,
+		at: sealAt, seal: &sealCompletion,
+	})
+	release := simulationOnlySupervisorAction(actions, supervisorReleaseDomain)
+	releaseAt := sealAt.Add(time.Nanosecond)
+	releaseCompletion := supervisorReleaseCompletion{
+		generation: launchEffect.generation,
+		action:     supervisorPendingAction{kind: release.kind, token: release.token}, at: releaseAt,
+	}
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorReleaseCompleted, generation: launchEffect.generation,
+		at: releaseAt, release: &releaseCompletion,
+	})
+	settle := simulationOnlySupervisorAction(actions, supervisorSettleRuntime)
+
+	observation := terminalObservation(settle.terminal)
+	var terminalReceipt observationResult
+	runtime, terminalReceipt = runtime.observeAttempt(launchEffect.generation, observation)
+	trace.records = append(trace.records, simulationRecord{
+		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
+		runtimeOperation: simulationObserveAttempt, runtimeGeneration: launchEffect.generation,
+		runtimeObservation: observation, runtimeState: runtime, runtimeObservationOut: terminalReceipt,
+	})
+	runtimeCompletion := supervisorRuntimeCompletion{
+		generation: launchEffect.generation,
+		action:     supervisorPendingAction{kind: settle.kind, token: settle.token},
+		kind:       supervisorRuntimeAcknowledged,
+	}
+	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: launchEffect.generation,
+		runtime: &runtimeCompletion,
+	})
+	deliver := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)
+	terminal := publicTerminal(deliver.terminal, func(supervisorOutputRef) string { return "" }, nil, deliver.runtimeKind)
+	payload = attemptTerminalEvent{
+		attempt: launchEffect.attempt, generation: launchEffect.generation,
+		terminal: terminal, receipt: campaignReceipt(terminalReceipt),
+		resolvedMutationDeadline: resolveBaselineMutationDeadline(
+			terminalExecutionData(terminal).CommandDuration, definition.campaign.peers,
+		),
+	}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+
+	workspaceRelease := simulationOnlyEffect(effects, campaignEffectReleaseWorkspace)
+	payload = resourceSettledEvent{kind: campaignResourceWorkspace, identity: workspaceRelease.workspace}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+	snapshotRelease := simulationOnlyEffect(effects, campaignEffectReleaseSnapshot)
+	payload = resourceSettledEvent{kind: campaignResourceSnapshot, identity: string(snapshotRelease.snapshot)}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+
+	simulationRequireOnlyEffect(effects, campaignEffectProposeTerminal)
+	var committed terminalResult
+	runtime, committed = runtime.commitTerminal(registration.token)
+	trace.records = append(trace.records, simulationRecord{
+		sequence: uint64(len(trace.records) + 1), authority: simulationRuntimeAuthority,
+		runtimeOperation: simulationCommitTerminal, runtimeCampaign: registration.token,
+		runtimeState: runtime, runtimeTerminal: committed,
+	})
+	payload = terminalCommittedEvent{result: campaignTerminalEvidence(committed)}
+	campaign, effects = simulationAdvanceCampaign(campaign, payload)
+	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+
+	return SimulationResult{
+		trace: trace,
+		world: simulationWorld{campaign: campaign, runtime: runtime, supervisor: supervisor},
+	}
+}
+
 func simulationRequireOnlyEffect(effects []campaignEffect, kind campaignEffectKind) {
 	if len(effects) != 1 || effects[0].kind != kind {
 		panic(fmt.Sprintf("simulation effect=%#v, want one %v", effects, kind))
 	}
+}
+
+func simulationOnlyEffect(effects []campaignEffect, kind campaignEffectKind) campaignEffect {
+	simulationRequireOnlyEffect(effects, kind)
+
+	return effects[0]
+}
+
+func simulationRecordSupervisor(
+	trace *simulationTrace,
+	state supervisorState,
+	event supervisorEvent,
+) (supervisorState, []supervisorAction) {
+	next, actions := reduceSupervisor(state, event)
+	trace.records = append(trace.records, simulationRecord{
+		sequence: uint64(len(trace.records) + 1), authority: simulationSupervisorAuthority,
+		supervisorEvent: event, supervisorState: next,
+		supervisorActions: append([]supervisorAction(nil), actions...),
+	})
+
+	return next, actions
+}
+
+func simulationOnlySupervisorAction(
+	actions []supervisorAction,
+	kind supervisorActionKind,
+) supervisorAction {
+	if len(actions) != 1 || actions[0].kind != kind {
+		panic(fmt.Sprintf("simulation supervisor actions=%#v, want one %v", actions, kind))
+	}
+
+	return actions[0]
+}
+
+func simulationSupervisorAction(
+	actions []supervisorAction,
+	kind supervisorActionKind,
+) supervisorAction {
+	for _, action := range actions {
+		if action.kind == kind {
+			return action
+		}
+	}
+	panic(fmt.Sprintf("simulation supervisor actions=%#v, want %v", actions, kind))
 }
 
 func simulationAdvanceCampaign(
@@ -161,19 +423,19 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 
 	campaign, effects := beginCampaign(trace.definition.campaign)
 	runtime := newProcessRuntime(trace.definition.capacity)
+	supervisor := supervisorState{}
 	var delivered campaignEventPayload
+	var activeLaunch campaignEffect
+	var terminalReceipt observationResult
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
 			return simulationReplayFailure(trace, "record %d has sequence %d", index, record.sequence)
 		}
 		switch record.authority {
 		case simulationRuntimeAuthority:
-			if len(effects) != 1 {
-				return simulationReplayFailure(trace, "runtime record %d has %d enabled campaign effects", index, len(effects))
-			}
 			switch record.runtimeOperation {
 			case simulationRegisterCampaign:
-				if effects[0].kind != campaignEffectRegister {
+				if len(effects) != 1 || effects[0].kind != campaignEffectRegister {
 					return simulationReplayFailure(trace, "registration is not enabled at record %d", index)
 				}
 				var registration campaignRegistration
@@ -182,8 +444,53 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					return simulationReplayFailure(trace, "registration diverged at record %d", index)
 				}
 				delivered = campaignRegisteredEvent{registration: registration}
+				effects = nil
+			case simulationRequestAdmission:
+				if len(effects) != 1 || effects[0].kind != campaignEffectRequestAdmission ||
+					!reflect.DeepEqual(runtimeAdmissionRequest(effects[0].request), record.runtimeAdmission) {
+					return simulationReplayFailure(trace, "admission request is not enabled at record %d", index)
+				}
+				var admission admissionResult
+				runtime, admission = runtime.requestAdmission(record.runtimeAdmission)
+				if !reflect.DeepEqual(admission, record.runtimeAdmissionOut) || len(admission.deliveries) != 1 {
+					return simulationReplayFailure(trace, "admission decision diverged at record %d", index)
+				}
+				delivered = admissionGrantedEvent{
+					attempt: effects[0].attempt, grant: campaignAdmissionFact(admission.deliveries[0]),
+				}
+				effects = nil
+			case simulationStartCommitted:
+				if len(effects) != 1 || effects[0].kind != campaignEffectRequestStartCommitment ||
+					!reflect.DeepEqual(record.runtimeGrant, runtimeAdmissionRequest(effects[0].grant)) {
+					return simulationReplayFailure(trace, "start commitment is not enabled at record %d", index)
+				}
+				var started startCommittedResult
+				runtime, started = runtime.startCommitted(record.runtimeGrant)
+				if !reflect.DeepEqual(started, record.runtimeStart) {
+					return simulationReplayFailure(trace, "start commitment diverged at record %d", index)
+				}
+				delivered = startCommittedEvent{
+					attempt: effects[0].attempt, grant: effects[0].grant, result: campaignStartEvidence(started),
+				}
+				effects = nil
+			case simulationObserveAttempt:
+				var observation observationResult
+				runtime, observation = runtime.observeAttempt(record.runtimeGeneration, record.runtimeObservation)
+				if !reflect.DeepEqual(observation, record.runtimeObservationOut) {
+					return simulationReplayFailure(trace, "attempt observation diverged at record %d", index)
+				}
+				switch record.runtimeObservation.(type) {
+				case launchOwned:
+					delivered = attemptLaunchEvent{
+						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
+						result:  campaignLaunchObservation{kind: campaignLaunchOwned},
+						receipt: campaignReceipt(observation),
+					}
+				default:
+					terminalReceipt = observation
+				}
 			case simulationCommitTerminal:
-				if effects[0].kind != campaignEffectProposeTerminal {
+				if len(effects) != 1 || effects[0].kind != campaignEffectProposeTerminal {
 					return simulationReplayFailure(trace, "terminal commitment is not enabled at record %d", index)
 				}
 				var terminal terminalResult
@@ -192,10 +499,10 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					return simulationReplayFailure(trace, "terminal commitment diverged at record %d", index)
 				}
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
+				effects = nil
 			default:
 				return simulationReplayFailure(trace, "runtime operation is invalid at record %d", index)
 			}
-			effects = nil
 			if !reflect.DeepEqual(runtime, record.runtimeState) {
 				return simulationReplayFailure(trace, "runtime state diverged at record %d", index)
 			}
@@ -218,6 +525,37 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				!reflect.DeepEqual(effects, record.campaignEffects) {
 				return simulationReplayFailure(trace, "campaign transition diverged at record %d", index)
 			}
+		case simulationSupervisorAuthority:
+			if record.supervisorEvent.kind == supervisorProspectiveRegistered {
+				if len(effects) != 1 || effects[0].kind != campaignEffectLaunchAttempt ||
+					!simulationSupervisorRegistrationMatches(effects[0], record.supervisorEvent) {
+					return simulationReplayFailure(trace, "supervisor launch is not enabled at record %d", index)
+				}
+				activeLaunch = effects[0]
+				effects = nil
+			}
+			var actions []supervisorAction
+			supervisor, actions = reduceSupervisor(supervisor, record.supervisorEvent)
+			if !reflect.DeepEqual(supervisor, record.supervisorState) ||
+				!reflect.DeepEqual(actions, record.supervisorActions) {
+				return simulationReplayFailure(trace, "supervisor transition diverged at record %d", index)
+			}
+			if record.supervisorEvent.kind == supervisorRuntimeCompleted {
+				deliver := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)
+				terminal := publicTerminal(
+					deliver.terminal, func(supervisorOutputRef) string { return "" }, nil, deliver.runtimeKind,
+				)
+				terminalEvent := attemptTerminalEvent{
+					attempt: activeLaunch.attempt, generation: activeLaunch.generation,
+					terminal: terminal, receipt: campaignReceipt(terminalReceipt),
+				}
+				if activeLaunch.attemptKind == campaignAttemptBaseline {
+					terminalEvent.resolvedMutationDeadline = resolveBaselineMutationDeadline(
+						terminalExecutionData(terminal).CommandDuration, trace.definition.campaign.peers,
+					)
+				}
+				delivered = terminalEvent
+			}
 		default:
 			return simulationReplayFailure(trace, "authority is invalid at record %d", index)
 		}
@@ -225,8 +563,13 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 
 	return SimulationResult{
 		trace: trace,
-		world: simulationWorld{campaign: campaign, runtime: runtime, supervisor: supervisorState{}},
+		world: simulationWorld{campaign: campaign, runtime: runtime, supervisor: supervisor},
 	}
+}
+
+func simulationSupervisorRegistrationMatches(effect campaignEffect, event supervisorEvent) bool {
+	return event.generation == effect.generation && event.attempt == effect.attempt &&
+		event.profile == effect.spec.Profile && event.commandDeadline == effect.spec.Deadline
 }
 
 func simulationExternalFactEnabled(effects []campaignEffect, payload campaignEventPayload) bool {
@@ -239,7 +582,10 @@ func simulationExternalFactEnabled(effects []campaignEffect, payload campaignEve
 	case catalogueDiscoveredEvent:
 		return effects[0].kind == campaignEffectDiscoverCatalogue
 	case resourceSettledEvent:
-		return effects[0].kind == campaignEffectReleaseSnapshot
+		return effects[0].kind == campaignEffectReleaseSnapshot ||
+			effects[0].kind == campaignEffectReleaseWorkspace
+	case workspaceMaterializedEvent:
+		return effects[0].kind == campaignEffectMaterializeWorkspace
 	default:
 		return false
 	}
