@@ -299,6 +299,36 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 	}
 }
 
+func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}}
+	attempts := &managedAttemptFixture{shell: shell, emergencyEmpty: true}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	temporaryDirectory := &blockingManagedTemporaryDirectory{
+		managedTemporaryDirectory: managedTemporaryDirectory{}, started: started, release: release,
+	}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: shell, repository: repository, temporaryDirectory: temporaryDirectory, attempts: attempts,
+	})
+	go func() {
+		<-started
+		shell.closeRuntime("peer fatal without custody")
+		close(release)
+	}()
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if _, ok := result.outcome.(abortedOutcome); !ok || result.failure != nil {
+		t.Fatalf("outcome/failure = %#v/%#v, want forced Aborted", result.outcome, result.failure)
+	}
+}
+
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	heldCampaign := shell.registerCampaign(campaignProvenance{lineage: 99})
@@ -378,6 +408,22 @@ func (d *managedTemporaryDirectory) New() string {
 	return "temporary-" + time.Unix(int64(d.next), 0).Format("150405")
 }
 
+type blockingManagedTemporaryDirectory struct {
+	managedTemporaryDirectory
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (d *blockingManagedTemporaryDirectory) New() string {
+	d.once.Do(func() {
+		close(d.started)
+		<-d.release
+	})
+
+	return d.managedTemporaryDirectory.New()
+}
+
 type managedAttemptFixture struct {
 	mutex               sync.Mutex
 	launches            int
@@ -399,6 +445,7 @@ type managedAttemptFixture struct {
 	emergencies         int
 	drainGeneration     attemptGeneration
 	emergencyGeneration attemptGeneration
+	emergencyEmpty      bool
 }
 
 func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
@@ -521,6 +568,11 @@ func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEme
 		generation = f.emergencyGeneration
 	}
 	f.mutex.Unlock()
+	if f.emergencyEmpty {
+		settlement := f.shell.settleEmergency(emergencySweep{})
+
+		return managedObservedEmergency{epoch: epoch, settlement: settlement}
+	}
 	settlement := f.shell.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
 		generation: generation, disposition: emergencyCustodyTransferred,
 	}}})

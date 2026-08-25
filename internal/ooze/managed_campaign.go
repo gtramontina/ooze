@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -102,14 +103,15 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 	var effects []campaignEffect
 	runner.state, effects = beginCampaign(definition)
 	for len(effects) != 0 || runner.pending != 0 || runner.needsEmergencySettlement() {
+		if runner.needsEmergencySettlement() && (len(effects) == 0 || proposesTerminal(effects)) {
+			effects = runner.settleEmergency()
+		}
 		var next []campaignEffect
 		for _, effect := range effects {
 			next = append(next, runner.execute(effect, request)...)
 		}
 		effects = next
-		if len(effects) == 0 && runner.needsEmergencySettlement() {
-			effects = runner.settleEmergency()
-		} else if len(effects) == 0 && runner.pending != 0 {
+		if len(effects) == 0 && runner.pending != 0 {
 			terminal := <-runner.terminals
 			runner.pending--
 			effects = runner.settle(terminal, request)
@@ -119,6 +121,12 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 	return managedCampaignResult{
 		outcome: runner.state.outcome, failure: runner.state.failure, mutations: runner.mutations,
 	}
+}
+
+func proposesTerminal(effects []campaignEffect) bool {
+	return slices.ContainsFunc(effects, func(effect campaignEffect) bool {
+		return effect.kind == campaignEffectProposeTerminal
+	})
 }
 
 func (runner *managedCampaignRunner) needsEmergencySettlement() bool {
@@ -247,7 +255,12 @@ func (runner *managedCampaignRunner) execute(
 			kind: campaignResourceSnapshot, identity: string(effect.snapshot),
 		})
 	case campaignEffectProposeTerminal:
-		committed := runner.runtime.commitTerminal(runner.state.runtimeToken)
+		committed := terminalResult{}
+		if effect.fatalEpoch != 0 {
+			committed = runner.runtime.authorizeForcedAbort(runner.state.runtimeToken, effect.fatalEpoch)
+		} else {
+			committed = runner.runtime.commitTerminal(runner.state.runtimeToken)
+		}
 
 		return runner.advance(terminalCommittedEvent{result: committed})
 	default:

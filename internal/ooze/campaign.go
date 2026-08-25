@@ -85,6 +85,7 @@ type campaignEffect struct {
 	generation attemptGeneration
 	binding    barrierBinding
 	terminal   campaignTerminalCandidate
+	fatalEpoch fatalEpochID
 	spec       Spec
 }
 
@@ -554,7 +555,7 @@ func (state campaignState) onPreparationFailed(
 		state.obligations = slices.Delete(state.obligations, index, index+1)
 		state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
 
-		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
+		return state.proposeTerminal()
 	case campaignPreparingCatalogue:
 		if state.snapshot == "" || state.catalogueKnown {
 			campaignInvariant("prepare", "catalogue failure is stale")
@@ -672,7 +673,7 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 	}
 	if state.candidate.kind != 0 && event.kind == campaignResourceSnapshot &&
 		len(state.obligations) == 1 && state.obligations[0].kind == campaignResourceRegistration {
-		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
+		return state.proposeTerminal()
 	}
 
 	return state, nil
@@ -706,7 +707,7 @@ func (state campaignState) onResourceSettlementFailed(
 		state.obligations[0].kind == campaignResourceRegistration {
 		state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
 
-		return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
+		return state.proposeTerminal()
 	}
 
 	return state, nil
@@ -1316,7 +1317,7 @@ func (state campaignState) onRuntimeEmergencySettled(
 			state.obligations[0].kind == campaignResourceRegistration {
 			state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
 
-			return state.emit(campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate})
+			return state.proposeTerminal()
 		}
 
 		return state.emitAll(effects)
@@ -1327,6 +1328,15 @@ func (state campaignState) onRuntimeEmergencySettled(
 	}}
 
 	return state, nil
+}
+
+func (state campaignState) proposeTerminal() (campaignState, []campaignEffect) {
+	effect := campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate}
+	if state.drain.kind == campaignDrainRuntimeEmergency {
+		effect.fatalEpoch = state.drain.epoch
+	}
+
+	return state.emit(effect)
 }
 
 func (state campaignState) onRuntimeEmergencyStarted(
