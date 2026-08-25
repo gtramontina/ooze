@@ -15,7 +15,6 @@ func TestMutation(t *testing.T) {
 		ooze.WithRepositoryRoot("."),
 		ooze.WithTestCommand("gotestsum --format-hide-empty-pkg --max-fails=1 -- -timeout=60s -failfast ./..."),
 		ooze.WithMinimumThreshold(0.5),
-		ooze.Parallel(),
 		ooze.IgnoreSourceFiles("(^release\\.go$|testdata\\/.*)"),
 	)
 }
