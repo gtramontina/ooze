@@ -179,6 +179,7 @@ type FailureKey struct {
 	kind       simulationFailureKind
 	authority  simulationAuthority
 	divergence simulationReplayDivergence
+	legality   simulationReplayLegality
 	operation  string
 	reason     string
 	liveness   simulationLivenessKind
@@ -186,6 +187,17 @@ type FailureKey struct {
 }
 
 type simulationReplayDivergence uint8
+
+type simulationReplayLegality uint8
+
+const (
+	simulationReplaySequenceFailure simulationReplayLegality = iota + 1
+	simulationReplayEnablednessFailure
+	simulationReplayCausalityFailure
+	simulationReplayOperationFailure
+	simulationReplayQuiescenceFailure
+	simulationReplayCommutationFailure
+)
 
 const (
 	simulationCampaignStateDivergence simulationReplayDivergence = iota + 1
@@ -288,7 +300,9 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 	barrierAt := 0
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
-			return simulationReplayFailure(trace, "record %d has sequence %d", index, record.sequence)
+			return simulationReplayFailure(
+				trace, simulationReplaySequenceFailure, "record %d has sequence %d", index, record.sequence,
+			)
 		}
 		switch record.authority {
 		case simulationRuntimeAuthority:
@@ -299,7 +313,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return effect.kind == campaignEffectRegister
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "registration is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"registration is not enabled at record %d", index,
+					)
 				}
 				_ = registrationEffect
 				effects = remaining
@@ -318,7 +335,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "admission request is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"admission request is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var admission admissionResult
@@ -350,7 +370,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "admission cancellation is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"admission cancellation is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var cancelled admissionResult
@@ -371,7 +394,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "grant return is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"grant return is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var returned admissionResult
@@ -391,7 +417,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "confirmation barrier is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"confirmation barrier is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var bound barrierResult
@@ -420,7 +449,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return ok
 				})
 				if terminalAt < 0 {
-					return simulationReplayFailure(trace, "confirmation queue has no causal terminal at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayCausalityFailure,
+						"confirmation queue has no causal terminal at record %d", index,
+					)
 				}
 				terminal := candidates[terminalAt].(attemptTerminalEvent)
 				terminal.receipt.confirmationQueueDrained = completed.decision == confirmationQueueCompleted
@@ -433,7 +465,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "start commitment is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"start commitment is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var started startCommittedResult
@@ -467,7 +502,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					}
 					activeLaunch, found := activeLaunches[record.runtimeGeneration]
 					if !found {
-						return simulationReplayFailure(trace, "owned observation has no causal launch at record %d", index)
+						return simulationReplayFailure(
+							trace, simulationReplayCausalityFailure,
+							"owned observation has no causal launch at record %d", index,
+						)
 					}
 					delivered = attemptLaunchEvent{
 						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
@@ -480,7 +518,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					}
 					activeLaunch, found := activeLaunches[record.runtimeGeneration]
 					if !found {
-						return simulationReplayFailure(trace, "not-released observation has no causal launch at record %d", index)
+						return simulationReplayFailure(
+							trace, simulationReplayCausalityFailure,
+							"not-released observation has no causal launch at record %d", index,
+						)
 					}
 					failure := LaunchFailed
 					if record.runtimeObservation.reason == launchResourceExhausted {
@@ -499,7 +540,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					}
 					activeLaunch, found := activeLaunches[record.runtimeGeneration]
 					if !found {
-						return simulationReplayFailure(trace, "unconfirmed observation has no causal launch at record %d", index)
+						return simulationReplayFailure(
+							trace, simulationReplayCausalityFailure,
+							"unconfirmed observation has no causal launch at record %d", index,
+						)
 					}
 					delivered = attemptLaunchEvent{
 						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
@@ -528,7 +572,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return effect.kind == campaignEffectProposeTerminal
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "terminal commitment is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"terminal commitment is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var terminal terminalResult
@@ -555,7 +602,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return effect.kind == campaignEffectProposeTerminal && effect.fatalEpoch == record.runtimeFatalEpoch
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "forced abort is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"forced abort is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 				var terminal terminalResult
@@ -576,7 +626,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				delivered = runtimeEmergencyStartedEvent{closure: campaignClosure(closure)}
 			default:
-				return simulationReplayFailure(trace, "runtime operation is invalid at record %d", index)
+				return simulationReplayFailure(
+					trace, simulationReplayOperationFailure,
+					"runtime operation is invalid at record %d", index,
+				)
 			}
 			if delivered != nil {
 				source := simulationCausalSource{
@@ -613,7 +666,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			}
 			if delivered != nil && !reflect.DeepEqual(payload, delivered) {
 				return simulationReplayFailure(
-					trace, "causal campaign fact diverged at record %d: got=%#v want=%#v",
+					trace, simulationReplayCausalityFailure,
+					"causal campaign fact diverged at record %d: got=%#v want=%#v",
 					index, delivered, payload,
 				)
 			}
@@ -623,7 +677,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				})
 				if !ok {
 					return simulationReplayFailure(
-						trace, "external campaign fact is not enabled at record %d (%s): source=%#v effects=%v deliveries=%v",
+						trace, simulationReplayEnablednessFailure,
+						"external campaign fact is not enabled at record %d (%s): source=%#v effects=%v deliveries=%v",
 						index, payload.campaignEventName(), record.source,
 						simulationEffectKinds(effects), pendingDeliveries,
 					)
@@ -660,7 +715,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						simulationSupervisorRegistrationMatches(effect, event)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "supervisor launch is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"supervisor launch is not enabled at record %d", index,
+					)
 				}
 				activeLaunches[event.generation] = launchEffect
 				effects = remaining
@@ -673,7 +731,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return effect.kind == campaignEffectStopAttempt && effect.generation == event.generation
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "supervisor stop is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayEnablednessFailure,
+						"supervisor stop is not enabled at record %d", index,
+					)
 				}
 				effects = remaining
 			}
@@ -694,14 +755,20 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				activeLaunch, found := activeLaunches[action.generation]
 				if !found {
-					return simulationReplayFailure(trace, "runtime completion has no causal launch at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayCausalityFailure,
+						"runtime completion has no causal launch at record %d", index,
+					)
 				}
 				terminal := publicTerminal(
 					action.terminal, func(supervisorOutputRef) string { return "" }, nil, action.runtimeKind,
 				)
 				receipt, found := terminalReceipts[activeLaunch.generation]
 				if !found {
-					return simulationReplayFailure(trace, "terminal completion has no runtime receipt at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayCausalityFailure,
+						"terminal completion has no runtime receipt at record %d", index,
+					)
 				}
 				delete(terminalReceipts, activeLaunch.generation)
 				terminalEvent := attemptTerminalEvent{
@@ -726,7 +793,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return ok
 				})
 				if deliverAt < 0 || settlementAt < 0 {
-					return simulationReplayFailure(trace, "emergency settlement has no causal delivery at record %d", index)
+					return simulationReplayFailure(
+						trace, simulationReplayCausalityFailure,
+						"emergency settlement has no causal delivery at record %d", index,
+					)
 				}
 				settlement := candidates[settlementAt]
 				pendingDeliveries[record.source] = slices.Delete(candidates, settlementAt, settlementAt+1)
@@ -736,20 +806,28 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				pendingDeliveries[source] = append(pendingDeliveries[source], settlement)
 			}
 		default:
-			return simulationReplayFailure(trace, "authority is invalid at record %d", index)
+			return simulationReplayFailure(
+				trace, simulationReplayOperationFailure, "authority is invalid at record %d", index,
+			)
 		}
 		for barrierAt < len(trace.barriers) && trace.barriers[barrierAt].afterSequence == record.sequence {
 			barrier := trace.barriers[barrierAt]
 			if !reflect.DeepEqual(simulationTraceCampaignState(campaign), barrier.campaign) ||
 				!reflect.DeepEqual(simulationTraceRuntimeState(runtime), barrier.runtime) ||
 				!reflect.DeepEqual(simulationTraceSupervisorState(supervisor), barrier.supervisor) {
-				return simulationReplayFailure(trace, "quiescent world diverged after sequence %d", record.sequence)
+				return simulationReplayFailure(
+					trace, simulationReplayQuiescenceFailure,
+					"quiescent world diverged after sequence %d", record.sequence,
+				)
 			}
 			barrierAt++
 		}
 	}
 	if barrierAt != len(trace.barriers) {
-		return simulationReplayFailure(trace, "quiescent barrier %d has no accepted prefix", barrierAt)
+		return simulationReplayFailure(
+			trace, simulationReplayQuiescenceFailure,
+			"quiescent barrier %d has no accepted prefix", barrierAt,
+		)
 	}
 	if verifyCommutation && len(trace.barriers) != 0 {
 		for leftAt := 0; leftAt+1 < len(trace.records); leftAt++ {
@@ -758,7 +836,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			}
 			if err := simulationVerifyAdjacentCommutation(trace, leftAt); err != nil {
 				return simulationReplayFailure(
-					trace, "independent owner cuts diverged at record %d: %v", leftAt, err,
+					trace, simulationReplayCommutationFailure,
+					"independent owner cuts diverged at record %d: %v", leftAt, err,
 				)
 			}
 		}
@@ -1795,7 +1874,12 @@ func simulationEffectKinds(effects []campaignEffect) []campaignEffectKind {
 	return kinds
 }
 
-func simulationReplayFailure(trace simulationTrace, format string, arguments ...any) SimulationResult {
+func simulationReplayFailure(
+	trace simulationTrace,
+	legality simulationReplayLegality,
+	format string,
+	arguments ...any,
+) SimulationResult {
 	authority := simulationAuthority(0)
 	if len(arguments) != 0 {
 		if index, ok := arguments[0].(int); ok && index >= 0 && index < len(trace.records) {
@@ -1807,7 +1891,7 @@ func simulationReplayFailure(trace simulationTrace, format string, arguments ...
 		trace: trace,
 		key: FailureKey{
 			property: "ReplayLegal", kind: simulationReplayFailureKind,
-			authority: authority, operation: format,
+			authority: authority, legality: legality,
 		},
 		failure: fmt.Errorf(format, arguments...),
 	}
@@ -1819,7 +1903,7 @@ func simulationReplayDivergenceFailure(
 	format string,
 	arguments ...any,
 ) SimulationResult {
-	result := simulationReplayFailure(trace, format, arguments...)
+	result := simulationReplayFailure(trace, 0, format, arguments...)
 	result.key.divergence = divergence
 	result.key.operation = ""
 
