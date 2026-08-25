@@ -1,6 +1,9 @@
 package verboserepository
 
-import "github.com/gtramontina/ooze/internal/ooze"
+import (
+	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/ooze"
+)
 
 type VerboseTemporaryRepository struct {
 	logger   ooze.Logger
@@ -21,6 +24,14 @@ func (t *VerboseTemporaryRepository) Root() string {
 func (t *VerboseTemporaryRepository) Overwrite(filePath string, data []byte) {
 	t.logger.Logf("overwriting '%s'…", filePath)
 	t.delegate.Overwrite(filePath, data)
+}
+
+func (t *VerboseTemporaryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return t.delegate.ListGoSourceFiles()
+}
+
+func (t *VerboseTemporaryRepository) MaterializeTemporaryRepository(path string) ooze.TemporaryRepository {
+	return NewVerboseTemporaryRepository(t.logger, t.delegate.MaterializeTemporaryRepository(path))
 }
 
 func (t *VerboseTemporaryRepository) Remove() {
