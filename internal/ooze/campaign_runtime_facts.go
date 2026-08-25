@@ -23,11 +23,7 @@ func campaignAdmissionEvidence(result admissionResult) campaignAdmissionResult {
 }
 
 func campaignStartEvidence(result startCommittedResult) campaignStartResult {
-	return campaignStartResult{
-		decision: result.decision, generation: result.generation,
-		settlementAcknowledged:   result.settlementAcknowledged,
-		runtimeClosureInProgress: result.runtimeClosureInProgress,
-	}
+	return campaignStartResult(result)
 }
 
 func campaignReceipt(result observationResult) campaignRuntimeReceipt {
@@ -55,9 +51,7 @@ func campaignClosure(result runtimeClosure) campaignRuntimeClosure {
 func campaignResiduals(residual []residualCustody) []campaignResidualCustody {
 	facts := make([]campaignResidualCustody, len(residual))
 	for index, custody := range residual {
-		facts[index] = campaignResidualCustody{
-			generation: custody.generation, stage: custody.stage, transferred: custody.transferred,
-		}
+		facts[index] = campaignResidualCustody(custody)
 	}
 	return facts
 }
@@ -72,7 +66,7 @@ func campaignSettlement(result emergencySettlement) campaignEmergencySettlement 
 }
 
 func campaignTerminalEvidence(result terminalResult) campaignTerminalResult {
-	return campaignTerminalResult{decision: result.decision, epoch: result.epoch}
+	return campaignTerminalResult(result)
 }
 
 func campaignBarrierEvidence(result barrierResult) campaignBarrierResult {

@@ -316,7 +316,7 @@ func (runner *managedCampaignRunner) execute(
 			kind: campaignResourceSnapshot, identity: string(effect.snapshot),
 		})
 	case campaignEffectProposeTerminal:
-		committed := terminalResult{}
+		var committed terminalResult
 		if effect.fatalEpoch != 0 {
 			committed = runner.runtime.authorizeForcedAbort(runner.runtimeToken, effect.fatalEpoch)
 		} else {
