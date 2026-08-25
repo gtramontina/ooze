@@ -35,6 +35,21 @@ type simulationDefinition struct {
 
 type simulationChoiceBytes []byte
 
+type simulationChoiceSource interface {
+	choose(limit int) int
+}
+
+func (source simulationChoiceBytes) choose(limit int) int {
+	if limit <= 0 {
+		panic("simulation choice limit must be positive")
+	}
+	if len(source) == 0 {
+		return 0
+	}
+
+	return int(source[0]) % limit
+}
+
 type simulationTrace struct {
 	definition simulationDefinition
 	records    []simulationRecord
@@ -104,7 +119,7 @@ type ViolationResult struct {
 }
 
 // Explore expands choices only through facts enabled by the production owners.
-func Explore(definition simulationDefinition, choices simulationChoiceBytes) SimulationResult {
+func Explore(definition simulationDefinition, choices simulationChoiceSource) SimulationResult {
 	definition.catalogue = append([]mutantIdentity(nil), definition.catalogue...)
 	state, effects := beginCampaign(definition.campaign)
 	runtime := newProcessRuntime(definition.capacity)
@@ -134,11 +149,14 @@ func Explore(definition simulationDefinition, choices simulationChoiceBytes) Sim
 	state, effects = simulationAdvanceCampaign(state, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, state, effects, payload))
 	if len(definition.catalogue) != 0 {
-		if len(choices) == 0 || choices[0]&simulationChooseBaselineFailure == 0 {
-			return SimulationResult{trace: trace, failure: fmt.Errorf("selected supervised outcome is not implemented")}
+		launchAtBoundary := false
+		if choices != nil {
+			launchAtBoundary = choices.choose(2) == 1
 		}
 
-		return simulationExploreBaselineFailure(definition, trace, state, effects, runtime, registration)
+		return simulationExploreBaselineFailure(
+			definition, trace, state, effects, runtime, registration, launchAtBoundary,
+		)
 	}
 	simulationRequireOnlyEffect(effects, campaignEffectReleaseSnapshot)
 	payload = resourceSettledEvent{
@@ -174,6 +192,7 @@ func simulationExploreBaselineFailure(
 	effects []campaignEffect,
 	runtime processRuntime,
 	registration campaignRegistration,
+	launchAtBoundary bool,
 ) SimulationResult {
 	materialize := simulationOnlyEffect(effects, campaignEffectMaterializeWorkspace)
 	payload := campaignEventPayload(workspaceMaterializedEvent{
@@ -224,12 +243,17 @@ func simulationExploreBaselineFailure(
 	})
 	launch := simulationOnlySupervisorAction(actions, supervisorLaunchNative)
 	completedAt := launchBy.Add(-time.Nanosecond)
+	launchEventKind := supervisorLaunchCompleted
+	if launchAtBoundary {
+		completedAt = launchBy
+		launchEventKind = supervisorLaunchBoundary
+	}
 	completion := supervisorLaunchCompletion{
 		generation: launchEffect.generation, action: launch.token, at: completedAt,
 		kind: supervisorLaunchReleased,
 	}
 	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
-		kind: supervisorLaunchCompleted, generation: launchEffect.generation,
+		kind: launchEventKind, generation: launchEffect.generation,
 		at: completedAt, completion: &completion,
 	})
 	wait := simulationSupervisorAction(actions, supervisorWaitRoot)
