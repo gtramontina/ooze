@@ -462,7 +462,6 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 	switch terminal := terminal.(type) {
 	case Settled:
 		terminal.ExecutionData = data
-		terminal = terminal
 		return managedObservedTerminal{
 			terminal: terminal,
 			receipt:  f.shell.observeAttempt(generation, attemptSettled{profile: spec.Profile, deadline: spec.Deadline}),
