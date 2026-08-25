@@ -47,8 +47,9 @@ jobs:
         run: go test -race -cover -timeout=60s -shuffle=on ./...
 
       - name: Native acceptance
+        if: ${{ always() }}
         env:
-          ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+          ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
         run: go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/cmdtestrunner ./internal/ooze
 
   stress:
@@ -57,7 +58,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       GOTOOLCHAIN: local
-      ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+      ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
     strategy:
       fail-fast: false
       matrix:
@@ -89,4 +90,4 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Verify supported operating systems
-        run: test "${{ needs.test.result }}" = "success" && { test "${{ needs.stress.result }}" = "success" || test "${{ needs.stress.result }}" = "skipped"; }
+        run: test "${{ needs.test.result }}" = "success" && { test "${{ needs.stress.result }}" = "success" || { test "${{ github.event_name }}" = "pull_request" && test "${{ needs.stress.result }}" = "skipped"; }; }

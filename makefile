@@ -2,7 +2,7 @@ PATH := $(PWD)/.bin:$(PATH)
 SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 STRESS_COUNT ?= 10
-ACCEPTANCE_TESTS := ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$$
+ACCEPTANCE_TESTS := ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$$
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
 .git/.hooks.log:
@@ -33,8 +33,8 @@ test.acceptance: $(pre-reqs)
 		-run '$(ACCEPTANCE_TESTS)' ./internal/cmdtestrunner ./internal/ooze
 .PHONY: test.acceptance
 
-# Repeats only green, independently bounded process fixtures. Whether this
-# target gates CI belongs to the cross-platform acceptance-gate decision.
+# Ten-repeat main, weekly, and manual gate for green, independently bounded
+# process fixtures.
 test.adversarial.stress: $(pre-reqs)
 	@gotestsum --format=testname -- -race -count=$(STRESS_COUNT) -timeout=10m -shuffle=on \
 		-run '$(ACCEPTANCE_TESTS)' \
