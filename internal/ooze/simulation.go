@@ -78,7 +78,15 @@ func (source *simulationChoiceCursor) choose(limit int) int {
 type simulationTrace struct {
 	definition simulationDefinition
 	records    []simulationRecord
+	barriers   []simulationQuiescentBarrier
 	malformed  *simulationMalformedFact
+}
+
+type simulationQuiescentBarrier struct {
+	afterSequence uint64
+	campaign      simulationCampaignState
+	runtime       simulationRuntimeState
+	supervisor    simulationSupervisorState
 }
 
 type simulationRecord struct {
@@ -622,6 +630,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 	var delivered campaignEventPayload
 	activeLaunches := make(map[attemptGeneration]campaignEffect)
 	terminalReceipts := make(map[attemptGeneration]observationResult)
+	barrierAt := 0
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
 			return simulationReplayFailure(trace, "record %d has sequence %d", index, record.sequence)
@@ -899,6 +908,18 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 		default:
 			return simulationReplayFailure(trace, "authority is invalid at record %d", index)
 		}
+		for barrierAt < len(trace.barriers) && trace.barriers[barrierAt].afterSequence == record.sequence {
+			barrier := trace.barriers[barrierAt]
+			if !reflect.DeepEqual(simulationTraceCampaignState(campaign), barrier.campaign) ||
+				!reflect.DeepEqual(simulationTraceRuntimeState(runtime), barrier.runtime) ||
+				!reflect.DeepEqual(simulationTraceSupervisorState(supervisor), barrier.supervisor) {
+				return simulationReplayFailure(trace, "quiescent world diverged after sequence %d", record.sequence)
+			}
+			barrierAt++
+		}
+	}
+	if barrierAt != len(trace.barriers) {
+		return simulationReplayFailure(trace, "quiescent barrier %d has no accepted prefix", barrierAt)
 	}
 
 	return SimulationResult{
