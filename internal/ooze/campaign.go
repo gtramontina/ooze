@@ -1385,6 +1385,9 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		}
 		if resolvedConfirmation {
 			state.drain.provisionals = slices.Clone(state.drain.provisionals[1:])
+			if event.receipt.confirmationQueueDrained {
+				state.confirmationBarrierBound = false
+			}
 		}
 	default:
 		campaignInvariant("observe terminal", "attempt kind is invalid")
