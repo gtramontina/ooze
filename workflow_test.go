@@ -439,6 +439,14 @@ func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
 	)
 }
 
+func TestCompatibilityWorkflowInstallsSelfMutationTestTool(t *testing.T) {
+	testJob := workflowJob(t, ".github/workflows/compatibility.yml", "test")
+	requireContract(t, testJob, "compatibility test job",
+		"Install gotestsum 1.13.0",
+		"go install gotest.tools/gotestsum@v1.13.0",
+	)
+}
+
 func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing.T) {
 	configured := ooze.Options{}
 	for _, option := range selfMutationOptions("campaign-runner") {
