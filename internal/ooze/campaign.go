@@ -1020,6 +1020,9 @@ func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (camp
 			kind: campaignEffectReturnAdmission, attempt: event.attempt, grant: event.grant,
 		})
 	}
+	if state.drain.kind == campaignDrainAbort || state.drain.kind == campaignDrainRuntimeEmergency {
+		return state, nil
+	}
 
 	return state.acceptGrant(attemptAt, event.grant)
 }
@@ -1272,12 +1275,22 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 	case campaignLaunchNotReleased:
 		if (event.result.failure != LaunchFailed && event.result.failure != LaunchResourceExhausted) ||
 			event.result.residual != 0 ||
-			!event.receipt.settlementAcknowledged || event.receipt.runtimeClosureInProgress {
+			!event.receipt.settlementAcknowledged {
 			campaignInvariant("observe launch", "proven no-release observation is invalid")
 		}
 		state.attempts[attemptAt].stage = campaignAttemptSettled
 		state.removeAttemptObligation(campaignResourceAdmission, event.attempt, event.generation)
 		state.removeAttemptObligation(campaignResourceExecutionDomain, event.attempt, event.generation)
+		if event.receipt.runtimeClosureInProgress || state.drain.kind == campaignDrainRuntimeEmergency {
+			if state.drain.kind != campaignDrainRuntimeEmergency {
+				campaignInvariant("observe launch", "late proven no-release lacks runtime emergency")
+			}
+
+			return state.emit(campaignEffect{
+				kind: campaignEffectReleaseWorkspace, attempt: event.attempt,
+				workspace: state.attempts[attemptAt].workspace,
+			})
+		}
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "attempt was not released"}
 		effects := state.abortOutstandingAttempts(event.attempt)
@@ -1383,7 +1396,8 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			case FuseTrip:
 				state.mutants[mutantAt].result = mutantRunaway
 			case AutomaticDeadlineTrip, SerialDeadlineTrip:
-				if event.receipt.confirmationProvisional {
+				if event.receipt.confirmationProvisional && state.drain.kind != campaignDrainAbort &&
+					state.drain.kind != campaignDrainRuntimeEmergency {
 					state.phase = campaignDraining
 					state.drain.kind = campaignDrainConfirm
 					state.drain.provisionals = state.insertProvisional(attempt.mutant)
@@ -1394,13 +1408,13 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 				campaignInvariant("observe primary terminal", "trip kind is invalid")
 			}
 		case Stopped:
-			if state.drain.kind != campaignDrainAbort {
+			if state.drain.kind != campaignDrainAbort && state.drain.kind != campaignDrainRuntimeEmergency {
 				state.phase = campaignDraining
 				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary stopped"}
 				transitionEffects = state.abortOutstandingAttempts(event.attempt)
 			}
 		case Infrastructure:
-			if state.drain.kind != campaignDrainAbort {
+			if state.drain.kind != campaignDrainAbort && state.drain.kind != campaignDrainRuntimeEmergency {
 				state.phase = campaignDraining
 				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary infrastructure uncertainty"}
 				transitionEffects = state.abortOutstandingAttempts(event.attempt)
