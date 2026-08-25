@@ -119,6 +119,10 @@ const (
 	ManagedAbortProspectiveLaunch
 	ManagedAbortDrainageUnconfirmed
 	ManagedAbortBaselineFailed
+	ManagedAbortBaselineDeadline
+	ManagedAbortBaselineFuse
+	ManagedAbortBaselineStopped
+	ManagedAbortBaselineInfrastructure
 	ManagedAbortPrimaryStopped
 	ManagedAbortPrimaryInfrastructure
 	ManagedAbortConfirmationInfrastructure
@@ -304,6 +308,14 @@ func presentManagedAbortCause(cause string) ManagedAbortCause {
 		return ManagedAbortDrainageUnconfirmed
 	case "baseline did not pass":
 		return ManagedAbortBaselineFailed
+	case "baseline command deadline fired":
+		return ManagedAbortBaselineDeadline
+	case "baseline process fuse fired":
+		return ManagedAbortBaselineFuse
+	case "baseline was stopped":
+		return ManagedAbortBaselineStopped
+	case "baseline infrastructure uncertainty":
+		return ManagedAbortBaselineInfrastructure
 	case "primary stopped":
 		return ManagedAbortPrimaryStopped
 	case "primary infrastructure uncertainty":

@@ -234,6 +234,9 @@ func projectManagedAbort(result ManagedReleaseResult, colors bool) managedReport
 			result.Total-evaluated,
 		)
 	}
+	if result.Baseline != nil && result.Cause != ManagedAbortBaselineFailed {
+		writeManagedAttemptDiagnostics(&report, *result.Baseline, "┃   ", "")
+	}
 	if result.Baseline != nil && result.Baseline.Output.Bytes != "" {
 		report.WriteString("┠━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┨\n")
 		for line := range strings.SplitSeq(strings.TrimSuffix(result.Baseline.Output.Bytes, "\n"), "\n") {
@@ -284,6 +287,14 @@ func managedAbortCauseText(cause ManagedAbortCause) string {
 		return "execution-domain drainage was unconfirmed"
 	case ManagedAbortBaselineFailed:
 		return "the unmutated baseline failed."
+	case ManagedAbortBaselineDeadline:
+		return "the baseline command reached its Ooze deadline"
+	case ManagedAbortBaselineFuse:
+		return "the baseline command crossed the automatic process fuse"
+	case ManagedAbortBaselineStopped:
+		return "the baseline command was stopped"
+	case ManagedAbortBaselineInfrastructure:
+		return "baseline supervision ended with infrastructure uncertainty"
 	case ManagedAbortPrimaryStopped:
 		return "a primary attempt was stopped"
 	case ManagedAbortPrimaryInfrastructure:
@@ -388,7 +399,7 @@ func writeManagedAttemptDiagnostics(
 		{"release", evidence.Failures.Release},
 	} {
 		if diagnostic.value != "" {
-			fmt.Fprintf(report, "%s%s%s: %s\n", linePrefix, diagnosticPrefix, diagnostic.name, diagnostic.value)
+			fmt.Fprintf(report, "%s%s%s: failure recorded\n", linePrefix, diagnosticPrefix, diagnostic.name)
 		}
 	}
 }
@@ -441,9 +452,10 @@ func managedConfirmationLine(mutation ManagedMutationResult) string {
 		return ""
 	}
 	confirmation := *mutation.Confirmation
-	result := "failed"
+	var result string
 	switch confirmation.Kind {
 	case ManagedAttemptSettled:
+		result = "failed"
 		if confirmation.Passed {
 			result = "passed"
 		}
@@ -451,6 +463,14 @@ func managedConfirmationLine(mutation ManagedMutationResult) string {
 		result = "timed out"
 	case ManagedAttemptFuse:
 		result = "tripped the process fuse"
+	case ManagedAttemptStopped:
+		result = "was stopped"
+	case ManagedAttemptInfrastructure:
+		result = "ended with infrastructure uncertainty"
+	case ManagedAttemptDrainUnconfirmed:
+		result = "ended with unconfirmed drainage"
+	default:
+		panic("managed confirmation kind is invalid")
 	}
 
 	return fmt.Sprintf(

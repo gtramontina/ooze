@@ -174,6 +174,43 @@ func TestManagedReportPrintsFullFailedBaselineOutputWithoutScore(t *testing.T) {
 	}
 }
 
+func TestManagedReportDistinguishesBaselineInfrastructureAndSanitizesDiagnostics(t *testing.T) {
+	private := "pid=777 path=/private/repository drain-by=42s token=secret"
+	baseline := ManagedAttemptEvidence{
+		Kind: ManagedAttemptInfrastructure, Deadline: 10 * time.Minute,
+		LaunchDuration: time.Second, CommandDuration: 2 * time.Second,
+		BoundFired: CommandDeadlineFired,
+		Output: OutputSnapshot{
+			Bytes: "captured baseline output\n", Cutoff: 25, CompleteThroughCutoff: true, Final: true,
+		},
+		Failures: FailureDiagnostics{
+			Wait: private, RunningCensus: private, Termination: private,
+			DrainCensus: private, Output: private, Release: private,
+		},
+	}
+	report := projectManagedReport(ManagedReleaseResult{
+		Outcome: ManagedAborted, Cause: ManagedAbortBaselineInfrastructure,
+		Total: 3, Baseline: &baseline,
+	}, managedReportConfiguration{})
+
+	for _, fragment := range []string{
+		"Cause: baseline supervision ended with infrastructure uncertainty",
+		"deadline: 10m0s; launch: 1s; command: 2s; bound fired: command deadline",
+		"output prefix: cutoff=25 complete-through-cutoff=true final=true",
+		"wait: failure recorded", "running census: failure recorded",
+		"termination: failure recorded", "drain census: failure recorded",
+		"output: failure recorded", "release: failure recorded",
+		"captured baseline output",
+	} {
+		if !strings.Contains(report.text, fragment) {
+			t.Fatalf("report missing %q:\n%s", fragment, report.text)
+		}
+	}
+	if strings.Contains(report.text, private) {
+		t.Fatalf("report leaked a private diagnostic payload:\n%s", report.text)
+	}
+}
+
 func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *testing.T) {
 	survived := ManagedMutationResult{
 		File: gomutatedfile.New(
@@ -201,8 +238,8 @@ func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *tes
 	for _, fragment := range []string{
 		"Mutant survived: first.go → Integer Increment",
 		"Infrastructure uncertainty: second.go → Loop Condition",
-		"wait: wait failed",
-		"output: output partial",
+		"wait: failure recorded",
+		"output: failure recorded",
 		"Cause: primary infrastructure uncertainty",
 		"Evaluated 1 of 3 mutants: 0 detected, 1 survived.",
 		"Those results are real, but 2 mutants were not attributed, so no score can be computed.",
@@ -239,13 +276,16 @@ func TestManagedReportRetainsConfirmationFailureWhenCampaignAborts(t *testing.T)
 	for _, fragment := range []string{
 		"Confirmation infrastructure uncertainty: confirmed.go → Loop Condition",
 		"primary timed out at 20s with peer overlap",
-		"confirmation wait: confirmation wait failed",
-		"confirmation output: confirmation output partial",
+		"confirmation wait: failure recorded",
+		"confirmation output: failure recorded",
 		"bound fired: none",
 	} {
 		if !strings.Contains(report.text, fragment) {
 			t.Fatalf("report missing %q:\n%s", fragment, report.text)
 		}
+	}
+	if strings.Contains(report.text, "exclusive confirmation failed") {
+		t.Fatalf("confirmation infrastructure was mislabeled as a command failure:\n%s", report.text)
 	}
 }
 
@@ -311,8 +351,8 @@ func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
 		"2 execution-domain obligations remain unresolved:",
 		"Attempt diagnostic: campaign-1:3",
 		"output prefix: cutoff=14 complete-through-cutoff=true final=false",
-		"termination: kill failed",
-		"drain census: census unavailable",
+		"termination: failure recorded",
+		"drain census: failure recorded",
 	} {
 		if !strings.Contains(report.text, fragment) {
 			t.Fatalf("report missing %q:\n%s", fragment, report.text)
