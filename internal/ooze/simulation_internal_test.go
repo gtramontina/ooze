@@ -455,8 +455,10 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 		first.invariant.operation != supervisorReducerOperation {
 		t.Fatalf("supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	}
-	if first.world.runtime.lifecycle != runtimeClosedDrained || len(first.world.runtime.admissions) != 0 {
-		t.Fatalf("supervisor violation cleanup retained custody: %#v", first.world.runtime)
+	residual := first.world.runtime.residualCustody()
+	if first.world.runtime.lifecycle != runtimeClosedUnconfirmed ||
+		len(residual) != 1 || residual[0].generation != registered.generation || !residual[0].transferred {
+		t.Fatalf("supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 	}
 }
 

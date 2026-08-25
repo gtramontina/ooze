@@ -633,7 +633,9 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 		malformedEvent := malformed.campaign.production()
 		_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
 			id: campaignEventID(len(campaign.trace) + 1), payload: malformedEvent.payload,
-		}, simulationEmergencySweep)
+		}, func(closure runtimeClosure) emergencySweep {
+			return simulationEmergencySweep(runtime, closure)
+		})
 	case simulationRuntimeAuthority:
 		simulationAdvanceRuntimeGuarded(&runtime, malformed.runtimeAdmission.production())
 	case simulationSupervisorAuthority:
@@ -655,7 +657,7 @@ func simulationAdvanceRuntimeGuarded(runtime *processRuntime, request admissionR
 		}
 		var closure runtimeClosure
 		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
-		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(closure))
+		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(*runtime, closure))
 		panic(violation)
 	}()
 
@@ -680,18 +682,23 @@ func simulationAdvanceSupervisorGuarded(
 		}
 		var closure runtimeClosure
 		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
-		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(closure))
+		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(*runtime, closure))
 		panic(violation)
 	}()
 
 	_, _ = reduceSupervisor(state, event)
 }
 
-func simulationEmergencySweep(closure runtimeClosure) emergencySweep {
+func simulationEmergencySweep(runtime processRuntime, closure runtimeClosure) emergencySweep {
 	resolutions := make([]emergencyResolution, len(closure.residual))
 	for index, residual := range closure.residual {
+		disposition := emergencyCustodyTransferred
+		admissionAt := runtime.admissionIndexByGeneration(residual.generation)
+		if admissionAt >= 0 && runtime.admissions[admissionAt].disposition == dispositionTerminalDeferred {
+			disposition = emergencyConfirmedDrained
+		}
 		resolutions[index] = emergencyResolution{
-			generation: residual.generation, disposition: emergencyConfirmedDrained,
+			generation: residual.generation, disposition: disposition,
 		}
 	}
 
