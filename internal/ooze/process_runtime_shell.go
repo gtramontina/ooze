@@ -107,11 +107,13 @@ func (start installedStart) fail(generation attemptGeneration, violation runtime
 }
 
 type processRuntimeShell struct {
-	mutex         sync.Mutex
-	core          processRuntime
-	emergency     chan struct{}
-	recorder      *simulationRecorder
-	notifications runtimeNotificationQueue
+	mutex              sync.Mutex
+	core               processRuntime
+	emergency          chan struct{}
+	recorder           *simulationRecorder
+	notifications      runtimeNotificationQueue
+	pendingStarts      map[attemptGeneration]struct{}
+	startRegistrations sync.WaitGroup
 }
 
 type runtimeNotificationQueue struct {
@@ -282,13 +284,37 @@ func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation 
 		}
 		start := installation.install(result.generation, s)
 		s.core = next
+		if s.pendingStarts == nil {
+			s.pendingStarts = make(map[attemptGeneration]struct{})
+		}
+		s.pendingStarts[result.generation] = struct{}{}
+		s.startRegistrations.Add(1)
 
 		return preparedStart{result: result, start: start}
 	})
 }
 
+func (s *processRuntimeShell) acknowledgeStartRegistration(generation attemptGeneration) {
+	s.mutex.Lock()
+	if _, pending := s.pendingStarts[generation]; !pending {
+		s.mutex.Unlock()
+		invariant(startLaunchOperation, "start registration is absent or duplicated")
+	}
+	delete(s.pendingStarts, generation)
+	s.mutex.Unlock()
+	s.startRegistrations.Done()
+}
+
+func (s *processRuntimeShell) awaitStartRegistrations() {
+	s.startRegistrations.Wait()
+}
+
 func (s *processRuntimeShell) failLaunchInvariant(generation attemptGeneration, violation runtimeInvariantViolation) {
 	underRuntimeLock(s, violation.operation, nil, func() struct{} {
+		if _, pending := s.pendingStarts[generation]; pending {
+			delete(s.pendingStarts, generation)
+			s.startRegistrations.Done()
+		}
 		wasOpen := s.core.open()
 		cause := runtimeFatalCause(violation.reason)
 		if generation != 0 {
