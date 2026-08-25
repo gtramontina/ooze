@@ -806,6 +806,27 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 	}
 }
 
+func TestSimulationChoiceTranscriptMarksCanonicalRecovery(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-recovery", lineage: 91, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, simulationChoiceBytes{2})
+	if explored.failure != nil {
+		t.Fatalf("recovery exploration failed: %v", explored.failure)
+	}
+	if len(explored.trace.choices) < 2 || explored.trace.choices[0].recovery {
+		t.Fatalf("choice transcript=%#v, want one explored choice before recovery", explored.trace.choices)
+	}
+	for _, choice := range explored.trace.choices[1:] {
+		if !choice.recovery || choice.selected != 0 {
+			t.Fatalf("non-canonical recovery choice=%#v", choice)
+		}
+	}
+}
+
 func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)

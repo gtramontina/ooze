@@ -79,7 +79,14 @@ type simulationTrace struct {
 	definition simulationDefinition
 	records    []simulationRecord
 	barriers   []simulationQuiescentBarrier
+	choices    []simulationChoiceRecord
 	malformed  *simulationMalformedFact
+}
+
+type simulationChoiceRecord struct {
+	limit    int
+	selected int
+	recovery bool
 }
 
 type simulationQuiescentBarrier struct {
@@ -198,9 +205,7 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 	trace.records = append(trace.records, simulationCampaignRecord(trace, state, effects, payload))
 	if len(definition.catalogue) != 0 {
 		choice := 0
-		if choices != nil {
-			choice = choices.choose(3)
-		}
+		choice = simulationChooseMove(&trace, choices, 3)
 		baselineExit := 0
 		primaryExit := 0
 		if choice == 1 {
@@ -472,7 +477,7 @@ func simulationExplorePendingMoves(
 		pending := make([]simulationPendingAttempt, 0, len(effects))
 		materializations := enabled
 		for len(materializations) != 0 {
-			selected := simulationChooseMove(choices, len(materializations))
+			selected := simulationChooseMove(&trace, choices, len(materializations))
 			materialize := materializations[selected].effect
 			materializations = slices.Delete(materializations, selected, selected+1)
 			if materialize.kind != campaignEffectMaterializeWorkspace {
@@ -487,7 +492,7 @@ func simulationExplorePendingMoves(
 		effects = nil
 		started := len(pending)
 		for len(pending) != 0 {
-			selected := simulationChooseMove(choices, len(pending))
+			selected := simulationChooseMove(&trace, choices, len(pending))
 			attempt := pending[selected]
 			pending = slices.Delete(pending, selected, selected+1)
 			exitCode := primaryExit
@@ -530,12 +535,25 @@ func simulationExplorePendingMoves(
 	}
 }
 
-func simulationChooseMove(choices simulationChoiceSource, limit int) int {
-	if choices == nil || limit == 1 {
+func simulationChooseMove(trace *simulationTrace, choices simulationChoiceSource, limit int) int {
+	if limit <= 0 {
+		panic("simulation choice limit must be positive")
+	}
+	if limit == 1 {
 		return 0
 	}
+	selected, recovery := 0, choices == nil
+	if cursor, ok := choices.(*simulationChoiceCursor); ok {
+		recovery = cursor.at >= len(cursor.values)
+	}
+	if choices != nil {
+		selected = choices.choose(limit)
+	}
+	trace.choices = append(trace.choices, simulationChoiceRecord{
+		limit: limit, selected: selected, recovery: recovery,
+	})
 
-	return choices.choose(limit)
+	return selected
 }
 
 func simulationRequireOnlyEffect(effects []campaignEffect, kind campaignEffectKind) {
