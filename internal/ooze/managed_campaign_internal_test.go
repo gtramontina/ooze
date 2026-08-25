@@ -594,7 +594,11 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	f.mutex.Lock()
 	f.launches++
 	f.specs = append(f.specs, spec)
-	f.shell = start.shell
+	if f.shell == nil {
+		f.shell = start.shell
+	} else if f.shell != start.shell {
+		panic("managed attempt fixture changed process runtime")
+	}
 	if f.byGeneration == nil {
 		f.byGeneration = make(map[attemptGeneration]Spec)
 		f.terminalByGen = make(map[attemptGeneration]Terminal)
