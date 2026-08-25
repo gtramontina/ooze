@@ -851,6 +851,43 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
+func TestSimulationConformanceProvesOnlyIndependentOwnerCutsCommute(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	definition := campaignDefinition{
+		identity: "campaign-commutation", lineage: 510, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	}
+	campaign, _ := beginCampaign(definition)
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+	shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	actions := driver.reduce(supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: 1, attempt: "independent-attempt",
+		at: time.Unix(100, 0), launchBy: time.Unix(101, 0),
+		profile: AutomaticProfile, commandDeadline: time.Second,
+	})
+	for _, action := range actions {
+		recorder.recordSupervisorAction(action)
+	}
+	independent, _ := recorder.quiescent(runner, shell, driver)
+	if err := simulationVerifyAdjacentCommutation(independent, 0); err != nil {
+		t.Fatalf("independent owner cuts did not commute: %v", err)
+	}
+
+	causalRecorder := newSimulationRecorder()
+	causalShell := newProcessRuntimeShellWithRecorder(1, causalRecorder)
+	causalCampaign, _ := beginCampaign(definition)
+	causalRunner := &managedCampaignRunner{state: causalCampaign, recorder: causalRecorder}
+	causalDriver := &supervisorDriver{recorder: causalRecorder}
+	causalRegistration := causalShell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	causalRunner.advance(campaignRegisteredEvent{registration: causalRegistration})
+	causal, _ := causalRecorder.quiescent(causalRunner, causalShell, causalDriver)
+	if err := simulationVerifyAdjacentCommutation(causal, 0); err == nil {
+		t.Fatal("runtime registration commuted with its causal campaign delivery")
+	}
+}
+
 func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
