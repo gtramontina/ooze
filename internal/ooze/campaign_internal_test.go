@@ -233,8 +233,16 @@ func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testin
 
 	completed, ok := harness.state.outcome.(completedOutcome)
 	want := []mutantResult{{mutant: "mutant-a", kind: mutantSurvived}, {mutant: "mutant-b", kind: mutantKilled}}
-	if !ok || !reflect.DeepEqual(completed.mutants, want) {
+	got := make([]mutantResult, len(completed.mutants))
+	for index, mutant := range completed.mutants {
+		got[index] = mutantResult{mutant: mutant.mutant, kind: mutant.kind}
+	}
+	if !ok || !reflect.DeepEqual(got, want) {
 		t.Fatalf("completed outcome=%#v, want %#v", harness.state.outcome, want)
+	}
+	if completed.mutants[0].primary.kind != ManagedAttemptSettled ||
+		completed.mutants[1].primary.kind != ManagedAttemptSettled {
+		t.Fatalf("completed outcome discarded primary evidence: %#v", completed.mutants)
 	}
 	if harness.state.commandCount() != 3 || len(harness.state.obligations) != 0 {
 		t.Fatalf("commands/obligations=%d/%#v", harness.state.commandCount(), harness.state.obligations)
@@ -245,8 +253,13 @@ func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 2)
 	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
 	effects := harness.settleAttempt(t, baseline, Settled{
-		Exit:          ExitStatus{Code: 1},
-		ExecutionData: ExecutionData{Deadline: 10 * time.Minute, CommandDuration: time.Second},
+		Exit: ExitStatus{Code: 1},
+		ExecutionData: ExecutionData{
+			Deadline: 10 * time.Minute, CommandDuration: time.Second,
+			Output: OutputSnapshot{
+				Bytes: "full baseline failure\n", Cutoff: 22, CompleteThroughCutoff: true, Final: true,
+			},
+		},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	effects = harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-baseline"})
@@ -256,7 +269,9 @@ func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 	var committed terminalResult
 	harness.runtime, committed = harness.runtime.commitTerminal(harness.state.runtimeToken)
 	harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(committed)})
-	if _, ok := harness.state.outcome.(abortedOutcome); !ok || harness.state.commandCount() != 1 {
+	aborted, ok := harness.state.outcome.(abortedOutcome)
+	if !ok || aborted.baseline.output.Bytes != "full baseline failure\n" ||
+		!aborted.baseline.output.Final || aborted.total != 1 || harness.state.commandCount() != 1 {
 		t.Fatalf("baseline failure outcome/count=%#v/%d", harness.state.outcome, harness.state.commandCount())
 	}
 }
@@ -817,8 +832,17 @@ func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testi
 	harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(committed)})
 	completed := harness.state.outcome.(completedOutcome)
 	want := []mutantResult{{mutant: "mutant-a", kind: mutantSurvived}, {mutant: "mutant-b", kind: mutantTimedOut}}
-	if !reflect.DeepEqual(completed.mutants, want) {
+	got := make([]mutantResult, len(completed.mutants))
+	for index, mutant := range completed.mutants {
+		got[index] = mutantResult{mutant: mutant.mutant, kind: mutant.kind}
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("confirmation outcome=%#v, want %#v", completed.mutants, want)
+	}
+	for _, mutant := range completed.mutants {
+		if !mutant.primary.confirmationProvisional || mutant.confirmation.kind == 0 {
+			t.Fatalf("confirmation outcome discarded provenance: %#v", completed.mutants)
+		}
 	}
 }
 

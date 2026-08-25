@@ -4,17 +4,14 @@ import (
 	"flag"
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
-	"github.com/gtramontina/ooze/internal/gotextdiff"
 	"github.com/gtramontina/ooze/internal/ignoredrepository"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
-	"github.com/gtramontina/ooze/internal/prettydiff"
 	"github.com/gtramontina/ooze/internal/verboserepository"
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/viruses"
@@ -47,6 +44,7 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 	MinimumThreshold:          1.0,
 	Serial:                    false,
 	MutationTimeout:           0,
+	ForceColors:               false,
 	IgnoreSourceFilesPatterns: nil,
 	Viruses: []viruses.Virus{
 		arithmetic.New(),
@@ -106,7 +104,9 @@ func Release(t *testing.T, options ...Option) {
 		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
 	}
 
-	logger.Logf("%s %s", color.Yellow("┃"), color.Green("Releasing Ooze…"))
+	colorsEnabled := opts.ForceColors || color.EnabledByDefault()
+	palette := color.NewPalette(colorsEnabled)
+	logger.Logf("%s %s", palette.Yellow("┃"), palette.Green("Releasing Ooze…"))
 	profile := ooze.AutomaticProfile
 	if opts.Serial {
 		profile = ooze.SerialProfile
@@ -117,37 +117,23 @@ func Release(t *testing.T, options ...Option) {
 		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
 		Viruses: opts.Viruses,
 	})
-	if managed.Outcome == ooze.ManagedCleanupUnconfirmed {
-		panic(managed.Cause)
-	}
-	if managed.Outcome != ooze.ManagedCompleted {
-		t.Fail()
-		return
-	}
-	if !summarizeManagedCompatibility(logger, managed.Mutations, opts.MinimumThreshold) {
-		t.Fail()
-	}
+	report := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
+	publishManagedReport(t, logger, report)
 }
 
-func summarizeManagedCompatibility(
-	logger ooze.Logger,
-	mutations []ooze.ManagedMutationResult,
-	minimumThreshold float32,
-) bool {
-	detected := 0
-	differ := prettydiff.New(gotextdiff.New())
-	for _, mutation := range mutations {
-		if mutation.Outcome != ooze.ManagedSurvived {
-			detected++
-
-			continue
-		}
-		logger.Logf("Mutant survived: %s\n%s", mutation.File.Label(), strings.TrimSpace(mutation.File.Diff(differ)))
+func publishManagedReport(t *testing.T, logger ooze.Logger, report ooze.ManagedReport) {
+	t.Helper()
+	logger.Logf("%s", report.Text)
+	switch report.Disposition {
+	case ooze.ManagedReportPass:
+		return
+	case ooze.ManagedReportError:
+		t.Errorf("ooze: %s", report.CallerMessage)
+	case ooze.ManagedReportPanic:
+		panic(report.PanicValue)
+	default:
+		panic("ooze: report disposition is invalid")
 	}
-	score := float32(detected) / float32(len(mutations))
-	logger.Logf("Mutation score: %.2f (minimum: %.2f)", score, minimumThreshold)
-
-	return score >= minimumThreshold
 }
 
 func verbose() bool {
