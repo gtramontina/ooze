@@ -89,6 +89,53 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	}
 }
 
+func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testing.T) {
+	definition := simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-boundary", lineage: 22, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}
+	for _, test := range []struct {
+		name    string
+		choice  byte
+		kind    supervisorEventKind
+		equalAt bool
+	}{
+		{name: "completion before", choice: 0, kind: supervisorLaunchCompleted},
+		{name: "completion at equality", choice: 1, kind: supervisorLaunchBoundary, equalAt: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			explored := Explore(definition, simulationChoiceBytes{test.choice})
+			var launch supervisorEvent
+			var launchBy time.Time
+			for _, record := range explored.trace.records {
+				if record.authority == simulationSupervisorAuthority &&
+					record.supervisorEvent.kind == supervisorProspectiveRegistered {
+					launchBy = record.supervisorEvent.launchBy
+				}
+				if record.authority == simulationSupervisorAuthority &&
+					(record.supervisorEvent.kind == supervisorLaunchCompleted ||
+						record.supervisorEvent.kind == supervisorLaunchBoundary) {
+					launch = record.supervisorEvent
+					break
+				}
+			}
+			if launch.kind != test.kind || launch.completion == nil {
+				t.Fatalf("selected launch fact=%#v, want kind %v", launch, test.kind)
+			}
+			if got := launch.completion.at.Equal(launchBy); got != test.equalAt {
+				t.Fatalf("completion/boundary equality=%v, want %v", got, test.equalAt)
+			}
+			replayed := ReplayLegal(explored.trace)
+			if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
+				t.Fatalf("boundary replay diverged: %#v", replayed)
+			}
+		})
+	}
+}
+
 func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
@@ -204,13 +251,14 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	})
 	wantSupervisor, wantActions := reduceSupervisor(supervisorState{}, event)
 	wantProjection := simulationWorld{
-		campaign: wantCampaign, runtime: wantRuntime, supervisor: wantSupervisor,
+		campaign: wantCampaign, runtime: wantRuntime,
+		supervisor: simulationProjectSupervisorState(wantSupervisor),
 	}
 	if !reflect.DeepEqual(projection, wantProjection) {
 		t.Fatalf("production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
 	}
 	if !reflect.DeepEqual(trace.records[1].campaignEffects, wantEffects) ||
-		!reflect.DeepEqual(trace.records[2].supervisorActions, wantActions) {
+		!reflect.DeepEqual(trace.records[2].supervisorActions, simulationProjectSupervisorActions(wantActions)) {
 		t.Fatalf("recorded ordered outputs diverged: %#v", trace.records)
 	}
 }
@@ -270,6 +318,29 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 	}
 	if projection.campaign.snapshot != "snapshot:campaign-paths" {
 		t.Fatalf("logical snapshot identity=%q", projection.campaign.snapshot)
+	}
+}
+
+func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
+	recorder := newSimulationRecorder()
+	driver := &supervisorDriver{recorder: recorder}
+	sourceLocation := time.FixedZone("private-host-zone", 9*60*60)
+	registeredAt := time.Date(2026, 8, 26, 1, 2, 3, 4, sourceLocation)
+	driver.reduce(supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: 1, attempt: "attempt-a",
+		at: registeredAt, launchBy: registeredAt.Add(time.Second),
+		profile: AutomaticProfile, commandDeadline: time.Second,
+	})
+
+	recorder.mutex.Lock()
+	record := recorder.records[0]
+	recorder.mutex.Unlock()
+	if record.supervisorEvent.at.Location() != time.UTC ||
+		record.supervisorState.attempts[0].registeredAt.Location() != time.UTC {
+		t.Fatalf("supervisor trace retained host locations: %#v", record)
+	}
+	if !record.supervisorEvent.at.Equal(registeredAt) {
+		t.Fatalf("canonical instant changed: got=%s want=%s", record.supervisorEvent.at, registeredAt)
 	}
 }
 

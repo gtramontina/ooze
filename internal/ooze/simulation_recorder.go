@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type simulationRecorder struct {
@@ -68,8 +69,9 @@ func (recorder *simulationRecorder) recordSupervisor(
 	}
 	recorder.append(simulationRecord{
 		sequence: recorder.next.Add(1), authority: simulationSupervisorAuthority,
-		supervisorEvent: event, supervisorState: cloneSupervisorState(state),
-		supervisorActions: slices.Clone(actions),
+		supervisorEvent:   simulationProjectSupervisorEvent(event),
+		supervisorState:   simulationProjectSupervisorState(state),
+		supervisorActions: simulationProjectSupervisorActions(actions),
 	})
 }
 
@@ -98,7 +100,7 @@ func (recorder *simulationRecorder) quiescent(
 	runtimeState := simulationProjectRuntime(runtime.core)
 	runtime.mutex.Unlock()
 	driver.mutex.Lock()
-	supervisorState := cloneSupervisorState(driver.state)
+	supervisorState := simulationProjectSupervisorState(driver.state)
 	driver.mutex.Unlock()
 	campaignState := simulationProjectCampaign(runner.state)
 
@@ -227,4 +229,117 @@ func simulationLogicalSnapshot(campaign campaignIdentity) snapshotIdentity {
 
 func simulationLogicalWorkspace(attempt attemptIdentity) string {
 	return "workspace:" + string(attempt)
+}
+
+func simulationProjectSupervisorEvent(event supervisorEvent) supervisorEvent {
+	event.at = simulationCanonicalTime(event.at)
+	event.launchBy = simulationCanonicalTime(event.launchBy)
+	event.drainBy = simulationCanonicalTime(event.drainBy)
+	if event.completion != nil {
+		completion := *event.completion
+		completion.at = simulationCanonicalTime(completion.at)
+		event.completion = &completion
+	}
+	if event.running != nil {
+		running := *event.running
+		running.facts = slices.Clone(running.facts)
+		for index := range running.facts {
+			running.facts[index].at = simulationCanonicalTime(running.facts[index].at)
+			running.facts[index].stop = simulationProjectStop(running.facts[index].stop)
+		}
+		running.exitRecheck.at = simulationCanonicalTime(running.exitRecheck.at)
+		running.drainBy = simulationCanonicalTime(running.drainBy)
+		event.running = &running
+	}
+	if event.drain != nil {
+		drain := *event.drain
+		drain.at = simulationCanonicalTime(drain.at)
+		event.drain = &drain
+	}
+	if event.output != nil {
+		output := *event.output
+		output.at = simulationCanonicalTime(output.at)
+		event.output = &output
+	}
+	if event.seal != nil {
+		seal := *event.seal
+		seal.at = simulationCanonicalTime(seal.at)
+		event.seal = &seal
+	}
+	if event.release != nil {
+		release := *event.release
+		release.at = simulationCanonicalTime(release.at)
+		event.release = &release
+	}
+	event.emergencySnapshots = slices.Clone(event.emergencySnapshots)
+	for index := range event.emergencySnapshots {
+		snapshot := &event.emergencySnapshots[index]
+		if snapshot.completion != nil {
+			completion := *snapshot.completion
+			completion.at = simulationCanonicalTime(completion.at)
+			snapshot.completion = &completion
+		}
+		if snapshot.running != nil {
+			running := *snapshot.running
+			running.facts = slices.Clone(running.facts)
+			for factAt := range running.facts {
+				running.facts[factAt].at = simulationCanonicalTime(running.facts[factAt].at)
+				running.facts[factAt].stop = simulationProjectStop(running.facts[factAt].stop)
+			}
+			running.exitRecheck.at = simulationCanonicalTime(running.exitRecheck.at)
+			running.drainBy = simulationCanonicalTime(running.drainBy)
+			snapshot.running = &running
+		}
+	}
+
+	return event
+}
+
+func simulationProjectSupervisorState(state supervisorState) supervisorState {
+	state = cloneSupervisorState(state)
+	state.emergency.at = simulationCanonicalTime(state.emergency.at)
+	state.emergency.drainBy = simulationCanonicalTime(state.emergency.drainBy)
+	for index := range state.attempts {
+		attempt := &state.attempts[index]
+		attempt.registeredAt = simulationCanonicalTime(attempt.registeredAt)
+		attempt.launchBy = simulationCanonicalTime(attempt.launchBy)
+		attempt.lastEventAt = simulationCanonicalTime(attempt.lastEventAt)
+		attempt.revokedAt = simulationCanonicalTime(attempt.revokedAt)
+		attempt.startedAt = simulationCanonicalTime(attempt.startedAt)
+		attempt.deadlineAt = simulationCanonicalTime(attempt.deadlineAt)
+		attempt.intent.at = simulationCanonicalTime(attempt.intent.at)
+		attempt.intent.drainBy = simulationCanonicalTime(attempt.intent.drainBy)
+		attempt.intent.stop = simulationProjectStop(attempt.intent.stop)
+		attempt.drain.effectiveDrainBy = simulationCanonicalTime(attempt.drain.effectiveDrainBy)
+	}
+
+	return state
+}
+
+func simulationProjectSupervisorActions(actions []supervisorAction) []supervisorAction {
+	actions = slices.Clone(actions)
+	for index := range actions {
+		actions[index].at = simulationCanonicalTime(actions[index].at)
+		actions[index].drainBy = simulationCanonicalTime(actions[index].drainBy)
+		actions[index].intent.at = simulationCanonicalTime(actions[index].intent.at)
+		actions[index].intent.drainBy = simulationCanonicalTime(actions[index].intent.drainBy)
+		actions[index].intent.stop = simulationProjectStop(actions[index].intent.stop)
+	}
+
+	return actions
+}
+
+func simulationProjectStop(stop StopRequest) StopRequest {
+	stop.At = simulationCanonicalTime(stop.At)
+	stop.DrainBy = simulationCanonicalTime(stop.DrainBy)
+
+	return stop
+}
+
+func simulationCanonicalTime(instant time.Time) time.Time {
+	if instant.IsZero() {
+		return time.Time{}
+	}
+
+	return time.Unix(0, instant.UnixNano()).UTC()
 }
