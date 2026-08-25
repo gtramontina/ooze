@@ -71,9 +71,14 @@ func TestSelfMutationSubprocessSkipsFilesystemReentrantNativeFixture(t *testing.
 	if skip == nil {
 		t.Fatal("self-mutation subprocess has no test-selection exclusion")
 	}
-	const fixture = "TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember"
-	if !skip.MatchString(fixture) {
-		t.Errorf("self-mutation subprocess selects filesystem-reentrant native fixture %q", fixture)
+	fixtures := []string{
+		"TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember",
+		"TestNativeSupervisorDrainsWideFanout",
+	}
+	for _, fixture := range fixtures {
+		if !skip.MatchString(fixture) {
+			t.Errorf("self-mutation subprocess selects filesystem-reentrant native fixture %q", fixture)
+		}
 	}
 	if skip.MatchString("TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary") {
 		t.Error("self-mutation subprocess excludes an in-memory managed campaign fixture")
