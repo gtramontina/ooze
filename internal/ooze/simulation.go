@@ -334,6 +334,19 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				if !reflect.DeepEqual(simulationTraceConfirmationQueueResult(completed), record.runtimeQueueOut) {
 					return simulationReplayFailure(trace, "confirmation queue completion diverged at record %d", index)
 				}
+				candidates := pendingDeliveries[record.source]
+				terminalAt := slices.IndexFunc(candidates, func(candidate campaignEventPayload) bool {
+					_, ok := candidate.(attemptTerminalEvent)
+
+					return ok
+				})
+				if terminalAt < 0 {
+					return simulationReplayFailure(trace, "confirmation queue has no causal terminal at record %d", index)
+				}
+				terminal := candidates[terminalAt].(attemptTerminalEvent)
+				terminal.receipt.confirmationQueueDrained = completed.decision == confirmationQueueCompleted
+				pendingDeliveries[record.source] = slices.Delete(candidates, terminalAt, terminalAt+1)
+				delivered = terminal
 			case simulationStartCommitted:
 				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectRequestStartCommitment && reflect.DeepEqual(
