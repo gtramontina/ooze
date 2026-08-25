@@ -1070,6 +1070,19 @@ func simulationEmergencySweep(runtime processRuntime, closure runtimeClosure) em
 
 // Shrink removes semantic records and definition members while retaining one typed failure.
 func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
+	shrunk := simulationCloneTrace(trace)
+	for {
+		before := simulationTraceShrinkMeasure(shrunk)
+		candidate := simulationShrinkOnce(shrunk, key)
+		after := simulationTraceShrinkMeasure(candidate)
+		if !simulationShrinkMeasureLess(after, before) {
+			return candidate
+		}
+		shrunk = candidate
+	}
+}
+
+func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace {
 	if key.kind == simulationLivenessFailureKind {
 		return simulationShrinkLivenessWith(trace, key, Explore)
 	}
@@ -1178,10 +1191,45 @@ func simulationShrinkLivenessWith(
 	evaluate simulationExploreEvaluator,
 ) simulationTrace {
 	shrunk := simulationCloneTrace(trace)
+	for {
+		before := simulationTraceShrinkMeasure(shrunk)
+		candidate := simulationShrinkLivenessOnceWith(shrunk, key, evaluate)
+		after := simulationTraceShrinkMeasure(candidate)
+		if !simulationShrinkMeasureLess(after, before) {
+			return candidate
+		}
+		shrunk = candidate
+	}
+}
+
+func simulationShrinkLivenessOnceWith(
+	trace simulationTrace,
+	key FailureKey,
+	evaluate simulationExploreEvaluator,
+) simulationTrace {
+	shrunk := simulationCloneTrace(trace)
 	preserves := func(definition simulationDefinition, choices []simulationChoiceRecord) (simulationTrace, bool) {
 		result := evaluate(definition, &simulationShrinkChoiceSource{choices: slices.Clone(choices)})
 
 		return result.trace, result.failure != nil && reflect.DeepEqual(result.key, key)
+	}
+	for width := len(shrunk.choices); width > 0; {
+		accepted := false
+		for start := 0; start+width <= len(shrunk.choices); start++ {
+			choices := slices.Delete(slices.Clone(shrunk.choices), start, start+width)
+			candidate, ok := preserves(shrunk.definition, choices)
+			if !ok {
+				continue
+			}
+			shrunk = candidate
+			accepted = true
+			break
+		}
+		if accepted {
+			width = min(width, len(shrunk.choices))
+			continue
+		}
+		width--
 	}
 	for index := 0; index < len(shrunk.definition.catalogue); {
 		definition := shrunk.definition
@@ -1237,6 +1285,32 @@ func simulationShrinkLivenessWith(
 	}
 
 	return shrunk
+}
+
+func simulationTraceShrinkMeasure(trace simulationTrace) [4]int {
+	return [4]int{
+		len(trace.definition.catalogue), len(trace.records), trace.definition.capacity,
+		simulationShrinkChoiceDistance(trace.choices),
+	}
+}
+
+func simulationShrinkMeasureLess(left, right [4]int) bool {
+	for index := range left {
+		if left[index] != right[index] {
+			return left[index] < right[index]
+		}
+	}
+
+	return false
+}
+
+func simulationShrinkChoiceDistance(choices []simulationChoiceRecord) int {
+	distance := 0
+	for _, choice := range choices {
+		distance += choice.selected
+	}
+
+	return distance
 }
 
 func simulationExploreShrinkCandidate(
