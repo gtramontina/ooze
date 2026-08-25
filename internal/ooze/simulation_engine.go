@@ -345,11 +345,20 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 	case campaignEffectProposeTerminal:
 		var terminal terminalResult
-		engine.runtime, terminal = engine.runtime.commitTerminal(engine.registration.token)
+		operation := simulationCommitTerminal
+		if move.effect.fatalEpoch == 0 {
+			engine.runtime, terminal = engine.runtime.commitTerminal(engine.registration.token)
+		} else {
+			operation = simulationAuthorizeForcedAbort
+			engine.runtime, terminal = engine.runtime.authorizeForcedAbort(
+				engine.registration.token, move.effect.fatalEpoch,
+			)
+		}
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationCommitTerminal, runtimeCampaign: engine.registration.token,
-			runtimeState: simulationTraceRuntimeState(engine.runtime), runtimeTerminal: terminal,
+			runtimeOperation: operation, runtimeCampaign: engine.registration.token,
+			runtimeFatalEpoch: move.effect.fatalEpoch,
+			runtimeState:      simulationTraceRuntimeState(engine.runtime), runtimeTerminal: terminal,
 		})
 		engine.enqueueDelivery(sequence, terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
 	default:
@@ -365,10 +374,20 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorLaunchNative:
 		attempt := simulationSupervisorAttempt(engine.supervisor, action.generation)
 		completedAt := attempt.launchBy.Add(-time.Nanosecond)
+		var drainBy time.Time
 		kind := supervisorLaunchCompleted
 		if move.variant == 1 {
 			completedAt = attempt.launchBy
 			kind = supervisorLaunchBoundary
+		}
+		if move.variant == 2 {
+			if err := engine.applySupervisor(move.source, supervisorEvent{
+				kind: supervisorLaunchBoundary, generation: action.generation, at: attempt.launchBy,
+			}); err != nil {
+				return err
+			}
+			completedAt = attempt.launchBy.Add(time.Nanosecond)
+			drainBy = completedAt.Add(5 * time.Second)
 		}
 		completion := supervisorLaunchCompletion{
 			generation: action.generation, action: action.token, at: completedAt,
@@ -376,7 +395,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		}
 		return engine.applySupervisor(move.source, supervisorEvent{
 			kind: kind, generation: action.generation,
-			at: completedAt, completion: &completion,
+			at: completedAt, drainBy: drainBy, completion: &completion,
 		})
 	case supervisorPublishOwned:
 		launch := engine.launches[action.generation]
@@ -418,6 +437,13 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			attempt: launch.attempt, generation: launch.generation,
 			result: launchResult, receipt: campaignReceipt(result),
 		})
+		if action.kind == supervisorPublishLaunchUnconfirmed && result.runtimeClosureInProgress &&
+			!engine.supervisor.emergency.active && !engine.hasPendingSupervisorEmergency() {
+			emergencyAt := action.at.Add(time.Nanosecond)
+			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
+				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
+			})
+		}
 	case supervisorCloseProspective, supervisorAdoptOwned:
 		observation := attemptObservation(launchOwned{})
 		if action.kind == supervisorCloseProspective {
@@ -449,9 +475,12 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorObserveEmptiness:
 		at := action.drainBy.Add(-time.Nanosecond)
 		kind := supervisorDrainObservedEmpty
-		if move.variant == 1 {
+		if move.variant == 1 || move.variant == 2 {
 			at = action.drainBy
 			kind = supervisorDrainObservedResidual
+		}
+		if move.variant == 2 {
+			at = action.drainBy.Add(time.Nanosecond)
 		}
 		at = simulationCompletionAt(engine.supervisor, action.generation, at)
 		completion := supervisorDrainCompletion{
@@ -722,6 +751,14 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 			generation: move.action.generation, action: sample.token,
 			kind: supervisorRunningFuseObserved, at: observedAt, rootLive: true, live: supervisorFuseCeiling + 1,
 		}}
+	case 4:
+		observedAt = attempt.deadlineAt.Add(time.Nanosecond)
+		drainBy = attempt.deadlineAt.Add(5 * time.Second)
+		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt}
+		bundle.facts = []supervisorRunningFact{{
+			generation: move.action.generation, action: wait.token,
+			kind: supervisorRunningRootExited, at: observedAt,
+		}}
 	default:
 		return fmt.Errorf("simulation running variant %d is invalid", move.variant)
 	}
@@ -848,20 +885,24 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 			continue
 		}
 		switch move.action.kind {
-		case supervisorLaunchNative, supervisorWaitRoot, supervisorObserveEmptiness:
+		case supervisorLaunchNative, supervisorObserveEmptiness:
 			alternative := move
 			alternative.variant = 1
 			moves = append(moves, alternative)
-			if move.action.kind == supervisorWaitRoot {
-				deadline := move
-				deadline.variant = 2
-				moves = append(moves, deadline)
-				attempt := simulationSupervisorAttempt(engine.supervisor, move.action.generation)
-				if attempt.profile == AutomaticProfile {
-					fuse := move
-					fuse.variant = 3
-					moves = append(moves, fuse)
-				}
+			after := move
+			after.variant = 2
+			moves = append(moves, after)
+		case supervisorWaitRoot:
+			for _, variant := range []uint8{1, 2, 4} {
+				alternative := move
+				alternative.variant = variant
+				moves = append(moves, alternative)
+			}
+			attempt := simulationSupervisorAttempt(engine.supervisor, move.action.generation)
+			if attempt.profile == AutomaticProfile {
+				fuse := move
+				fuse.variant = 3
+				moves = append(moves, fuse)
 			}
 		}
 	}
@@ -960,6 +1001,12 @@ func (engine simulationEngine) hasPendingLaunchDelivery(generation attemptGenera
 		launch, ok := move.delivery.(attemptLaunchEvent)
 
 		return ok && launch.generation == generation
+	})
+}
+
+func (engine simulationEngine) hasPendingSupervisorEmergency() bool {
+	return slices.ContainsFunc(engine.pending, func(move simulationEngineMove) bool {
+		return move.supervisorDelivery != nil && move.supervisorDelivery.kind == supervisorEmergencyStarted
 	})
 }
 

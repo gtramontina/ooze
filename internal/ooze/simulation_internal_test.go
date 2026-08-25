@@ -161,6 +161,133 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 	}
 }
 
+func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) {
+	tests := []struct {
+		name    string
+		action  supervisorActionKind
+		variant uint8
+		outcome func(simulationWorld) bool
+		observe func(simulationTrace) bool
+	}{
+		{
+			name: "launch after", action: supervisorLaunchNative, variant: 2,
+			outcome: func(world simulationWorld) bool {
+				_, aborted := world.campaign.outcome.(abortedOutcome)
+
+				return aborted && world.campaign.failure == nil
+			},
+			observe: func(trace simulationTrace) bool {
+				var launchBy simulationInstant
+				for _, record := range trace.records {
+					if record.authority != simulationSupervisorAuthority {
+						continue
+					}
+					if record.supervisorEvent.kind == supervisorProspectiveRegistered {
+						launchBy = record.supervisorEvent.launchBy
+					}
+					if record.supervisorEvent.kind == supervisorLaunchCompleted &&
+						record.supervisorEvent.at.production().After(launchBy.production()) {
+						return true
+					}
+				}
+
+				return false
+			},
+		},
+		{
+			name: "deadline after", action: supervisorWaitRoot, variant: 4,
+			outcome: func(world simulationWorld) bool {
+				completed, ok := world.campaign.outcome.(completedOutcome)
+
+				return ok && world.campaign.failure == nil && len(completed.mutants) == 1 &&
+					completed.mutants[0].kind == mutantTimedOut
+			},
+			observe: func(trace simulationTrace) bool {
+				for _, record := range trace.records {
+					if record.authority != simulationSupervisorAuthority ||
+						record.supervisorEvent.kind != supervisorRunningObserved ||
+						record.supervisorEvent.running == nil {
+						continue
+					}
+					for _, fact := range record.supervisorEvent.running.facts {
+						if fact.kind == supervisorRunningRootExited &&
+							fact.at.production().After(record.supervisorEvent.running.exitRecheck.at.production()) {
+							return true
+						}
+					}
+				}
+
+				return false
+			},
+		},
+		{
+			name: "drain after", action: supervisorObserveEmptiness, variant: 2,
+			outcome: func(world simulationWorld) bool {
+				_, failed := world.campaign.failure.(cleanupUnconfirmedFault)
+
+				return failed && world.runtime.lifecycle == runtimeClosedUnconfirmed
+			},
+			observe: func(trace simulationTrace) bool {
+				drainBy := make(map[supervisorActionToken]simulationInstant)
+				for _, record := range trace.records {
+					for _, action := range record.supervisorActions {
+						if action.kind == supervisorObserveEmptiness {
+							drainBy[action.token] = action.drainBy
+						}
+					}
+					if record.authority == simulationSupervisorAuthority &&
+						record.supervisorEvent.kind == supervisorDrainCompleted &&
+						record.supervisorEvent.at.production().After(
+							drainBy[supervisorActionToken(record.source.identity)].production(),
+						) {
+						return true
+					}
+				}
+
+				return false
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			selected := false
+			choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+				for index, move := range moves {
+					if move.action.kind == test.action && move.attemptKind == campaignAttemptPrimary &&
+						move.variant == test.variant {
+						selected = true
+
+						return index
+					}
+				}
+				for index, move := range moves {
+					if move.action.kind != supervisorWaitRoot {
+						return index
+					}
+				}
+
+				return 0
+			})
+			explored := Explore(simulationDefinition{
+				campaign: campaignDefinition{
+					identity: "campaign-after-boundary", lineage: 221, command: []string{"test"},
+					profile: AutomaticProfile, peers: 1,
+				},
+				capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+			}, choices)
+			if explored.failure != nil || !selected || !test.outcome(explored.world) ||
+				!test.observe(explored.trace) {
+				t.Fatalf("after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v",
+					selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
+			}
+			if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
+				!reflect.DeepEqual(replayed.world, explored.world) {
+				t.Fatalf("after-boundary replay=%#v", replayed)
+			}
+		})
+	}
+}
+
 func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 	definition := simulationDefinition{
 		campaign: campaignDefinition{
@@ -423,6 +550,84 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 	if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
 		t.Fatalf("confirmation replay failure=%v world-equal=%v",
 			replayed.failure, reflect.DeepEqual(replayed.world, explored.world))
+	}
+}
+
+func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *testing.T) {
+	catalogue := []mutantIdentity{"mutant-a", "mutant-b", "mutant-c"}
+	timedOut := make(map[mutantIdentity]bool, len(catalogue))
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		ready := 0
+		for _, move := range moves {
+			if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary {
+				ready++
+			}
+		}
+		if ready >= 2 || len(timedOut) == len(catalogue)-1 {
+			for _, mutant := range catalogue {
+				if timedOut[mutant] {
+					continue
+				}
+				for index, move := range moves {
+					if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
+						move.mutant == mutant && move.variant == 2 {
+						timedOut[mutant] = true
+
+						return index
+					}
+				}
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-multiple-provisionals", lineage: 2521, command: []string{"test"},
+			profile: AutomaticProfile, peers: 3,
+		},
+		capacity: 3, catalogue: catalogue,
+	}, choices)
+	completed, ok := explored.world.campaign.outcome.(completedOutcome)
+	if explored.failure != nil || !ok || len(timedOut) != len(catalogue) || len(completed.mutants) != len(catalogue) {
+		t.Fatalf("multiple-provisional exploration=%#v timed=%v failure=%v",
+			explored.world.campaign.outcome, timedOut, explored.failure)
+	}
+	for index, mutant := range completed.mutants {
+		if mutant.mutant != catalogue[index] || mutant.primary.kind != campaignEvidenceDeadline ||
+			mutant.confirmation.kind != campaignEvidenceSettled {
+			t.Fatalf("multiple-provisional mutant[%d]=%#v", index, mutant)
+		}
+	}
+	var barriers, confirmations []mutantIdentity
+	for _, record := range explored.trace.records {
+		for _, effect := range record.campaignEffects {
+			if effect.kind == campaignEffectBindConfirmationBarrier {
+				barriers = append(barriers, effect.mutant)
+			}
+			if effect.kind == campaignEffectLaunchAttempt && effect.attemptKind == campaignAttemptConfirmation {
+				attemptAt := slices.IndexFunc(record.campaignState.attempts, func(attempt campaignAttempt) bool {
+					return attempt.identity == effect.attempt
+				})
+				if attemptAt < 0 {
+					t.Fatalf("confirmation launch attempt %q is absent", effect.attempt)
+				}
+				confirmations = append(confirmations, record.campaignState.attempts[attemptAt].mutant)
+			}
+		}
+	}
+	if !reflect.DeepEqual(barriers, catalogue[:1]) || !reflect.DeepEqual(confirmations, catalogue) {
+		t.Fatalf("confirmation barrier/FIFO order=%v/%v, want %v/%v",
+			barriers, confirmations, catalogue[:1], catalogue)
+	}
+	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
+		!reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("multiple-provisional replay=%#v", replayed)
 	}
 }
 
@@ -733,18 +938,18 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 		reason    string
 	}{
 		{
-			name: "duplicate registration",
+			name:   "duplicate registration",
 			prefix: registrationPrefix, malformed: registeredEvent,
 			reason: "prospective registration is incomplete or duplicated",
 		},
 		{
-			name: "wrong event kind",
-			prefix: registrationPrefix,
+			name:      "wrong event kind",
+			prefix:    registrationPrefix,
 			malformed: supervisorEvent{generation: registeredEvent.generation, at: completionAt},
-			reason: "event kind is invalid",
+			reason:    "event kind is invalid",
 		},
 		{
-			name: "contradictory released completion",
+			name:   "contradictory released completion",
 			prefix: registrationPrefix,
 			malformed: supervisorEvent{
 				kind: supervisorLaunchCompleted, generation: registeredEvent.generation, at: completionAt,
@@ -756,20 +961,20 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 			reason: "released completion carries a launch failure",
 		},
 		{
-			name: "output completion in launch phase",
+			name:   "output completion in launch phase",
 			prefix: registrationPrefix,
 			malformed: supervisorEvent{
 				kind: supervisorOutputCompleted, generation: registeredEvent.generation, at: completionAt,
 				output: &supervisorOutputCompletion{
 					generation: registeredEvent.generation,
-					action: supervisorPendingAction{kind: supervisorCaptureOutput, token: launchAction},
-					at: completionAt, ref: 1,
+					action:     supervisorPendingAction{kind: supervisorCaptureOutput, token: launchAction},
+					at:         completionAt, ref: 1,
 				},
 			},
 			reason: "output completion correlation, evidence, or shape is invalid",
 		},
 		{
-			name: "late release after boundary revocation",
+			name:   "late release after boundary revocation",
 			prefix: boundaryPrefix,
 			malformed: supervisorEvent{
 				kind: supervisorLaunchCompleted, generation: registeredEvent.generation,
@@ -785,7 +990,7 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			malformed := simulationMalformedFact{
-				authority: simulationSupervisorAuthority,
+				authority:  simulationSupervisorAuthority,
 				supervisor: simulationTraceSupervisorEvent(test.malformed),
 			}
 			first := ReplayViolation(test.prefix, malformed)
@@ -2218,7 +2423,6 @@ func simulationRecordedActionSummary(trace simulationTrace) []string {
 
 	return summary
 }
-
 
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))
