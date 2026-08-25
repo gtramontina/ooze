@@ -149,13 +149,22 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 	state, effects = simulationAdvanceCampaign(state, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, state, effects, payload))
 	if len(definition.catalogue) != 0 {
-		launchAtBoundary := false
+		choice := 0
 		if choices != nil {
-			launchAtBoundary = choices.choose(2) == 1
+			choice = choices.choose(3)
+		}
+		baselineExit := 0
+		primaryExit := 0
+		if choice == 1 {
+			baselineExit = 1
+		}
+		if choice == 2 {
+			primaryExit = 1
 		}
 
-		return simulationExploreBaselineFailure(
-			definition, trace, state, effects, runtime, registration, launchAtBoundary,
+		return simulationExploreAttempt(
+			definition, trace, state, effects, runtime, registration, supervisorState{},
+			baselineExit, primaryExit, choice == 1, 1,
 		)
 	}
 	simulationRequireOnlyEffect(effects, campaignEffectReleaseSnapshot)
@@ -185,18 +194,23 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 	}
 }
 
-func simulationExploreBaselineFailure(
+func simulationExploreAttempt(
 	definition simulationDefinition,
 	trace simulationTrace,
 	campaign campaignState,
 	effects []campaignEffect,
 	runtime processRuntime,
 	registration campaignRegistration,
+	supervisor supervisorState,
+	exitCode int,
+	primaryExit int,
 	launchAtBoundary bool,
+	attemptOrdinal int,
 ) SimulationResult {
 	materialize := simulationOnlyEffect(effects, campaignEffectMaterializeWorkspace)
 	payload := campaignEventPayload(workspaceMaterializedEvent{
-		attempt: materialize.attempt, workspace: "workspace-baseline", snapshot: materialize.snapshot,
+		attempt:   materialize.attempt,
+		workspace: fmt.Sprintf("workspace-%d", attemptOrdinal), snapshot: materialize.snapshot,
 	})
 	campaign, effects = simulationAdvanceCampaign(campaign, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
@@ -232,8 +246,7 @@ func simulationExploreBaselineFailure(
 	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
 
 	launchEffect := simulationOnlyEffect(effects, campaignEffectLaunchAttempt)
-	supervisor := supervisorState{}
-	registeredAt := time.Unix(1_000, 0)
+	registeredAt := time.Unix(int64(1_000+attemptOrdinal*100), 0)
 	launchBy := registeredAt.Add(time.Second)
 	var actions []supervisorAction
 	supervisor, actions = simulationRecordSupervisor(&trace, supervisor, supervisorEvent{
@@ -284,7 +297,7 @@ func simulationExploreBaselineFailure(
 			generation: launchEffect.generation, sampleAction: sample.token, waitAction: wait.token,
 			facts: []supervisorRunningFact{{
 				generation: launchEffect.generation, action: wait.token,
-				kind: supervisorRunningRootExited, at: rootAt, exitCode: 1,
+				kind: supervisorRunningRootExited, at: rootAt, exitCode: exitCode,
 			}},
 		},
 	})
@@ -351,13 +364,16 @@ func simulationExploreBaselineFailure(
 	})
 	deliver := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)
 	terminal := publicTerminal(deliver.terminal, func(supervisorOutputRef) string { return "" }, nil, deliver.runtimeKind)
-	payload = attemptTerminalEvent{
+	terminalEvent := attemptTerminalEvent{
 		attempt: launchEffect.attempt, generation: launchEffect.generation,
 		terminal: terminal, receipt: campaignReceipt(terminalReceipt),
-		resolvedMutationDeadline: resolveBaselineMutationDeadline(
-			terminalExecutionData(terminal).CommandDuration, definition.campaign.peers,
-		),
 	}
+	if launchEffect.attemptKind == campaignAttemptBaseline {
+		terminalEvent.resolvedMutationDeadline = resolveBaselineMutationDeadline(
+			terminalExecutionData(terminal).CommandDuration, definition.campaign.peers,
+		)
+	}
+	payload = terminalEvent
 	campaign, effects = simulationAdvanceCampaign(campaign, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
 
@@ -365,6 +381,12 @@ func simulationExploreBaselineFailure(
 	payload = resourceSettledEvent{kind: campaignResourceWorkspace, identity: workspaceRelease.workspace}
 	campaign, effects = simulationAdvanceCampaign(campaign, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
+	if launchEffect.attemptKind == campaignAttemptBaseline && exitCode == 0 {
+		return simulationExploreAttempt(
+			definition, trace, campaign, effects, runtime, registration, supervisor,
+			primaryExit, primaryExit, launchAtBoundary, attemptOrdinal+1,
+		)
+	}
 	snapshotRelease := simulationOnlyEffect(effects, campaignEffectReleaseSnapshot)
 	payload = resourceSettledEvent{kind: campaignResourceSnapshot, identity: string(snapshotRelease.snapshot)}
 	campaign, effects = simulationAdvanceCampaign(campaign, payload)

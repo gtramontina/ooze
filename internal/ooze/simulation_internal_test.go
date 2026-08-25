@@ -136,6 +136,37 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 	}
 }
 
+func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
+	definition := simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-primary", lineage: 23, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}
+	for _, test := range []struct {
+		name   string
+		choice byte
+		want   mutantResultKind
+	}{
+		{name: "survived", choice: 0, want: mutantSurvived},
+		{name: "killed", choice: 2, want: mutantKilled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			explored := Explore(definition, simulationChoiceBytes{test.choice})
+			completed, ok := explored.world.campaign.outcome.(completedOutcome)
+			if explored.failure != nil || !ok || len(completed.mutants) != 1 ||
+				completed.mutants[0].kind != test.want {
+				t.Fatalf("completed outcome=%#v failure=%v, want %v", explored.world.campaign.outcome, explored.failure, test.want)
+			}
+			if explored.world.campaign.commandCount() != 2 || len(explored.world.campaign.obligations) != 0 {
+				t.Fatalf("terminal commands/obligations=%d/%#v",
+					explored.world.campaign.commandCount(), explored.world.campaign.obligations)
+			}
+		})
+	}
+}
+
 func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
