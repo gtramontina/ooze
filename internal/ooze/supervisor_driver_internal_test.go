@@ -616,6 +616,55 @@ func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
 	}
 }
 
+func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	campaign, _ := beginCampaign(campaignDefinition{
+		identity: "recorder-reentry", lineage: 191, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	})
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	fixture := newRunningReducerFixture(t, SerialProfile)
+	reentered := make(chan struct{})
+	returned := make(chan struct{})
+	var driver *supervisorDriver
+	driver = &supervisorDriver{
+		state: fixture.state, recorder: recorder,
+		execute: func(supervisorAction) *supervisorEvent {
+			recorder.quiescent(runner, shell, driver)
+			close(reentered)
+
+			return nil
+		},
+	}
+	eventAt := fixture.startedAt.Add(time.Second)
+	event := supervisorEvent{
+		kind: supervisorRunningObserved, generation: fixture.generation,
+		at: eventAt, drainBy: fixture.drainBy,
+		running: &supervisorRunningBundle{
+			generation: fixture.generation, waitAction: fixture.waitAction,
+			facts: []supervisorRunningFact{{
+				generation: fixture.generation, action: fixture.waitAction,
+				kind: supervisorRunningRootExited, at: eventAt,
+			}},
+		},
+	}
+	go func() {
+		defer func() {
+			_ = recover()
+			close(returned)
+		}()
+		driver.applyMonitorEvent(event)
+	}()
+
+	select {
+	case <-reentered:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("native action could not enter a quiescent recorder cut")
+	}
+	<-returned
+}
+
 func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotReleased(t *testing.T) {
 	registeredAt := time.Unix(9_000, 0)
 	launchBy := registeredAt.Add(time.Second)
