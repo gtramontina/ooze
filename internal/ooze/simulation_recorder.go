@@ -13,6 +13,7 @@ type simulationRecorder struct {
 	mutex       sync.Mutex
 	next        atomic.Uint64
 	records     []simulationRecord
+	barriers    []simulationQuiescentBarrier
 	actionMutex sync.Mutex
 	actions     map[supervisorActionToken]simulationInFlightAction
 	actionWake  chan struct{}
@@ -232,13 +233,17 @@ func (recorder *simulationRecorder) quiescent(
 		runtime:       simulationTraceRuntimeState(runtimeState),
 		supervisor:    simulationTraceSupervisorState(supervisorState),
 	}
+	recorder.mutex.Lock()
+	recorder.barriers = append(recorder.barriers, barrier)
+	barriers := slices.Clone(recorder.barriers)
+	recorder.mutex.Unlock()
 
 	return simulationTrace{
 			definition: simulationDefinition{
 				campaign: definition, capacity: runtimeState.capacity,
 				catalogue: slices.Clone(campaignState.catalogue),
 			},
-			records: records, barriers: []simulationQuiescentBarrier{barrier},
+			records: records, barriers: barriers,
 		}, simulationWorld{
 			campaign: campaignState, runtime: runtimeState, supervisor: supervisorState,
 		}

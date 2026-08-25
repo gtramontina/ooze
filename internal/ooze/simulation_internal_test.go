@@ -565,18 +565,28 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	driver := &supervisorDriver{recorder: recorder}
+	cut := func() { _, _ = recorder.quiescent(runner, shell, driver) }
 
 	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	cut()
 	runner.advance(campaignRegisteredEvent{registration: registration})
+	cut()
 	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
+	cut()
 	runner.advance(catalogueDiscoveredEvent{snapshot: "private-snapshot"})
+	cut()
 	runner.advance(resourceSettledEvent{
 		kind: campaignResourceSnapshot, identity: "private-snapshot",
 	})
+	cut()
 	terminal := shell.commitTerminal(registration.token)
+	cut()
 	runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
 
 	trace, production := recorder.quiescent(runner, shell, driver)
+	if len(trace.barriers) != 7 {
+		t.Fatalf("retained prefix barriers=%d, want 7", len(trace.barriers))
+	}
 	replayed := ReplayLegal(trace)
 	if replayed.failure != nil {
 		t.Fatalf("recorded production trace did not replay: %v", replayed.failure)
