@@ -110,10 +110,18 @@ type processRuntimeShell struct {
 	mutex     sync.Mutex
 	core      processRuntime
 	emergency chan struct{}
+	recorder  *simulationRecorder
 }
 
 func newProcessRuntimeShell(capacity int) *processRuntimeShell {
 	return &processRuntimeShell{core: newProcessRuntime(capacity), emergency: make(chan struct{})}
+}
+
+func newProcessRuntimeShellWithRecorder(capacity int, recorder *simulationRecorder) *processRuntimeShell {
+	shell := newProcessRuntimeShell(capacity)
+	shell.recorder = recorder
+
+	return shell
 }
 
 func (s *processRuntimeShell) runtimeEmergency() <-chan struct{} { return s.emergency }
@@ -305,6 +313,8 @@ func (s *processRuntimeShell) assertReturnable(grants []admissionGrant) {
 }
 
 func underRuntimeLock[T any](shell *processRuntimeShell, operation string, apply func() T) (result T) {
+	leaveRecorder := shell.recorder.enter()
+	defer leaveRecorder()
 	shell.mutex.Lock()
 	wasOpen := shell.core.open()
 	defer func() {
@@ -324,7 +334,10 @@ func underRuntimeLock[T any](shell *processRuntimeShell, operation string, apply
 		shell.mutex.Unlock()
 	}()
 
-	return apply()
+	result = apply()
+	shell.recorder.recordRuntime(operation, shell.core)
+
+	return result
 }
 
 func (s *processRuntimeShell) broadcastEmergency(wasOpen bool) {
