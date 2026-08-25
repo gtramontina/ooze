@@ -3,6 +3,7 @@ package ooze
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"time"
 )
 
@@ -37,6 +38,7 @@ type simulationChoiceBytes []byte
 type simulationTrace struct {
 	definition simulationDefinition
 	records    []simulationRecord
+	malformed  *simulationMalformedFact
 }
 
 type simulationRecord struct {
@@ -637,10 +639,65 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
 }
 
+// Shrink removes semantic records and definition members while retaining one typed failure.
+func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
+	if trace.malformed == nil {
+		panic("simulation shrink requires one malformed fact")
+	}
+	shrunk := simulationCloneTrace(trace)
+	for len(shrunk.records) != 0 {
+		candidate := simulationCloneTrace(shrunk)
+		candidate.records = candidate.records[:len(candidate.records)-1]
+		if !simulationPreservesFailure(candidate, key) {
+			break
+		}
+		shrunk = candidate
+	}
+	for index := 0; index < len(shrunk.definition.catalogue); {
+		candidate := simulationCloneTrace(shrunk)
+		candidate.definition.catalogue = slices.Delete(candidate.definition.catalogue, index, index+1)
+		if simulationPreservesFailure(candidate, key) {
+			shrunk = candidate
+			continue
+		}
+		index++
+	}
+	first := ReplayViolation(shrunk, *shrunk.malformed)
+	second := ReplayViolation(shrunk, *shrunk.malformed)
+	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+		panic("simulation shrink did not retain a deterministic failure")
+	}
+
+	return shrunk
+}
+
+func simulationCloneTrace(trace simulationTrace) simulationTrace {
+	trace.definition.catalogue = slices.Clone(trace.definition.catalogue)
+	trace.definition.campaign.command = slices.Clone(trace.definition.campaign.command)
+	trace.definition.campaign.env = slices.Clone(trace.definition.campaign.env)
+	trace.records = slices.Clone(trace.records)
+	if trace.malformed != nil {
+		malformed := *trace.malformed
+		trace.malformed = &malformed
+	}
+
+	return trace
+}
+
+func simulationPreservesFailure(trace simulationTrace, key FailureKey) bool {
+	result := ReplayViolation(trace, *trace.malformed)
+
+	return result.failure == nil && reflect.DeepEqual(result.key, key)
+}
+
 func simulationFailureKey(authority simulationAuthority, violation runtimeInvariantViolation) FailureKey {
-	identities := make([]string, len(violation.stableIdentities))
-	seen := make(map[string]int, len(violation.stableIdentities))
-	for index, identity := range violation.stableIdentities {
+	relevant := violation.stableIdentities
+	if authority == simulationCampaignAuthority && len(relevant) != 0 {
+		relevant = relevant[:1]
+	}
+	identities := make([]string, len(relevant))
+	seen := make(map[string]int, len(relevant))
+	for index, identity := range relevant {
 		ordinal, ok := seen[identity]
 		if !ok {
 			ordinal = len(seen) + 1
