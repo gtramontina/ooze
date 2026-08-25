@@ -157,6 +157,7 @@ type processRuntime struct {
 	lifecycle   runtimeLifecycle
 	fatalCauses []runtimeFatalCause
 	fatalEpoch  fatalEpochID
+	fatalOwner  campaignToken
 	campaigns   []registeredCampaign
 	admissions  []admittedAttempt
 }
@@ -265,6 +266,7 @@ type emergencySweep struct{ resolutions []emergencyResolution }
 
 type emergencySettlement struct {
 	epoch        fatalEpochID
+	owner        campaignToken
 	acknowledged []attemptGeneration
 	residual     []residualCustody
 }
@@ -870,9 +872,17 @@ func (r processRuntime) settleEmergency(sweep emergencySweep) (processRuntime, e
 	}
 	next.lifecycle = runtimeFatalSettledClosing
 	next = next.finalizeFatalClosure()
+	residual := next.residualCustody()
+	if len(residual) != 0 {
+		index := next.admissionIndexByGeneration(residual[0].generation)
+		if index < 0 {
+			invariant(settleEmergencyOperation, "residual owner is missing")
+		}
+		next.fatalOwner = next.admissions[index].grant.campaign
+	}
 
 	return next, emergencySettlement{
-		epoch: next.fatalEpoch, acknowledged: acknowledged, residual: next.residualCustody(),
+		epoch: next.fatalEpoch, owner: next.fatalOwner, acknowledged: acknowledged, residual: residual,
 	}
 }
 
@@ -915,17 +925,14 @@ func (r processRuntime) commitTerminal(campaign campaignToken) (processRuntime, 
 }
 
 func (r processRuntime) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) (processRuntime, terminalResult) {
-	if epoch == 0 || epoch != r.fatalEpoch || r.lifecycle != runtimeClosedDrained {
-		return r, terminalResult{decision: terminalRejectedClosed}
+	if epoch == 0 || epoch != r.fatalEpoch ||
+		(r.lifecycle != runtimeClosedDrained && r.lifecycle != runtimeClosedUnconfirmed) ||
+		(r.lifecycle == runtimeClosedUnconfirmed && campaign == r.fatalOwner) {
+		return r, terminalResult{decision: terminalRejectedClosed, epoch: r.fatalEpoch}
 	}
 	index := r.campaignIndex(campaign)
 	if index < 0 {
 		return r, terminalResult{decision: terminalRejectedUnknown}
-	}
-	for _, admission := range r.admissions {
-		if admission.grant.campaign == campaign {
-			return r, terminalResult{decision: terminalRejectedOutstanding}
-		}
 	}
 	next := r.clone()
 	next.campaigns = slices.Delete(next.campaigns, index, index+1)

@@ -420,6 +420,39 @@ func TestProcessRuntimeFatalClosingDefersEachValidOwnedTerminal(t *testing.T) {
 	}
 }
 
+func TestProcessRuntimeElectsOneResidualOwnerAndForceAbortsItsPeer(t *testing.T) {
+	runtime := newProcessRuntime(2)
+	runtime, firstCampaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
+	runtime, secondCampaign := runtime.registerCampaign(campaignProvenance{lineage: 12})
+	runtime, first := runtime.requestAdmission(admissionRequest{
+		campaign: firstCampaign.token, attempt: "first", class: sharedAdmission,
+	})
+	runtime, second := runtime.requestAdmission(admissionRequest{
+		campaign: secondCampaign.token, attempt: "second", class: sharedAdmission,
+	})
+	runtime, firstStart := runtime.startCommitted(first.deliveries[0])
+	runtime, secondStart := runtime.startCommitted(second.deliveries[0])
+	runtime, _ = runtime.observeAttempt(firstStart.generation, launchOwned{})
+	runtime, _ = runtime.observeAttempt(secondStart.generation, launchOwned{})
+	runtime, closure := runtime.observeAttempt(firstStart.generation, drainUnconfirmed{})
+	runtime, settlement := runtime.settleEmergency(emergencySweep{resolutions: []emergencyResolution{
+		{generation: firstStart.generation, disposition: emergencyCustodyTransferred},
+		{generation: secondStart.generation, disposition: emergencyCustodyTransferred},
+	}})
+
+	if settlement.owner != firstCampaign.token {
+		t.Fatalf("settlement owner = %#v, want first residual campaign %#v", settlement.owner, firstCampaign.token)
+	}
+	runtime, peer := runtime.authorizeForcedAbort(secondCampaign.token, closure.fatalEpoch)
+	if peer.decision != terminalForcedAborted {
+		t.Fatalf("peer terminal = %#v, want forced abort", peer)
+	}
+	_, owner := runtime.authorizeForcedAbort(firstCampaign.token, closure.fatalEpoch)
+	if owner.decision != terminalRejectedClosed {
+		t.Fatalf("owner terminal = %#v, want retained cleanup ownership", owner)
+	}
+}
+
 func TestProcessRuntimeFatalClosingTerminalDeferralRejectsMalformedAndDuplicateObservations(t *testing.T) {
 	for _, test := range []struct {
 		name        string
