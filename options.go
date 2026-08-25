@@ -71,6 +71,10 @@ func Serial() func(Options) Options {
 // WithMutationTimeout configures the absolute deadline for every primary and
 // confirmation attempt. The baseline keeps its separate managed bound.
 func WithMutationTimeout(timeout time.Duration) func(Options) Options {
+	if timeout < 0 {
+		panic("mutation timeout must be positive")
+	}
+
 	return func(options Options) Options {
 		options.MutationTimeout = timeout
 
