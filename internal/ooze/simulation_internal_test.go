@@ -285,6 +285,94 @@ func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T)
 	}
 }
 
+func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
+	delayed := false
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		grantAt := -1
+		for index, move := range moves {
+			if _, ok := move.delivery.(admissionGrantedEvent); ok {
+				grantAt = index
+				break
+			}
+		}
+		if grantAt >= 0 {
+			for index, move := range moves {
+				if index == grantAt || move.action.kind == supervisorWaitRoot {
+					continue
+				}
+				delayed = true
+
+				return index
+			}
+
+			return grantAt
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-late-grant", lineage: 2511, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, choices)
+	if explored.failure != nil || !delayed {
+		t.Fatalf("late-grant exploration failure=%v delayed=%v", explored.failure, delayed)
+	}
+	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
+		!reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("late-grant replay=%#v", replayed)
+	}
+}
+
+func TestSimulationFocusedRepeatedFuseTripsDoNotChangeAdmission(t *testing.T) {
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		for index, move := range moves {
+			if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
+				move.variant == 3 {
+				return index
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-repeated-fuse", lineage: 2512, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, choices)
+	completed, ok := explored.world.campaign.outcome.(completedOutcome)
+	if explored.failure != nil || !ok || len(completed.mutants) != 2 {
+		t.Fatalf("repeated-fuse exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	}
+	for _, mutant := range completed.mutants {
+		if mutant.kind != mutantRunaway || mutant.confirmation.kind != campaignAttemptEvidenceKind(0) {
+			t.Fatalf("repeated-fuse mutant=%#v, want direct runaway without confirmation", mutant)
+		}
+	}
+	if explored.world.runtime.mode != fullAutomatic || completed.singleAdmissionFallback {
+		t.Fatalf("repeated-fuse admission mode/fallback=%v/%v",
+			explored.world.runtime.mode, completed.singleAdmissionFallback)
+	}
+	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
+		!reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("repeated-fuse replay=%#v", replayed)
+	}
+}
+
 func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) {
 	timedOut := false
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
@@ -337,7 +425,7 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 	}
 }
 
-func TestSimulationExploresGlobalDrainExpiryThroughEmergencySettlement(t *testing.T) {
+func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testing.T) {
 	expired := false
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
@@ -377,6 +465,28 @@ func TestSimulationExploresGlobalDrainExpiryThroughEmergencySettlement(t *testin
 	if _, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault); !ok ||
 		explored.world.runtime.lifecycle != runtimeClosedUnconfirmed {
 		t.Fatalf("drain-expiry world=%#v", explored.world)
+	}
+	startAt, closedAt, forcedAbortAt := -1, -1, -1
+	for index, record := range explored.trace.records {
+		if record.authority != simulationRuntimeAuthority {
+			continue
+		}
+		if record.runtimeOperation == simulationStartCommitted &&
+			record.runtimeStart.decision == startCommittedAccepted {
+			startAt = index
+		}
+		if closedAt < 0 && record.runtimeState.lifecycle != runtimeOpen {
+			closedAt = index
+		}
+		if record.runtimeOperation == simulationAuthorizeForcedAbort {
+			forcedAbortAt = index
+		}
+		if closedAt >= 0 && index > closedAt && record.runtimeOperation == simulationCommitTerminal {
+			t.Fatalf("normal terminal commitment followed fatal closure at record %d", index)
+		}
+	}
+	if startAt < 0 || closedAt <= startAt || forcedAbortAt >= 0 {
+		t.Fatalf("start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
 	}
 	replayed := ReplayLegal(explored.trace)
 	if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
