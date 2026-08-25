@@ -118,9 +118,13 @@ type campaignState struct {
 	commands                 int
 	nextAttempt              uint64
 	mutationDeadline         time.Duration
+	baselineEvidence         campaignAttemptEvidence
+	artifactResidue          []string
+	fatalAttempts            []campaignFatalAttemptEvidence
 	drain                    campaignDrainIntent
 	confirmationBarrierBound bool
 	pendingGrantReturns      []campaignAdmission
+	singleAdmissionFallback  bool
 }
 
 type campaignDrainIntentKind uint8
@@ -171,10 +175,12 @@ type campaignAttempt struct {
 }
 
 type campaignMutant struct {
-	identity            mutantIdentity
-	result              mutantResultKind
-	primaryStarted      bool
-	confirmationStarted bool
+	identity             mutantIdentity
+	result               mutantResultKind
+	primaryStarted       bool
+	confirmationStarted  bool
+	primaryEvidence      campaignAttemptEvidence
+	confirmationEvidence campaignAttemptEvidence
 }
 
 type campaignEventPayload interface {
@@ -414,8 +420,18 @@ type campaignTerminalCandidate struct{ kind campaignTerminalKind }
 
 type campaignOutcome interface{ campaignOutcome() }
 type noMutantsOutcome struct{}
-type completedOutcome struct{ mutants []mutantResult }
-type abortedOutcome struct{ cause string }
+type completedOutcome struct {
+	mutants                 []mutantResult
+	singleAdmissionFallback bool
+}
+type abortedOutcome struct {
+	cause                   string
+	mutants                 []mutantResult
+	total                   int
+	baseline                campaignAttemptEvidence
+	artifactResidue         []string
+	singleAdmissionFallback bool
+}
 
 type campaignFailure interface{ campaignFailure() }
 
@@ -424,7 +440,15 @@ type nonEmptyResidualCustody struct {
 	tail []campaignResidualCustody
 }
 
-type cleanupUnconfirmedFault struct{ residual nonEmptyResidualCustody }
+type cleanupUnconfirmedFault struct {
+	residual nonEmptyResidualCustody
+	attempts []campaignFatalAttemptEvidence
+}
+
+type campaignFatalAttemptEvidence struct {
+	attempt  attemptIdentity
+	evidence campaignAttemptEvidence
+}
 
 func (noMutantsOutcome) campaignOutcome()        {}
 func (completedOutcome) campaignOutcome()        {}
@@ -432,8 +456,23 @@ func (abortedOutcome) campaignOutcome()          {}
 func (cleanupUnconfirmedFault) campaignFailure() {}
 
 type mutantResult struct {
-	mutant mutantIdentity
-	kind   mutantResultKind
+	mutant       mutantIdentity
+	kind         mutantResultKind
+	primary      campaignAttemptEvidence
+	confirmation campaignAttemptEvidence
+}
+
+type campaignAttemptEvidence struct {
+	kind                    ManagedAttemptKind
+	passed                  bool
+	deadline                time.Duration
+	launchDuration          time.Duration
+	commandDuration         time.Duration
+	boundFired              BoundFired
+	output                  OutputSnapshot
+	failures                FailureDiagnostics
+	count                   ObservedCount
+	confirmationProvisional bool
 }
 
 type mutantResultKind uint8
@@ -760,6 +799,7 @@ func (state campaignState) onResourceSettlementFailed(
 		campaignInvariant("settle resource", "resource failure is invalid")
 	}
 	state.obligations = slices.Delete(state.obligations, index, index+1)
+	state.artifactResidue = append(state.artifactResidue, event.identity)
 	state.phase = campaignDraining
 	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
 	if event.kind == campaignResourceWorkspace {
@@ -819,11 +859,20 @@ func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (ca
 			if mutant.result == 0 {
 				campaignInvariant("commit terminal", "completed mutant is unattributed")
 			}
-			results[index] = mutantResult{mutant: mutant.identity, kind: mutant.result}
+			results[index] = mutantResult{
+				mutant: mutant.identity, kind: mutant.result,
+				primary: mutant.primaryEvidence, confirmation: mutant.confirmationEvidence,
+			}
 		}
-		state.outcome = completedOutcome{mutants: results}
+		state.outcome = completedOutcome{
+			mutants: results, singleAdmissionFallback: state.singleAdmissionFallback,
+		}
 	case campaignTerminalAborted:
-		state.outcome = abortedOutcome{cause: state.drain.cause}
+		state.outcome = abortedOutcome{
+			cause: state.drain.cause, mutants: state.partialMutantResults(), total: len(state.catalogue),
+			baseline: state.baselineEvidence, artifactResidue: slices.Clone(state.artifactResidue),
+			singleAdmissionFallback: state.singleAdmissionFallback,
+		}
 	default:
 		campaignInvariant("commit terminal", "terminal candidate is invalid")
 	}
@@ -1125,6 +1174,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 		event.generation != state.attempts[attemptAt].generation || event.receipt.generation != event.generation {
 		campaignInvariant("observe launch", "launch observation is invalid")
 	}
+	state.singleAdmissionFallback = state.singleAdmissionFallback || event.receipt.pressureTransitioned
 	switch event.result.kind {
 	case campaignLaunchOwned:
 		if event.result.failure != 0 || event.result.residual != 0 {
@@ -1187,6 +1237,9 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		if terminalDeadline(event.terminal) != state.attemptDeadline(state.attempts[attemptAt]) {
 			campaignInvariant("observe drain unconfirmed", "attempt deadline is not campaign-authorized")
 		}
+		state.fatalAttempts = append(state.fatalAttempts, campaignFatalAttemptEvidence{
+			attempt: event.attempt, evidence: campaignAttemptPresentation(event.terminal, false),
+		})
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{
 			kind: campaignDrainRuntimeEmergency, cause: "execution-domain drainage unconfirmed",
@@ -1201,12 +1254,14 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		campaignInvariant("observe terminal", "attempt terminal is invalid")
 	}
 	attempt := &state.attempts[attemptAt]
+	state.singleAdmissionFallback = state.singleAdmissionFallback || event.receipt.pressureTransitioned
 	if terminalDeadline(event.terminal) != state.attemptDeadline(*attempt) {
 		campaignInvariant("observe terminal", "attempt deadline is not campaign-authorized")
 	}
 	var transitionEffects []campaignEffect
 	switch attempt.kind {
 	case campaignAttemptBaseline:
+		state.baselineEvidence = campaignAttemptPresentation(event.terminal, false)
 		settled, passed := event.terminal.(Settled)
 		passed = passed && settled.Exit.Passed() && settled.Deadline == state.definition.baselineDeadline &&
 			settled.CommandDuration > 0
@@ -1224,6 +1279,9 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		if mutantAt < 0 || state.mutants[mutantAt].result != 0 {
 			campaignInvariant("observe primary terminal", "primary mutant is stale or already attributed")
 		}
+		state.mutants[mutantAt].primaryEvidence = campaignAttemptPresentation(
+			event.terminal, event.receipt.confirmationProvisional,
+		)
 		switch terminal := event.terminal.(type) {
 		case Settled:
 			if terminal.Exit.Passed() {
@@ -1267,6 +1325,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			state.drain.provisionals[0] != attempt.mutant {
 			campaignInvariant("observe confirmation terminal", "confirmation mutant is invalid")
 		}
+		state.mutants[mutantAt].confirmationEvidence = campaignAttemptPresentation(event.terminal, false)
 		resolvedConfirmation := true
 		_, settledConfirmation := event.terminal.(Settled)
 		_, trippedConfirmation := event.terminal.(Tripped)
@@ -1316,6 +1375,59 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	})
 
 	return state.emitAll(effects)
+}
+
+func campaignAttemptPresentation(terminal Terminal, confirmationProvisional bool) campaignAttemptEvidence {
+	data := terminalExecutionData(terminal)
+	evidence := campaignAttemptEvidence{
+		deadline: data.Deadline, launchDuration: data.LaunchDuration,
+		commandDuration: data.CommandDuration, boundFired: data.BoundFired,
+		output: data.Output, failures: data.Failures,
+		confirmationProvisional: confirmationProvisional,
+	}
+	switch observed := terminal.(type) {
+	case Settled:
+		evidence.kind = ManagedAttemptSettled
+		evidence.passed = observed.Exit.Passed()
+	case Tripped:
+		switch trip := observed.Trip.(type) {
+		case FuseTrip:
+			evidence.kind = ManagedAttemptFuse
+			evidence.count = ObservedCount{Value: trip.Live, Present: true}
+		case AutomaticDeadlineTrip:
+			evidence.kind = ManagedAttemptDeadline
+			evidence.count = trip.Peak
+		case SerialDeadlineTrip:
+			evidence.kind = ManagedAttemptDeadline
+		default:
+			campaignInvariant("present attempt", "trip kind is invalid")
+		}
+	case Stopped:
+		evidence.kind = ManagedAttemptStopped
+	case Infrastructure:
+		evidence.kind = ManagedAttemptInfrastructure
+	case DrainUnconfirmed:
+		evidence.kind = ManagedAttemptDrainUnconfirmed
+	default:
+		campaignInvariant("present attempt", "terminal kind is invalid")
+	}
+
+	return evidence
+}
+
+func (state campaignState) partialMutantResults() []mutantResult {
+	results := make([]mutantResult, 0, len(state.mutants))
+	for _, mutant := range state.mutants {
+		if mutant.result == 0 && mutant.primaryEvidence.kind == 0 && mutant.confirmationEvidence.kind == 0 {
+			continue
+		}
+		results = append(results, mutantResult{
+			mutant: mutant.identity, kind: mutant.result,
+			primary: mutant.primaryEvidence, confirmation: mutant.confirmationEvidence,
+		})
+	}
+
+	return results
 }
 
 func (state campaignState) attemptDeadline(attempt campaignAttempt) time.Duration {
@@ -1419,7 +1531,7 @@ func (state campaignState) onRuntimeEmergencySettled(
 	residual := slices.Clone(event.settlement.residual)
 	state.failure = cleanupUnconfirmedFault{residual: nonEmptyResidualCustody{
 		head: residual[0], tail: slices.Clone(residual[1:]),
-	}}
+	}, attempts: slices.Clone(state.fatalAttempts)}
 
 	return state, nil
 }

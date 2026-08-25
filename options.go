@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/viruses"
@@ -20,6 +19,7 @@ type Options struct {
 	MinimumThreshold          float32
 	Serial                    bool
 	MutationTimeout           time.Duration
+	ForceColors               bool
 	IgnoreSourceFilesPatterns []*regexp.Regexp
 	Viruses                   []viruses.Virus
 }
@@ -109,7 +109,7 @@ func WithViruses(virus viruses.Virus, rest ...viruses.Virus) func(Options) Optio
 // running the mutation tests in a CI environment, for example.
 func ForceColors() func(Options) Options {
 	return func(options Options) Options {
-		color.Force()
+		options.ForceColors = true
 
 		return options
 	}

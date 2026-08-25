@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	fatihcolor "github.com/fatih/color"
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/viruses"
@@ -51,6 +52,14 @@ func TestOptions(t *testing.T) {
 	t.Run("can configure an absolute mutation timeout", func(t *testing.T) {
 		options := ooze.WithMutationTimeout(37 * time.Second)(ooze.Options{})
 		assert.Equal(t, 37*time.Second, options.MutationTimeout)
+	})
+
+	t.Run("freezes forced color without mutating process-global state", func(t *testing.T) {
+		before := fatihcolor.NoColor
+		options := ooze.ForceColors()(ooze.Options{})
+
+		assert.True(t, options.ForceColors)
+		assert.Equal(t, before, fatihcolor.NoColor)
 	})
 
 	t.Run("rejects a negative mutation timeout at configuration", func(t *testing.T) {

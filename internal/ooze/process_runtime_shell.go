@@ -147,6 +147,13 @@ func (s *processRuntimeShell) fatalEpoch() fatalEpochID {
 	return s.core.fatalEpoch
 }
 
+func (s *processRuntimeShell) emergencySettlementRequired() bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	return s.core.lifecycle == runtimeFatalClosing
+}
+
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
 	return underRuntimeLock(s, "cancel admission", func() (result admissionResult) {
 		if token.delivery == nil {

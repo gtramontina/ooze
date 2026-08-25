@@ -214,7 +214,8 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 
 	completed, ok := result.outcome.(completedOutcome)
 	if !ok || len(completed.mutants) != 2 || completed.mutants[0].kind != mutantKilled ||
-		completed.mutants[1].kind != mutantKilled {
+		completed.mutants[1].kind != mutantKilled || !completed.singleAdmissionFallback ||
+		completed.mutants[0].confirmation.kind != ManagedAttemptSettled {
 		t.Fatalf("outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	}
 	if attempts.launches != 4 || shell.snapshot().mode != singleAdmission {
@@ -282,7 +283,14 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 	}}
 	attempts := &managedAttemptFixture{terminals: []Terminal{
 		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-		DrainUnconfirmed{Residual: OwnedUndrained},
+		DrainUnconfirmed{
+			Residual: OwnedUndrained,
+			ExecutionData: ExecutionData{
+				CommandDuration: time.Second,
+				Output:          OutputSnapshot{Bytes: "private", Cutoff: 7, CompleteThroughCutoff: true},
+				Failures:        FailureDiagnostics{DrainCensus: "census failed"},
+			},
+		},
 	}}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: newProcessRuntimeShell(1), repository: repository,
@@ -294,7 +302,10 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.failure.(cleanupUnconfirmedFault); !ok || attempts.emergencies != 1 {
+	fault, ok := result.failure.(cleanupUnconfirmedFault)
+	if !ok || len(fault.attempts) != 1 || fault.attempts[0].attempt != "campaign-a:2" ||
+		fault.attempts[0].evidence.output.Cutoff != 7 ||
+		fault.attempts[0].evidence.failures.DrainCensus != "census failed" || attempts.emergencies != 1 {
 		t.Fatalf("failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
 	}
 }
