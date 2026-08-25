@@ -62,6 +62,7 @@ func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T
 		"github.event_name == 'workflow_dispatch'",
 		"path: performance-baseline",
 		"path: performance-candidate",
+		"project-path: performance-candidate",
 		"Collect interleaved A/B samples",
 		"performance-evidence-${{ matrix.name }}",
 		".github/performance/collect.sh",
