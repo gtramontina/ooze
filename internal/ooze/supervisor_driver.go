@@ -810,9 +810,6 @@ func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 		driver.mutex.Unlock()
 		return
 	}
-	if event.at.Before(attempt.lastEventAt) {
-		event.at = attempt.lastEventAt
-	}
 	next, actions := reduceSupervisor(driver.state, event)
 	driver.state = next
 	driver.mutex.Unlock()
