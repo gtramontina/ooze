@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/ooze"
@@ -14,6 +15,11 @@ import (
 var (
 	errNotAllowed = errors.New("not allowed")
 	errRemoved    = errors.New("repository has been removed")
+)
+
+const (
+	temporaryRepositoryRemoveAttempts = 10
+	temporaryRepositoryRemoveDelay    = 20 * time.Millisecond
 )
 
 type FSTemporaryRepository struct {
@@ -86,10 +92,29 @@ func (r *FSTemporaryRepository) Remove() {
 		panic(errRemoved)
 	}
 
-	err := os.RemoveAll(r.root)
+	err := removeRepositoryUsing(r.root, os.RemoveAll, transientRepositoryRemoveError, time.Sleep)
 	if err != nil {
 		panic(fmt.Errorf("failed removing repository at '%s': %w", r.root, err))
 	}
 
 	r.removed = true
+}
+
+func removeRepositoryUsing(
+	path string,
+	remove func(string) error,
+	retryable func(error) bool,
+	wait func(time.Duration),
+) error {
+	var err error
+	for attempt := 0; attempt < temporaryRepositoryRemoveAttempts; attempt++ {
+		err = remove(path)
+		if err == nil || !retryable(err) {
+			return err
+		}
+		if attempt+1 < temporaryRepositoryRemoveAttempts {
+			wait(temporaryRepositoryRemoveDelay)
+		}
+	}
+	return err
 }
