@@ -584,6 +584,13 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	if !reflect.DeepEqual(replayed.world, production) {
 		t.Fatalf("recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 	}
+	corrupted := trace
+	corrupted.barriers = slices.Clone(trace.barriers)
+	corrupted.barriers[0].runtime.capacity++
+	if failure := ReplayLegal(corrupted).failure; failure == nil ||
+		!strings.Contains(failure.Error(), "quiescent world diverged") {
+		t.Fatalf("corrupted barrier replay failure=%v", failure)
+	}
 }
 
 func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
@@ -685,6 +692,9 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 	}
 
 	trace, production := recorder.quiescent(runner, shell, driver)
+	if len(trace.barriers) != 1 || trace.barriers[0].afterSequence != uint64(len(trace.records)) {
+		t.Fatalf("quiescent barriers=%#v, want one final accepted-prefix cut", trace.barriers)
+	}
 	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
 		t.Fatalf("managed trace retained a production capability at %s", path)
 	}

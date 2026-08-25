@@ -222,12 +222,23 @@ func (recorder *simulationRecorder) quiescent(
 	definition.command = slices.Clone(definition.command)
 	definition.env = slices.Clone(definition.env)
 
+	afterSequence := uint64(0)
+	if len(records) != 0 {
+		afterSequence = records[len(records)-1].sequence
+	}
+	barrier := simulationQuiescentBarrier{
+		afterSequence: afterSequence,
+		campaign:      simulationTraceCampaignState(campaignState),
+		runtime:       simulationTraceRuntimeState(runtimeState),
+		supervisor:    simulationTraceSupervisorState(supervisorState),
+	}
+
 	return simulationTrace{
 			definition: simulationDefinition{
 				campaign: definition, capacity: runtimeState.capacity,
 				catalogue: slices.Clone(campaignState.catalogue),
 			},
-			records: records,
+			records: records, barriers: []simulationQuiescentBarrier{barrier},
 		}, simulationWorld{
 			campaign: campaignState, runtime: runtimeState, supervisor: supervisorState,
 		}
