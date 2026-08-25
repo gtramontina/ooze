@@ -185,6 +185,29 @@ func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testin
 	}
 }
 
+func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}}
+	attempts := &managedAttemptFixture{terminals: []Terminal{
+		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		DrainUnconfirmed{Residual: OwnedUndrained},
+	}}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(1), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if _, ok := result.failure.(cleanupUnconfirmedFault); !ok || attempts.emergencies != 1 {
+		t.Fatalf("failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	}
+}
+
 type managedMemoryRepository struct {
 	files            []*gosourcefile.GoSourceFile
 	materializations int
@@ -238,6 +261,8 @@ type managedAttemptFixture struct {
 	releasePrimaries <-chan struct{}
 	stopRelease      chan struct{}
 	stops            int
+	emergencies      int
+	drainGeneration  attemptGeneration
 }
 
 func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
@@ -299,6 +324,16 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 			terminal: terminal,
 			receipt:  f.shell.observeAttempt(generation, attemptStopped{}),
 		}
+	case DrainUnconfirmed:
+		terminal.ExecutionData = data
+		f.mutex.Lock()
+		f.drainGeneration = generation
+		f.mutex.Unlock()
+
+		return managedObservedTerminal{
+			terminal: terminal,
+			receipt:  f.shell.observeAttempt(generation, drainUnconfirmed{}),
+		}
 	default:
 		panic("unsupported fixture terminal")
 	}
@@ -309,6 +344,14 @@ func (f *managedAttemptFixture) stop(attemptGeneration) {
 	close(f.stopRelease)
 	f.mutex.Unlock()
 }
-func (*managedAttemptFixture) emergency(fatalEpochID) managedObservedEmergency {
-	panic("unexpected emergency")
+func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEmergency {
+	f.mutex.Lock()
+	f.emergencies++
+	generation := f.drainGeneration
+	f.mutex.Unlock()
+	settlement := f.shell.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+		generation: generation, disposition: emergencyCustodyTransferred,
+	}}})
+
+	return managedObservedEmergency{epoch: epoch, settlement: settlement}
 }
