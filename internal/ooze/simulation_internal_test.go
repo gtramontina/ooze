@@ -382,6 +382,36 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	}
 }
 
+func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCustody(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-runtime-violation", lineage: 33, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1,
+	}, nil)
+	prefix := simulationTrace{
+		definition: explored.trace.definition,
+		records:    slices.Clone(explored.trace.records[:1]),
+	}
+	malformed := simulationMalformedFact{
+		authority: simulationRuntimeAuthority, runtimeOperation: simulationRequestAdmission,
+	}
+
+	first := ReplayViolation(prefix, malformed)
+	second := ReplayViolation(prefix, malformed)
+	if first.failure != nil || !reflect.DeepEqual(first, second) {
+		t.Fatalf("runtime violation replay diverged: first=%#v second=%#v", first, second)
+	}
+	if first.key.authority != simulationRuntimeAuthority ||
+		first.invariant.operation != "request admission" || first.invariant.reason != "invalid request" {
+		t.Fatalf("runtime invariant/key=%#v/%#v", first.invariant, first.key)
+	}
+	if first.world.runtime.lifecycle != runtimeClosedDrained || len(first.world.runtime.admissions) != 0 {
+		t.Fatalf("runtime violation cleanup retained custody: %#v", first.world.runtime)
+	}
+}
+
 func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{

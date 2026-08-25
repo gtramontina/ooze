@@ -132,9 +132,11 @@ type SimulationResult struct {
 }
 
 type simulationMalformedFact struct {
-	authority  simulationAuthority
-	campaign   campaignEventPayload
-	supervisor supervisorEvent
+	authority        simulationAuthority
+	campaign         campaignEventPayload
+	runtimeOperation simulationRuntimeOperation
+	runtimeAdmission simulationAdmission
+	supervisor       supervisorEvent
 }
 
 // FailureKey is the alpha-normalized semantic identity retained while shrinking.
@@ -811,12 +813,18 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	if legal.failure != nil {
 		return ViolationResult{failure: fmt.Errorf("legal prefix: %w", legal.failure)}
 	}
-	if malformed.authority != simulationCampaignAuthority &&
-		malformed.authority != simulationSupervisorAuthority {
+	switch malformed.authority {
+	case simulationCampaignAuthority:
+		if malformed.campaign == nil {
+			return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
+		}
+	case simulationRuntimeAuthority:
+		if malformed.runtimeOperation != simulationRequestAdmission {
+			return ViolationResult{failure: fmt.Errorf("malformed runtime operation is not implemented")}
+		}
+	case simulationSupervisorAuthority:
+	default:
 		return ViolationResult{failure: fmt.Errorf("malformed fact authority is not implemented")}
-	}
-	if malformed.authority == simulationCampaignAuthority && malformed.campaign == nil {
-		return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 	}
 
 	runtime := legal.world.runtime
@@ -842,15 +850,37 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 		}
 	}()
 
-	if malformed.authority == simulationCampaignAuthority {
+	switch malformed.authority {
+	case simulationCampaignAuthority:
 		_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
 			id: campaignEventID(len(campaign.trace) + 1), payload: malformed.campaign,
 		}, simulationEmergencySweep)
-	} else {
+	case simulationRuntimeAuthority:
+		simulationAdvanceRuntimeGuarded(&runtime, malformed.runtimeAdmission.production())
+	case simulationSupervisorAuthority:
 		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor)
 	}
 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
+}
+
+func simulationAdvanceRuntimeGuarded(runtime *processRuntime, request admissionRequest) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		violation, ok := recovered.(runtimeInvariantViolation)
+		if !ok {
+			violation = runtimeInvariantViolation{operation: "request admission", reason: "unexpected panic"}
+		}
+		var closure runtimeClosure
+		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
+		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(closure))
+		panic(violation)
+	}()
+
+	*runtime, _ = runtime.requestAdmission(request)
 }
 
 func simulationAdvanceSupervisorGuarded(
