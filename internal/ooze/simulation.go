@@ -50,6 +50,11 @@ type simulationChoiceCursor struct {
 	at     int
 }
 
+type simulationShrinkChoiceSource struct {
+	choices []simulationChoiceRecord
+	at      int
+}
+
 func (source simulationChoiceBytes) choose(limit int) int {
 	if limit <= 0 {
 		panic("simulation choice limit must be positive")
@@ -757,6 +762,24 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 			break
 		}
 	}
+	for choiceAt := 0; choiceAt < len(shrunk.choices); choiceAt++ {
+		choice := shrunk.choices[choiceAt]
+		if choice.recovery || choice.selected == 0 {
+			continue
+		}
+		for selected := 0; selected < choice.selected; selected++ {
+			choices := slices.Clone(shrunk.choices)
+			choices[choiceAt].selected = selected
+			candidate, ok := simulationExploreShrinkCandidateWithChoices(
+				shrunk, shrunk.definition, &simulationShrinkChoiceSource{choices: choices},
+			)
+			if !ok || !simulationPreservesFailure(candidate, key) {
+				continue
+			}
+			shrunk = candidate
+			break
+		}
+	}
 	first := ReplayViolation(shrunk, *shrunk.malformed)
 	second := ReplayViolation(shrunk, *shrunk.malformed)
 	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
@@ -770,7 +793,15 @@ func simulationExploreShrinkCandidate(
 	trace simulationTrace,
 	definition simulationDefinition,
 ) (simulationTrace, bool) {
-	explored := Explore(definition, nil)
+	return simulationExploreShrinkCandidateWithChoices(trace, definition, nil)
+}
+
+func simulationExploreShrinkCandidateWithChoices(
+	trace simulationTrace,
+	definition simulationDefinition,
+	choices simulationChoiceSource,
+) (simulationTrace, bool) {
+	explored := Explore(definition, choices)
 	if explored.failure != nil {
 		return simulationTrace{}, false
 	}
@@ -807,6 +838,20 @@ func simulationExploreShrinkCandidate(
 	}
 
 	return candidate, true
+}
+
+func (source *simulationShrinkChoiceSource) choose(limit int) int {
+	if source.at >= len(source.choices) {
+		return 0
+	}
+	selected := source.choices[source.at].selected
+	source.at++
+
+	return selected % limit
+}
+
+func (source *simulationShrinkChoiceSource) exhausted() bool {
+	return source.at >= len(source.choices) || source.choices[source.at].recovery
 }
 
 func simulationSameRecordKind(left, right simulationRecord) bool {
