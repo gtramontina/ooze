@@ -49,7 +49,7 @@ func (recorder *simulationRecorder) recordRuntime(
 	}
 	record.sequence = reservation.sequence
 	record.authority = reservation.authority
-	record.runtimeState = simulationProjectRuntime(state)
+	record.runtimeState = simulationTraceRuntimeState(state)
 	recorder.append(record)
 }
 
