@@ -73,6 +73,7 @@ type supervisorDriver struct {
 	emergencyDeferred []supervisorAction
 	emergencyReceipt  emergencySettlement
 	emergencyReady    bool
+	recorder          *simulationRecorder
 }
 
 func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorDriver {
@@ -107,6 +108,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		recordDiagnostic: construction.recordDiagnostic,
 		attempts:         make(map[attemptGeneration]*supervisorDrivenAttempt),
 		emergency:        make(chan SweepResult, 1),
+		recorder:         construction.runtime.recorder,
 	}
 }
 
@@ -185,6 +187,7 @@ func (driver *supervisorDriver) stageLaunch(
 	for {
 		select {
 		case <-driver.requireLaunchWake(generation):
+			leaveRecorder := driver.recorder.enter()
 			driver.mutex.Lock()
 			attempt := driver.requireAttempt(generation)
 			if attempt.launchResolved && len(attempt.launchReturn) != 0 {
@@ -199,22 +202,25 @@ func (driver *supervisorDriver) stageLaunch(
 					observation = launchObservation(completion)
 				}
 				driver.mutex.Unlock()
+				leaveRecorder()
 
 				return observation, actions
 			}
 			event := attempt.launchEvent
 			if event != nil && event.completion != nil && event.at.Before(launchBy) {
-				next, publication := reduceSupervisor(driver.state, *event)
-				driver.state = next
+				publication := driver.reduceLocked(*event)
 				attempt.launchConsumed = true
 				attempt.launchResolved = true
 				observation := launchObservation(event.completion)
 				driver.mutex.Unlock()
+				leaveRecorder()
 
 				return observation, publication
 			}
 			driver.mutex.Unlock()
+			leaveRecorder()
 		case <-boundary:
+			leaveRecorder := driver.recorder.enter()
 			driver.mutex.Lock()
 			attempt := driver.requireAttempt(generation)
 			var completion *supervisorLaunchCompletion
@@ -227,17 +233,17 @@ func (driver *supervisorDriver) stageLaunch(
 			if completion != nil && completion.kind == supervisorLaunchReleaseUnconfirmed {
 				boundaryDrainBy = attempt.launchEvent.drainBy
 			}
-			next, publication := reduceSupervisor(driver.state, supervisorEvent{
+			publication := driver.reduceLocked(supervisorEvent{
 				kind: supervisorLaunchBoundary, generation: generation, at: launchBy,
 				completion: completion, drainBy: boundaryDrainBy,
 			})
-			driver.state = next
 			attempt.launchResolved = true
 			observation := attemptObservation(launchUnconfirmed{})
 			if completion != nil {
 				observation = launchObservation(completion)
 			}
 			driver.mutex.Unlock()
+			leaveRecorder()
 
 			return observation, publication
 		}
@@ -375,10 +381,18 @@ func (driver *supervisorDriver) launch(generation attemptGeneration, spec Spec) 
 }
 
 func (driver *supervisorDriver) reduce(event supervisorEvent) []supervisorAction {
+	leaveRecorder := driver.recorder.enter()
+	defer leaveRecorder()
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
+
+	return driver.reduceLocked(event)
+}
+
+func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisorAction {
 	next, actions := reduceSupervisor(driver.state, event)
 	driver.state = next
+	driver.recorder.recordSupervisor(event, next, actions)
 
 	return actions
 }
@@ -805,6 +819,8 @@ func (driver *supervisorDriver) applyRunningSampleFacts(
 }
 
 func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
+	leaveRecorder := driver.recorder.enter()
+	defer leaveRecorder()
 	driver.mutex.Lock()
 	index := driver.state.attemptIndex(event.generation)
 	if index < 0 {
@@ -818,8 +834,7 @@ func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 		driver.mutex.Unlock()
 		return
 	}
-	next, actions := reduceSupervisor(driver.state, event)
-	driver.state = next
+	actions := driver.reduceLocked(event)
 	driver.mutex.Unlock()
 	for _, action := range actions {
 		driver.run(action)
@@ -985,6 +1000,8 @@ func (driver *supervisorDriver) waitManaged(
 }
 
 func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
+	leaveRecorder := driver.recorder.enter()
+	defer leaveRecorder()
 	driver.mutex.Lock()
 	if driver.emergencyStarted {
 		driver.mutex.Unlock()
@@ -1113,11 +1130,10 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	next, actions := reduceSupervisor(driver.state, supervisorEvent{
+	actions := driver.reduceLocked(supervisorEvent{
 		kind: supervisorEmergencyStarted, at: request.At, drainBy: request.DrainBy,
 		emergencySnapshots: snapshots,
 	})
-	driver.state = next
 	remaining := make([]supervisorAction, 0, len(actions))
 	for _, action := range actions {
 		if _, ok := returning[action.generation]; ok {

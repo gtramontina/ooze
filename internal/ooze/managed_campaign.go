@@ -72,6 +72,7 @@ type managedCampaignRunner struct {
 	terminals    chan managedTerminalObservation
 	pending      int
 	emergency    bool
+	recorder     *simulationRecorder
 }
 
 type managedAttemptFacts struct {
@@ -99,6 +100,7 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		owned:                       make(map[attemptGeneration]*OwnedAttempt),
 		authorities:                 make(map[campaignAdmission]admissionAuthority),
 		attemptFacts:                make(map[attemptGeneration]managedAttemptFacts),
+		recorder:                    construction.runtime.recorder,
 	}
 }
 

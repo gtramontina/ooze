@@ -3,6 +3,7 @@ package ooze
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *testing.T) {
@@ -159,6 +160,56 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	second := ReplayViolation(shrunk, *shrunk.malformed)
 	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
 		t.Fatalf("shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
+	}
+}
+
+func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	definition := campaignDefinition{
+		identity: "campaign-conformance", lineage: 51, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	}
+	campaign, _ := beginCampaign(definition)
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+
+	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	runner.advance(campaignRegisteredEvent{registration: registration})
+	event := supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: 1, attempt: "attempt-a",
+		at: time.Unix(100, 0), launchBy: time.Unix(101, 0),
+		profile: AutomaticProfile, commandDeadline: time.Second,
+	}
+	driver.reduce(event)
+
+	trace, projection := recorder.quiescent(runner, shell, driver)
+	if got, want := simulationAuthorities(trace), []simulationAuthority{
+		simulationRuntimeAuthority, simulationCampaignAuthority, simulationSupervisorAuthority,
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("production authority order=%v, want %v", got, want)
+	}
+	for index, record := range trace.records {
+		if record.sequence != uint64(index+1) {
+			t.Fatalf("production sequence at %d=%d", index, record.sequence)
+		}
+	}
+
+	wantRuntime := newProcessRuntime(1)
+	wantRuntime, wantRegistration := wantRuntime.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	wantCampaign, wantEffects := advanceCampaign(campaign, campaignEvent{
+		id: 1, payload: campaignRegisteredEvent{registration: wantRegistration},
+	})
+	wantSupervisor, wantActions := reduceSupervisor(supervisorState{}, event)
+	wantProjection := simulationWorld{
+		campaign: wantCampaign, runtime: wantRuntime, supervisor: wantSupervisor,
+	}
+	if !reflect.DeepEqual(projection, wantProjection) {
+		t.Fatalf("production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
+	}
+	if !reflect.DeepEqual(trace.records[1].campaignEffects, wantEffects) ||
+		!reflect.DeepEqual(trace.records[2].supervisorActions, wantActions) {
+		t.Fatalf("recorded ordered outputs diverged: %#v", trace.records)
 	}
 }
 

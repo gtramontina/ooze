@@ -39,9 +39,13 @@ func proposesTerminal(effects []campaignEffect) bool {
 }
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
+	leaveRecorder := runner.recorder.enter()
+	defer leaveRecorder()
 	runner.nextEvent++
 	var effects []campaignEffect
-	runner.state, effects = advanceCampaign(runner.state, campaignEvent{id: runner.nextEvent, payload: payload})
+	event := campaignEvent{id: runner.nextEvent, payload: payload}
+	runner.state, effects = advanceCampaign(runner.state, event)
+	runner.recorder.recordCampaign(event, runner.state, effects)
 
 	return effects
 }
