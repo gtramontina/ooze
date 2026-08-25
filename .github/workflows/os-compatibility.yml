@@ -22,8 +22,6 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    env:
-      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +61,10 @@ jobs:
         shell: bash
         run: ${{ matrix.go-command }} version
 
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
+
       - name: Test
         shell: bash
         run: ${{ matrix.go-command }} test -race -cover -timeout=60s -shuffle=on ./...
@@ -90,7 +92,6 @@ jobs:
     if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.runner }}
     env:
-      GOTOOLCHAIN: local
       ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
     strategy:
       fail-fast: false
@@ -124,6 +125,10 @@ jobs:
           go-version: "1.26.6"
           cache: true
 
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
+
       - name: Repeat bounded native acceptance
         shell: bash
         run: |
@@ -142,7 +147,6 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.runner }}
     env:
-      GOTOOLCHAIN: local
       PERFORMANCE_SAMPLES: 10
       PERFORMANCE_TOOLCHAIN: ${{ matrix.toolchain }}
     strategy:
@@ -152,12 +156,15 @@ jobs:
           - name: Ubuntu-24.04
             runner: ubuntu-24.04
             toolchain: devbox
+            go-command: devbox run -- go
           - name: macOS-26
             runner: macos-26
             toolchain: devbox
+            go-command: devbox run -- go
           - name: Windows-2025
             runner: windows-2025
             toolchain: raw-go
+            go-command: go
     steps:
       - name: Check out candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,6 +192,11 @@ jobs:
           go-version: "1.26.6"
           cache-dependency-path: performance-candidate/go.sum
 
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        working-directory: performance-candidate
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
+
       - name: Collect interleaved A/B samples
         shell: bash
         run: performance-candidate/.github/performance/collect.sh performance-baseline performance-candidate performance.jsonl
@@ -197,6 +209,50 @@ jobs:
           path: performance.jsonl
           if-no-files-found: error
           retention-days: 30
+
+  mutation-evidence:
+    name: Mutation evidence / ${{ matrix.name }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+          - name: macOS 26
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+          - name: Windows 2025
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
+      - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
+
+      - name: Run mutation acceptance
+        shell: bash
+        run: ${{ matrix.go-command }} test -timeout=30m -count=1 -v -tags=mutation
 
   required:
     name: OS Compatibility
