@@ -46,6 +46,11 @@ type simulationChoiceSource interface {
 	choose(limit int) int
 }
 
+type simulationChoiceCursor struct {
+	values simulationChoiceBytes
+	at     int
+}
+
 func (source simulationChoiceBytes) choose(limit int) int {
 	if limit <= 0 {
 		panic("simulation choice limit must be positive")
@@ -55,6 +60,19 @@ func (source simulationChoiceBytes) choose(limit int) int {
 	}
 
 	return int(source[0]) % limit
+}
+
+func (source *simulationChoiceCursor) choose(limit int) int {
+	if limit <= 0 {
+		panic("simulation choice limit must be positive")
+	}
+	if source == nil || source.at >= len(source.values) {
+		return 0
+	}
+	choice := int(source.values[source.at]) % limit
+	source.at++
+
+	return choice
 }
 
 type simulationTrace struct {
@@ -137,6 +155,9 @@ type ViolationResult struct {
 
 // Explore expands choices only through facts enabled by the production owners.
 func Explore(definition simulationDefinition, choices simulationChoiceSource) SimulationResult {
+	if values, ok := choices.(simulationChoiceBytes); ok {
+		choices = &simulationChoiceCursor{values: slices.Clone(values)}
+	}
 	definition.catalogue = append([]mutantIdentity(nil), definition.catalogue...)
 	state, effects := beginCampaign(definition.campaign)
 	runtime := newProcessRuntime(definition.capacity)
@@ -181,7 +202,7 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 
 		return simulationExplorePendingMoves(
 			definition, trace, state, effects, runtime, registration, supervisorState{},
-			baselineExit, primaryExit, choice == 1, 1,
+			baselineExit, primaryExit, choice == 1, 1, choices,
 		)
 	}
 	simulationRequireOnlyEffect(effects, campaignEffectReleaseSnapshot)
@@ -431,21 +452,30 @@ func simulationExplorePendingMoves(
 	primaryExit int,
 	launchAtBoundary bool,
 	attemptOrdinal int,
+	choices simulationChoiceSource,
 ) SimulationResult {
 	for len(effects) != 0 && effects[0].kind == campaignEffectMaterializeWorkspace {
 		pending := make([]simulationPendingAttempt, 0, len(effects))
-		for index, materialize := range effects {
+		materializations := slices.Clone(effects)
+		for len(materializations) != 0 {
+			selected := simulationChooseMove(choices, len(materializations))
+			materialize := materializations[selected]
+			materializations = slices.Delete(materializations, selected, selected+1)
 			if materialize.kind != campaignEffectMaterializeWorkspace {
 				return SimulationResult{trace: trace, failure: fmt.Errorf("attempt wave contains effect %v", materialize.kind)}
 			}
 			var attempt simulationPendingAttempt
 			campaign, runtime, supervisor, trace, attempt = simulationStartPendingAttempt(
-				campaign, runtime, supervisor, trace, materialize, attemptOrdinal+index, launchAtBoundary,
+				campaign, runtime, supervisor, trace, materialize, attemptOrdinal+len(pending), launchAtBoundary,
 			)
 			pending = append(pending, attempt)
 		}
 		effects = nil
-		for index, attempt := range pending {
+		started := len(pending)
+		for len(pending) != 0 {
+			selected := simulationChooseMove(choices, len(pending))
+			attempt := pending[selected]
+			pending = slices.Delete(pending, selected, selected+1)
 			exitCode := primaryExit
 			if attempt.launch.attemptKind == campaignAttemptBaseline {
 				exitCode = baselineExit
@@ -454,12 +484,12 @@ func simulationExplorePendingMoves(
 			campaign, runtime, supervisor, trace, next = simulationSettlePendingAttempt(
 				definition, campaign, runtime, supervisor, trace, attempt, exitCode,
 			)
-			if index+1 != len(pending) && len(next) != 0 {
+			if len(pending) != 0 && len(next) != 0 {
 				return SimulationResult{trace: trace, failure: fmt.Errorf("attempt wave emitted effects before its peers settled")}
 			}
 			effects = append(effects, next...)
 		}
-		attemptOrdinal += len(pending)
+		attemptOrdinal += started
 	}
 	snapshotRelease := simulationOnlyEffect(effects, campaignEffectReleaseSnapshot)
 	payload := campaignEventPayload(resourceSettledEvent{
@@ -484,6 +514,14 @@ func simulationExplorePendingMoves(
 			campaign: campaign, runtime: runtime, supervisor: simulationProjectSupervisorState(supervisor),
 		},
 	}
+}
+
+func simulationChooseMove(choices simulationChoiceSource, limit int) int {
+	if choices == nil || limit == 1 {
+		return 0
+	}
+
+	return choices.choose(limit)
 }
 
 func simulationRequireOnlyEffect(effects []campaignEffect, kind campaignEffectKind) {

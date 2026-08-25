@@ -230,6 +230,42 @@ func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T)
 	}
 }
 
+func TestSimulationChoiceStreamSelectsEnabledPeerSettlementOrder(t *testing.T) {
+	definition := simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-choice-order", lineage: 251, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}
+	first := Explore(definition, simulationChoiceBytes{0, 0, 0})
+	second := Explore(definition, simulationChoiceBytes{0, 0, 1})
+	if first.failure != nil || second.failure != nil {
+		t.Fatalf("choice exploration failures=%v/%v", first.failure, second.failure)
+	}
+	terminalOrder := func(trace simulationTrace) []attemptIdentity {
+		var attempts []attemptIdentity
+		for _, record := range trace.records {
+			terminal, ok := record.campaignEvent.payload.(attemptTerminalEvent)
+			if ok {
+				attempts = append(attempts, terminal.attempt)
+			}
+		}
+
+		return attempts[1:]
+	}
+	firstOrder := terminalOrder(first.trace)
+	secondOrder := terminalOrder(second.trace)
+	if reflect.DeepEqual(firstOrder, secondOrder) {
+		t.Fatalf("distinct choice streams selected the same primary order: %v", firstOrder)
+	}
+	for _, explored := range []SimulationResult{first, second} {
+		if replayed := ReplayLegal(explored.trace); replayed.failure != nil {
+			t.Fatalf("choice-selected trace did not replay: %v", replayed.failure)
+		}
+	}
+}
+
 func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
