@@ -39,9 +39,9 @@ func (system *nativeManagedAttemptSystem) wait(
 	return system.driver.waitManaged(generation, owned)
 }
 
-func (system *nativeManagedAttemptSystem) stop(generation attemptGeneration) {
+func (system *nativeManagedAttemptSystem) stop(_ attemptGeneration, owned *OwnedAttempt) {
 	at := system.driver.now()
-	system.driver.stop(generation, StopRequest{At: at, DrainBy: at.Add(system.driver.drainEpoch)})
+	owned.Stop(StopRequest{At: at, DrainBy: at.Add(system.driver.drainEpoch)})
 }
 
 func (system *nativeManagedAttemptSystem) emergency(epoch fatalEpochID) managedObservedEmergency {

@@ -31,7 +31,7 @@ type managedObservedEmergency struct {
 type managedAttemptSystem interface {
 	launch(installedStart, Spec) managedObservedLaunch
 	wait(attemptGeneration, *OwnedAttempt) managedObservedTerminal
-	stop(attemptGeneration)
+	stop(attemptGeneration, *OwnedAttempt)
 	emergency(fatalEpochID) managedObservedEmergency
 }
 
@@ -276,7 +276,11 @@ func (runner *managedCampaignRunner) execute(
 		}
 		return runner.launch(effect, request)
 	case campaignEffectStopAttempt:
-		runner.attempts.stop(effect.generation)
+		owned := runner.owned[effect.generation]
+		if owned == nil {
+			panic("managed stop attempt is not owned")
+		}
+		runner.attempts.stop(effect.generation, owned)
 
 		return nil
 	case campaignEffectCancelAdmission:

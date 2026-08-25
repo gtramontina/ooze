@@ -692,7 +692,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 		panic("unsupported fixture terminal")
 	}
 }
-func (f *managedAttemptFixture) stop(attemptGeneration) {
+func (f *managedAttemptFixture) stop(attemptGeneration, *OwnedAttempt) {
 	f.mutex.Lock()
 	f.stops++
 	close(f.stopRelease)
