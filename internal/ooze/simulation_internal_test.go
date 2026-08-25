@@ -283,6 +283,21 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				t.Fatalf("after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v",
 					selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
 			}
+			if test.action == supervisorLaunchNative {
+				order := make(map[supervisorActionKind]int)
+				ordinal := 0
+				for _, record := range explored.trace.records {
+					for _, action := range record.supervisorActions {
+						ordinal++
+						order[action.kind] = ordinal
+					}
+				}
+				if order[supervisorRevokeLaunchRelease] >= order[supervisorPublishLaunchUnconfirmed] ||
+					order[supervisorPublishLaunchUnconfirmed] >= order[supervisorAdoptOwned] ||
+					order[supervisorAdoptOwned] >= order[supervisorForceOwned] {
+					t.Fatalf("late closure/adoption action order=%v", order)
+				}
+			}
 			if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
 				!reflect.DeepEqual(replayed.world, explored.world) {
 				t.Fatalf("after-boundary replay=%#v", replayed)
@@ -633,6 +648,134 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
 		!reflect.DeepEqual(replayed.world, explored.world) {
 		t.Fatalf("multiple-provisional replay=%#v", replayed)
+	}
+}
+
+func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
+	selected := false
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		ownedPeerReady := slices.ContainsFunc(moves, func(move simulationEngineMove) bool {
+			return move.action.kind == supervisorWaitRoot && move.mutant == "mutant-a"
+		})
+		if ownedPeerReady {
+			for index, move := range moves {
+				if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-b" &&
+					move.variant.launch == simulationLaunchProvenNotReleased {
+					selected = true
+
+					return index
+				}
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-b" {
+				continue
+			}
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-release-stop", lineage: 2522, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, choices)
+	if explored.failure != nil || !selected {
+		t.Fatalf("release/stop exploration selected=%v failure=%v", selected, explored.failure)
+	}
+	publicationAt, stopEffectAt, stopFactAt := -1, -1, -1
+	for index, record := range explored.trace.records {
+		for _, action := range record.supervisorActions {
+			if action.kind == supervisorPublishNotReleased {
+				publicationAt = index
+			}
+		}
+		for _, effect := range record.campaignEffects {
+			if effect.kind == campaignEffectStopAttempt {
+				stopEffectAt = index
+			}
+		}
+		if record.supervisorEvent.running != nil && slices.ContainsFunc(
+			record.supervisorEvent.running.facts,
+			func(fact simulationSupervisorRunningFact) bool {
+				return fact.kind == supervisorRunningStopRequested
+			},
+		) {
+			stopFactAt = index
+		}
+	}
+	if publicationAt < 0 || stopEffectAt <= publicationAt || stopFactAt <= stopEffectAt {
+		t.Fatalf("release publication/stop effect/stop fact order=%d/%d/%d",
+			publicationAt, stopEffectAt, stopFactAt)
+	}
+	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
+		!reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("release/stop replay=%#v", replayed)
+	}
+}
+
+func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *testing.T) {
+	selected := false
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		ownedPeerReady := slices.ContainsFunc(moves, func(move simulationEngineMove) bool {
+			return move.action.kind == supervisorWaitRoot && move.mutant == "mutant-b"
+		})
+		if ownedPeerReady {
+			for index, move := range moves {
+				if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-a" &&
+					move.variant.launch == simulationLaunchAfterBoundary {
+					selected = true
+
+					return index
+				}
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-a" {
+				continue
+			}
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-custody-order", lineage: 2523, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, choices)
+	if explored.failure != nil || !selected {
+		t.Fatalf("custody-order exploration selected=%v failure=%v", selected, explored.failure)
+	}
+	var stages []admissionStage
+	for _, record := range explored.trace.records {
+		if record.authority != simulationRuntimeAuthority ||
+			record.runtimeOperation != simulationObserveAttempt ||
+			record.runtimeObservation.kind != simulationLaunchUnconfirmedObservation {
+			continue
+		}
+		for _, admission := range record.runtimeState.admissions {
+			if admission.stage == admissionProspective || admission.stage == admissionOwned {
+				stages = append(stages, admission.stage)
+			}
+		}
+		break
+	}
+	if !reflect.DeepEqual(stages, []admissionStage{admissionProspective, admissionOwned}) {
+		t.Fatalf("unconfirmed prospective/owned custody order=%v", stages)
+	}
+	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
+		!reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("custody-order replay=%#v", replayed)
 	}
 }
 
@@ -1357,10 +1500,16 @@ func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *
 		authority:    simulationRuntimeAuthority,
 		runtimeState: simulationRuntimeState{capacity: 3},
 	}
-	key := simulationReplayDivergenceFailure(
+	firstKey := simulationReplayDivergenceFailure(
 		simulationTrace{}, simulationRuntimeStateDivergence, "rewritten diagnostic",
 	).key
-	retained := simulationRetainRecordedFailure(candidate, failing, key.divergence)
+	secondKey := simulationReplayDivergenceFailure(
+		simulationTrace{}, simulationRuntimeStateDivergence, "another diagnostic: %d", 3,
+	).key
+	if !reflect.DeepEqual(firstKey, secondKey) {
+		t.Fatalf("typed replay keys depend on diagnostics: %#v/%#v", firstKey, secondKey)
+	}
+	retained := simulationRetainRecordedFailure(candidate, failing, firstKey.divergence)
 	if retained.runtimeState.capacity != 3 {
 		t.Fatalf("typed replay divergence retained state=%#v", retained.runtimeState)
 	}

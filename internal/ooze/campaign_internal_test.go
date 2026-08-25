@@ -1373,6 +1373,182 @@ func TestCampaignAdoptsStartCommittedBeforeClosureWhoseFactArrivesAfterClosure(t
 	}
 }
 
+func TestCampaignSettlesLateProvenNoReleaseDuringRuntimeEmergency(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	prospective := make([]launchedCampaignAttempt, 0, len(primaryEffects))
+	for index, primary := range primaryEffects {
+		prospective = append(prospective, harness.startProspective(
+			t, primary, "workspace-"+strconv.Itoa(index+1),
+		))
+	}
+
+	var unconfirmed observationResult
+	harness.runtime, unconfirmed = harness.runtime.observeAttempt(prospective[0].generation, launchUnconfirmed{})
+	harness.advance(attemptLaunchEvent{
+		attempt: prospective[0].attempt, generation: prospective[0].generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		receipt: campaignReceipt(unconfirmed),
+	})
+	wantDrain := harness.state.drain
+
+	var notReleased observationResult
+	harness.runtime, notReleased = harness.runtime.observeAttempt(
+		prospective[1].generation, launchNotReleased{reason: launchFailed},
+	)
+	effects := harness.advance(attemptLaunchEvent{
+		attempt: prospective[1].attempt, generation: prospective[1].generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		receipt: campaignReceipt(notReleased),
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	attemptAt := harness.state.attemptIndex(prospective[1].attempt)
+	if attemptAt < 0 || harness.state.attempts[attemptAt].stage != campaignAttemptSettled ||
+		!reflect.DeepEqual(harness.state.drain, wantDrain) {
+		t.Fatalf("late no-release state=%#v, want settled peer and unchanged drain %#v", harness.state, wantDrain)
+	}
+}
+
+func TestCampaignPreservesRuntimeEmergencyForPreClosureNoReleaseDeliveredLate(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	first := harness.startProspective(t, primaryEffects[0], "workspace-a")
+	second := harness.startProspective(t, primaryEffects[1], "workspace-b")
+
+	var notReleased observationResult
+	harness.runtime, notReleased = harness.runtime.observeAttempt(
+		second.generation, launchNotReleased{reason: launchFailed},
+	)
+	if notReleased.runtimeClosureInProgress {
+		t.Fatalf("pre-closure no-release receipt=%#v", notReleased)
+	}
+	var unconfirmed observationResult
+	harness.runtime, unconfirmed = harness.runtime.observeAttempt(first.generation, launchUnconfirmed{})
+	harness.advance(attemptLaunchEvent{
+		attempt: first.attempt, generation: first.generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		receipt: campaignReceipt(unconfirmed),
+	})
+	wantDrain := harness.state.drain
+
+	effects := harness.advance(attemptLaunchEvent{
+		attempt: second.attempt, generation: second.generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		receipt: campaignReceipt(notReleased),
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	if !reflect.DeepEqual(harness.state.drain, wantDrain) {
+		t.Fatalf("delayed pre-closure no-release drain=%#v, want runtime emergency %#v",
+			harness.state.drain, wantDrain)
+	}
+}
+
+func TestCampaignPreservesRuntimeEmergencyForPreClosureProvisionalDeliveredLate(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	first := harness.startProspective(t, primaryEffects[0], "workspace-a")
+	second := harness.startProspective(t, primaryEffects[1], "workspace-b")
+	var owned observationResult
+	harness.runtime, owned = harness.runtime.observeAttempt(first.generation, launchOwned{})
+	harness.advance(attemptLaunchEvent{
+		attempt: first.attempt, generation: first.generation,
+		result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceipt(owned),
+	})
+
+	deadline := harness.state.mutationDeadline
+	var terminal observationResult
+	harness.runtime, terminal = harness.runtime.observeAttempt(first.generation, attemptTripped{
+		kind: deadlineTrip, profile: AutomaticProfile, deadline: deadline,
+	})
+	if !terminal.confirmationProvisional || terminal.runtimeClosureInProgress {
+		t.Fatalf("pre-closure provisional receipt=%#v", terminal)
+	}
+	var unconfirmed observationResult
+	harness.runtime, unconfirmed = harness.runtime.observeAttempt(second.generation, launchUnconfirmed{})
+	harness.advance(attemptLaunchEvent{
+		attempt: second.attempt, generation: second.generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		receipt: campaignReceipt(unconfirmed),
+	})
+	wantDrain := harness.state.drain
+
+	effects := harness.advance(attemptTerminalEvent{
+		attempt: first.attempt, generation: first.generation,
+		terminal: Tripped{
+			Trip: AutomaticDeadlineTrip{},
+			ExecutionData: ExecutionData{
+				Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+			},
+		},
+		receipt: campaignReceipt(terminal),
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
+	if !reflect.DeepEqual(harness.state.drain, wantDrain) {
+		t.Fatalf("delayed pre-closure provisional drain=%#v, want runtime emergency %#v",
+			harness.state.drain, wantDrain)
+	}
+}
+
+func TestCampaignAbortDrainSurvivesLateProvisionalTerminal(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	owned := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	prospective := harness.startProspective(t, primaryEffects[1], "workspace-b")
+
+	var notReleased observationResult
+	harness.runtime, notReleased = harness.runtime.observeAttempt(
+		prospective.generation, launchNotReleased{reason: launchFailed},
+	)
+	effects := harness.advance(attemptLaunchEvent{
+		attempt: prospective.attempt, generation: prospective.generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		receipt: campaignReceipt(notReleased),
+	})
+	assertCampaignEffects(t, effects, campaignEffectStopAttempt, campaignEffectReleaseWorkspace)
+	wantDrain := harness.state.drain
+
+	deadline := harness.state.mutationDeadline
+	harness.settleAttempt(t, owned, Tripped{
+		Trip: AutomaticDeadlineTrip{},
+		ExecutionData: ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		},
+	}, 0)
+	if !reflect.DeepEqual(harness.state.drain, wantDrain) || harness.state.phase != campaignDraining {
+		t.Fatalf("late provisional terminal drain=%#v, want abort drain %#v", harness.state.drain, wantDrain)
+	}
+}
+
+func TestCampaignLateGrantDuringAbortAwaitsQueuedCancellation(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
+	prospective := harness.startProspective(t, primaryEffects[0], "workspace-a")
+	effects := harness.advance(workspaceMaterializedEvent{
+		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
+	})
+	request := effects[0].request
+	var admitted admissionResult
+	harness.runtime, admitted = harness.runtime.requestAdmission(runtimeAdmissionRequest(request))
+	grant := campaignAdmissionFact(admitted.deliveries[0])
+
+	var notReleased observationResult
+	harness.runtime, notReleased = harness.runtime.observeAttempt(
+		prospective.generation, launchNotReleased{reason: launchFailed},
+	)
+	effects = harness.advance(attemptLaunchEvent{
+		attempt: prospective.attempt, generation: prospective.generation,
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		receipt: campaignReceipt(notReleased),
+	})
+	assertCampaignEffects(t, effects, campaignEffectCancelAdmission, campaignEffectReleaseWorkspace)
+	wantDrain := harness.state.drain
+
+	effects = harness.advance(admissionGrantedEvent{attempt: primaryEffects[1].attempt, grant: grant})
+	if len(effects) != 0 {
+		t.Fatalf("late abort grant effects=%#v, want queued cancellation only", effects)
+	}
+	attemptAt := harness.state.attemptIndex(primaryEffects[1].attempt)
+	if attemptAt < 0 || harness.state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
+		!reflect.DeepEqual(harness.state.drain, wantDrain) {
+		t.Fatalf("late abort grant state=%#v, want cancelling attempt under drain %#v", harness.state, wantDrain)
+	}
+}
+
 func TestCampaignCleanupUnconfirmedRequiresStaticNonEmptyResidual(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a"}, 1)
 	primary := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
@@ -1712,6 +1888,23 @@ func (harness *campaignHarness) launchMaterialized(
 	workspace string,
 ) launchedCampaignAttempt {
 	t.Helper()
+	started := harness.startProspective(t, effect, workspace)
+	var receipt observationResult
+	harness.runtime, receipt = harness.runtime.observeAttempt(started.generation, launchOwned{})
+	harness.advance(attemptLaunchEvent{
+		attempt: effect.attempt, generation: started.generation,
+		result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceipt(receipt),
+	})
+
+	return started
+}
+
+func (harness *campaignHarness) startProspective(
+	t *testing.T,
+	effect campaignEffect,
+	workspace string,
+) launchedCampaignAttempt {
+	t.Helper()
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: effect.attempt, workspace: workspace, snapshot: effect.snapshot,
 	})
@@ -1725,12 +1918,6 @@ func (harness *campaignHarness) launchMaterialized(
 	harness.runtime, started = harness.runtime.startCommitted(admitted.deliveries[0])
 	harness.advance(startCommittedEvent{
 		attempt: effect.attempt, grant: grant, result: campaignStartEvidence(started),
-	})
-	var receipt observationResult
-	harness.runtime, receipt = harness.runtime.observeAttempt(started.generation, launchOwned{})
-	harness.advance(attemptLaunchEvent{
-		attempt: effect.attempt, generation: started.generation,
-		result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceipt(receipt),
 	})
 
 	return launchedCampaignAttempt{attempt: effect.attempt, generation: started.generation}

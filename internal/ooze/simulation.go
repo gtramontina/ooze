@@ -1370,10 +1370,9 @@ func simulationTraceShrinks(candidate, current simulationTrace) bool {
 }
 
 func simulationTracePayloadRank(trace simulationTrace) int {
-	rank := simulationPayloadRank(reflect.ValueOf(trace.definition)) + simulationIdentityPayloadRank(trace.definition)
-	rank += len(trace.choices)
+	rank := simulationIdentityPayloadRank(trace.definition) + len(trace.choices)
 	for _, record := range trace.records {
-		rank += simulationPayloadRank(reflect.ValueOf(record))
+		rank += simulationRecordPayloadRank(record)
 	}
 
 	return rank
@@ -1393,55 +1392,39 @@ func simulationIdentityPayloadRank(definition simulationDefinition) int {
 	return rank
 }
 
-func simulationPayloadRank(value reflect.Value) int {
-	if !value.IsValid() {
-		return 0
-	}
-	if value.Type() == reflect.TypeOf(simulationInstant{}) {
-		return 0
-	}
-	switch value.Kind() {
-	case reflect.Pointer, reflect.Interface:
-		if value.IsNil() {
-			return 0
+func simulationRecordPayloadRank(record simulationRecord) int {
+	rank := 1 + len(record.campaignEffects) + len(record.supervisorActions)
+	switch record.authority {
+	case simulationCampaignAuthority:
+		rank += len(record.campaignEvent.catalogueDiscovered.mutants)
+		rank += len(record.campaignEvent.workspaceMaterializationFailed.artifactResidue)
+	case simulationRuntimeAuthority:
+		rank += len(record.runtimeSweep.resolutions)
+		rank += len(record.runtimeAdmissionOut.deliveries)
+		rank += len(record.runtimeObservationOut.deliveries) +
+			len(record.runtimeObservationOut.cancelledWaiting) +
+			len(record.runtimeObservationOut.compensatedGrants)
+		rank += len(record.runtimeEmergencyOut.acknowledged) + len(record.runtimeEmergencyOut.residual)
+		rank += len(record.runtimeClosure.cancelledWaiting) +
+			len(record.runtimeClosure.compensatedGrants) + len(record.runtimeClosure.residual)
+	case simulationSupervisorAuthority:
+		event := record.supervisorEvent
+		rank += len(event.emergencySnapshots)
+		for _, present := range []bool{
+			event.completion != nil, event.running != nil, event.drain != nil, event.output != nil,
+			event.seal != nil, event.release != nil, event.runtime != nil,
+			event.emergencySettlement != nil,
+		} {
+			if present {
+				rank++
+			}
 		}
-
-		return 1 + simulationPayloadRank(value.Elem())
-	case reflect.Struct:
-		rank := 0
-		for index := 0; index < value.NumField(); index++ {
-			rank += simulationPayloadRank(value.Field(index))
-		}
-
-		return rank
-	case reflect.Slice, reflect.Array:
-		rank := value.Len()
-		for index := 0; index < value.Len(); index++ {
-			rank += simulationPayloadRank(value.Index(index))
-		}
-
-		return rank
-	case reflect.Map:
-		return value.Len()
-	case reflect.Bool:
-		if value.Bool() {
-			return 1
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if value.Int() != 0 {
-			return 1
-		}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		if value.Uint() != 0 {
-			return 1
-		}
-	case reflect.String:
-		if value.Len() != 0 {
-			return 1
+		if event.running != nil {
+			rank += len(event.running.facts)
 		}
 	}
 
-	return 0
+	return rank
 }
 
 func simulationTraceBoundaryDistance(trace simulationTrace) int {
@@ -1838,6 +1821,7 @@ func simulationReplayDivergenceFailure(
 ) SimulationResult {
 	result := simulationReplayFailure(trace, format, arguments...)
 	result.key.divergence = divergence
+	result.key.operation = ""
 
 	return result
 }
