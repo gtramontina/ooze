@@ -240,8 +240,8 @@ func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testin
 	if !ok || !reflect.DeepEqual(got, want) {
 		t.Fatalf("completed outcome=%#v, want %#v", harness.state.outcome, want)
 	}
-	if completed.mutants[0].primary.kind != ManagedAttemptSettled ||
-		completed.mutants[1].primary.kind != ManagedAttemptSettled {
+	if completed.mutants[0].primary.kind != campaignEvidenceSettled ||
+		completed.mutants[1].primary.kind != campaignEvidenceSettled {
 		t.Fatalf("completed outcome discarded primary evidence: %#v", completed.mutants)
 	}
 	if harness.state.commandCount() != 3 || len(harness.state.obligations) != 0 {

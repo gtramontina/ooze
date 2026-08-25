@@ -119,8 +119,7 @@ func projectManagedReport(result ManagedReleaseResult, configuration managedRepo
 	score := float32(detected) / float32(total)
 	writeManagedSummary(&report, killed, timedOut, runaway, survived, score, configuration)
 	if result.SingleAdmissionFallback {
-		report.WriteString("Ooze fell back to single-admission automatic after validated capacity pressure.\n")
-		report.WriteString("Every later automatic campaign in this process admits one attempt at a time.\n")
+		writeManagedFallbackNotice(&report)
 	}
 	disposition := managedReportPass
 	if score < configuration.minimumThreshold {
@@ -144,7 +143,7 @@ func projectManagedInvariantViolation(result ManagedReleaseResult) managedReport
 	invariant := result.Invariant
 	var report strings.Builder
 	report.WriteString("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n")
-	report.WriteString("┃ ☠ Internal invariant violated. No campaign in this process is scored.\n")
+	report.WriteString("┃ ☠ Internal invariant violated. This campaign has no score.\n")
 	fmt.Fprintf(&report, "┃   Operation: %s\n", invariant.Operation)
 	fmt.Fprintf(&report, "┃   Reason: %s\n", invariant.Reason)
 	if invariant.Phase != "" {
@@ -174,6 +173,7 @@ func projectManagedInvariantViolation(result ManagedReleaseResult) managedReport
 			&report, "┃   %d unresolved execution-domain %s joined this fatal epoch.\n",
 			len(result.Residual), noun,
 		)
+		writeManagedResiduals(&report, result.Residual)
 	}
 	report.WriteString("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
 
@@ -190,23 +190,10 @@ func projectManagedCleanupUnconfirmed(result ManagedReleaseResult) managedReport
 	report.WriteString("┃\n┃   The process runtime is closed for the remainder of this process.\n")
 	for _, attempt := range result.FatalAttempts {
 		fmt.Fprintf(&report, "┃   Attempt diagnostic: %s\n", attempt.Attempt)
-		writeManagedAttemptDiagnostics(&report, attempt.Evidence)
+		writeManagedAttemptDiagnostics(&report, attempt.Evidence, "┃   ", "")
 	}
 	fmt.Fprintf(&report, "┃   %d execution-domain obligations remain unresolved:\n", len(result.Residual))
-	for _, residual := range result.Residual {
-		stage := "prospective"
-		if residual.Stage == ManagedResidualOwned {
-			stage = "owned"
-		}
-		transferred := ""
-		if residual.Transferred {
-			transferred = ", custody transferred"
-		}
-		fmt.Fprintf(
-			&report, "┃     %s attempt %s (generation %d%s)\n",
-			stage, residual.Attempt, residual.Generation, transferred,
-		)
-	}
+	writeManagedResiduals(&report, result.Residual)
 	report.WriteString("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
 
 	return managedReport{
@@ -235,12 +222,9 @@ func projectManagedAbort(result ManagedReleaseResult, colors bool) managedReport
 	report.WriteString("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n")
 	report.WriteString("┃ ⨯ Campaign aborted. No mutation score.\n")
 	report.WriteString("┃\n")
-	cause := result.Cause
-	if cause == "baseline did not pass" {
-		cause = "the unmutated baseline failed."
-	}
+	cause := managedAbortCauseText(result.Cause)
 	fmt.Fprintf(&report, "┃   Cause: %s\n", cause)
-	if result.Cause == "baseline did not pass" {
+	if result.Cause == ManagedAbortBaselineFailed {
 		fmt.Fprintf(&report, "┃   Mutation evidence requires a green suite; 0 of %d mutants were evaluated.\n", result.Total)
 	} else {
 		fmt.Fprintf(&report, "┃   Evaluated %d of %d mutants: %d detected, %d survived.\n", evaluated, result.Total, detected, survived)
@@ -263,10 +247,55 @@ func projectManagedAbort(result ManagedReleaseResult, colors bool) managedReport
 		}
 	}
 	report.WriteString("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+	if result.SingleAdmissionFallback {
+		report.WriteString("\n")
+		writeManagedFallbackNotice(&report)
+	}
 
 	return managedReport{
 		text: report.String(), disposition: managedReportError,
-		callerMessage: "campaign aborted: " + result.Cause + "; no mutation score",
+		callerMessage: "campaign aborted: " + cause + "; no mutation score",
+	}
+}
+
+func managedAbortCauseText(cause ManagedAbortCause) string {
+	switch cause {
+	case ManagedAbortCampaignRegistration:
+		return "campaign registration was rejected"
+	case ManagedAbortSnapshotMaterialization:
+		return "the repository snapshot could not be materialized"
+	case ManagedAbortCatalogueDiscovery:
+		return "mutation catalogue discovery failed"
+	case ManagedAbortWorkspaceMaterialization:
+		return "a mutation workspace could not be materialized or cleaned"
+	case ManagedAbortAdmissionRejected:
+		return "managed admission was rejected"
+	case ManagedAbortFatalEpoch:
+		return "a process fatal epoch interrupted the campaign"
+	case ManagedAbortWorkspaceCleanup:
+		return "mutation workspace cleanup could not be confirmed"
+	case ManagedAbortSnapshotCleanup:
+		return "repository snapshot cleanup could not be confirmed"
+	case ManagedAbortAttemptNotReleased:
+		return "an attempt was not released"
+	case ManagedAbortProspectiveLaunch:
+		return "a prospective launch remained unresolved"
+	case ManagedAbortDrainageUnconfirmed:
+		return "execution-domain drainage was unconfirmed"
+	case ManagedAbortBaselineFailed:
+		return "the unmutated baseline failed."
+	case ManagedAbortPrimaryStopped:
+		return "a primary attempt was stopped"
+	case ManagedAbortPrimaryInfrastructure:
+		return "primary infrastructure uncertainty"
+	case ManagedAbortConfirmationInfrastructure:
+		return "confirmation infrastructure uncertainty"
+	case ManagedAbortProcessEmergency:
+		return "a process runtime emergency interrupted the campaign"
+	case ManagedAbortInfrastructure:
+		return "campaign infrastructure uncertainty"
+	default:
+		panic("managed abort cause is invalid")
 	}
 }
 
@@ -278,24 +307,29 @@ func writeManagedMutationDetail(
 ) {
 	switch mutation.Outcome {
 	case 0:
+		if mutation.Confirmation != nil {
+			fmt.Fprintf(report, "Confirmation infrastructure uncertainty: %s\n", mutation.File.Label())
+			fmt.Fprintf(report, "%s\n", managedConfirmationLine(mutation))
+			writeManagedAttemptDiagnostics(report, mutation.Primary, "  ", "primary ")
+			writeManagedAttemptDiagnostics(report, *mutation.Confirmation, "  ", "confirmation ")
+			break
+		}
 		fmt.Fprintf(report, "Infrastructure uncertainty: %s\n", mutation.File.Label())
-		writeManagedAttemptDiagnostics(report, mutation.Primary)
+		writeManagedAttemptDiagnostics(report, mutation.Primary, "  ", "")
 	case ManagedSurvived:
-		fmt.Fprintf(
-			report, "Mutant survived: %s\n%s\n", mutation.File.Label(),
-			managedColoredDiff(strings.TrimSpace(mutation.File.Diff(differ)), palette),
-		)
+		fmt.Fprintf(report, "Mutant survived: %s\n", mutation.File.Label())
 		if mutation.Confirmation != nil {
 			fmt.Fprintf(report, "%s\n", managedConfirmationLine(mutation))
 		}
+		fmt.Fprintf(report, "%s\n", managedColoredDiff(strings.TrimSpace(mutation.File.Diff(differ)), palette))
 	case ManagedKilled:
 		if mutation.Confirmation != nil {
 			fmt.Fprintf(report, "Killed:    %s\n%s\n", mutation.File.Label(), managedConfirmationLine(mutation))
 		}
 	case ManagedTimedOut:
 		fmt.Fprintf(report, "Timed out: %s\n", mutation.File.Label())
-		if mutation.Primary.Count.Present {
-			fmt.Fprintf(report, "  observed running peak: %d\n", mutation.Primary.Count.Value)
+		if evidence := managedOutcomeEvidence(mutation); evidence.Count.Present {
+			fmt.Fprintf(report, "  observed running peak: %d\n", evidence.Count.Value)
 		}
 		if mutation.Confirmation != nil {
 			fmt.Fprintf(report, "%s\n", managedConfirmationLine(mutation))
@@ -330,14 +364,20 @@ func managedColoredDiff(diff string, palette reportcolor.Palette) string {
 	return strings.Join(lines, "\n")
 }
 
-func writeManagedAttemptDiagnostics(report *strings.Builder, evidence ManagedAttemptEvidence) {
+func writeManagedAttemptDiagnostics(
+	report *strings.Builder,
+	evidence ManagedAttemptEvidence,
+	linePrefix, diagnosticPrefix string,
+) {
 	fmt.Fprintf(
-		report, "  deadline: %s; launch: %s; command: %s; bound fired: %d\n",
-		evidence.Deadline, evidence.LaunchDuration, evidence.CommandDuration, evidence.BoundFired,
+		report, "%s%sdeadline: %s; launch: %s; command: %s; bound fired: %s\n",
+		linePrefix, diagnosticPrefix, evidence.Deadline, evidence.LaunchDuration, evidence.CommandDuration,
+		managedBoundFired(evidence.BoundFired),
 	)
 	fmt.Fprintf(
-		report, "  output prefix: cutoff=%d complete-through-cutoff=%t final=%t\n",
-		evidence.Output.Cutoff, evidence.Output.CompleteThroughCutoff, evidence.Output.Final,
+		report, "%s%soutput prefix: cutoff=%d complete-through-cutoff=%t final=%t\n",
+		linePrefix, diagnosticPrefix, evidence.Output.Cutoff,
+		evidence.Output.CompleteThroughCutoff, evidence.Output.Final,
 	)
 	for _, diagnostic := range []struct{ name, value string }{
 		{"wait", evidence.Failures.Wait},
@@ -348,9 +388,44 @@ func writeManagedAttemptDiagnostics(report *strings.Builder, evidence ManagedAtt
 		{"release", evidence.Failures.Release},
 	} {
 		if diagnostic.value != "" {
-			fmt.Fprintf(report, "  %s: %s\n", diagnostic.name, diagnostic.value)
+			fmt.Fprintf(report, "%s%s%s: %s\n", linePrefix, diagnosticPrefix, diagnostic.name, diagnostic.value)
 		}
 	}
+}
+
+func managedBoundFired(bound BoundFired) string {
+	switch bound {
+	case NoBoundFired:
+		return "none"
+	case CommandDeadlineFired:
+		return "command deadline"
+	default:
+		panic("managed fired bound is invalid")
+	}
+}
+
+func writeManagedResiduals(report *strings.Builder, residuals []ManagedResidualCustody) {
+	for _, residual := range residuals {
+		var stage string
+		switch residual.Stage {
+		case ManagedResidualProspective:
+			stage = "prospective"
+		case ManagedResidualOwned:
+			stage = "owned"
+		default:
+			panic("managed residual stage is invalid")
+		}
+		transferred := ""
+		if residual.Transferred {
+			transferred = " (custody transferred)"
+		}
+		fmt.Fprintf(report, "┃     %s attempt %s%s\n", stage, residual.Attempt, transferred)
+	}
+}
+
+func writeManagedFallbackNotice(report *strings.Builder) {
+	report.WriteString("Ooze fell back to single-admission automatic after validated capacity pressure.\n")
+	report.WriteString("Every later automatic campaign in this process admits one attempt at a time.\n")
 }
 
 func managedOutcomeEvidence(mutation ManagedMutationResult) ManagedAttemptEvidence {

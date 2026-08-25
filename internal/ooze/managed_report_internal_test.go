@@ -151,7 +151,7 @@ func TestManagedReportPrintsFullFailedBaselineOutputWithoutScore(t *testing.T) {
 		},
 	}
 	report := projectManagedReport(ManagedReleaseResult{
-		Outcome: ManagedAborted, Cause: "baseline did not pass", Total: 3,
+		Outcome: ManagedAborted, Cause: ManagedAbortBaselineFailed, Total: 3,
 		Baseline: &baseline,
 	}, managedReportConfiguration{minimumThreshold: 0.5})
 
@@ -193,7 +193,7 @@ func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *tes
 		},
 	}
 	report := projectManagedReport(ManagedReleaseResult{
-		Outcome: ManagedAborted, Cause: "primary infrastructure uncertainty", Total: 3,
+		Outcome: ManagedAborted, Cause: ManagedAbortPrimaryInfrastructure, Total: 3,
 		Mutations:       []ManagedMutationResult{survived, uncertain},
 		ArtifactResidue: []string{"/tmp/ooze-residue"},
 	}, managedReportConfiguration{minimumThreshold: 0.5})
@@ -218,6 +218,68 @@ func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *tes
 	}
 }
 
+func TestManagedReportRetainsConfirmationFailureWhenCampaignAborts(t *testing.T) {
+	confirmation := ManagedAttemptEvidence{
+		Kind: ManagedAttemptInfrastructure, Deadline: 20 * time.Second,
+		CommandDuration: 4 * time.Second, BoundFired: NoBoundFired,
+		Failures: FailureDiagnostics{Wait: "confirmation wait failed", Output: "confirmation output partial"},
+	}
+	report := projectManagedReport(ManagedReleaseResult{
+		Outcome: ManagedAborted, Cause: ManagedAbortConfirmationInfrastructure, Total: 1,
+		Mutations: []ManagedMutationResult{{
+			File: gomutatedfile.New("Loop Condition", "confirmed.go", []byte("package fixture\n"), []byte("package fixture\n")),
+			Primary: ManagedAttemptEvidence{
+				Kind: ManagedAttemptDeadline, Deadline: 20 * time.Second,
+				CommandDuration: 20 * time.Second, ConfirmationProvisional: true,
+			},
+			Confirmation: &confirmation,
+		}},
+	}, managedReportConfiguration{})
+
+	for _, fragment := range []string{
+		"Confirmation infrastructure uncertainty: confirmed.go → Loop Condition",
+		"primary timed out at 20s with peer overlap",
+		"confirmation wait: confirmation wait failed",
+		"confirmation output: confirmation output partial",
+		"bound fired: none",
+	} {
+		if !strings.Contains(report.text, fragment) {
+			t.Fatalf("report missing %q:\n%s", fragment, report.text)
+		}
+	}
+}
+
+func TestManagedReportUsesAuthoritativeConfirmationPeakAndReportsAbortFallback(t *testing.T) {
+	confirmation := ManagedAttemptEvidence{
+		Kind: ManagedAttemptDeadline, CommandDuration: 20 * time.Second,
+		Count: ObservedCount{Value: 11, Present: true},
+	}
+	confirmed := ManagedMutationResult{
+		File:    gomutatedfile.New("Loop Condition", "timeout.go", []byte("package fixture\n"), []byte("package fixture\n")),
+		Outcome: ManagedTimedOut,
+		Primary: ManagedAttemptEvidence{
+			Kind: ManagedAttemptDeadline, CommandDuration: 20 * time.Second,
+			Count: ObservedCount{Value: 7, Present: true}, ConfirmationProvisional: true,
+		},
+		Confirmation: &confirmation,
+	}
+	completed := projectManagedReport(ManagedReleaseResult{
+		Outcome: ManagedCompleted, Mutations: []ManagedMutationResult{confirmed},
+	}, managedReportConfiguration{})
+	if !strings.Contains(completed.text, "observed running peak: 11") ||
+		strings.Contains(completed.text, "observed running peak: 7") {
+		t.Fatalf("report did not use authoritative confirmation peak:\n%s", completed.text)
+	}
+
+	aborted := projectManagedReport(ManagedReleaseResult{
+		Outcome: ManagedAborted, Cause: ManagedAbortPrimaryInfrastructure, Total: 1,
+		SingleAdmissionFallback: true,
+	}, managedReportConfiguration{})
+	if !strings.Contains(aborted.text, "Ooze fell back to single-admission automatic") {
+		t.Fatalf("aborted report hid the process fallback:\n%s", aborted.text)
+	}
+}
+
 func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
 	report := projectManagedReport(ManagedReleaseResult{
 		Outcome: ManagedCleanupUnconfirmed,
@@ -238,8 +300,8 @@ func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
 	if report.disposition != managedReportPanic || report.panicValue != "ooze: cleanup unconfirmed" {
 		t.Fatalf("fatal disposition = %#v, want exactly one cleanup panic", report)
 	}
-	first := strings.Index(report.text, "prospective attempt campaign-1:2 (generation 7)")
-	second := strings.Index(report.text, "owned attempt campaign-1:3 (generation 9, custody transferred)")
+	first := strings.Index(report.text, "prospective attempt campaign-1:2")
+	second := strings.Index(report.text, "owned attempt campaign-1:3 (custody transferred)")
 	if first < 0 || second <= first {
 		t.Fatalf("residual custody is absent or reordered:\n%s", report.text)
 	}
@@ -257,8 +319,14 @@ func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
 		}
 	}
 	if strings.Contains(report.text, "Score:") || strings.Contains(report.text, "panic:") ||
-		strings.Contains(report.text, "private output") {
+		strings.Contains(report.text, "private output") || strings.Contains(report.text, "generation") {
 		t.Fatalf("fatal report embedded a score or second panic presentation:\n%s", report.text)
+	}
+	for _, line := range strings.Split(report.text, "\n") {
+		if !strings.HasPrefix(line, "┃") && !strings.HasPrefix(line, "┏") &&
+			!strings.HasPrefix(line, "┗") {
+			t.Fatalf("fatal report line escaped its box: %q\n%s", line, report.text)
+		}
 	}
 }
 
@@ -281,7 +349,7 @@ func TestManagedReportLetsInvariantViolationDominateBeforeOnePanic(t *testing.T)
 		t.Fatalf("fatal disposition = %#v, want exactly one invariant panic", report)
 	}
 	for _, fragment := range []string{
-		"Internal invariant violated. No campaign in this process is scored.",
+		"Internal invariant violated. This campaign has no score.",
 		"Operation: campaign advance",
 		"Reason: terminal event is stale",
 		"Phase: Confirming",
@@ -291,6 +359,7 @@ func TestManagedReportLetsInvariantViolationDominateBeforeOnePanic(t *testing.T)
 		"Trace tail:",
 		"event 4",
 		"1 unresolved execution-domain obligation joined this fatal epoch.",
+		"owned attempt campaign-1:3",
 	} {
 		if !strings.Contains(report.text, fragment) {
 			t.Fatalf("report missing %q:\n%s", fragment, report.text)

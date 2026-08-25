@@ -3,6 +3,7 @@ package ooze
 import (
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -215,7 +216,7 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	completed, ok := result.outcome.(completedOutcome)
 	if !ok || len(completed.mutants) != 2 || completed.mutants[0].kind != mutantKilled ||
 		completed.mutants[1].kind != mutantKilled || !completed.singleAdmissionFallback ||
-		completed.mutants[0].confirmation.kind != ManagedAttemptSettled {
+		completed.mutants[0].confirmation.kind != campaignEvidenceSettled {
 		t.Fatalf("outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	}
 	if attempts.launches != 4 || shell.snapshot().mode != singleAdmission {
@@ -351,7 +352,9 @@ func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if outcome, ok := result.outcome.(abortedOutcome); !ok || outcome.cause != "snapshot exploded" {
+	if outcome, ok := result.outcome.(abortedOutcome); !ok ||
+		outcome.cause != "repository snapshot could not be materialized" ||
+		strings.Contains(outcome.cause, "/private/repository") {
 		t.Fatalf("boundary outcome = %#v, want typed snapshot abort", result.outcome)
 	}
 }
@@ -375,6 +378,29 @@ func TestManagedCampaignCleansWorkspaceAcquiredBeforeMutationPanic(t *testing.T)
 	if _, ok := result.outcome.(abortedOutcome); !ok || repository.workspace == nil || !repository.workspace.removed {
 		t.Fatalf("outcome/workspace = %#v/%#v, want aborted with acquired workspace removed",
 			result.outcome, repository.workspace)
+	}
+}
+
+func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeCleaned(t *testing.T) {
+	repository := &managedPartialWorkspaceRepository{failWorkspaceCleanup: true}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(1), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{
+			terminals: []Terminal{Settled{
+				Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second},
+			}},
+		},
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	outcome, ok := result.outcome.(abortedOutcome)
+	if !ok || strings.Contains(outcome.cause, "/private/workspace") ||
+		len(outcome.artifactResidue) != 1 || !strings.HasPrefix(outcome.artifactResidue[0], "temporary-") {
+		t.Fatalf("outcome = %#v, want stable cause plus structured residue", result.outcome)
 	}
 }
 
@@ -427,12 +453,14 @@ type managedPanickingRepository struct{}
 
 func (managedPanickingRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile { return nil }
 func (managedPanickingRepository) MaterializeTemporaryRepository(string) TemporaryRepository {
-	panic("snapshot exploded")
+	panic("snapshot exploded at /private/repository")
 }
 
 type managedPartialWorkspaceRepository struct {
-	snapshot  *managedPartialSnapshot
-	workspace *managedPartialWorkspace
+	snapshot             *managedPartialSnapshot
+	workspace            *managedPartialWorkspace
+	failWorkspaceCleanup bool
+	workspaceCount       int
 }
 
 func (r *managedPartialWorkspaceRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
@@ -455,15 +483,19 @@ func (r *managedPartialSnapshot) ListGoSourceFiles() []*gosourcefile.GoSourceFil
 	return r.owner.ListGoSourceFiles()
 }
 func (r *managedPartialSnapshot) MaterializeTemporaryRepository(path string) TemporaryRepository {
-	r.owner.workspace = &managedPartialWorkspace{root: path}
+	r.owner.workspaceCount++
+	r.owner.workspace = &managedPartialWorkspace{
+		root: path, failRemove: r.owner.failWorkspaceCleanup && r.owner.workspaceCount > 1,
+	}
 	return r.owner.workspace
 }
 func (*managedPartialSnapshot) Overwrite(string, []byte) {}
 func (*managedPartialSnapshot) Remove()                  {}
 
 type managedPartialWorkspace struct {
-	root    string
-	removed bool
+	root       string
+	removed    bool
+	failRemove bool
 }
 
 func (r *managedPartialWorkspace) Root() string                                  { return r.root }
@@ -472,7 +504,12 @@ func (*managedPartialWorkspace) MaterializeTemporaryRepository(string) Temporary
 	panic("nested workspace is invalid")
 }
 func (*managedPartialWorkspace) Overwrite(string, []byte) { panic("mutation write exploded") }
-func (r *managedPartialWorkspace) Remove()                { r.removed = true }
+func (r *managedPartialWorkspace) Remove() {
+	if r.failRemove {
+		panic("cleanup exploded at /private/workspace")
+	}
+	r.removed = true
+}
 
 func (r *managedMemoryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return append([]*gosourcefile.GoSourceFile(nil), r.files...)
