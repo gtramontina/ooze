@@ -2,7 +2,6 @@ package ooze_test
 
 import (
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	engine "github.com/gtramontina/ooze/internal/ooze"
+	"github.com/stretchr/testify/assert"
 )
 
 type selfMutationShard struct {
@@ -61,15 +61,14 @@ func TestSelfMutationShardsPartitionSelectedProduction(t *testing.T) {
 	seen := make(map[string]string)
 	for _, shard := range selfMutationProductionShards {
 		for _, path := range shard.paths {
-			if previous := seen[path]; previous != "" {
-				t.Errorf("production source %q appears in shards %q and %q", path, previous, shard.name)
+			{
+				previous := seen[path]
+				assert.EqualValues(t, "", previous, "production source %q appears in shards %q and %q", path, previous, shard.name)
 			}
 			seen[path] = shard.name
 		}
 	}
-	if !reflect.DeepEqual(seen, want) {
-		t.Fatalf("mutation shard partition=%#v, want %#v", seen, want)
-	}
+	assert.Equal(t, want, seen, "mutation shard partition=%#v, want %#v", seen, want)
 }
 
 func TestSelfMutationShardsUseOwningPackageTests(t *testing.T) {
@@ -83,13 +82,9 @@ func TestSelfMutationShardsUseOwningPackageTests(t *testing.T) {
 		"darwin":             {"./internal/ooze"},
 	}
 	for _, shard := range selfMutationProductionShards {
-		if !reflect.DeepEqual(shard.packages, want[shard.name]) {
-			t.Errorf("mutation shard %q packages=%#v, want %#v", shard.name, shard.packages, want[shard.name])
-		}
+		assert.Equal(t, want[shard.name], shard.packages, "mutation shard %q packages=%#v, want %#v", shard.name, shard.packages, want[shard.name])
 		for _, packagePattern := range shard.packages {
-			if packagePattern == "./..." {
-				t.Errorf("mutation shard %q repeats the full module test suite", shard.name)
-			}
+			assert.NotEqual(t, "./...", packagePattern, "mutation shard %q repeats the full module test suite", shard.name)
 		}
 	}
 }
@@ -220,8 +215,9 @@ func assertSelfMutationCatalogue(
 	seen := make(map[string]struct{})
 	for _, source := range sources {
 		path := filepath.ToSlash(source.String())
-		if _, selected := allowed[path]; !selected {
-			t.Errorf("self-mutation catalogue includes unchanged production source %q", path)
+		{
+			_, selected := allowed[path]
+			assert.True(t, selected, "self-mutation catalogue includes unchanged production source %q", path)
 		}
 		seen[path] = struct{}{}
 	}
@@ -231,8 +227,9 @@ func assertSelfMutationCatalogue(
 		active = active || runtime.GOOS == "windows" && path == "internal/fsrepository/remove_windows.go"
 		active = active || runtime.GOOS == "darwin" && path == "internal/ooze/supervisor_native_darwin.go"
 		active = active && (runtime.GOOS != "windows" || path != "internal/fsrepository/remove_unix.go")
-		if _, selected := seen[path]; active && !selected {
-			t.Errorf("self-mutation catalogue omits active changed production source %q", path)
+		{
+			_, selected := seen[path]
+			assert.False(t, active && !selected, "self-mutation catalogue omits active changed production source %q", path)
 		}
 	}
 }

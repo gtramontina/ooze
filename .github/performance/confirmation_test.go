@@ -16,6 +16,8 @@ import (
 
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const confirmationHelper = "OOZE_CONFIRMATION_HELPER"
@@ -45,30 +47,25 @@ func TestPerformanceConfirmationEvidence(t *testing.T) {
 		runConfirmationCommandHelper(t)
 		return
 	}
-	if runtime.GOMAXPROCS(0) < 2 {
-		t.Fatal("confirmation evidence requires detected admission capacity of at least two")
-	}
+	assert.False(t, runtime.GOMAXPROCS(0) < 2, "confirmation evidence requires detected admission capacity of at least two")
 	repository := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(repository, "source.go"),
-		[]byte("package fixture\nvar first = 0\nvar second = 0\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(
+			filepath.Join(repository, "source.go"),
+			[]byte("package fixture\nvar first = 0\nvar second = 0\n"),
+			0o600,
+		)
+		require.NoError(t, err)
 	}
 	events := t.TempDir()
 	t.Setenv(confirmationHelper, "1")
 	t.Setenv("OOZE_CONFIRMATION_EVENTS", events)
 	command, err := filepath.Abs(os.Args[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	command += " -test.run=^TestPerformanceConfirmationEvidence$"
 
 	captured, err := os.CreateTemp(t.TempDir(), "report-*.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	originalStdout := os.Stdout
 	os.Stdout = captured
 	t.Cleanup(func() { os.Stdout = originalStdout })
@@ -82,33 +79,26 @@ func TestPerformanceConfirmationEvidence(t *testing.T) {
 	)
 	wall := time.Since(started)
 	os.Stdout = originalStdout
-	if err := captured.Close(); err != nil {
-		t.Fatal(err)
+	{
+		err := captured.Close()
+		require.NoError(t, err)
 	}
 	report, err := os.ReadFile(captured.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	confirmationDurations := regexp.MustCompile(`exclusive confirmation [^\n]+ in ([0-9.]+(?:ns|us|µs|ms|s))`).FindAllStringSubmatch(string(report), -1)
 	var confirmationTime time.Duration
 	for _, match := range confirmationDurations {
 		duration, parseErr := time.ParseDuration(match[1])
-		if parseErr != nil {
-			t.Fatal(parseErr)
-		}
+		require.NoError(t, parseErr)
 		confirmationTime += duration
 	}
 	paths, err := filepath.Glob(filepath.Join(events, "*.start"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	counts := make(map[string]int)
 	for _, path := range paths {
 		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
+		require.NoError(t, readErr)
 		counts[string(data)]++
 	}
 	confirmations := 0
@@ -117,12 +107,9 @@ func TestPerformanceConfirmationEvidence(t *testing.T) {
 			confirmations += count - 1
 		}
 	}
-	if len(paths) != 5 || confirmations != 2 || len(confirmationDurations) != 2 {
-		t.Fatalf(
-			"confirmation commands/count/report = %d/%d/%d, want 5/2/2\n%s",
-			len(paths), confirmations, len(confirmationDurations), report,
-		)
-	}
+	assert.EqualValues(t, 5, len(paths), "confirmation commands/count/report = %d/%d/%d, want 5/2/2\n%s", len(paths), confirmations, len(confirmationDurations), report)
+	assert.EqualValues(t, 2, confirmations, "confirmation commands/count/report = %d/%d/%d, want 5/2/2\n%s", len(paths), confirmations, len(confirmationDurations), report)
+	assert.EqualValues(t, 2, len(confirmationDurations), "confirmation commands/count/report = %d/%d/%d, want 5/2/2\n%s", len(paths), confirmations, len(confirmationDurations), report)
 	sample := confirmationSample{
 		Label: "confirmation", Revision: os.Getenv("OOZE_PERFORMANCE_REVISION"),
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, GoVersion: runtime.Version(),
@@ -136,18 +123,14 @@ func TestPerformanceConfirmationEvidence(t *testing.T) {
 		WallMilliseconds:       wall.Milliseconds(),
 	}
 	encoded, err := json.Marshal(sample)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fmt.Printf("OOZE_CONFIRMATION %s\n", encoded)
 }
 
 func runConfirmationCommandHelper(t *testing.T) {
 	t.Helper()
 	data, err := os.ReadFile("source.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	role := "baseline"
 	if strings.Contains(string(data), "= 1") {
 		role = "mutant"
@@ -155,8 +138,9 @@ func runConfirmationCommandHelper(t *testing.T) {
 	digest := sha256.Sum256(data)
 	identity := role + ":" + hex.EncodeToString(digest[:8])
 	name := strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".start"
-	if err := os.WriteFile(filepath.Join(os.Getenv("OOZE_CONFIRMATION_EVENTS"), name), []byte(identity), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(filepath.Join(os.Getenv("OOZE_CONFIRMATION_EVENTS"), name), []byte(identity), 0o600)
+		require.NoError(t, err)
 	}
 	if role == "mutant" {
 		time.Sleep(10 * time.Second)

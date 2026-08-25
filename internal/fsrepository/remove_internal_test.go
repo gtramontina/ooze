@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRemoveRepositoryUsingRetriesOnlyTransientFailures(t *testing.T) {
@@ -17,9 +20,9 @@ func TestRemoveRepositoryUsingRetriesOnlyTransientFailures(t *testing.T) {
 		}
 		return nil
 	}, func(err error) bool { return errors.Is(err, transient) }, func(time.Duration) { waits++ })
-	if err != nil || calls != 3 || waits != 2 {
-		t.Fatalf("retry result err=%v calls=%d waits=%d, want nil/3/2", err, calls, waits)
-	}
+	require.NoError(t, err, "retry result err=%v calls=%d waits=%d, want nil/3/2", err, calls, waits)
+	assert.EqualValues(t, 3, calls, "retry result err=%v calls=%d waits=%d, want nil/3/2", err, calls, waits)
+	assert.EqualValues(t, 2, waits, "retry result err=%v calls=%d waits=%d, want nil/3/2", err, calls, waits)
 
 	permanent := errors.New("permanent")
 	calls = 0
@@ -28,9 +31,9 @@ func TestRemoveRepositoryUsingRetriesOnlyTransientFailures(t *testing.T) {
 		calls++
 		return permanent
 	}, func(error) bool { return false }, func(time.Duration) { waits++ })
-	if !errors.Is(err, permanent) || calls != 1 || waits != 0 {
-		t.Fatalf("permanent result err=%v calls=%d waits=%d, want permanent/1/0", err, calls, waits)
-	}
+	require.ErrorIs(t, err, permanent, "permanent result err=%v calls=%d waits=%d, want permanent/1/0", err, calls, waits)
+	assert.EqualValues(t, 1, calls, "permanent result err=%v calls=%d waits=%d, want permanent/1/0", err, calls, waits)
+	assert.EqualValues(t, 0, waits, "permanent result err=%v calls=%d waits=%d, want permanent/1/0", err, calls, waits)
 
 	t.Run("bounded exhaustion", func(t *testing.T) {
 		calls := 0
@@ -41,14 +44,11 @@ func TestRemoveRepositoryUsingRetriesOnlyTransientFailures(t *testing.T) {
 		}, func(error) bool { return true }, func(delay time.Duration) {
 			delays = append(delays, delay)
 		})
-		if !errors.Is(err, transient) || calls != temporaryRepositoryRemoveAttempts ||
-			len(delays) != temporaryRepositoryRemoveAttempts-1 {
-			t.Fatalf("exhaustion err=%v calls=%d waits=%d", err, calls, len(delays))
-		}
+		require.ErrorIs(t, err, transient, "exhaustion err=%v calls=%d waits=%d", err, calls, len(delays))
+		assert.Equal(t, temporaryRepositoryRemoveAttempts, calls, "exhaustion err=%v calls=%d waits=%d", err, calls, len(delays))
+		assert.Equal(t, temporaryRepositoryRemoveAttempts-1, len(delays), "exhaustion err=%v calls=%d waits=%d", err, calls, len(delays))
 		for index, delay := range delays {
-			if delay != temporaryRepositoryRemoveDelay {
-				t.Fatalf("wait %d = %s, want %s", index, delay, temporaryRepositoryRemoveDelay)
-			}
+			assert.Equal(t, temporaryRepositoryRemoveDelay, delay, "wait %d = %s, want %s", index, delay, temporaryRepositoryRemoveDelay)
 		}
 	})
 }

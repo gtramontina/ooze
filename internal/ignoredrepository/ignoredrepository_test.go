@@ -123,7 +123,7 @@ func TestIgnoredRepository_MaterializeTemporaryRepository(t *testing.T) {
 
 		actualTempRepository := repository.MaterializeTemporaryRepository("temporary-path")
 
-		assert.Equal(t, "temporary-path", expectedTempRepository.Root())
+		assert.EqualValues(t, "temporary-path", expectedTempRepository.Root())
 		assert.Equal(t, []*gosourcefile.GoSourceFile{
 			gosourcefile.New("kept.go", []byte("kept")),
 		}, actualTempRepository.ListGoSourceFiles())

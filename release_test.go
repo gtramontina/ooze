@@ -13,6 +13,8 @@ import (
 
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const releaseDispositionHelper = "OOZE_RELEASE_DISPOSITION_HELPER"
@@ -27,12 +29,13 @@ const (
 
 func TestReleaseRunsManagedBaselineAndMutation(t *testing.T) {
 	repository := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(repository, "source.go"),
-		[]byte("package fixture\nvar number = 0\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(
+			filepath.Join(repository, "source.go"),
+			[]byte("package fixture\nvar number = 0\n"),
+			0o600,
+		)
+		require.NoError(t, err)
 	}
 	t.Setenv(managedReleaseHelper, "1")
 
@@ -63,12 +66,13 @@ func TestManagedReleaseCommandHelper(t *testing.T) {
 
 func TestReleaseSerialUsesDetectedCapacityWithoutMutantOverlap(t *testing.T) {
 	repository := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(repository, "source.go"),
-		[]byte("package fixture\nvar first = 0\nvar second = 0\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(
+			filepath.Join(repository, "source.go"),
+			[]byte("package fixture\nvar first = 0\nvar second = 0\n"),
+			0o600,
+		)
+		require.NoError(t, err)
 	}
 	coordination := t.TempDir()
 	t.Setenv(managedReleaseHelper, "serial")
@@ -82,8 +86,9 @@ func TestReleaseSerialUsesDetectedCapacityWithoutMutantOverlap(t *testing.T) {
 		ooze.WithViruses(integerincrement.New()),
 		ooze.Serial(),
 	)
-	if _, err := os.Stat(os.Getenv(managedSerialOverlap)); !os.IsNotExist(err) {
-		t.Fatalf("serial mutant commands overlapped: %v", err)
+	{
+		_, err := os.Stat(os.Getenv(managedSerialOverlap))
+		assert.True(t, os.IsNotExist(err), "serial mutant commands overlapped: %v", err)
 	}
 }
 
@@ -145,22 +150,17 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestReleaseDispositionHelper$")
 			command.Env = append(os.Environ(), releaseDispositionHelper+"="+test.role)
 			output, err := command.CombinedOutput()
-			if (err != nil) != test.wantFailure {
-				t.Fatalf("subprocess error = %v, want failure %t:\n%s", err, test.wantFailure, output)
-			}
+			require.Equal(t, test.wantFailure, (err != nil), "subprocess error = %v, want failure %t:\n%s", err, test.wantFailure, output)
 			text := string(output)
 			last := -1
 			for _, fragment := range test.want {
 				at := strings.Index(text, fragment)
-				if at < 0 || at < last {
-					t.Fatalf("output missing or reordered %q:\n%s", fragment, text)
-				}
+				assert.False(t, at < 0, "output missing or reordered %q:\n%s", fragment, text)
+				assert.False(t, at < last, "output missing or reordered %q:\n%s", fragment, text)
 				last = at
 			}
 			for _, fragment := range test.absent {
-				if strings.Contains(text, fragment) {
-					t.Fatalf("output unexpectedly contains %q:\n%s", fragment, text)
-				}
+				assert.False(t, strings.Contains(text, fragment), "output unexpectedly contains %q:\n%s", fragment, text)
 			}
 		})
 	}
@@ -173,12 +173,13 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	}
 	repository := t.TempDir()
 	if role != "no-mutants" {
-		if err := os.WriteFile(
-			filepath.Join(repository, "source.go"),
-			[]byte("package fixture\nvar number = 0\n"),
-			0o600,
-		); err != nil {
-			t.Fatal(err)
+		{
+			err := os.WriteFile(
+				filepath.Join(repository, "source.go"),
+				[]byte("package fixture\nvar number = 0\n"),
+				0o600,
+			)
+			assert.NoError(t, err)
 		}
 	}
 	threshold := float32(0)

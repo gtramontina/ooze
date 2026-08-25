@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const performanceHelper = "OOZE_PERFORMANCE_HELPER"
@@ -80,17 +82,16 @@ var n13 = 0
 var n14 = 0
 var n15 = 0
 `
-	if err := os.WriteFile(filepath.Join(repository, "source.go"), []byte(source), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(filepath.Join(repository, "source.go"), []byte(source), 0o600)
+		require.NoError(t, err)
 	}
 	events := t.TempDir()
 	t.Setenv(performanceHelper, "1")
 	t.Setenv("OOZE_PERFORMANCE_EVENTS", events)
 	t.Setenv("OOZE_PERFORMANCE_EXPECTED_PEAK", strconv.Itoa(performanceExpectedPeak()))
 	command, err := filepath.Abs(os.Args[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	command += " -test.run=^TestPerformanceEvidence$"
 	if !performanceRequiresHealthySettlements() {
 		started := time.Now()
@@ -102,9 +103,7 @@ var n15 = 0
 		return
 	}
 	captured, err := os.CreateTemp(t.TempDir(), "performance-report-*.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	originalStdout := os.Stdout
 	os.Stdout = captured
 	t.Cleanup(func() { os.Stdout = originalStdout })
@@ -112,26 +111,21 @@ var n15 = 0
 	ooze.Release(t, performanceOptions(repository, command)...)
 	wall := time.Since(started)
 	os.Stdout = originalStdout
-	if err := captured.Close(); err != nil {
-		t.Fatal(err)
+	{
+		err := captured.Close()
+		require.NoError(t, err)
 	}
 	report, err := os.ReadFile(captured.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	survived := strings.Count(string(report), "Mutant survived:")
-	if survived != 16 {
-		t.Fatalf("nominally healthy mutant outcomes: survived=%d, want 16\n%s", survived, report)
-	}
+	assert.EqualValues(t, 16, survived, "nominally healthy mutant outcomes: survived=%d, want 16\n%s", survived, report)
 	writePerformanceSample(t, events, wall, survived)
 }
 
 func runPerformanceCommandHelper(t *testing.T) {
 	t.Helper()
 	data, err := os.ReadFile("source.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	role := "baseline"
 	if strings.Contains(string(data), "= 1") {
 		role = "mutant"
@@ -144,14 +138,14 @@ func runPerformanceCommandHelper(t *testing.T) {
 		os.Getenv("OOZE_PERFORMANCE_EVENTS"),
 		fmt.Sprintf("started-%d-%d", os.Getpid(), started.UnixNano()),
 	)
-	if err := os.WriteFile(marker, nil, 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(marker, nil, 0o600)
+		require.NoError(t, err)
 	}
 	defer os.Remove(marker) //nolint:errcheck // The temporary fixture directory is removed by testing.
 	expectedPeak, err := strconv.Atoi(os.Getenv("OOZE_PERFORMANCE_EXPECTED_PEAK"))
-	if err != nil || expectedPeak < 1 {
-		t.Fatalf("invalid expected peak %q", os.Getenv("OOZE_PERFORMANCE_EXPECTED_PEAK"))
-	}
+	require.NoError(t, err, "invalid expected peak %q", os.Getenv("OOZE_PERFORMANCE_EXPECTED_PEAK"))
+	assert.False(t, expectedPeak < 1, "invalid expected peak %q", os.Getenv("OOZE_PERFORMANCE_EXPECTED_PEAK"))
 	if role == "baseline" {
 		expectedPeak = 1
 	}
@@ -163,18 +157,15 @@ func runPerformanceCommandHelper(t *testing.T) {
 				break
 			}
 			startedCommands, globErr := filepath.Glob(filepath.Join(os.Getenv("OOZE_PERFORMANCE_EVENTS"), "started-*"))
-			if globErr != nil {
-				t.Fatal(globErr)
-			}
+			require.NoError(t, globErr)
 			if len(startedCommands) >= expectedPeak {
-				if writeErr := os.WriteFile(capacityReached, nil, 0o600); writeErr != nil {
-					t.Fatal(writeErr)
+				{
+					writeErr := os.WriteFile(capacityReached, nil, 0o600)
+					require.NoError(t, writeErr)
 				}
 				break
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("only %d command processes started, want %d without a ramp", len(startedCommands), expectedPeak)
-			}
+			assert.False(t, time.Now().After(deadline), "only %d command processes started, want %d without a ramp", len(startedCommands), expectedPeak)
 			time.Sleep(time.Millisecond)
 		}
 	}
@@ -190,31 +181,27 @@ func runPerformanceCommandHelper(t *testing.T) {
 		GOMAXPROCS: runtime.GOMAXPROCS(0), GoMemorySys: memory,
 	}
 	encoded, err := json.Marshal(event)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	name := fmt.Sprintf("%d-%d.json", event.PID, event.StartedNS)
-	if err := os.WriteFile(filepath.Join(os.Getenv("OOZE_PERFORMANCE_EVENTS"), name), encoded, 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(filepath.Join(os.Getenv("OOZE_PERFORMANCE_EVENTS"), name), encoded, 0o600)
+		assert.NoError(t, err)
 	}
 }
 
 func writePerformanceSample(t *testing.T, directory string, wall time.Duration, survived int) {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(directory, "*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	events := make([]performanceEvent, 0, len(paths))
 	baselines := 0
 	for _, path := range paths {
 		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
+		require.NoError(t, readErr)
 		var event performanceEvent
-		if unmarshalErr := json.Unmarshal(data, &event); unmarshalErr != nil {
-			t.Fatalf("decode %s: %v", path, unmarshalErr)
+		{
+			unmarshalErr := json.Unmarshal(data, &event)
+			require.NoError(t, unmarshalErr, "decode %s: %v", path, unmarshalErr)
 		}
 		if event.Role == "baseline" {
 			baselines++
@@ -222,16 +209,10 @@ func writePerformanceSample(t *testing.T, directory string, wall time.Duration, 
 		events = append(events, event)
 	}
 	expectedBaselines := performanceExpectedBaselines()
-	if baselines != expectedBaselines || len(events) != 16+expectedBaselines {
-		t.Fatalf(
-			"performance commands = %d with %d baselines, want %d/%d",
-			len(events), baselines, 16+expectedBaselines, expectedBaselines,
-		)
-	}
+	assert.Equal(t, expectedBaselines, baselines, "performance commands = %d with %d baselines, want %d/%d", len(events), baselines, 16+expectedBaselines, expectedBaselines)
+	assert.Equal(t, 16+expectedBaselines, len(events), "performance commands = %d with %d baselines, want %d/%d", len(events), baselines, 16+expectedBaselines, expectedBaselines)
 	peakProcesses, peakMemory := performancePeaks(events)
-	if peakProcesses != performanceExpectedPeak() {
-		t.Fatalf("peak command processes = %d, want %d", peakProcesses, performanceExpectedPeak())
-	}
+	assert.Equal(t, performanceExpectedPeak(), peakProcesses, "peak command processes = %d, want %d", peakProcesses, performanceExpectedPeak())
 	procs := make(map[int]struct{})
 	for _, event := range events {
 		procs[event.GOMAXPROCS] = struct{}{}
@@ -241,9 +222,8 @@ func writePerformanceSample(t *testing.T, directory string, wall time.Duration, 
 		observed = append(observed, value)
 	}
 	sort.Ints(observed)
-	if len(observed) != 1 || observed[0] != performanceExpectedGOMAXPROCS() {
-		t.Fatalf("observed GOMAXPROCS = %v, want [%d]", observed, performanceExpectedGOMAXPROCS())
-	}
+	require.Len(t, observed, 1, "observed GOMAXPROCS = %v, want [%d]", observed, performanceExpectedGOMAXPROCS())
+	assert.Equal(t, performanceExpectedGOMAXPROCS(), observed[0], "observed GOMAXPROCS = %v, want [%d]", observed, performanceExpectedGOMAXPROCS())
 	mutants := 16
 	sample := performanceSample{
 		Label: os.Getenv("OOZE_PERFORMANCE_LABEL"), Revision: os.Getenv("OOZE_PERFORMANCE_REVISION"),
@@ -261,17 +241,17 @@ func writePerformanceSample(t *testing.T, directory string, wall time.Duration, 
 		SurvivedCount:          survived,
 	}
 	encoded, err := json.Marshal(sample)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fmt.Printf("OOZE_PERF %s\n", encoded)
 }
 
 func performanceSampleNumber(t *testing.T) int {
 	t.Helper()
 	var sample int
-	if _, err := fmt.Sscanf(os.Getenv("OOZE_PERFORMANCE_SAMPLE"), "%d", &sample); err != nil || sample < 1 {
-		t.Fatalf("invalid OOZE_PERFORMANCE_SAMPLE %q", os.Getenv("OOZE_PERFORMANCE_SAMPLE"))
+	{
+		_, err := fmt.Sscanf(os.Getenv("OOZE_PERFORMANCE_SAMPLE"), "%d", &sample)
+		require.NoError(t, err, "invalid OOZE_PERFORMANCE_SAMPLE %q", os.Getenv("OOZE_PERFORMANCE_SAMPLE"))
+		assert.False(t, sample < 1, "invalid OOZE_PERFORMANCE_SAMPLE %q", os.Getenv("OOZE_PERFORMANCE_SAMPLE"))
 	}
 	return sample
 }

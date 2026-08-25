@@ -5,6 +5,7 @@ package fsrepository
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/sys/windows"
 )
 
@@ -20,8 +21,9 @@ func TestTransientRepositoryRemoveErrorClassifiesOnlyBoundedWindowsFailures(t *t
 		{name: "access denied", err: windows.ERROR_ACCESS_DENIED, want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := transientRepositoryRemoveError(test.err); got != test.want {
-				t.Fatalf("transientRepositoryRemoveError(%v) = %t, want %t", test.err, got, test.want)
+			{
+				got := transientRepositoryRemoveError(test.err)
+				assert.Equal(t, test.want, got, "transientRepositoryRemoveError(%v) = %t, want %t", test.err, got, test.want)
 			}
 		})
 	}

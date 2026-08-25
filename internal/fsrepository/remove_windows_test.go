@@ -3,33 +3,31 @@
 package fsrepository_test
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gtramontina/ooze/internal/fsrepository"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
 
 func TestFSTemporaryRepositoryRetriesWindowsDeleteSharing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "held.txt")
-	if err := os.WriteFile(path, []byte("held"), 0o600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(path, []byte("held"), 0o600)
+		require.NoError(t, err)
 	}
 	pointer, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	handle, err := windows.CreateFile(
 		pointer, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	closed := make(chan struct{})
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -37,12 +35,14 @@ func TestFSTemporaryRepositoryRetriesWindowsDeleteSharing(t *testing.T) {
 		close(closed)
 	}()
 
-	if err := os.Remove(path); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
-		t.Fatalf("held-file removal error = %v, want sharing violation", err)
+	{
+		err := os.Remove(path)
+		require.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION, "held-file removal error = %v, want sharing violation", err)
 	}
 	fsrepository.NewTemporary(dir).Remove()
 	<-closed
-	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("repository remains after transient sharing violation: %v", err)
+	{
+		_, err := os.Stat(dir)
+		assert.ErrorIs(t, err, os.ErrNotExist, "repository remains after transient sharing violation: %v", err)
 	}
 }

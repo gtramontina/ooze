@@ -9,14 +9,14 @@ import (
 	"testing"
 
 	"github.com/gtramontina/ooze"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func workflowJob(t *testing.T, path, name string) string {
 	t.Helper()
 	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
 	header := "  " + name + ":"
 	start := -1
@@ -32,7 +32,7 @@ func workflowJob(t *testing.T, path, name string) string {
 	if start >= 0 {
 		return strings.Join(lines[start:], "\n")
 	}
-	t.Fatalf("workflow %s has no %q job", path, name)
+	require.FailNow(t, "workflow %s has no %q job", path, name)
 	return ""
 }
 
@@ -47,15 +47,9 @@ func TestSelfMutationSubprocessDoesNotExcludeRootEntryPoints(t *testing.T) {
 			skip = regexp.MustCompile(expression)
 		}
 	}
-	if skip == nil {
-		t.Fatal("self-mutation subprocess has no test-selection exclusion")
-	}
-	if skip.MatchString("TestMutationCampaignRunner") {
-		t.Error("self-mutation subprocess excludes a root entry point from an unselected package")
-	}
-	if skip.MatchString("TestOptions") {
-		t.Error("self-mutation subprocess excludes an ordinary production test")
-	}
+	require.NotNil(t, skip, "self-mutation subprocess has no test-selection exclusion")
+	assert.False(t, skip.MatchString("TestMutationCampaignRunner"), "self-mutation subprocess excludes a root entry point from an unselected package")
+	assert.False(t, skip.MatchString("TestOptions"), "self-mutation subprocess excludes an ordinary production test")
 }
 
 func TestSelfMutationSubprocessSkipsFilesystemReentrantNativeFixture(t *testing.T) {
@@ -69,21 +63,15 @@ func TestSelfMutationSubprocessSkipsFilesystemReentrantNativeFixture(t *testing.
 			skip = regexp.MustCompile(expression)
 		}
 	}
-	if skip == nil {
-		t.Fatal("self-mutation subprocess has no test-selection exclusion")
-	}
+	require.NotNil(t, skip, "self-mutation subprocess has no test-selection exclusion")
 	fixtures := []string{
 		"TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember",
 		"TestNativeSupervisorDrainsWideFanout",
 	}
 	for _, fixture := range fixtures {
-		if !skip.MatchString(fixture) {
-			t.Errorf("self-mutation subprocess selects filesystem-reentrant native fixture %q", fixture)
-		}
+		assert.True(t, skip.MatchString(fixture), "self-mutation subprocess selects filesystem-reentrant native fixture %q", fixture)
 	}
-	if skip.MatchString("TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary") {
-		t.Error("self-mutation subprocess excludes an in-memory managed campaign fixture")
-	}
+	assert.False(t, skip.MatchString("TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary"), "self-mutation subprocess excludes an in-memory managed campaign fixture")
 }
 
 func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
@@ -97,9 +85,7 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 		case "--format-hide-empty-pkg":
 			argument = "--format=testname"
 		}
-		if strings.Contains(argument, `"`) {
-			t.Fatalf("self-mutation subprocess argument contains literal quote characters: %q", argument)
-		}
+		assert.False(t, strings.Contains(argument, `"`), "self-mutation subprocess argument contains literal quote characters: %q", argument)
 		if strings.HasPrefix(argument, "./") {
 			if argument == "./internal/ooze" {
 				arguments = append(arguments,
@@ -113,26 +99,20 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 	}
 	command := exec.Command(configured.TestCommand[0], arguments...)
 	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run self-mutation subprocess selection probe: %v\n%s", err, output)
-	}
+	require.NoError(t, err, "run self-mutation subprocess selection probe: %v\n%s", err, output)
 	fixtures := []string{
 		"TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement",
 		"TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged",
 	}
 	for _, fixture := range fixtures {
-		if !strings.Contains(string(output), fixture) {
-			t.Fatalf("self-mutation subprocess skipped ordinary owning-package fixture %q:\n%s", fixture, output)
-		}
+		assert.True(t, strings.Contains(string(output), fixture), "self-mutation subprocess skipped ordinary owning-package fixture %q:\n%s", fixture, output)
 	}
 }
 
 func requireContract(t *testing.T, subject, contract string, required ...string) {
 	t.Helper()
 	for _, value := range required {
-		if !strings.Contains(subject, value) {
-			t.Errorf("%s is missing %q", contract, value)
-		}
+		assert.True(t, strings.Contains(subject, value), "%s is missing %q", contract, value)
 	}
 }
 
@@ -164,20 +144,16 @@ func workflowMatrixRows(t *testing.T, job string) map[string]map[string]string {
 func requireMatrixRow(t *testing.T, job, name string, want map[string]string) {
 	t.Helper()
 	row := workflowMatrixRows(t, job)[name]
-	if row == nil {
-		t.Fatalf("matrix has no %q row", name)
-	}
+	require.NotNil(t, row, "matrix has no %q row", name)
 	for key, value := range want {
-		if row[key] != value {
-			t.Errorf("matrix %q %s = %q, want %q", name, key, row[key], value)
-		}
+		assert.Equal(t, value, row[key], "matrix %q %s = %q, want %q", name, key, row[key], value)
 	}
 }
 
 func requireMatrixRunner(t *testing.T, job, runner string, want map[string]string) {
 	t.Helper()
 	for _, violation := range matrixRunnerContractViolations(t, job, runner, want) {
-		t.Error(violation)
+		assert.Fail(t, violation)
 	}
 }
 
@@ -216,9 +192,7 @@ func TestMatrixRunnerContractChecksEveryMatchingRow(t *testing.T) {
 	violations := matrixRunnerContractViolations(t, job, "ubuntu-24.04", map[string]string{
 		"toolchain": "devbox", "go-command": "devbox run -- go",
 	})
-	if len(violations) != 1 {
-		t.Fatalf("runner contract violations=%#v, want the drifted second row", violations)
-	}
+	assert.EqualValues(t, 1, len(violations), "runner contract violations=%#v, want the drifted second row", violations)
 }
 
 func requireNativeToolchains(t *testing.T, job string) {
@@ -258,17 +232,13 @@ func requireMutationShardRows(t *testing.T, job string) {
 		"Windows 2025 / campaign-effects":   {"campaign-effects", "TestMutationCampaignEffects"},
 	}
 	rows := workflowMatrixRows(t, job)
-	if len(rows) != len(want) {
-		t.Errorf("mutation matrix has %d rows, want %d", len(rows), len(want))
-	}
+	assert.Equal(t, len(want), len(rows), "mutation matrix has %d rows, want %d", len(rows), len(want))
 	for name, selection := range want {
 		requireMatrixRow(t, job, name, map[string]string{
 			"catalogue-shard": selection[0], "mutation-test": selection[1],
 		})
 	}
-	if strings.Contains(job, "OOZE_") {
-		t.Error("mutation workflow uses a forbidden OOZE_* selector")
-	}
+	assert.False(t, strings.Contains(job, "OOZE_"), "mutation workflow uses a forbidden OOZE_* selector")
 }
 
 func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testing.T) {
@@ -297,39 +267,29 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 
 func TestAcceptanceGateDocumentsNativeToolchainPolicy(t *testing.T) {
 	contents, err := os.ReadFile("docs/acceptance-gate.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	policy := strings.Join(strings.Fields(string(contents)), " ")
 	requireContract(t, policy, "native toolchain policy",
 		"Linux and macOS use the repository's pinned Devbox environment",
 		"Windows uses pinned raw Go 1.26.6",
 	)
-	if strings.Contains(policy, "symmetrically on Linux, Darwin, and Windows") {
-		t.Error("acceptance gate still claims one raw-Go path for every native platform")
-	}
+	assert.False(t, strings.Contains(policy, "symmetrically on Linux, Darwin, and Windows"), "acceptance gate still claims one raw-Go path for every native platform")
 }
 
 func TestAcceptanceEvidenceDoesNotCreditPrototypeWithProductionSimulation(t *testing.T) {
 	contents, err := os.ReadFile("docs/acceptance-gate-evidence.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	evidence := strings.Join(strings.Fields(string(contents)), " ")
 	requireContract(t, evidence, "production simulation evidence correction",
 		"The tested revision did not contain the accepted production simulation module",
 		"a8e3e2440e1e06800458104e881d4aa8da951653",
 	)
-	if strings.Contains(evidence, "#64 nested simulation module passes") {
-		t.Error("historical evidence still credits the prototype with production simulation delivery")
-	}
+	assert.False(t, strings.Contains(evidence, "#64 nested simulation module passes"), "historical evidence still credits the prototype with production simulation delivery")
 }
 
 func TestAcceptanceGateDocumentsAuthoritativeDarwinControl(t *testing.T) {
 	contents, err := os.ReadFile("docs/acceptance-gate.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	requireContract(t, strings.Join(strings.Fields(string(contents)), " "), "Darwin control authority",
 		"Group signalling is a best-effort bulk optimization",
 		"Birth-validated per-identity control is authoritative",
@@ -393,9 +353,7 @@ func TestPerformanceEvidenceReportsCleanupEscalationSeparately(t *testing.T) {
 		".github/performance/confirmation_test.go",
 	} {
 		contents, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		requireContract(t, string(contents), path,
 			`json:"cleanup_escalation_count"`,
 			`json:"cleanup_escalation_basis"`,
@@ -405,17 +363,13 @@ func TestPerformanceEvidenceReportsCleanupEscalationSeparately(t *testing.T) {
 
 func TestPerformanceDocumentDoesNotMislabelHistoricalRunAsExactHead(t *testing.T) {
 	contents, err := os.ReadFile("docs/performance-evidence.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	document := strings.Join(strings.Fields(string(contents)), " ")
 	requireContract(t, document, "performance evidence publication",
 		"The #72 closure comment records the exact published-head revalidation",
 		"Retained implementation run",
 	)
-	if strings.Contains(document, "## Final native run") {
-		t.Error("historical implementation run is still labeled as final exact-head evidence")
-	}
+	assert.False(t, strings.Contains(document, "## Final native run"), "historical implementation run is still labeled as final exact-head evidence")
 }
 
 func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
@@ -424,16 +378,12 @@ func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 		`name: "🎲 Production deterministic simulation"`,
 		`devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze`,
 	)
-	if strings.Contains(testJob, "docs/prototypes/deterministic-simulation-contract") {
-		t.Error("CI still presents the throwaway prototype as simulation delivery")
-	}
+	assert.False(t, strings.Contains(testJob, "docs/prototypes/deterministic-simulation-contract"), "CI still presents the throwaway prototype as simulation delivery")
 }
 
 func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
 	contents, err := os.ReadFile("makefile")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	makefile := strings.ReplaceAll(string(contents), "\r\n", "\n")
 	requireContract(t, makefile, "lint target",
 		"lint:\n\t@golangci-lint run --no-config ./...",
@@ -454,24 +404,17 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing
 		configured = option(configured)
 	}
 	command := strings.Join(configured.TestCommand, " ")
-	if !strings.Contains(command, "TestDarwinNativeSupervisorTripsAutomaticDescendantFuse") {
-		t.Error("self-mutation command does not exclude its deliberate 65-descendant fuse fixture")
-	}
+	assert.True(t, strings.Contains(command, "TestDarwinNativeSupervisorTripsAutomaticDescendantFuse"), "self-mutation command does not exclude its deliberate 65-descendant fuse fixture")
 	for _, argument := range configured.TestCommand {
-		if argument == "." || argument == "./..." {
-			t.Errorf("self-mutation command selects root or full-module package %q", argument)
-		}
+		assert.NotEqual(t, ".", argument, "self-mutation command selects root or full-module package %q", argument)
+		assert.NotEqual(t, "./...", argument, "self-mutation command selects root or full-module package %q", argument)
 	}
 	excludesPrototype := false
 	for _, pattern := range configured.IgnoreSourceFilesPatterns {
 		excludesPrototype = excludesPrototype || pattern.MatchString("docs/prototypes/deadline-calibration/main.go")
 	}
-	if !excludesPrototype {
-		t.Error("self-mutation campaign includes separately tested nested prototype modules")
-	}
-	if configured.Serial {
-		t.Error("self-mutation campaign abandoned managed automatic admission")
-	}
+	assert.True(t, excludesPrototype, "self-mutation campaign includes separately tested nested prototype modules")
+	assert.False(t, configured.Serial, "self-mutation campaign abandoned managed automatic admission")
 }
 
 func TestManualNativeWorkflowRunsExactCandidateMutationGate(t *testing.T) {

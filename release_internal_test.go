@@ -8,6 +8,8 @@ import (
 
 	"github.com/gtramontina/ooze/internal/iologger"
 	internalooze "github.com/gtramontina/ooze/internal/ooze"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const fatalReportHelper = "OOZE_FATAL_REPORT_HELPER"
@@ -23,17 +25,16 @@ func TestPublishManagedFatalReportsOnceBeforeOnePanic(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestPublishManagedFatalHelper$")
 			command.Env = append(os.Environ(), fatalReportHelper+"="+test.role)
 			output, err := command.CombinedOutput()
-			if err == nil {
-				t.Fatalf("fatal helper passed:\n%s", output)
-			}
+			require.NotNil(t, err, "fatal helper passed:\n%s", output)
 			text := string(output)
 			diagnosticAt := strings.Index(text, test.diagnostic)
 			panicAt := strings.Index(text, test.panicLine)
-			if diagnosticAt < 0 || panicAt < 0 || diagnosticAt > panicAt {
-				t.Fatalf("diagnostic was not emitted before panic:\n%s", text)
-			}
-			if count := strings.Count(text, test.panicLine); count != 1 {
-				t.Fatalf("panic line count = %d, want exactly one:\n%s", count, text)
+			assert.False(t, diagnosticAt < 0, "diagnostic was not emitted before panic:\n%s", text)
+			assert.False(t, panicAt < 0, "diagnostic was not emitted before panic:\n%s", text)
+			assert.False(t, diagnosticAt > panicAt, "diagnostic was not emitted before panic:\n%s", text)
+			{
+				count := strings.Count(text, test.panicLine)
+				assert.EqualValues(t, 1, count, "panic line count = %d, want exactly one:\n%s", count, text)
 			}
 		})
 	}
