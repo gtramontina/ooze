@@ -39,7 +39,7 @@ func (system *nativeManagedAttemptSystem) wait(
 	return system.driver.waitManaged(generation, owned)
 }
 
-func (system *nativeManagedAttemptSystem) stop(_ attemptGeneration, owned *OwnedAttempt) {
+func (system *nativeManagedAttemptSystem) stop(owned *OwnedAttempt) {
 	at := system.driver.now()
 	owned.Stop(StopRequest{At: at, DrainBy: at.Add(system.driver.drainEpoch)})
 }

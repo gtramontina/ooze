@@ -18,7 +18,7 @@ func TestNativeManagedAttemptSystemStopsThroughOwnedAdmission(t *testing.T) {
 		})
 		owned.sealStopAdmission()
 
-		system.stop(17, owned)
+		system.stop(owned)
 
 		if called {
 			t.Fatal("managed stop bypassed sealed owned-attempt admission")
@@ -31,7 +31,7 @@ func TestNativeManagedAttemptSystemStopsThroughOwnedAdmission(t *testing.T) {
 			return Settled{}
 		})
 
-		system.stop(18, owned)
+		system.stop(owned)
 
 		if !request.At.Equal(now) || !request.DrainBy.Equal(now.Add(5*time.Second)) {
 			t.Fatalf("managed stop request = %#v", request)
