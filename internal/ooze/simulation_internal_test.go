@@ -86,6 +86,45 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	}
 }
 
+func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-violation", lineage: 31, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1,
+	}, nil)
+	prefix := simulationTrace{
+		definition: explored.trace.definition,
+		records:    append([]simulationRecord(nil), explored.trace.records[:2]...),
+	}
+	malformed := simulationMalformedFact{
+		authority: simulationCampaignAuthority,
+		campaign:  snapshotEstablishedEvent{},
+	}
+
+	first := ReplayViolation(prefix, malformed)
+	second := ReplayViolation(prefix, malformed)
+	if first.failure != nil || second.failure != nil {
+		t.Fatalf("violation replay failures=%v/%v", first.failure, second.failure)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("violation replay is nondeterministic:\nfirst=%#v\nsecond=%#v", first, second)
+	}
+	if first.invariant.operation != "campaign establish snapshot" ||
+		first.invariant.reason != "snapshot observation is invalid" {
+		t.Fatalf("retained invariant=%#v", first.invariant)
+	}
+	if first.key.authority != simulationCampaignAuthority ||
+		first.key.operation != first.invariant.operation || first.key.reason != first.invariant.reason {
+		t.Fatalf("failure key=%#v, invariant=%#v", first.key, first.invariant)
+	}
+	if first.world.runtime.lifecycle != runtimeClosedDrained || first.world.runtime.fatalEpoch == 0 ||
+		len(first.world.runtime.fatalCauses) != 1 {
+		t.Fatalf("runtime cleanup=%#v", first.world.runtime)
+	}
+}
+
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))
 	for _, record := range trace.records {
