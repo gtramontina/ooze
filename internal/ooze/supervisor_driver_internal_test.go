@@ -2132,7 +2132,14 @@ func automaticDeadlineTerminalWithReadyPeak(
 	if !ok || owned.Attempt == nil {
 		t.Fatalf("launch = %#v, want Owned", result)
 	}
-	terminal := owned.Attempt.Wait()
+	terminalReady := make(chan Terminal, 1)
+	go func() { terminalReady <- owned.Attempt.Wait() }()
+	var terminal Terminal
+	select {
+	case terminal = <-terminalReady:
+	case <-time.After(time.Second):
+		t.Fatalf("iteration %d owned attempt wait did not settle", iteration)
+	}
 	close(waitReleased)
 
 	return terminal
