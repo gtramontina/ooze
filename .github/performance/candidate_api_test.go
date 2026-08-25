@@ -21,3 +21,5 @@ func performanceExpectedBaselines() int { return 1 }
 func performanceExpectedPeak() int { return min(runtime.GOMAXPROCS(0), 16) }
 
 func performanceExpectedGOMAXPROCS() int { return 1 }
+
+func performanceRequiresHealthySettlements() bool { return true }
