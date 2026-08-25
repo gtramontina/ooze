@@ -120,7 +120,7 @@ func projectManagedReport(result ManagedReleaseResult, configuration managedRepo
 	writeManagedSummary(&report, killed, timedOut, runaway, survived, score, configuration)
 	if result.SingleAdmissionFallback {
 		report.WriteString("Ooze fell back to single-admission automatic after validated capacity pressure.\n")
-		report.WriteString("Every later campaign in this process runs one automatic attempt at a time.\n")
+		report.WriteString("Every later automatic campaign in this process admits one attempt at a time.\n")
 	}
 	disposition := managedReportPass
 	if score < configuration.minimumThreshold {

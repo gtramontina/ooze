@@ -35,7 +35,7 @@ func main() {
 	section("Completed, after the one-way admission fallback")
 	summary(scored, 0.50)
 	fmt.Println("  ! Ooze fell back to single-admission automatic after validated capacity")
-	fmt.Println("    pressure. Every later campaign in this process runs one attempt at a time.")
+	fmt.Println("    pressure. Every later automatic campaign admits one attempt at a time.")
 
 	section("Per-mutant detail: a survivor")
 	survivor("internal/laboratory/laboratory.go:37", "Comparison Invert", "")

@@ -79,12 +79,20 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 //   - WithMutationTimeout: baseline-derived
 //   - IgnoreSourceFiles: `nil`
 //   - WithViruses: all available (see viruses.Virus' implementations)
+//   - ForceColors: `false`
 //
-// The results are then presented in the console. If the mutation score is equal
-// to or above the configured threshold (WithMinimumThreshold), the execution is
-// considered successful. Failed otherwise. Regardless of the execution result,
-// any surviving mutant (no tests failed after applying the source code
-// mutation) will also be presented in the console for analysis.
+// Automatic execution manages aggregate process-local admission. Serial chooses
+// process-local exclusive attempts while preserving the detected-capacity Go
+// execution profile. WithMutationTimeout is the sole absolute mutation-deadline
+// override.
+//
+// Release writes one report to stdout before returning. Only a completed
+// campaign publishes a score; it succeeds when the float32 detected/total score
+// is greater than or equal to WithMinimumThreshold. NoMutants and infrastructure
+// aborts fail without a score. Cleanup uncertainty and invariant violations emit
+// one consolidated diagnostic and panic once. Go may discard stdout for passing
+// package-pattern runs without -v, so use go test -v when retaining the report is
+// required.
 func Release(t *testing.T, options ...Option) {
 	t.Helper()
 

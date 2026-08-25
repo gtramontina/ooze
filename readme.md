@@ -35,7 +35,7 @@ Mutation testing is a great ally in developing a robust code base and a reliable
 
 ### Prerequisites
 
-In order to ensure that you get accurate results, make sure that test suite that Ooze will run is passing. Otherwise, Ooze will report as if all mutants have been killed.
+Ooze verifies an unmutated repository snapshot before it admits any mutant. Keep the configured test suite green: if that baseline fails, Ooze prints its full output, aborts the campaign without a mutation score, and fails the mutation test.
 
 When Ooze reports that it found a living mutant, it will print a diff of the changes the virus made to the source file. The mutant source is printed using Go's [`go/format`](https://pkg.go.dev/go/format) package. This means that, if your source code isn't gofmt'd, the diff may contain some formatting changes that are not relevant to the mutation. This isn't a prerequisite per se, but for a better experience, it is recommended that you run `gofmt` on your source files.
 
@@ -77,18 +77,39 @@ Ooze supports Go 1.25 and every stable Go release through the current version.
 	go test -v -tags=mutation
 	```
 
-	This will execute all tests in the current package including the sources tagged with `mutation`. This assumes that the above is the only test file in the root of your project. If you have other tests, you may want to put the mutation tests in a separate package, under `./mutation` for example, and configure Ooze to use `..` as the repository root (see [`WithRepositoryRoot`](#Settings) below).
+	This will execute all tests in the current package including the sources tagged with `mutation`. This assumes that the above is the only test file in the root of your project. If you have other tests, you may want to put the mutation tests in a separate package, under `./mutation` for example, and configure Ooze to use `..` as the repository root (see [`WithRepositoryRoot`](#settings) below).
 
 	If `-v` is enabled, Ooze will also be verbose. To enable Ooze's verbose mode only without the test framework verbosity, use `-ooze.v`.
 
 	> **Note**
-	> printing to `stdout` while Go tests are running has its intricacies. Running the tests at a particular package (without specifying which test file or subpackages, like `./...`), allows for Ooze to print progress and reports as they happen. Otherwise, the output is buffered and printed at the end of the test run and, in some cases, only if a test fails. This is a limitation of Go's testing framework.
+	> Ooze writes its report synchronously to `stdout` before `Release` returns. Go controls whether passing-test output is shown: `go test -v` shows it, while a passing `go test ./...` without `-v` may discard it. Failed campaigns are shown. Use `-v` whenever the report is a required artifact.
 
 ### Results
 
-Once all tests on all mutants have run, Ooze will print a report with the results. It will also exit with a non-zero exit code if the mutation score is below the minimum threshold (see [`WithMinimumThreshold`](#Settings) below). This is an example of the report:
+Only a completed campaign publishes a score. Every catalogue mutant is either `Survived`, `Killed`, `TimedOut`, or `Runaway`; detected mutants are the last three classes. The score remains `detected / total`, and the test passes when the `float32` score is greater than or equal to [`WithMinimumThreshold`](#settings).
 
-![report sample](.assets/report.png)
+Survivors include their full diff. Timed-out and runaway mutants are called out separately, and a mutant that needed an exclusive confirmation includes both observations even when the confirmation killed it. Ordinary killed mutants stay quiet. A completed automatic campaign looks like this (also available as the [plain-text report artifact](.assets/report.txt)):
+
+```text
+Mutant survived: internal/gotextdiff/gotextdiff.go → Integer Increment
+--- internal/gotextdiff/gotextdiff.go (original)
++++ internal/gotextdiff/gotextdiff.go (mutated with 'Integer Increment')
+@@ -14,1 +14,1 @@
+- retries := 0
++ retries := 1
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ • Total:                      143    ┃
+┃ • Detected:                   133    ┃
+┃   ├ killed:                   129    ┃
+┃   ├ timed out:                  3    ┃
+┃   └ runaway:                    1    ┃
+┃ • Survived:                    10    ┃
+┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨
+┃ ✓ Score:     0.93 (minimum: 0.50)    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
+`NoMutants` and infrastructure `Aborted` outcomes fail the mutation test without publishing a score. An abort retains every already-attributable mutant diagnostic; a failed baseline prints its full captured output. If Ooze cannot prove process cleanup, or detects an internal invariant violation, it prints one consolidated diagnostic and then panics exactly once.
 
 More examples of the results can be found in the [`mutation.yml`](https://github.com/gtramontina/ooze/actions/workflows/mutation.yml) workflow.
 
@@ -102,22 +123,34 @@ ooze.Release(
 	ooze.WithRepositoryRoot("."),
 	ooze.WithTestCommand("make test"),
 	ooze.WithMinimumThreshold(0.75),
-	ooze.Parallel(),
+	ooze.WithMutationTimeout(2*time.Minute),
+	ooze.Serial(),
 	ooze.IgnoreSourceFiles("^release\\.go$"),
 )
 ```
 
 The table below presents all available options.
 
-| Option                 | Default                               | Description                                                                                                                                                                                                                                                                   |
-|------------------------|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `WithRepositoryRoot`   | `.`                                   | A string that configures which directory is the repository root. This is usually required when your mutation test file lives some other place that is not root itself.                                                                                                        |
-| `WithTestCommand`      | `go test -count=1 ./...`              | The test command to run, as string. You may configure it as you wish, as a `makefile` phony target, for example. Or simply run the standard `go test` command with extra flags, such as `timeout` and `tags`.                                                                 |
-| `WithMinimumThreshold` | `1.0`                                 | A float between `0.0` and `1.0`. This represents the minimum mutation test score to consider the execution successful.                                                                                                                                                        |
-| `Parallel`             | `false`                               | Indicates whether to run the tests on the mutants in parallel. Given Ooze is executed via Go's testing framework, the level of parallelism can be configured when running the mutation tests from the command line. For example with `go test -v -tags=mutation -parallel 3`. |
-| `IgnoreSourceFiles`    | `nil`                                 | Regular expression representing source files to be filtered out and not suffer any mutations.                                                                                                                                                                                 |
-| `WithViruses`          | all available ([see below](#Viruses)) | A list of viruses to infect the source files with. You can also implement your own viruses (generic or even application-specific).                                                                                                                                            |
-| `ForceColors`          | `false`                               | Forces colors in logs. This is useful when running the mutation tests in a CI environment, for example.                                                                                                                                                                       |
+| Option                 | Default                               | Description |
+|------------------------|---------------------------------------|-------------|
+| `WithRepositoryRoot`   | `.`                                   | Configures the repository root. This is usually required when the mutation test lives outside that root. |
+| `WithTestCommand`      | `go test -count=1 ./...`              | Configures the opaque command used for the baseline, primaries, and confirmations. |
+| `WithMinimumThreshold` | `1.0`                                 | Sets the minimum completed-campaign score, from `0.0` to `1.0`, inclusive. |
+| `Serial`               | automatic                             | Runs every attempt process-locally exclusively. It preserves the detected-capacity cooperative Go profile; it is not a one-CPU mode. |
+| `WithMutationTimeout`  | baseline-derived                      | Sets the absolute deadline for every primary and confirmation. This is the only timeout-policy override; the baseline keeps its separate managed bound. |
+| `IgnoreSourceFiles`    | `nil`                                 | Filters source files using regular expressions. |
+| `WithViruses`          | all available ([see below](#viruses)) | Selects public `Virus` implementations, including application-specific ones. |
+| `ForceColors`          | `false`                               | Forces colors for this campaign's report without changing process-global color state. |
+
+### Managed execution
+
+Automatic execution is zero-configuration. Ooze captures the process's positive Go concurrency once, starts healthy mutant work at that aggregate capacity, and gives automatic attempt roots `GOMAXPROCS=1`. Concurrent `Release` calls in the same process share that admission authority. Separate processes do not coordinate.
+
+After trustworthy shared-execution pressure, automatic admission makes a one-way transition to one attempt at a time for the rest of the process. The report announces that transition. The automatic execution profile remains `GOMAXPROCS=1`; fallback does not silently become `Serial()`.
+
+`Serial()` and `WithMutationTimeout` are semantic escape hatches, not tuning controls. `Serial()` chooses process-local exclusivity while preserving the detected-capacity profile. `WithMutationTimeout` replaces the baseline-derived mutation deadline with one absolute duration. There is no public concurrency number, deadline multiplier, confirmation toggle, environment override, focused selector, or fast profile.
+
+The test command is opaque. If it has an inner timeout shorter than Ooze's resolved deadline, that command can exit non-zero first. Ooze then reports the mutant as `Killed`, not `TimedOut`; both are detected classes, so the score is unchanged, but the diagnostic differs.
 
 ## Viruses
 
