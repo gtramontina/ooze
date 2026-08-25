@@ -27,6 +27,7 @@ type managedObservedEmergency struct {
 }
 
 type managedAttemptSystem interface {
+	reserveLaunch(*pendingStartCell, Spec)
 	launch(installedStart, Spec) managedObservedLaunch
 	wait(attemptGeneration, *OwnedAttempt) managedObservedTerminal
 	stop(*OwnedAttempt)

@@ -33,13 +33,6 @@ func TestProcessRuntimeShellCompletesSealedConfirmationQueue(t *testing.T) {
 	}
 }
 
-func (cell *pendingStartCell) installedGeneration() attemptGeneration {
-	cell.mutex.Lock()
-	defer cell.mutex.Unlock()
-
-	return cell.generation
-}
-
 func TestProcessRuntimeShellUsesBufferedOneShotGrantDelivery(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 11})

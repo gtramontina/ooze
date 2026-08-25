@@ -11,12 +11,10 @@ import (
 	"time"
 )
 
-func TestSupervisorDriverEmergencyWaitsForCommittedStartRegistration(t *testing.T) {
+func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *testing.T) {
 	registeredAt := time.Unix(6_500, 0)
 	emergencyAt := registeredAt.Add(500 * time.Millisecond)
 	drainBy := emergencyAt.Add(5 * time.Second)
-	nativeStarted := make(chan struct{})
-	nativeDone := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 87})
@@ -24,85 +22,35 @@ func TestSupervisorDriverEmergencyWaitsForCommittedStartRegistration(t *testing.
 		campaign: campaign.token, attempt: "committed-before-registration", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
-	cell := pendingStartCell{}
-	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
-	shell.closeRuntime(runtimeFatalCause("committed start registration race"))
-
+	nativeCalls := 0
 	driver := newSupervisorDriver(supervisorDriverConstruction{
 		runtime: shell, now: func() time.Time { return registeredAt },
 		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
 		launchProgress: time.Second, drainEpoch: 5 * time.Second,
 		execute: func(action supervisorAction) *supervisorEvent {
-			switch action.kind {
-			case supervisorLaunchNative:
-				close(nativeStarted)
-				<-nativeDone
-				completion := supervisorLaunchCompletion{
-					generation: action.generation, action: action.token, at: emergencyAt,
-					kind: supervisorLaunchProvenNotReleased, failure: LaunchFailed,
-				}
+			nativeCalls++
+			t.Fatalf("pre-registered emergency executed native action: %#v", action)
 
-				return &supervisorEvent{
-					kind: supervisorLaunchCompleted, generation: action.generation,
-					at: emergencyAt, completion: &completion,
-				}
-			case supervisorRevokeLaunchRelease:
-				return nil
-			default:
-				t.Fatalf("unexpected native action: %#v", action)
-
-				return nil
-			}
+			return nil
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 	})
+	spec := Spec{
+		Attempt: "committed-before-registration", Command: []string{"blocked-start"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	}
+	cell := pendingStartCell{}
+	driver.reserveLaunch(&cell, spec)
+	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
+	shell.closeRuntime(runtimeFatalCause("committed start registration race"))
 
-	settled := make(chan SweepResult, 1)
-	panicked := make(chan any, 1)
-	go func() {
-		defer func() { panicked <- recover() }()
-		settled <- driver.emergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
-	}()
-	select {
-	case panicValue := <-panicked:
-		t.Fatalf("emergency settled before committed start registration: %v", panicValue)
-	case result := <-settled:
-		t.Fatalf("emergency settled before committed start registration: %#v", result)
-	case <-time.After(20 * time.Millisecond):
+	settlement := driver.emergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
+	if _, ok := settlement.(SweepDrained); !ok {
+		t.Fatalf("pre-registration emergency settlement = %#v, want SweepDrained", settlement)
 	}
-
-	launched := make(chan managedObservedLaunch, 1)
-	go func() {
-		launched <- driver.launchManaged(prepared.start, Spec{
-			Attempt: "committed-before-registration", Command: []string{"blocked-start"}, Dir: "/tmp",
-			Profile: SerialProfile, Deadline: 10 * time.Second,
-		})
-	}()
-	<-nativeStarted
-	select {
-	case launch := <-launched:
-		if launch.result != (LaunchUnconfirmed{Residual: ProspectiveUnresolved}) {
-			t.Fatalf("launch = %#v, want prospective LaunchUnconfirmed", launch.result)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("emergency did not release the registered launch")
-	}
-	close(nativeDone)
-	select {
-	case panicValue := <-panicked:
-		if panicValue != nil {
-			t.Fatalf("emergency panicked after registration: %v", panicValue)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("emergency did not return after late no-release")
-	}
-	select {
-	case result := <-settled:
-		if _, ok := result.(SweepDrained); !ok {
-			t.Fatalf("emergency settlement = %#v, want SweepDrained", result)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("late no-release did not settle the emergency")
+	launch := driver.launchManaged(prepared.start, spec)
+	if launch.result != (NotReleased{Kind: LaunchFailed}) || nativeCalls != 0 {
+		t.Fatalf("preempted launch/calls = %#v/%d, want not released/zero", launch.result, nativeCalls)
 	}
 }
 

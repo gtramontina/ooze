@@ -1127,7 +1127,24 @@ func (state campaignState) acceptGrant(attemptAt int, grant campaignAdmission) (
 
 	return state.emit(campaignEffect{
 		kind: campaignEffectRequestStartCommitment, attempt: grant.attempt, grant: grant,
+		spec: state.attemptSpec(attemptAt),
 	})
+}
+
+func (state campaignState) attemptSpec(attemptAt int) Spec {
+	deadline := state.mutationDeadline
+	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
+		deadline = state.definition.baselineDeadline
+	}
+	if deadline <= 0 {
+		campaignInvariant("prepare start commitment", "attempt deadline is unresolved")
+	}
+
+	return Spec{
+		Attempt: string(state.attempts[attemptAt].identity), Command: slices.Clone(state.definition.command),
+		Dir: state.attempts[attemptAt].workspace, Env: slices.Clone(state.definition.env),
+		Profile: state.definition.profile, Deadline: deadline,
+	}
 }
 
 func (state campaignState) onConfirmationBarrierBound(
@@ -1215,19 +1232,7 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 	})
 	state.attempts[attemptAt].stage = campaignAttemptProspective
 	state.attempts[attemptAt].generation = event.result.generation
-	deadline := state.mutationDeadline
-	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
-		deadline = state.definition.baselineDeadline
-	}
-	if deadline <= 0 {
-		campaignInvariant("start committed", "attempt deadline is unresolved")
-	}
 	state.commands++
-	spec := Spec{
-		Attempt: string(event.attempt), Command: slices.Clone(state.definition.command),
-		Dir: state.attempts[attemptAt].workspace, Env: slices.Clone(state.definition.env),
-		Profile: state.definition.profile, Deadline: deadline,
-	}
 
 	return state.emit(campaignEffect{
 		kind: campaignEffectLaunchAttempt, attempt: event.attempt, generation: event.result.generation,
@@ -1235,7 +1240,7 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 		attemptKind: state.attempts[attemptAt].kind,
 		completesConfirmationQueue: state.attempts[attemptAt].kind == campaignAttemptConfirmation &&
 			len(state.drain.provisionals) == 1,
-		spec: spec,
+		spec: state.attemptSpec(attemptAt),
 	})
 }
 
