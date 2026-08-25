@@ -3,6 +3,7 @@ package ooze
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/color"
@@ -19,7 +20,8 @@ type Options struct {
 	TestRunner                laboratory.TestRunner
 	TemporaryDir              laboratory.TemporaryDirectory
 	MinimumThreshold          float32
-	Parallel                  bool
+	Serial                    bool
+	MutationTimeout           time.Duration
 	IgnoreSourceFilesPatterns []*regexp.Regexp
 	Viruses                   []viruses.Virus
 }
@@ -58,13 +60,21 @@ func WithMinimumThreshold(minimumThreshold float32) func(Options) Options {
 	}
 }
 
-// Parallel indicates whether to run the tests on the mutants in parallel. Given
-// Ooze is executed via Go's testing framework, the level of parallelism can be
-// configured when running the mutation tests. For example, with
-// WithTestCommand(`go test -v -tags=mutation -parallel 3`).
-func Parallel() func(Options) Options {
+// Serial runs each managed attempt process-locally exclusively while preserving
+// the detected-capacity cooperative Go execution profile.
+func Serial() func(Options) Options {
 	return func(options Options) Options {
-		options.Parallel = true
+		options.Serial = true
+
+		return options
+	}
+}
+
+// WithMutationTimeout configures the absolute deadline for every primary and
+// confirmation attempt. The baseline keeps its separate managed bound.
+func WithMutationTimeout(timeout time.Duration) func(Options) Options {
+	return func(options Options) Options {
+		options.MutationTimeout = timeout
 
 		return options
 	}
