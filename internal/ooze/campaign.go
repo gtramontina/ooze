@@ -1285,7 +1285,9 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			state.mutationDeadline = event.resolvedMutationDeadline.duration
 		} else {
 			state.phase = campaignDraining
-			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "baseline did not pass"}
+			state.drain = campaignDrainIntent{
+				kind: campaignDrainAbort, cause: campaignBaselineAbortCause(event.terminal),
+			}
 		}
 	case campaignAttemptPrimary:
 		mutantAt := state.mutantIndex(attempt.mutant)
@@ -1388,6 +1390,30 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	})
 
 	return state.emitAll(effects)
+}
+
+func campaignBaselineAbortCause(terminal Terminal) string {
+	switch observed := terminal.(type) {
+	case Settled:
+		return "baseline did not pass"
+	case Tripped:
+		switch observed.Trip.(type) {
+		case AutomaticDeadlineTrip, SerialDeadlineTrip:
+			return "baseline command deadline fired"
+		case FuseTrip:
+			return "baseline process fuse fired"
+		default:
+			campaignInvariant("observe baseline terminal", "baseline trip kind is invalid")
+		}
+	case Stopped:
+		return "baseline was stopped"
+	case Infrastructure:
+		return "baseline infrastructure uncertainty"
+	default:
+		campaignInvariant("observe baseline terminal", "baseline terminal kind is invalid")
+	}
+
+	return ""
 }
 
 func campaignAttemptEvidenceFromTerminal(terminal Terminal, confirmationProvisional bool) campaignAttemptEvidence {
