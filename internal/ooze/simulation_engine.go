@@ -24,12 +24,41 @@ type simulationEngineMove struct {
 	source             simulationCausalSource
 	effect             campaignEffect
 	action             supervisorAction
-	variant            uint8
+	variant            simulationMoveVariant
 	attemptKind        campaignAttemptKind
 	mutant             mutantIdentity
 	delivery           campaignEventPayload
 	supervisorDelivery *supervisorEvent
 }
+
+type simulationMoveVariant struct {
+	launch  simulationLaunchVariant
+	running simulationRunningVariant
+	drain   simulationDrainVariant
+}
+
+type simulationLaunchVariant uint8
+
+const (
+	simulationLaunchAtBoundary simulationLaunchVariant = iota + 1
+	simulationLaunchAfterBoundary
+)
+
+type simulationRunningVariant uint8
+
+const (
+	simulationRunningFailed simulationRunningVariant = iota + 1
+	simulationRunningAtDeadline
+	simulationRunningFuse
+	simulationRunningAfterDeadline
+)
+
+type simulationDrainVariant uint8
+
+const (
+	simulationDrainAtBoundary simulationDrainVariant = iota + 1
+	simulationDrainAfterBoundary
+)
 
 type simulationEngine struct {
 	definition   simulationDefinition
@@ -376,11 +405,11 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		completedAt := attempt.launchBy.Add(-time.Nanosecond)
 		var drainBy time.Time
 		kind := supervisorLaunchCompleted
-		if move.variant == 1 {
+		if move.variant.launch == simulationLaunchAtBoundary {
 			completedAt = attempt.launchBy
 			kind = supervisorLaunchBoundary
 		}
-		if move.variant == 2 {
+		if move.variant.launch == simulationLaunchAfterBoundary {
 			if err := engine.applySupervisor(move.source, supervisorEvent{
 				kind: supervisorLaunchBoundary, generation: action.generation, at: attempt.launchBy,
 			}); err != nil {
@@ -475,11 +504,12 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorObserveEmptiness:
 		at := action.drainBy.Add(-time.Nanosecond)
 		kind := supervisorDrainObservedEmpty
-		if move.variant == 1 || move.variant == 2 {
+		if move.variant.drain == simulationDrainAtBoundary ||
+			move.variant.drain == simulationDrainAfterBoundary {
 			at = action.drainBy
 			kind = supervisorDrainObservedResidual
 		}
-		if move.variant == 2 {
+		if move.variant.drain == simulationDrainAfterBoundary {
 			at = action.drainBy.Add(time.Nanosecond)
 		}
 		at = simulationCompletionAt(engine.supervisor, action.generation, at)
@@ -729,21 +759,21 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 	bundle := &supervisorRunningBundle{
 		generation: move.action.generation, sampleAction: sample.token, waitAction: wait.token,
 	}
-	switch move.variant {
-	case 0, 1:
+	switch move.variant.running {
+	case 0, simulationRunningFailed:
 		exitCode := 0
-		if move.variant == 1 {
+		if move.variant.running == simulationRunningFailed {
 			exitCode = 1
 		}
 		bundle.facts = []supervisorRunningFact{{
 			generation: move.action.generation, action: wait.token,
 			kind: supervisorRunningRootExited, at: observedAt, exitCode: exitCode,
 		}}
-	case 2:
+	case simulationRunningAtDeadline:
 		observedAt = attempt.deadlineAt
 		drainBy = observedAt.Add(5 * time.Second)
 		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: observedAt}
-	case 3:
+	case simulationRunningFuse:
 		if sample.token == 0 {
 			return fmt.Errorf("simulation fuse move has no running sample action")
 		}
@@ -751,7 +781,7 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 			generation: move.action.generation, action: sample.token,
 			kind: supervisorRunningFuseObserved, at: observedAt, rootLive: true, live: supervisorFuseCeiling + 1,
 		}}
-	case 4:
+	case simulationRunningAfterDeadline:
 		observedAt = attempt.deadlineAt.Add(time.Nanosecond)
 		drainBy = attempt.deadlineAt.Add(5 * time.Second)
 		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt}
@@ -760,7 +790,7 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 			kind: supervisorRunningRootExited, at: observedAt,
 		}}
 	default:
-		return fmt.Errorf("simulation running variant %d is invalid", move.variant)
+		return fmt.Errorf("simulation running variant %d is invalid", move.variant.running)
 	}
 	return engine.applySupervisor(move.source, supervisorEvent{
 		kind: supervisorRunningObserved, generation: move.action.generation, at: observedAt, drainBy: drainBy,
@@ -887,21 +917,31 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 		switch move.action.kind {
 		case supervisorLaunchNative, supervisorObserveEmptiness:
 			alternative := move
-			alternative.variant = 1
+			if move.action.kind == supervisorLaunchNative {
+				alternative.variant.launch = simulationLaunchAtBoundary
+			} else {
+				alternative.variant.drain = simulationDrainAtBoundary
+			}
 			moves = append(moves, alternative)
 			after := move
-			after.variant = 2
+			if move.action.kind == supervisorLaunchNative {
+				after.variant.launch = simulationLaunchAfterBoundary
+			} else {
+				after.variant.drain = simulationDrainAfterBoundary
+			}
 			moves = append(moves, after)
 		case supervisorWaitRoot:
-			for _, variant := range []uint8{1, 2, 4} {
+			for _, variant := range []simulationRunningVariant{
+				simulationRunningFailed, simulationRunningAtDeadline, simulationRunningAfterDeadline,
+			} {
 				alternative := move
-				alternative.variant = variant
+				alternative.variant.running = variant
 				moves = append(moves, alternative)
 			}
 			attempt := simulationSupervisorAttempt(engine.supervisor, move.action.generation)
 			if attempt.profile == AutomaticProfile {
 				fuse := move
-				fuse.variant = 3
+				fuse.variant.running = simulationRunningFuse
 				moves = append(moves, fuse)
 			}
 		}
