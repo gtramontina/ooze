@@ -1,8 +1,10 @@
 package runtimeshapes
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type scenario struct {
@@ -22,9 +24,10 @@ func scenarios() []scenario {
 			},
 			check: func(t *testing.T, got state, replies []reply) {
 				t.Helper()
-				if len(got.campaigns) != 2 || !replies[0].accepted || !replies[1].accepted || !replies[2].recursive {
-					t.Fatalf("registration: state=%#v replies=%#v", got, replies)
-				}
+				assert.EqualValues(t, 2, len(got.campaigns), "registration: state=%#v replies=%#v", got, replies)
+				assert.True(t, replies[0].accepted, "registration: state=%#v replies=%#v", got, replies)
+				assert.True(t, replies[1].accepted, "registration: state=%#v replies=%#v", got, replies)
+				assert.True(t, replies[2].recursive, "registration: state=%#v replies=%#v", got, replies)
 			},
 		},
 		{
@@ -50,9 +53,7 @@ func scenarios() []scenario {
 					got = append(got, item.deliveries...)
 				}
 				want := []grant{{1, "a1"}, {1, "a2"}, {2, "b1"}, {3, "x"}, {2, "b2"}}
-				if !reflect.DeepEqual(got, want) {
-					t.Fatalf("grant order=%#v, want %#v", got, want)
-				}
+				assert.Equal(t, want, got, "grant order=%#v, want %#v", got, want)
 			},
 		},
 		{
@@ -69,9 +70,10 @@ func scenarios() []scenario {
 			},
 			check: func(t *testing.T, got state, replies []reply) {
 				t.Helper()
-				if replies[4].generation != 1 || replies[5].generation != 2 || !got.entries[0].overlapped || !got.entries[1].overlapped {
-					t.Fatalf("overlap: state=%#v replies=%#v", got, replies)
-				}
+				assert.EqualValues(t, 1, replies[4].generation, "overlap: state=%#v replies=%#v", got, replies)
+				assert.EqualValues(t, 2, replies[5].generation, "overlap: state=%#v replies=%#v", got, replies)
+				assert.True(t, got.entries[0].overlapped, "overlap: state=%#v replies=%#v", got, replies)
+				assert.True(t, got.entries[1].overlapped, "overlap: state=%#v replies=%#v", got, replies)
 			},
 		},
 		{
@@ -91,9 +93,10 @@ func scenarios() []scenario {
 			},
 			check: func(t *testing.T, got state, replies []reply) {
 				t.Helper()
-				if got.campaigns[0].gateOpen || len(got.entries) != 1 || got.entries[0].stage != granted || len(replies[10].deliveries) != 1 {
-					t.Fatalf("barrier: state=%#v reply=%#v", got, replies[10])
-				}
+				assert.False(t, got.campaigns[0].gateOpen, "barrier: state=%#v reply=%#v", got, replies[10])
+				require.Len(t, got.entries, 1, "barrier: state=%#v reply=%#v", got, replies[10])
+				assert.Equal(t, granted, got.entries[0].stage, "barrier: state=%#v reply=%#v", got, replies[10])
+				assert.EqualValues(t, 1, len(replies[10].deliveries), "barrier: state=%#v reply=%#v", got, replies[10])
 			},
 		},
 		{
@@ -112,9 +115,9 @@ func scenarios() []scenario {
 			},
 			check: func(t *testing.T, got state, replies []reply) {
 				t.Helper()
-				if !got.single || len(replies[6].deliveries) != 0 || len(replies[9].deliveries) != 1 {
-					t.Fatalf("pressure: state=%#v replies=%#v", got, replies)
-				}
+				assert.True(t, got.single, "pressure: state=%#v replies=%#v", got, replies)
+				assert.EqualValues(t, 0, len(replies[6].deliveries), "pressure: state=%#v replies=%#v", got, replies)
+				assert.EqualValues(t, 1, len(replies[9].deliveries), "pressure: state=%#v replies=%#v", got, replies)
 			},
 		},
 		{
@@ -129,9 +132,10 @@ func scenarios() []scenario {
 			},
 			check: func(t *testing.T, got state, replies []reply) {
 				t.Helper()
-				if !got.closed || len(got.entries) != 1 || got.entries[0].stage != owned || !replies[5].closed {
-					t.Fatalf("fatal custody: state=%#v replies=%#v", got, replies)
-				}
+				assert.True(t, got.closed, "fatal custody: state=%#v replies=%#v", got, replies)
+				require.Len(t, got.entries, 1, "fatal custody: state=%#v replies=%#v", got, replies)
+				assert.Equal(t, owned, got.entries[0].stage, "fatal custody: state=%#v replies=%#v", got, replies)
+				assert.True(t, replies[5].closed, "fatal custody: state=%#v replies=%#v", got, replies)
 			},
 		},
 		{
@@ -147,9 +151,10 @@ func scenarios() []scenario {
 			},
 			check: func(t *testing.T, got state, replies []reply) {
 				t.Helper()
-				if replies[5].accepted || !replies[5].closed || !replies[6].accepted || len(got.entries) != 0 {
-					t.Fatalf("settlement: state=%#v replies=%#v", got, replies)
-				}
+				assert.False(t, replies[5].accepted, "settlement: state=%#v replies=%#v", got, replies)
+				assert.True(t, replies[5].closed, "settlement: state=%#v replies=%#v", got, replies)
+				assert.True(t, replies[6].accepted, "settlement: state=%#v replies=%#v", got, replies)
+				assert.EqualValues(t, 0, len(got.entries), "settlement: state=%#v replies=%#v", got, replies)
 			},
 		},
 	}

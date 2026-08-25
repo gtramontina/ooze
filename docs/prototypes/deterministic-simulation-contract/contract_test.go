@@ -1,10 +1,12 @@
 package simulationcontract_test
 
 import (
-	"reflect"
 	"testing"
 
 	contract "deterministic-simulation-contract"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestChoiceBytesExpandToReplayableLegalTrace(t *testing.T) {
@@ -14,15 +16,9 @@ func TestChoiceBytesExpandToReplayableLegalTrace(t *testing.T) {
 	trace, explored := contract.Explore(definition, []byte{2, 1, 0, 2})
 	replayed, err := contract.Replay(definition, trace)
 
-	if err != nil {
-		t.Fatalf("replay rejected generated trace: %v", err)
-	}
-	if !reflect.DeepEqual(replayed, explored) {
-		t.Fatalf("replay = %#v, explored = %#v", replayed, explored)
-	}
-	if explored.Terminal != contract.Completed {
-		t.Fatalf("terminal = %v, want Completed", explored.Terminal)
-	}
+	require.NoError(t, err, "replay rejected generated trace: %v", err)
+	assert.Equal(t, explored, replayed, "replay = %#v, explored = %#v", replayed, explored)
+	assert.Equal(t, contract.Completed, explored.Terminal, "terminal = %v, want Completed", explored.Terminal)
 }
 
 func TestSemanticShrinkRemovesUnrelatedWholeEventsAndPreservesFailure(t *testing.T) {
@@ -40,9 +36,7 @@ func TestSemanticShrinkRemovesUnrelatedWholeEventsAndPreservesFailure(t *testing
 	fingerprint := contract.FailureFingerprint{Mutant: "failing", Outcome: contract.Killed}
 
 	shrunk, err := contract.Shrink(counterexample, fingerprint)
-	if err != nil {
-		t.Fatalf("shrink failed: %v", err)
-	}
+	require.NoError(t, err, "shrink failed: %v", err)
 	want := contract.Counterexample{
 		Definition: contract.Definition{Mutants: []string{"failing"}},
 		Trace: contract.Trace{Events: []contract.Event{
@@ -50,11 +44,10 @@ func TestSemanticShrinkRemovesUnrelatedWholeEventsAndPreservesFailure(t *testing
 			{Sequence: 2, Kind: contract.PrimarySettled, Mutant: "failing", Outcome: contract.Killed},
 		}},
 	}
-	if !reflect.DeepEqual(shrunk, want) {
-		t.Fatalf("shrunk = %#v, want %#v", shrunk, want)
-	}
-	if _, err := contract.Replay(shrunk.Definition, shrunk.Trace); err != nil {
-		t.Fatalf("shrunk trace is not legal: %v", err)
+	assert.Equal(t, want, shrunk, "shrunk = %#v, want %#v", shrunk, want)
+	{
+		_, err := contract.Replay(shrunk.Definition, shrunk.Trace)
+		assert.NoError(t, err, "shrunk trace is not legal: %v", err)
 	}
 }
 
@@ -63,10 +56,6 @@ func TestEmptyCatalogueExplorationRunsNoCommand(t *testing.T) {
 
 	trace, result := contract.Explore(contract.Definition{Mutants: nil}, []byte{1, 2, 3})
 
-	if len(trace.Events) != 0 {
-		t.Fatalf("empty catalogue trace = %#v, want no events", trace)
-	}
-	if result.Terminal != contract.NoMutants {
-		t.Fatalf("terminal = %v, want NoMutants", result.Terminal)
-	}
+	assert.EqualValues(t, 0, len(trace.Events), "empty catalogue trace = %#v, want no events", trace)
+	assert.Equal(t, contract.NoMutants, result.Terminal, "terminal = %v, want NoMutants", result.Terminal)
 }
