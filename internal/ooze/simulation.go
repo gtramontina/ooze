@@ -79,6 +79,27 @@ type SimulationResult struct {
 	failure error
 }
 
+type simulationMalformedFact struct {
+	authority simulationAuthority
+	campaign  campaignEventPayload
+}
+
+// FailureKey is the alpha-normalized semantic identity retained while shrinking.
+type FailureKey struct {
+	authority  simulationAuthority
+	operation  string
+	reason     string
+	identities []string
+}
+
+// ViolationResult retains the original invariant and the world after guarded cleanup.
+type ViolationResult struct {
+	world     simulationWorld
+	invariant runtimeInvariantViolation
+	key       FailureKey
+	failure   error
+}
+
 // Explore expands choices only through facts enabled by the production owners.
 func Explore(definition simulationDefinition, choices simulationChoiceBytes) SimulationResult {
 	definition.catalogue = append([]mutantIdentity(nil), definition.catalogue...)
@@ -564,6 +585,80 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 	return SimulationResult{
 		trace: trace,
 		world: simulationWorld{campaign: campaign, runtime: runtime, supervisor: supervisor},
+	}
+}
+
+// ReplayViolation applies one malformed fact after a legal prefix and captures the guard's re-panic.
+func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) (result ViolationResult) {
+	legal := ReplayLegal(prefix)
+	if legal.failure != nil {
+		return ViolationResult{failure: fmt.Errorf("legal prefix: %w", legal.failure)}
+	}
+	if malformed.authority != simulationCampaignAuthority || malformed.campaign == nil {
+		return ViolationResult{failure: fmt.Errorf("malformed fact authority is not implemented")}
+	}
+
+	runtime := legal.world.runtime
+	campaign := legal.world.campaign
+	defer func() {
+		recovered := recover()
+		violation, ok := recovered.(runtimeInvariantViolation)
+		if !ok {
+			if recovered == nil {
+				result = ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
+			} else {
+				result = ViolationResult{failure: fmt.Errorf("unexpected violation panic: %v", recovered)}
+			}
+
+			return
+		}
+		result = ViolationResult{
+			world: simulationWorld{
+				campaign: campaign, runtime: runtime, supervisor: legal.world.supervisor,
+			},
+			invariant: violation,
+			key:       simulationFailureKey(malformed.authority, violation),
+		}
+	}()
+
+	_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
+		id: campaignEventID(len(campaign.trace) + 1), payload: malformed.campaign,
+	}, func(closure runtimeClosure) emergencySweep {
+		resolutions := make([]emergencyResolution, len(closure.residual))
+		for index, residual := range closure.residual {
+			resolutions[index] = emergencyResolution{
+				generation: residual.generation, disposition: emergencyConfirmedDrained,
+			}
+		}
+
+		return emergencySweep{resolutions: resolutions}
+	})
+
+	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
+}
+
+func simulationFailureKey(authority simulationAuthority, violation runtimeInvariantViolation) FailureKey {
+	identities := make([]string, len(violation.stableIdentities))
+	seen := make(map[string]int, len(violation.stableIdentities))
+	for index, identity := range violation.stableIdentities {
+		ordinal, ok := seen[identity]
+		if !ok {
+			ordinal = len(seen) + 1
+			seen[identity] = ordinal
+		}
+		role := identity
+		for at, character := range identity {
+			if character == '=' {
+				role = identity[:at+1]
+				break
+			}
+		}
+		identities[index] = fmt.Sprintf("%s#%d", role, ordinal)
+	}
+
+	return FailureKey{
+		authority: authority, operation: violation.operation, reason: violation.reason,
+		identities: identities,
 	}
 }
 
