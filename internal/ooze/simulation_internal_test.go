@@ -72,7 +72,7 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 		catalogue: []mutantIdentity{"mutant-a"},
 	}
 
-	explored := Explore(definition, simulationChoiceBytes{simulationChooseBaselineFailure})
+	explored := Explore(definition, simulationChoiceBytes{0, 2})
 	if explored.failure != nil {
 		t.Fatalf("exploration failure=%v", explored.failure)
 	}
@@ -151,19 +151,20 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}
 	for _, test := range []struct {
-		name   string
-		choice byte
-		want   mutantResultKind
+		name    string
+		choices simulationChoiceBytes
+		want    mutantResultKind
 	}{
-		{name: "survived", choice: 0, want: mutantSurvived},
-		{name: "killed", choice: 2, want: mutantKilled},
+		{name: "survived", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 0}, want: mutantSurvived},
+		{name: "killed", choices: simulationChoiceBytes{0, 0, 0, 0, 0, 2}, want: mutantKilled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			explored := Explore(definition, simulationChoiceBytes{test.choice})
+			explored := Explore(definition, test.choices)
 			completed, ok := explored.world.campaign.outcome.(completedOutcome)
 			if explored.failure != nil || !ok || len(completed.mutants) != 1 ||
 				completed.mutants[0].kind != test.want {
-				t.Fatalf("completed outcome=%#v failure=%v, want %v", explored.world.campaign.outcome, explored.failure, test.want)
+				t.Fatalf("completed outcome=%#v failure=%v, want %v; choices=%#v",
+					explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
 			}
 			if explored.world.campaign.commandCount() != 2 || len(explored.world.campaign.obligations) != 0 {
 				t.Fatalf("terminal commands/obligations=%d/%#v",
@@ -260,7 +261,8 @@ func TestSimulationChoiceStreamSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	firstOrder := terminalOrder(first.trace)
 	secondOrder := terminalOrder(second.trace)
 	if reflect.DeepEqual(firstOrder, secondOrder) {
-		t.Fatalf("distinct choice streams selected the same primary order: %v", firstOrder)
+		t.Fatalf("distinct choice streams selected the same primary order: %v; first=%#v second=%#v",
+			firstOrder, first.trace.choices, second.trace.choices)
 	}
 	for _, explored := range []SimulationResult{first, second} {
 		if replayed := ReplayLegal(explored.trace); replayed.failure != nil {
@@ -827,13 +829,22 @@ func TestSimulationChoiceTranscriptMarksCanonicalRecovery(t *testing.T) {
 	if explored.failure != nil {
 		t.Fatalf("recovery exploration failed: %v", explored.failure)
 	}
-	if len(explored.trace.choices) < 2 || explored.trace.choices[0].recovery {
-		t.Fatalf("choice transcript=%#v, want one explored choice before recovery", explored.trace.choices)
-	}
-	for _, choice := range explored.trace.choices[1:] {
-		if !choice.recovery || choice.selected != 0 {
+	seenExploration, seenRecovery := false, false
+	for _, choice := range explored.trace.choices {
+		if !choice.recovery {
+			if seenRecovery {
+				t.Fatalf("exploration resumed after recovery: %#v", explored.trace.choices)
+			}
+			seenExploration = true
+			continue
+		}
+		seenRecovery = true
+		if choice.selected != 0 {
 			t.Fatalf("non-canonical recovery choice=%#v", choice)
 		}
+	}
+	if !seenExploration || !seenRecovery {
+		t.Fatalf("choice transcript=%#v, want exploration followed by recovery", explored.trace.choices)
 	}
 }
 
@@ -847,6 +858,24 @@ func TestSimulationEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 	}, simulationChoiceBytes{})
 	if explored.failure != nil {
 		t.Fatalf("empty exploration failed: %v", explored.failure)
+	}
+	for index, record := range explored.trace.records {
+		if record.source.kind == 0 || record.source.identity == 0 {
+			t.Fatalf("record %d has no reducer-emitted causal source: %#v", index, record.source)
+		}
+	}
+}
+
+func TestSimulationNonEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-causal-nonempty", lineage: 93, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, simulationChoiceBytes{})
+	if explored.failure != nil {
+		t.Fatalf("non-empty exploration failed: %v", explored.failure)
 	}
 	for index, record := range explored.trace.records {
 		if record.source.kind == 0 || record.source.identity == 0 {
