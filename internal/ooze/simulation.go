@@ -98,8 +98,9 @@ type SimulationResult struct {
 }
 
 type simulationMalformedFact struct {
-	authority simulationAuthority
-	campaign  campaignEventPayload
+	authority  simulationAuthority
+	campaign   campaignEventPayload
+	supervisor supervisorEvent
 }
 
 // FailureKey is the alpha-normalized semantic identity retained while shrinking.
@@ -646,8 +647,12 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	if legal.failure != nil {
 		return ViolationResult{failure: fmt.Errorf("legal prefix: %w", legal.failure)}
 	}
-	if malformed.authority != simulationCampaignAuthority || malformed.campaign == nil {
+	if malformed.authority != simulationCampaignAuthority &&
+		malformed.authority != simulationSupervisorAuthority {
 		return ViolationResult{failure: fmt.Errorf("malformed fact authority is not implemented")}
+	}
+	if malformed.authority == simulationCampaignAuthority && malformed.campaign == nil {
+		return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 	}
 
 	runtime := legal.world.runtime
@@ -673,20 +678,51 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 		}
 	}()
 
-	_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
-		id: campaignEventID(len(campaign.trace) + 1), payload: malformed.campaign,
-	}, func(closure runtimeClosure) emergencySweep {
-		resolutions := make([]emergencyResolution, len(closure.residual))
-		for index, residual := range closure.residual {
-			resolutions[index] = emergencyResolution{
-				generation: residual.generation, disposition: emergencyConfirmedDrained,
-			}
-		}
-
-		return emergencySweep{resolutions: resolutions}
-	})
+	if malformed.authority == simulationCampaignAuthority {
+		_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
+			id: campaignEventID(len(campaign.trace) + 1), payload: malformed.campaign,
+		}, simulationEmergencySweep)
+	} else {
+		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor)
+	}
 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
+}
+
+func simulationAdvanceSupervisorGuarded(
+	runtime *processRuntime,
+	state supervisorState,
+	event supervisorEvent,
+) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		violation, ok := recovered.(runtimeInvariantViolation)
+		if !ok {
+			violation = runtimeInvariantViolation{
+				operation: supervisorReducerOperation, reason: "unexpected panic",
+			}
+		}
+		var closure runtimeClosure
+		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
+		*runtime, _ = runtime.settleEmergency(simulationEmergencySweep(closure))
+		panic(violation)
+	}()
+
+	_, _ = reduceSupervisor(state, event)
+}
+
+func simulationEmergencySweep(closure runtimeClosure) emergencySweep {
+	resolutions := make([]emergencyResolution, len(closure.residual))
+	for index, residual := range closure.residual {
+		resolutions[index] = emergencyResolution{
+			generation: residual.generation, disposition: emergencyConfirmedDrained,
+		}
+	}
+
+	return emergencySweep{resolutions: resolutions}
 }
 
 // Shrink removes semantic records and definition members while retaining one typed failure.

@@ -230,6 +230,54 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 	}
 }
 
+func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-supervisor-violation", lineage: 32, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, simulationChoiceBytes{simulationChooseBaselineFailure})
+	prefixLength := 0
+	var registered supervisorEvent
+	for index, record := range explored.trace.records {
+		if record.authority == simulationSupervisorAuthority &&
+			record.supervisorEvent.kind == supervisorProspectiveRegistered {
+			prefixLength = index + 1
+			registered = record.supervisorEvent
+			break
+		}
+	}
+	prefix := simulationTrace{
+		definition: explored.trace.definition,
+		records:    append([]simulationRecord(nil), explored.trace.records[:prefixLength]...),
+	}
+	completedAt := registered.launchBy.Add(-time.Nanosecond)
+	malformed := simulationMalformedFact{
+		authority: simulationSupervisorAuthority,
+		supervisor: supervisorEvent{
+			kind: supervisorLaunchCompleted, generation: registered.generation, at: completedAt,
+			completion: &supervisorLaunchCompletion{
+				generation: registered.generation, action: 999, at: completedAt,
+				kind: supervisorLaunchReleased,
+			},
+		},
+	}
+
+	first := ReplayViolation(prefix, malformed)
+	second := ReplayViolation(prefix, malformed)
+	if first.failure != nil || !reflect.DeepEqual(first, second) {
+		t.Fatalf("supervisor violation replay diverged: first=%#v second=%#v", first, second)
+	}
+	if first.key.authority != simulationSupervisorAuthority ||
+		first.invariant.operation != supervisorReducerOperation {
+		t.Fatalf("supervisor invariant/key=%#v/%#v", first.invariant, first.key)
+	}
+	if first.world.runtime.lifecycle != runtimeClosedDrained || len(first.world.runtime.admissions) != 0 {
+		t.Fatalf("supervisor violation cleanup retained custody: %#v", first.world.runtime)
+	}
+}
+
 func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
