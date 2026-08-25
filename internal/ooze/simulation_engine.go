@@ -79,24 +79,18 @@ func simulationExploreEngine(
 	for engine.campaign.outcome == nil && engine.campaign.failure == nil {
 		moves := engine.enabledMoves()
 		if len(moves) == 0 {
-			return SimulationResult{trace: engine.trace, failure: simulationLivenessFailure{
-				kind: simulationLivenessNoMove, live: engine.liveSources(),
-			}}
+			return simulationLivenessResult(engine, simulationLivenessNoMove)
 		}
 		selected, recovery := simulationSelectEngineMove(&engine.trace, choices, moves)
 		if recovery {
 			recoverySteps++
 			if recoverySteps > recoveryBound {
-				return SimulationResult{trace: engine.trace, failure: simulationLivenessFailure{
-					kind: simulationLivenessRecoveryBound, live: engine.liveSources(),
-				}}
+				return simulationLivenessResult(engine, simulationLivenessRecoveryBound)
 			}
 			cut := fmt.Sprintf("%#v|%#v|%#v", simulationTraceCampaignState(engine.campaign),
 				simulationTraceRuntimeState(engine.runtime), engine.liveSources())
 			if _, found := seenRecovery[cut]; found {
-				return SimulationResult{trace: engine.trace, failure: simulationLivenessFailure{
-					kind: simulationLivenessRepeatedWorld, live: engine.liveSources(),
-				}}
+				return simulationLivenessResult(engine, simulationLivenessRepeatedWorld)
 			}
 			seenRecovery[cut] = struct{}{}
 		}
@@ -109,9 +103,7 @@ func simulationExploreEngine(
 		}
 	}
 	if len(engine.pending) != 0 {
-		return SimulationResult{trace: engine.trace, failure: simulationLivenessFailure{
-			kind: simulationLivenessNoMove, live: engine.liveSources(),
-		}}
+		return simulationLivenessResult(engine, simulationLivenessNoMove)
 	}
 
 	return SimulationResult{
@@ -120,6 +112,30 @@ func simulationExploreEngine(
 			campaign: engine.campaign, runtime: engine.runtime,
 			supervisor: simulationProjectSupervisorState(engine.supervisor),
 		},
+	}
+}
+
+func simulationLivenessResult(engine simulationEngine, kind simulationLivenessKind) SimulationResult {
+	live := engine.liveSources()
+	ordinals := make(map[simulationCausalSourceKind]int)
+	identities := make([]string, len(live))
+	for index, source := range live {
+		ordinals[source.kind]++
+		identities[index] = fmt.Sprintf("owner-source-%d#%d", source.kind, ordinals[source.kind])
+	}
+	failure := simulationLivenessFailure{kind: kind, live: live}
+
+	return SimulationResult{
+		trace: engine.trace,
+		world: simulationWorld{
+			campaign: engine.campaign, runtime: engine.runtime,
+			supervisor: simulationProjectSupervisorState(engine.supervisor),
+		},
+		key: FailureKey{
+			property: "Explore", kind: simulationLivenessFailureKind,
+			liveness: kind, identities: identities,
+		},
+		failure: failure,
 	}
 }
 
@@ -407,15 +423,15 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		engine.emergency = settlement
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationSettleEmergency,
-			runtimeSweep: simulationTraceEmergencySweep(emergencySweep{resolutions: resolutions}),
-			runtimeState: simulationTraceRuntimeState(engine.runtime),
+			runtimeOperation:    simulationSettleEmergency,
+			runtimeSweep:        simulationTraceEmergencySweep(emergencySweep{resolutions: resolutions}),
+			runtimeState:        simulationTraceRuntimeState(engine.runtime),
 			runtimeEmergencyOut: simulationTraceEmergencySettlement(settlement),
 		})
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorEmergencySettlementCompleted,
 			emergencySettlement: &supervisorEmergencySettlementCompletion{
-				action: engine.supervisor.emergency.pendingAction,
+				action:       engine.supervisor.emergency.pendingAction,
 				acknowledged: acknowledged, residuals: residuals,
 			},
 		})
