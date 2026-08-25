@@ -615,7 +615,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 	supervisor := supervisorState{}
 	var delivered campaignEventPayload
 	activeLaunches := make(map[attemptGeneration]campaignEffect)
-	var terminalReceipt observationResult
+	terminalReceipts := make(map[attemptGeneration]observationResult)
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
 			return simulationReplayFailure(trace, "record %d has sequence %d", index, record.sequence)
@@ -695,7 +695,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 						receipt: campaignReceipt(observation),
 					}
 				default:
-					terminalReceipt = observation
+					terminalReceipts[record.runtimeGeneration] = observation
 				}
 			case simulationCommitTerminal:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
@@ -721,6 +721,9 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 			payload := record.campaignEvent.production().payload
 			if payload == nil {
 				payload = delivered
+			}
+			if delivered != nil {
+				delivered = simulationCausalCampaignPayload(payload, delivered)
 			}
 			if delivered != nil && !reflect.DeepEqual(payload, delivered) {
 				return simulationReplayFailure(trace, "causal campaign fact diverged at record %d", index)
@@ -785,14 +788,14 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				terminal := publicTerminal(
 					deliver.terminal, func(supervisorOutputRef) string { return "" }, nil, deliver.runtimeKind,
 				)
+				receipt, found := terminalReceipts[activeLaunch.generation]
+				if !found {
+					return simulationReplayFailure(trace, "terminal completion has no runtime receipt at record %d", index)
+				}
+				delete(terminalReceipts, activeLaunch.generation)
 				terminalEvent := attemptTerminalEvent{
 					attempt: activeLaunch.attempt, generation: activeLaunch.generation,
-					terminal: terminal, receipt: campaignReceipt(terminalReceipt),
-				}
-				if activeLaunch.attemptKind == campaignAttemptBaseline {
-					terminalEvent.resolvedMutationDeadline = resolveBaselineMutationDeadline(
-						terminalExecutionData(terminal).CommandDuration, trace.definition.campaign.peers,
-					)
+					terminal: terminal, receipt: campaignReceipt(receipt),
 				}
 				delivered = terminalEvent
 			}
@@ -807,6 +810,18 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 			campaign: campaign, runtime: runtime, supervisor: simulationProjectSupervisorState(supervisor),
 		},
 	}
+}
+
+func simulationCausalCampaignPayload(recorded, derived campaignEventPayload) campaignEventPayload {
+	recordedTerminal, recordedIsTerminal := recorded.(attemptTerminalEvent)
+	derivedTerminal, derivedIsTerminal := derived.(attemptTerminalEvent)
+	if recordedIsTerminal && derivedIsTerminal {
+		derivedTerminal.resolvedMutationDeadline = recordedTerminal.resolvedMutationDeadline
+
+		return derivedTerminal
+	}
+
+	return derived
 }
 
 // ReplayViolation applies one malformed fact after a legal prefix and captures the guard's re-panic.
