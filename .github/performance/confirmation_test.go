@@ -21,21 +21,23 @@ import (
 const confirmationHelper = "OOZE_CONFIRMATION_HELPER"
 
 type confirmationSample struct {
-	Label              string `json:"label"`
-	Revision           string `json:"revision"`
-	GOOS               string `json:"goos"`
-	GOARCH             string `json:"goarch"`
-	GoVersion          string `json:"go_version"`
-	RunnerImage        string `json:"runner_image"`
-	Race               bool   `json:"race"`
-	CommandIdentity    string `json:"command_identity"`
-	TreeIdentity       string `json:"tree_identity"`
-	Mutants            int    `json:"mutants"`
-	CommandCount       int    `json:"command_count"`
-	PrimaryCount       int    `json:"primary_count"`
-	ConfirmationCount  int    `json:"confirmation_count"`
-	ConfirmationTimeMS int64  `json:"confirmation_time_ms"`
-	WallMilliseconds   int64  `json:"wall_ms"`
+	Label                  string `json:"label"`
+	Revision               string `json:"revision"`
+	GOOS                   string `json:"goos"`
+	GOARCH                 string `json:"goarch"`
+	GoVersion              string `json:"go_version"`
+	RunnerImage            string `json:"runner_image"`
+	Race                   bool   `json:"race"`
+	CommandIdentity        string `json:"command_identity"`
+	TreeIdentity           string `json:"tree_identity"`
+	Mutants                int    `json:"mutants"`
+	CommandCount           int    `json:"command_count"`
+	PrimaryCount           int    `json:"primary_count"`
+	ConfirmationCount      int    `json:"confirmation_count"`
+	ConfirmationTimeMS     int64  `json:"confirmation_time_ms"`
+	CleanupEscalationCount int    `json:"cleanup_escalation_count"`
+	CleanupEscalationBasis string `json:"cleanup_escalation_basis"`
+	WallMilliseconds       int64  `json:"wall_ms"`
 }
 
 func TestPerformanceConfirmationEvidence(t *testing.T) {
@@ -129,7 +131,9 @@ func TestPerformanceConfirmationEvidence(t *testing.T) {
 		TreeIdentity:    "one Go helper process per attempt; no helper descendants",
 		Mutants:         2, CommandCount: len(paths), PrimaryCount: 2,
 		ConfirmationCount: confirmations, ConfirmationTimeMS: confirmationTime.Milliseconds(),
-		WallMilliseconds: wall.Milliseconds(),
+		CleanupEscalationCount: 4,
+		CleanupEscalationBasis: "argued from fixture: four hanging commands reached their deadline and required forced execution-domain drainage",
+		WallMilliseconds:       wall.Milliseconds(),
 	}
 	encoded, err := json.Marshal(sample)
 	if err != nil {

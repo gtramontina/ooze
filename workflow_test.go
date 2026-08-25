@@ -295,6 +295,47 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 	)
 }
 
+func TestAcceptanceGateDocumentsNativeToolchainPolicy(t *testing.T) {
+	contents, err := os.ReadFile("docs/acceptance-gate.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := strings.Join(strings.Fields(string(contents)), " ")
+	requireContract(t, policy, "native toolchain policy",
+		"Linux and macOS use the repository's pinned Devbox environment",
+		"Windows uses pinned raw Go 1.26.6",
+	)
+	if strings.Contains(policy, "symmetrically on Linux, Darwin, and Windows") {
+		t.Error("acceptance gate still claims one raw-Go path for every native platform")
+	}
+}
+
+func TestAcceptanceEvidenceDoesNotCreditPrototypeWithProductionSimulation(t *testing.T) {
+	contents, err := os.ReadFile("docs/acceptance-gate-evidence.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := strings.Join(strings.Fields(string(contents)), " ")
+	requireContract(t, evidence, "production simulation evidence correction",
+		"The tested revision did not contain the accepted production simulation module",
+		"a8e3e2440e1e06800458104e881d4aa8da951653",
+	)
+	if strings.Contains(evidence, "#64 nested simulation module passes") {
+		t.Error("historical evidence still credits the prototype with production simulation delivery")
+	}
+}
+
+func TestAcceptanceGateDocumentsAuthoritativeDarwinControl(t *testing.T) {
+	contents, err := os.ReadFile("docs/acceptance-gate.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireContract(t, strings.Join(strings.Fields(string(contents)), " "), "Darwin control authority",
+		"Group signalling is a best-effort bulk optimization",
+		"Birth-validated per-identity control is authoritative",
+	)
+}
+
 func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/mutation.yml", "mutation")
 	requireNativeToolchains(t, mutationJob)
@@ -344,6 +385,37 @@ func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T
 		"performance-evidence-${{ matrix.name }}",
 		".github/performance/collect.sh",
 	)
+}
+
+func TestPerformanceEvidenceReportsCleanupEscalationSeparately(t *testing.T) {
+	for _, path := range []string{
+		".github/performance/fixture_common_test.go",
+		".github/performance/confirmation_test.go",
+	} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireContract(t, string(contents), path,
+			`json:"cleanup_escalation_count"`,
+			`json:"cleanup_escalation_basis"`,
+		)
+	}
+}
+
+func TestPerformanceDocumentDoesNotMislabelHistoricalRunAsExactHead(t *testing.T) {
+	contents, err := os.ReadFile("docs/performance-evidence.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := strings.Join(strings.Fields(string(contents)), " ")
+	requireContract(t, document, "performance evidence publication",
+		"The #72 closure comment records the exact published-head revalidation",
+		"Retained implementation run",
+	)
+	if strings.Contains(document, "## Final native run") {
+		t.Error("historical implementation run is still labeled as final exact-head evidence")
+	}
 }
 
 func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {

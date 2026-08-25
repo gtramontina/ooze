@@ -40,10 +40,10 @@ Every pull request requires:
 5. isolated `golangci-lint run --no-config ./...` evidence.
 
 Toolchain layering is deliberate. Primary Ubuntu CI validates the Devbox
-environment. Native OS Compatibility and mutation matrices instead use the
-SHA-pinned `actions/setup-go` action with exact Go 1.26.6 symmetrically on
-Linux, Darwin, and Windows, preserving one native command path for the
-kernel-specific evidence.
+environment. Native OS Compatibility and mutation matrices preserve that
+environment on Unix. Linux and macOS use the repository's pinned Devbox
+environment. Windows uses pinned raw Go 1.26.6 because Devbox requires WSL2 and
+would not exercise native Windows Job Objects.
 
 The existing mutation workflow remains a post-CI `main` gate across Linux,
 Darwin, and Windows. Before the final landing decision, #72 runs it against the
@@ -79,11 +79,13 @@ Native drain evidence additionally proves this order through the real
 supervisor: capture live group members and their parent closure before any
 destructive kill; freeze the group and each captured escapee; enumerate and
 freeze to a fixpoint under one absolute bound; then kill by group and by
-captured PID plus birth identity. Every by-PID action immediately revalidates
-birth identity. Mismatch or unreadability signals nothing and cannot prove
-drainage. Generation/action correlation, capture-before-kill,
-freeze-before-fixpoint, identity reuse, and the green behind-live-member shape
-are mandatory.
+captured PID plus birth identity. Group signalling is a best-effort bulk
+optimization. Birth-validated per-identity control is authoritative. Every
+by-PID action immediately revalidates birth identity, and failure to control
+any captured identity fails closed even if group delivery succeeded. Mismatch
+or unreadability signals nothing and cannot prove drainage. Generation/action
+correlation, capture-before-kill, freeze-before-fixpoint, identity reuse, and
+the green behind-live-member shape are mandatory.
 
 ### Linux
 

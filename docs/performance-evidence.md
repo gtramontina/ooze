@@ -17,10 +17,12 @@ seventeen commands total.
 The helper writes one immutable record after each healthy command. The raw
 JSONL artifact records wall time, mutant throughput, peak overlapping helper
 processes, the sum of the live helpers' measured Go `MemStats.Sys` bytes, and
-the set of inherited `GOMAXPROCS` values. The helper tree has no descendants,
-so its process peak is an exact count for the stated tree identity. The memory
-number is Go runtime reserved memory for those helpers, not whole-runner RSS;
-it is measured evidence only for that named command tree.
+the set of inherited `GOMAXPROCS` values. It also reports cleanup escalation
+separately: zero for healthy commands that completed before their deadline,
+with the observation basis recorded alongside the count. The helper tree has
+no descendants, so its process peak is an exact count for the stated tree
+identity. The memory number is Go runtime reserved memory for those helpers,
+not whole-runner RSS; it is measured evidence only for that named command tree.
 
 The fixture holds the first mutant wave until the expected admission width is
 present. This makes the stable structural claim explicit: managed automatic
@@ -31,14 +33,21 @@ into a correctness threshold.
 After the healthy samples, one separate candidate observation runs two hanging
 mutants with a 120 ms resolved deadline. Its record reports primary count,
 confirmation count, summed confirmation command time, total wall time, and the
-five-command envelope (one baseline, two primaries, two confirmations). This
-keeps the deliberate confirmation cost separate from healthy throughput.
+five-command envelope (one baseline, two primaries, two confirmations). Its
+separate cleanup field records four forced execution-domain drainages, argued
+from the four deliberately hanging commands reaching their resolved deadline.
+This keeps the deliberate confirmation and cleanup cost separate from healthy
+throughput.
 
 The workflow uploads `performance.jsonl` even when collection fails. Missing,
 malformed, short, skipped, or inconclusive native evidence blocks the landing
 review; it is never converted into a green timing claim.
 
-## Final native run
+The #72 closure comment records the exact published-head revalidation and its
+artifacts. Keeping that self-referential closure record on the issue avoids
+mislabeling an earlier commit as the final branch head in this checked-in file.
+
+## Retained implementation run
 
 The final collection ran at candidate revision
 `4be3aa90f634e566527f46b63a8476d1802afe0f` in
@@ -137,5 +146,5 @@ between sample positions, and left the later correctness records green. The
 retained evidence therefore supports only a narrow conclusion: a roughly
 20-second hosted macOS wall-clock pause occurred inside the measured interval,
 but its cause remains unresolved. There is no reproduced runtime defect to
-justify a production change. The final exact-head distribution is clean, and
+justify a production change. The retained implementation distribution is clean, and
 the raw historical outliers remain linked rather than hidden by its median.
