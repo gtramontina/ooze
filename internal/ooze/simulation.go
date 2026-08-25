@@ -148,6 +148,7 @@ type simulationWorld struct {
 type SimulationResult struct {
 	trace   simulationTrace
 	world   simulationWorld
+	key     FailureKey
 	failure error
 }
 
@@ -160,10 +161,20 @@ type simulationMalformedFact struct {
 }
 
 // FailureKey is the alpha-normalized semantic identity retained while shrinking.
+type simulationFailureKind uint8
+
+const (
+	simulationInvariantFailureKind simulationFailureKind = iota + 1
+	simulationLivenessFailureKind
+)
+
 type FailureKey struct {
+	property   string
+	kind       simulationFailureKind
 	authority  simulationAuthority
 	operation  string
 	reason     string
+	liveness   simulationLivenessKind
 	identities []string
 }
 
@@ -1037,6 +1048,7 @@ func simulationFailureKey(authority simulationAuthority, violation runtimeInvari
 	}
 
 	return FailureKey{
+		property: "ReplayViolation", kind: simulationInvariantFailureKind,
 		authority: authority, operation: violation.operation, reason: violation.reason,
 		identities: identities,
 	}

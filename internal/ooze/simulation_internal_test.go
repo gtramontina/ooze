@@ -757,6 +757,24 @@ func simulationChoiceDistance(choices []simulationChoiceRecord) int {
 	return distance
 }
 
+func TestSimulationLivenessFailureKeyIgnoresRawOwnerIdentities(t *testing.T) {
+	first := simulationLivenessResult(simulationEngine{pending: []simulationEngineMove{
+		{source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 71}},
+		{source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 93}},
+	}}, simulationLivenessNoMove)
+	second := simulationLivenessResult(simulationEngine{pending: []simulationEngineMove{
+		{source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 4}},
+		{source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 5}},
+	}}, simulationLivenessNoMove)
+
+	if first.failure == nil || second.failure == nil || !reflect.DeepEqual(first.key, second.key) {
+		t.Fatalf("liveness failures/keys diverged: first=%#v second=%#v", first, second)
+	}
+	if first.key.kind != simulationLivenessFailureKind || first.key.liveness != simulationLivenessNoMove {
+		t.Fatalf("liveness failure key=%#v", first.key)
+	}
+}
+
 func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
