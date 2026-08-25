@@ -68,6 +68,7 @@ type managedCampaignRunner struct {
 	owned      map[attemptGeneration]*OwnedAttempt
 	terminals  chan managedTerminalObservation
 	pending    int
+	emergency  bool
 }
 
 type managedTerminalObservation struct {
@@ -88,25 +89,27 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		workspaces:                  make(map[string]TemporaryRepository),
 		starts:                      make(map[attemptGeneration]installedStart),
 		owned:                       make(map[attemptGeneration]*OwnedAttempt),
-		terminals:                   make(chan managedTerminalObservation),
 	}
 }
 
 func (runner *managedCampaignRunner) run(request managedCampaignRequest) managedCampaignResult {
 	request.env = managedExecutionEnvironment(request.env, request.profile, request.peers)
+	runner.terminals = make(chan managedTerminalObservation, request.peers+1)
 	definition := campaignDefinition{
 		identity: request.identity, lineage: request.lineage,
 		command: request.command, env: request.env, profile: request.profile, peers: request.peers,
 	}
 	var effects []campaignEffect
 	runner.state, effects = beginCampaign(definition)
-	for len(effects) != 0 || runner.pending != 0 {
+	for len(effects) != 0 || runner.pending != 0 || runner.needsEmergencySettlement() {
 		var next []campaignEffect
 		for _, effect := range effects {
 			next = append(next, runner.execute(effect, request)...)
 		}
 		effects = next
-		if len(effects) == 0 && runner.pending != 0 {
+		if len(effects) == 0 && runner.needsEmergencySettlement() {
+			effects = runner.settleEmergency()
+		} else if len(effects) == 0 && runner.pending != 0 {
 			terminal := <-runner.terminals
 			runner.pending--
 			effects = runner.settle(terminal, request)
@@ -116,6 +119,22 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 	return managedCampaignResult{
 		outcome: runner.state.outcome, failure: runner.state.failure, mutations: runner.mutations,
 	}
+}
+
+func (runner *managedCampaignRunner) needsEmergencySettlement() bool {
+	return !runner.emergency && runner.state.drain.kind == campaignDrainRuntimeEmergency
+}
+
+func (runner *managedCampaignRunner) settleEmergency() []campaignEffect {
+	epoch := runner.state.drain.epoch
+	observed := runner.attempts.emergency(epoch)
+	if observed.epoch != epoch || observed.settlement.epoch != epoch {
+		panic("managed emergency settlement has the wrong epoch")
+	}
+	runner.emergency = true
+	runner.pending = 0
+
+	return runner.advance(runtimeEmergencySettledEvent{epoch: epoch, settlement: observed.settlement})
 }
 
 func (runner *managedCampaignRunner) execute(
