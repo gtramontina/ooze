@@ -54,6 +54,41 @@ func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *te
 	}
 }
 
+func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 86})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "emergency-before-start", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell, now: func() time.Time { return time.Unix(6_000, 0) },
+		launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			t.Fatalf("rejected start executed native action: %#v", action)
+
+			return nil
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	shell.closeRuntime(runtimeFatalCause("emergency before start commitment"))
+	driver.emergencyStarted = true
+	cell := pendingStartCell{}
+	spec := Spec{
+		Attempt: "emergency-before-start", Command: []string{"never-start"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	}
+	driver.reserveLaunch(&cell, spec)
+	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
+	if prepared.result.decision != startCommittedRejectedClosed {
+		t.Fatalf("start decision = %v, want closed rejection", prepared.result.decision)
+	}
+	driver.discardLaunch(&cell)
+	if len(driver.reservations) != 0 || cell.installedGeneration() != 0 {
+		t.Fatalf("rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.installedGeneration())
+	}
+}
+
 func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSettlesLateNoRelease(t *testing.T) {
 	registeredAt := time.Unix(7_000, 0)
 	launchBy := registeredAt.Add(time.Second)

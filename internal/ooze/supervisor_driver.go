@@ -130,6 +130,7 @@ func newDrivenSupervisorForTest(
 	}
 	supervisor := newSupervisorForTest(installStart, driver.launch)
 	supervisor.reserveLaunch = driver.reserveLaunch
+	supervisor.discardLaunch = driver.discardLaunch
 	supervisor.driveLaunch = driver.launchInstalled
 	supervisor.emergencyDrain = driver.emergencyDrain
 
@@ -165,10 +166,19 @@ func (driver *supervisorDriver) reserveLaunch(cell *pendingStartCell, spec Spec)
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 	_, duplicated := driver.reservations[cell]
-	if cell == nil || duplicated || driver.emergencyStarted {
+	if cell == nil || duplicated {
 		invariant(supervisorDriverOperation, "launch reservation is invalid or duplicated")
 	}
 	driver.reservations[cell] = spec
+}
+
+func (driver *supervisorDriver) discardLaunch(cell *pendingStartCell) {
+	driver.mutex.Lock()
+	defer driver.mutex.Unlock()
+	if _, reserved := driver.reservations[cell]; !reserved || cell.installedGeneration() != 0 {
+		invariant(supervisorDriverOperation, "discarded launch reservation is absent or installed")
+	}
+	delete(driver.reservations, cell)
 }
 
 func (driver *supervisorDriver) stageLaunch(

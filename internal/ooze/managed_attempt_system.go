@@ -36,6 +36,10 @@ func (system *nativeManagedAttemptSystem) reserveLaunch(cell *pendingStartCell, 
 	system.driver.reserveLaunch(cell, spec)
 }
 
+func (system *nativeManagedAttemptSystem) discardLaunch(cell *pendingStartCell) {
+	system.driver.discardLaunch(cell)
+}
+
 func (system *nativeManagedAttemptSystem) wait(
 	generation attemptGeneration,
 	owned *OwnedAttempt,

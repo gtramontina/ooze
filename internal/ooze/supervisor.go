@@ -107,6 +107,7 @@ type Supervisor struct {
 	installStart   func(attemptIdentity, *pendingStartCell) installedStart
 	launchNative   func(attemptGeneration, Spec) LaunchResult
 	reserveLaunch  func(*pendingStartCell, Spec)
+	discardLaunch  func(*pendingStartCell)
 	driveLaunch    func(installedStart, Spec) LaunchResult
 	emergencyDrain func(EmergencyRequest) SweepResult
 }
@@ -151,6 +152,9 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 		s.reserveLaunch(&pendingStart, snapshot)
 	}
 	start := s.installStart(attemptIdentity(snapshot.Attempt), &pendingStart)
+	if start.generation == 0 && s.discardLaunch != nil {
+		s.discardLaunch(&pendingStart)
+	}
 	if s.driveLaunch != nil {
 		return s.driveLaunch(start, snapshot)
 	}

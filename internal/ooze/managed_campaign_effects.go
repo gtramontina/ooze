@@ -99,6 +99,8 @@ func (runner *managedCampaignRunner) execute(
 		})
 		if prepared.result.decision == startCommittedAccepted {
 			runner.starts[prepared.result.generation] = prepared.start
+		} else {
+			runner.attempts.discardLaunch(cell)
 		}
 
 		return runner.advance(startCommittedEvent{
