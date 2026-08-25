@@ -697,6 +697,181 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 	}
 }
 
+func simulationVerifyAdjacentCommutation(trace simulationTrace, leftAt int) error {
+	if leftAt < 0 || leftAt+1 >= len(trace.records) {
+		return fmt.Errorf("commutation pair is outside the trace")
+	}
+	left, right := trace.records[leftAt], trace.records[leftAt+1]
+	if left.authority == right.authority {
+		return fmt.Errorf("commutation pair has one transition authority")
+	}
+	if simulationRecordDependsOn(right, left) || simulationRecordDependsOn(left, right) {
+		return fmt.Errorf("commutation pair is causally related")
+	}
+	prefix := simulationCloneTrace(trace)
+	prefix.records = slices.Clone(prefix.records[:leftAt])
+	prefix.barriers = slices.DeleteFunc(prefix.barriers, func(barrier simulationQuiescentBarrier) bool {
+		return barrier.afterSequence > uint64(leftAt)
+	})
+	initial := ReplayLegal(prefix)
+	if initial.failure != nil {
+		return fmt.Errorf("commutation prefix: %w", initial.failure)
+	}
+	apply := func(first, second simulationRecord) (simulationWorld, error) {
+		world, err := simulationApplyRecordedOwnerCut(initial.world, first)
+		if err != nil {
+			return simulationWorld{}, err
+		}
+
+		return simulationApplyRecordedOwnerCut(world, second)
+	}
+	forward, err := apply(left, right)
+	if err != nil {
+		return fmt.Errorf("forward commutation: %w", err)
+	}
+	reversed, err := apply(right, left)
+	if err != nil {
+		return fmt.Errorf("reversed commutation: %w", err)
+	}
+	if !reflect.DeepEqual(forward, reversed) {
+		return fmt.Errorf("independent owner cuts changed the composed world")
+	}
+
+	return nil
+}
+
+func simulationRecordDependsOn(child, parent simulationRecord) bool {
+	switch child.source.kind {
+	case simulationOwnerDeliverySource:
+		return child.source.identity == parent.sequence
+	case simulationCampaignEffectSource:
+		return slices.ContainsFunc(parent.campaignEffects, func(effect campaignEffect) bool {
+			return uint64(effect.id) == child.source.identity
+		})
+	case simulationSupervisorActionSource:
+		return slices.ContainsFunc(parent.supervisorActions, func(action simulationSupervisorActionRecord) bool {
+			return uint64(action.token) == child.source.identity
+		})
+	default:
+		return false
+	}
+}
+
+func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRecord) (simulationWorld, error) {
+	switch record.authority {
+	case simulationCampaignAuthority:
+		state, effects := advanceCampaign(world.campaign, record.campaignEvent.production())
+		if !reflect.DeepEqual(simulationTraceCampaignState(state), record.campaignState) ||
+			!reflect.DeepEqual(effects, record.campaignEffects) {
+			return simulationWorld{}, fmt.Errorf("campaign owner cut diverged")
+		}
+		world.campaign = state
+	case simulationRuntimeAuthority:
+		state, err := simulationApplyRecordedRuntimeCut(world.runtime, record)
+		if err != nil {
+			return simulationWorld{}, err
+		}
+		world.runtime = state
+	case simulationSupervisorAuthority:
+		state, actions := reduceSupervisor(world.supervisor, record.supervisorEvent.production())
+		if !reflect.DeepEqual(simulationTraceSupervisorState(state), record.supervisorState) ||
+			!reflect.DeepEqual(simulationTraceSupervisorActions(actions), record.supervisorActions) {
+			return simulationWorld{}, fmt.Errorf("supervisor owner cut diverged")
+		}
+		world.supervisor = simulationProjectSupervisorState(state)
+	default:
+		return simulationWorld{}, fmt.Errorf("commutation authority is invalid")
+	}
+
+	return world, nil
+}
+
+func simulationApplyRecordedRuntimeCut(state processRuntime, record simulationRecord) (processRuntime, error) {
+	var output any
+	switch record.runtimeOperation {
+	case simulationRegisterCampaign:
+		var registration campaignRegistration
+		state, registration = state.registerCampaign(record.runtimeProvenance)
+		output = registration
+		if !reflect.DeepEqual(output, record.runtimeRegistration) {
+			return processRuntime{}, fmt.Errorf("runtime registration cut diverged")
+		}
+	case simulationRequestAdmission:
+		var result admissionResult
+		state, result = state.requestAdmission(record.runtimeAdmission.production())
+		if !reflect.DeepEqual(simulationTraceAdmissionResult(result), record.runtimeAdmissionOut) {
+			return processRuntime{}, fmt.Errorf("runtime admission cut diverged")
+		}
+	case simulationCancelAdmission:
+		var result admissionResult
+		state, result = state.cancelAdmission(record.runtimeAdmissionToken.production())
+		if !reflect.DeepEqual(simulationTraceAdmissionResult(result), record.runtimeAdmissionOut) {
+			return processRuntime{}, fmt.Errorf("runtime cancellation cut diverged")
+		}
+	case simulationAcknowledgeGrantReturn:
+		var result admissionResult
+		state, result = state.acknowledgeGrantReturn(record.runtimeGrant.production())
+		if !reflect.DeepEqual(simulationTraceAdmissionResult(result), record.runtimeAdmissionOut) {
+			return processRuntime{}, fmt.Errorf("runtime grant-return cut diverged")
+		}
+	case simulationBindConfirmationBarrier:
+		var result barrierResult
+		state, result = state.sealAndBindConfirmationBarrier(record.runtimeBarrier.production())
+		if !reflect.DeepEqual(simulationTraceBarrierResult(result), record.runtimeBarrierOut) {
+			return processRuntime{}, fmt.Errorf("runtime barrier cut diverged")
+		}
+	case simulationCompleteConfirmationQueue:
+		var result confirmationQueueResult
+		state, result = state.completeConfirmationQueue(record.runtimeCampaign)
+		if !reflect.DeepEqual(simulationTraceConfirmationQueueResult(result), record.runtimeQueueOut) {
+			return processRuntime{}, fmt.Errorf("runtime queue cut diverged")
+		}
+	case simulationStartCommitted:
+		var result startCommittedResult
+		state, result = state.startCommitted(record.runtimeGrant.production())
+		if !reflect.DeepEqual(result, record.runtimeStart) {
+			return processRuntime{}, fmt.Errorf("runtime start cut diverged")
+		}
+	case simulationObserveAttempt:
+		var result observationResult
+		state, result = state.observeAttempt(record.runtimeGeneration, record.runtimeObservation.production())
+		if !reflect.DeepEqual(simulationTraceObservationResult(result), record.runtimeObservationOut) {
+			return processRuntime{}, fmt.Errorf("runtime observation cut diverged")
+		}
+	case simulationCommitTerminal:
+		var result terminalResult
+		state, result = state.commitTerminal(record.runtimeCampaign)
+		if !reflect.DeepEqual(result, record.runtimeTerminal) {
+			return processRuntime{}, fmt.Errorf("runtime terminal cut diverged")
+		}
+	case simulationSettleEmergency:
+		var result emergencySettlement
+		state, result = state.settleEmergency(record.runtimeSweep.production())
+		if !reflect.DeepEqual(simulationTraceEmergencySettlement(result), record.runtimeEmergencyOut) {
+			return processRuntime{}, fmt.Errorf("runtime emergency cut diverged")
+		}
+	case simulationAuthorizeForcedAbort:
+		var result terminalResult
+		state, result = state.authorizeForcedAbort(record.runtimeCampaign, record.runtimeFatalEpoch)
+		if !reflect.DeepEqual(result, record.runtimeTerminal) {
+			return processRuntime{}, fmt.Errorf("runtime forced-abort cut diverged")
+		}
+	case simulationCloseRuntime:
+		var result runtimeClosure
+		state, result = state.closeRuntime(record.runtimeFatalCause)
+		if !reflect.DeepEqual(simulationTraceRuntimeClosure(result), record.runtimeClosure) {
+			return processRuntime{}, fmt.Errorf("runtime closure cut diverged")
+		}
+	default:
+		return processRuntime{}, fmt.Errorf("runtime commutation operation is invalid")
+	}
+	if !reflect.DeepEqual(simulationTraceRuntimeState(state), record.runtimeState) {
+		return processRuntime{}, fmt.Errorf("runtime owner state diverged")
+	}
+
+	return state, nil
+}
+
 func simulationCausalCampaignPayload(recorded, derived campaignEventPayload) campaignEventPayload {
 	recordedTerminal, recordedIsTerminal := recorded.(attemptTerminalEvent)
 	derivedTerminal, derivedIsTerminal := derived.(attemptTerminalEvent)
