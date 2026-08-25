@@ -837,6 +837,24 @@ func TestSimulationChoiceTranscriptMarksCanonicalRecovery(t *testing.T) {
 	}
 }
 
+func TestSimulationEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-causal-empty", lineage: 92, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1,
+	}, simulationChoiceBytes{})
+	if explored.failure != nil {
+		t.Fatalf("empty exploration failed: %v", explored.failure)
+	}
+	for index, record := range explored.trace.records {
+		if record.source.kind == 0 || record.source.identity == 0 {
+			t.Fatalf("record %d has no reducer-emitted causal source: %#v", index, record.source)
+		}
+	}
+}
+
 func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)

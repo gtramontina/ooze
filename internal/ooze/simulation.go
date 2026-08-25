@@ -99,6 +99,7 @@ type simulationQuiescentBarrier struct {
 type simulationRecord struct {
 	sequence  uint64
 	authority simulationAuthority
+	source    simulationCausalSource
 
 	campaignEvent   simulationCampaignEvent
 	campaignState   simulationCampaignState
@@ -176,6 +177,9 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 		choices = &simulationChoiceCursor{values: slices.Clone(values)}
 	}
 	definition.catalogue = append([]mutantIdentity(nil), definition.catalogue...)
+	if len(definition.catalogue) == 0 {
+		return simulationExploreEngine(definition, choices)
+	}
 	state, effects := beginCampaign(definition.campaign)
 	runtime := newProcessRuntime(definition.capacity)
 	trace := simulationTrace{definition: definition}
