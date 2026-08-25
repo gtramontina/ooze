@@ -30,27 +30,29 @@ type performanceEvent struct {
 }
 
 type performanceSample struct {
-	Label                 string  `json:"label"`
-	Revision              string  `json:"revision"`
-	Sample                int     `json:"sample"`
-	GOOS                  string  `json:"goos"`
-	GOARCH                string  `json:"goarch"`
-	GoVersion             string  `json:"go_version"`
-	RunnerImage           string  `json:"runner_image"`
-	Race                  bool    `json:"race"`
-	CommandIdentity       string  `json:"command_identity"`
-	TreeIdentity          string  `json:"tree_identity"`
-	Mutants               int     `json:"mutants"`
-	CommandCount          int     `json:"command_count"`
-	WallMilliseconds      int64   `json:"wall_ms"`
-	ThroughputPerSecond   float64 `json:"mutants_per_second"`
-	PeakCommandProcesses  int     `json:"peak_command_processes"`
-	ExpectedPeakProcesses int     `json:"expected_peak_processes"`
-	PeakGoMemorySysBytes  uint64  `json:"peak_go_memory_sys_bytes"`
-	ObservedGOMAXPROCS    []int   `json:"observed_gomaxprocs"`
-	ConfirmationCount     int     `json:"confirmation_count"`
-	ConfirmationTimeMS    int64   `json:"confirmation_time_ms"`
-	SurvivedCount         int     `json:"survived_count,omitempty"`
+	Label                  string  `json:"label"`
+	Revision               string  `json:"revision"`
+	Sample                 int     `json:"sample"`
+	GOOS                   string  `json:"goos"`
+	GOARCH                 string  `json:"goarch"`
+	GoVersion              string  `json:"go_version"`
+	RunnerImage            string  `json:"runner_image"`
+	Race                   bool    `json:"race"`
+	CommandIdentity        string  `json:"command_identity"`
+	TreeIdentity           string  `json:"tree_identity"`
+	Mutants                int     `json:"mutants"`
+	CommandCount           int     `json:"command_count"`
+	WallMilliseconds       int64   `json:"wall_ms"`
+	ThroughputPerSecond    float64 `json:"mutants_per_second"`
+	PeakCommandProcesses   int     `json:"peak_command_processes"`
+	ExpectedPeakProcesses  int     `json:"expected_peak_processes"`
+	PeakGoMemorySysBytes   uint64  `json:"peak_go_memory_sys_bytes"`
+	ObservedGOMAXPROCS     []int   `json:"observed_gomaxprocs"`
+	ConfirmationCount      int     `json:"confirmation_count"`
+	ConfirmationTimeMS     int64   `json:"confirmation_time_ms"`
+	CleanupEscalationCount int     `json:"cleanup_escalation_count"`
+	CleanupEscalationBasis string  `json:"cleanup_escalation_basis"`
+	SurvivedCount          int     `json:"survived_count,omitempty"`
 }
 
 func TestPerformanceEvidence(t *testing.T) {
@@ -254,7 +256,9 @@ func writePerformanceSample(t *testing.T, directory string, wall time.Duration, 
 		PeakCommandProcesses: peakProcesses, ExpectedPeakProcesses: performanceExpectedPeak(),
 		PeakGoMemorySysBytes: peakMemory,
 		ObservedGOMAXPROCS:   observed, ConfirmationCount: 0, ConfirmationTimeMS: 0,
-		SurvivedCount: survived,
+		CleanupEscalationCount: 0,
+		CleanupEscalationBasis: "measured: every helper completed before its deadline; no forced execution-domain drainage",
+		SurvivedCount:          survived,
 	}
 	encoded, err := json.Marshal(sample)
 	if err != nil {

@@ -45,8 +45,12 @@ three ordinary suites; no waiver was used.
   broader supervisor driver/reducer set passed 10 shuffled race repetitions.
 - The full repository test gate passed locally through Devbox: 879 tests, one
   longstanding skip, 11.031s.
-- #64 nested simulation module passes with race enabled; `Explore`, legal and
-  violation replay, and shrink remain separately callable.
+- Correction recorded during #72 verification: The tested revision did not
+  contain the accepted production simulation module. It ran only the throwaway
+  contract prototype, which is not production landing evidence.
+  Production delivery and its separate `Explore`, `ReplayLegal`,
+  `ReplayViolation`, and `Shrink` gates arrived later at
+  `a8e3e2440e1e06800458104e881d4aa8da951653` under #80.
 - Isolated `golangci-lint run --no-config ./...`: 0 issues.
 - Cross-compilation passes for Linux amd64, Darwin amd64/arm64, Windows
   amd64/arm64, and unsupported sentinel Plan 9 amd64.
