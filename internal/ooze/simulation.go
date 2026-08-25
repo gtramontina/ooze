@@ -246,7 +246,11 @@ func simulationCampaignRecord(
 }
 
 // ReplayLegal replays a typed legal trace through fresh production owner states.
-func ReplayLegal(trace simulationTrace) (result SimulationResult) {
+func ReplayLegal(trace simulationTrace) SimulationResult {
+	return simulationReplayLegal(trace, true)
+}
+
+func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (result SimulationResult) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result = SimulationResult{trace: trace, failure: fmt.Errorf("replay invariant: %v", recovered)}
@@ -693,6 +697,18 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 	if barrierAt != len(trace.barriers) {
 		return simulationReplayFailure(trace, "quiescent barrier %d has no accepted prefix", barrierAt)
 	}
+	if verifyCommutation && len(trace.barriers) != 0 {
+		for leftAt := 0; leftAt+1 < len(trace.records); leftAt++ {
+			if !simulationRecordsAreIndependent(trace.records[leftAt], trace.records[leftAt+1]) {
+				continue
+			}
+			if err := simulationVerifyAdjacentCommutation(trace, leftAt); err != nil {
+				return simulationReplayFailure(
+					trace, "independent owner cuts diverged at record %d: %v", leftAt, err,
+				)
+			}
+		}
+	}
 
 	return SimulationResult{
 		trace: trace,
@@ -707,10 +723,7 @@ func simulationVerifyAdjacentCommutation(trace simulationTrace, leftAt int) erro
 		return fmt.Errorf("commutation pair is outside the trace")
 	}
 	left, right := trace.records[leftAt], trace.records[leftAt+1]
-	if left.authority == right.authority {
-		return fmt.Errorf("commutation pair has one transition authority")
-	}
-	if simulationRecordDependsOn(right, left) || simulationRecordDependsOn(left, right) {
+	if !simulationRecordsAreIndependent(left, right) {
 		return fmt.Errorf("commutation pair is causally related")
 	}
 	prefix := simulationCloneTrace(trace)
@@ -718,7 +731,7 @@ func simulationVerifyAdjacentCommutation(trace simulationTrace, leftAt int) erro
 	prefix.barriers = slices.DeleteFunc(prefix.barriers, func(barrier simulationQuiescentBarrier) bool {
 		return barrier.afterSequence > uint64(leftAt)
 	})
-	initial := ReplayLegal(prefix)
+	initial := simulationReplayLegal(prefix, false)
 	if initial.failure != nil {
 		return fmt.Errorf("commutation prefix: %w", initial.failure)
 	}
@@ -743,6 +756,11 @@ func simulationVerifyAdjacentCommutation(trace simulationTrace, leftAt int) erro
 	}
 
 	return nil
+}
+
+func simulationRecordsAreIndependent(left, right simulationRecord) bool {
+	return left.authority != right.authority &&
+		!simulationRecordDependsOn(right, left) && !simulationRecordDependsOn(left, right)
 }
 
 func simulationRecordDependsOn(child, parent simulationRecord) bool {
@@ -1300,6 +1318,8 @@ func simulationCloneTrace(trace simulationTrace) simulationTrace {
 	trace.definition.campaign.command = slices.Clone(trace.definition.campaign.command)
 	trace.definition.campaign.env = slices.Clone(trace.definition.campaign.env)
 	trace.records = slices.Clone(trace.records)
+	trace.barriers = slices.Clone(trace.barriers)
+	trace.choices = slices.Clone(trace.choices)
 	if trace.malformed != nil {
 		malformed := *trace.malformed
 		trace.malformed = &malformed

@@ -939,40 +939,38 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
-func TestSimulationConformanceProvesOnlyIndependentOwnerCutsCommute(t *testing.T) {
-	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
-	definition := campaignDefinition{
-		identity: "campaign-commutation", lineage: 510, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-commutation", lineage: 510, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, nil)
+	if explored.failure != nil {
+		t.Fatalf("commutation exploration failure=%v", explored.failure)
 	}
-	campaign, _ := beginCampaign(definition)
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{recorder: recorder}
-	shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
-	actions := driver.reduce(supervisorEvent{
-		kind: supervisorProspectiveRegistered, generation: 1, attempt: "independent-attempt",
-		at: time.Unix(100, 0), launchBy: time.Unix(101, 0),
-		profile: AutomaticProfile, commandDeadline: time.Second,
-	})
-	for _, action := range actions {
-		recorder.recordSupervisorAction(action)
+	trace := simulationCloneTrace(explored.trace)
+	trace.barriers = []simulationQuiescentBarrier{{
+		afterSequence: trace.records[len(trace.records)-1].sequence,
+		campaign:      simulationTraceCampaignState(explored.world.campaign),
+		runtime:       simulationTraceRuntimeState(explored.world.runtime),
+		supervisor:    simulationTraceSupervisorState(explored.world.supervisor),
+	}}
+	independent, causal := 0, 0
+	for index := 0; index+1 < len(trace.records); index++ {
+		left, right := trace.records[index], trace.records[index+1]
+		if simulationRecordsAreIndependent(left, right) {
+			independent++
+		} else if left.authority != right.authority {
+			causal++
+		}
 	}
-	independent, _ := recorder.quiescent(runner, shell, driver)
-	if err := simulationVerifyAdjacentCommutation(independent, 0); err != nil {
-		t.Fatalf("independent owner cuts did not commute: %v", err)
+	if independent == 0 || causal == 0 {
+		t.Fatalf("commutation trace pairs independent/causal=%d/%d", independent, causal)
 	}
-
-	causalRecorder := newSimulationRecorder()
-	causalShell := newProcessRuntimeShellWithRecorder(1, causalRecorder)
-	causalCampaign, _ := beginCampaign(definition)
-	causalRunner := &managedCampaignRunner{state: causalCampaign, recorder: causalRecorder}
-	causalDriver := &supervisorDriver{recorder: causalRecorder}
-	causalRegistration := causalShell.registerCampaign(campaignProvenance{lineage: definition.lineage})
-	causalRunner.advance(campaignRegisteredEvent{registration: causalRegistration})
-	causal, _ := causalRecorder.quiescent(causalRunner, causalShell, causalDriver)
-	if err := simulationVerifyAdjacentCommutation(causal, 0); err == nil {
-		t.Fatal("runtime registration commuted with its causal campaign delivery")
+	if replayed := ReplayLegal(trace); replayed.failure != nil {
+		t.Fatalf("quiescent commutation replay failure=%v", replayed.failure)
 	}
 }
 
