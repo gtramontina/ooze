@@ -246,7 +246,10 @@ func TestSimulationChoiceStreamSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	terminalOrder := func(trace simulationTrace) []attemptIdentity {
 		var attempts []attemptIdentity
 		for _, record := range trace.records {
-			terminal, ok := record.campaignEvent.payload.(attemptTerminalEvent)
+			if record.authority != simulationCampaignAuthority {
+				continue
+			}
+			terminal, ok := record.campaignEvent.production().payload.(attemptTerminalEvent)
 			if ok {
 				attempts = append(attempts, terminal.attempt)
 			}
@@ -280,12 +283,17 @@ func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 	trace := explored.trace
 	trace.records = slices.Clone(trace.records)
 	for index, record := range trace.records {
-		settled, ok := record.campaignEvent.payload.(resourceSettledEvent)
+		if record.authority != simulationCampaignAuthority {
+			continue
+		}
+		settled, ok := record.campaignEvent.production().payload.(resourceSettledEvent)
 		if !ok || settled.kind != campaignResourceWorkspace {
 			continue
 		}
 		settled.identity = "workspace-not-released"
-		trace.records[index].campaignEvent.payload = settled
+		trace.records[index].campaignEvent = simulationTraceCampaignEvent(campaignEvent{
+			id: trace.records[index].campaignEvent.id, payload: settled,
+		})
 		break
 	}
 
@@ -309,7 +317,9 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 	}
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
-		campaign:  snapshotEstablishedEvent{},
+		campaign: simulationTraceCampaignEvent(campaignEvent{
+			id: 1, payload: snapshotEstablishedEvent{},
+		}),
 	}
 
 	first := ReplayViolation(prefix, malformed)
@@ -359,13 +369,13 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	completedAt := registered.launchBy.Add(-time.Nanosecond)
 	malformed := simulationMalformedFact{
 		authority: simulationSupervisorAuthority,
-		supervisor: supervisorEvent{
+		supervisor: simulationTraceSupervisorEvent(supervisorEvent{
 			kind: supervisorLaunchCompleted, generation: registered.generation, at: completedAt,
 			completion: &supervisorLaunchCompletion{
 				generation: registered.generation, action: 999, at: completedAt,
 				kind: supervisorLaunchReleased,
 			},
-		},
+		}),
 	}
 
 	first := ReplayViolation(prefix, malformed)
@@ -423,7 +433,9 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	}, simulationChoiceBytes{simulationChooseBaselineFailure})
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
-		campaign:  snapshotEstablishedEvent{},
+		campaign: simulationTraceCampaignEvent(campaignEvent{
+			id: 1, payload: snapshotEstablishedEvent{},
+		}),
 	}
 	counterexample := simulationTrace{
 		definition: explored.trace.definition,
@@ -703,7 +715,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 
 	trace, _ := recorder.quiescent(runner, shell, driver)
 	mutants[0] = "caller-rewrite"
-	got := trace.records[len(trace.records)-1].campaignEvent.payload.(catalogueDiscoveredEvent).mutants
+	got := trace.records[len(trace.records)-1].campaignEvent.production().payload.(catalogueDiscoveredEvent).mutants
 	if !reflect.DeepEqual(got, []mutantIdentity{"mutant-a", "mutant-b"}) {
 		t.Fatalf("recorded catalogue changed with caller input: %v", got)
 	}
@@ -736,6 +748,12 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 	}
 	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
 		t.Fatalf("runtime trace leaked a delivery capability at %s", path)
+	}
+}
+
+func TestSimulationTraceContainsOnlyCapabilityFreeDTOs(t *testing.T) {
+	if path, found := executionCapabilityPath(reflect.TypeFor[simulationTrace](), nil); found {
+		t.Fatalf("simulation trace contains executable capability at %s", path)
 	}
 }
 
@@ -863,7 +881,10 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 			records:    append([]simulationRecord(nil), explored.trace.records[:2]...),
 		}
 		malformed := simulationMalformedFact{
-			authority: simulationCampaignAuthority, campaign: snapshotEstablishedEvent{},
+			authority: simulationCampaignAuthority,
+			campaign: simulationTraceCampaignEvent(campaignEvent{
+				id: 1, payload: snapshotEstablishedEvent{},
+			}),
 		}
 		first := ReplayViolation(prefix, malformed)
 		second := ReplayViolation(prefix, malformed)
