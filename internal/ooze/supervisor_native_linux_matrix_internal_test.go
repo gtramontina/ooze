@@ -41,7 +41,7 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 		},
 		{
 			name: "double-forked session orphan", role: "orphan-root",
-			walkFromRoot: [2]bool{true, false}, waitable: [2]bool{true, true}, postRootSeed: "subject",
+			walkFromRoot: [2]bool{false, false}, waitable: [2]bool{true, true}, postRootSeed: "subject",
 		},
 		{
 			name: "session escapee whose parent is the root", role: "escape-root",
@@ -77,6 +77,9 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 			subject := readLinuxMatrixPID(t, filepath.Join(directory, "subject.pid"))
 			middle := readOptionalLinuxMatrixPID(t, filepath.Join(directory, "middle.pid"))
 			guardian := linuxMatrixGuardianPID(t, executor)
+			if shape.role == "orphan-root" {
+				awaitLinuxMatrixParent(t, subject, guardian, 5*time.Second)
+			}
 
 			aliveWalk := linuxMatrixDescendants(t, root)
 			aliveWaitable := linuxMatrixDirectChildren(t, guardian)
@@ -337,6 +340,18 @@ func linuxMatrixParent(t *testing.T, process int) int {
 	t.Fatalf("Linux process %d has no parent identity", process)
 
 	return 0
+}
+
+func awaitLinuxMatrixParent(t *testing.T, process, want int, bound time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(bound)
+	for time.Now().Before(deadline) {
+		if linuxMatrixParent(t, process) == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("Linux process %d was not adopted by %d within %s", process, want, bound)
 }
 
 func assertLinuxMatrixProcessGone(t *testing.T, process int) {
