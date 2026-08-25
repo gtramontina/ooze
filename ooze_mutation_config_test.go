@@ -2,6 +2,7 @@ package ooze_test
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/gtramontina/ooze"
@@ -104,6 +105,8 @@ func TestSelfMutationCatalogueIsProportionalToChangedProduction(t *testing.T) {
 	assertSelfMutationCatalogue(t, configured.Repository.ListGoSourceFiles(), allowed)
 	snapshot := configured.Repository.MaterializeTemporaryRepository(t.TempDir())
 	assertSelfMutationCatalogue(t, snapshot.ListGoSourceFiles(), allowed)
+	nested := snapshot.MaterializeTemporaryRepository(t.TempDir())
+	assertSelfMutationCatalogue(t, nested.ListGoSourceFiles(), allowed)
 }
 
 func assertSelfMutationCatalogue(
@@ -120,14 +123,23 @@ func assertSelfMutationCatalogue(
 		}
 		seen[path] = struct{}{}
 	}
-	for _, path := range []string{
+	required := []string{
 		"internal/fsrepository/fstemporaryrepository.go",
 		"internal/ignoredrepository/ignoredrepository.go",
 		"internal/ooze/managed_attempt_system.go",
 		"internal/ooze/managed_campaign.go",
-	} {
+	}
+	if runtime.GOOS == "windows" {
+		required = append(required, "internal/fsrepository/remove_windows.go")
+	} else {
+		required = append(required, "internal/fsrepository/remove_unix.go")
+	}
+	if runtime.GOOS == "darwin" {
+		required = append(required, "internal/ooze/supervisor_native_darwin.go")
+	}
+	for _, path := range required {
 		if _, selected := seen[path]; !selected {
-			t.Errorf("self-mutation catalogue omits changed portable source %q", path)
+			t.Errorf("self-mutation catalogue omits active changed production source %q", path)
 		}
 	}
 }
