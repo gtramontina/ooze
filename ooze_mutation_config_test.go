@@ -230,7 +230,7 @@ func assertSelfMutationCatalogue(
 			path != "internal/ooze/supervisor_native_darwin.go"
 		active = active || runtime.GOOS == "windows" && path == "internal/fsrepository/remove_windows.go"
 		active = active || runtime.GOOS == "darwin" && path == "internal/ooze/supervisor_native_darwin.go"
-		active = active && !(runtime.GOOS == "windows" && path == "internal/fsrepository/remove_unix.go")
+		active = active && (runtime.GOOS != "windows" || path != "internal/fsrepository/remove_unix.go")
 		if _, selected := seen[path]; active && !selected {
 			t.Errorf("self-mutation catalogue omits active changed production source %q", path)
 		}
