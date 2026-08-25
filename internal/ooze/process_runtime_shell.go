@@ -260,6 +260,14 @@ func (s *processRuntimeShell) commitTerminal(campaign campaignToken) terminalRes
 	return applyCore(s, "commit terminal", campaign, processRuntime.commitTerminal)
 }
 
+func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) terminalResult {
+	return underRuntimeLock(s, "authorize forced abort", func() (result terminalResult) {
+		s.core, result = s.core.authorizeForcedAbort(campaign, epoch)
+
+		return result
+	})
+}
+
 func (s *processRuntimeShell) closeRuntime(cause runtimeFatalCause) runtimeClosure {
 	return underRuntimeLock(s, "close runtime", func() runtimeClosure { return s.closeCore(cause) })
 }
