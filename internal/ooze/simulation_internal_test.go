@@ -386,9 +386,9 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
 			identity: "campaign-shrink", lineage: 41, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+			profile: AutomaticProfile, peers: 4,
 		},
-		capacity:  1,
+		capacity:  4,
 		catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{simulationChooseBaselineFailure})
 	malformed := simulationMalformedFact{
@@ -408,6 +408,12 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	}
 	if len(shrunk.definition.catalogue) != 0 {
 		t.Fatalf("shrunk catalogue=%v, want no unrelated members", shrunk.definition.catalogue)
+	}
+	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 {
+		t.Fatalf(
+			"shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1",
+			shrunk.definition.capacity, shrunk.definition.campaign.peers,
+		)
 	}
 	if shrunk.malformed == nil {
 		t.Fatal("shrink removed the one intended corruption")
