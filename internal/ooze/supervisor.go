@@ -106,6 +106,7 @@ type supervisorConstruction struct {
 type Supervisor struct {
 	installStart   func(attemptIdentity, *pendingStartCell) installedStart
 	launchNative   func(attemptGeneration, Spec) LaunchResult
+	reserveLaunch  func(*pendingStartCell, Spec)
 	driveLaunch    func(installedStart, Spec) LaunchResult
 	emergencyDrain func(EmergencyRequest) SweepResult
 }
@@ -146,13 +147,15 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 	}
 	snapshot := spec.snapshot()
 	pendingStart := pendingStartCell{}
+	if s.reserveLaunch != nil {
+		s.reserveLaunch(&pendingStart, snapshot)
+	}
 	start := s.installStart(attemptIdentity(snapshot.Attempt), &pendingStart)
 	if s.driveLaunch != nil {
 		return s.driveLaunch(start, snapshot)
 	}
 	var result LaunchResult
 	observed := start.launch(func(generation attemptGeneration) attemptObservation {
-		start.shell.acknowledgeStartRegistration(generation)
 		result = s.launchNative(generation, snapshot)
 
 		return brokerLaunchObservation(result)

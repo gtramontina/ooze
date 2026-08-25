@@ -1,6 +1,8 @@
 package ooze
 
 import (
+	"cmp"
+	"slices"
 	"sync"
 	"time"
 )
@@ -45,6 +47,7 @@ type supervisorDrivenAttempt struct {
 	launchConsumed  bool
 	launchReturn    []supervisorAction
 	emergencyReturn bool
+	preempted       bool
 	runtimeReceipt  observationResult
 	receiptReady    bool
 }
@@ -67,6 +70,7 @@ type supervisorDriver struct {
 	readDiagnostic    func(supervisorDiagnosticRef) error
 	recordDiagnostic  func(error) supervisorDiagnosticRef
 	attempts          map[attemptGeneration]*supervisorDrivenAttempt
+	reservations      map[*pendingStartCell]Spec
 	emergency         chan SweepResult
 	emergencyStarted  bool
 	emergencyReturns  int
@@ -107,6 +111,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		readOutput: construction.readOutput, readDiagnostic: construction.readDiagnostic,
 		recordDiagnostic: construction.recordDiagnostic,
 		attempts:         make(map[attemptGeneration]*supervisorDrivenAttempt),
+		reservations:     make(map[*pendingStartCell]Spec),
 		emergency:        make(chan SweepResult, 1),
 		recorder:         construction.runtime.recorder,
 	}
@@ -124,6 +129,7 @@ func newDrivenSupervisorForTest(
 		panic("driven supervisor requires a driver")
 	}
 	supervisor := newSupervisorForTest(installStart, driver.launch)
+	supervisor.reserveLaunch = driver.reserveLaunch
 	supervisor.driveLaunch = driver.launchInstalled
 	supervisor.emergencyDrain = driver.emergencyDrain
 
@@ -137,12 +143,16 @@ func (driver *supervisorDriver) launchInstalled(start installedStart, spec Spec)
 func (driver *supervisorDriver) launchManaged(start installedStart, spec Spec) managedObservedLaunch {
 	var actions []supervisorAction
 	var launchObservation attemptObservation
+	var receipt observationResult
+	var receiptReady bool
 	observed := start.launch(func(generation attemptGeneration) attemptObservation {
-		launchObservation, actions = driver.stageLaunch(generation, spec)
+		launchObservation, actions, receipt, receiptReady = driver.stageLaunch(start, spec)
 
 		return launchObservation
 	})
-	receipt := start.shell.observeAttempt(start.generation, observed)
+	if !receiptReady {
+		receipt = start.shell.observeAttempt(start.generation, observed)
+	}
 	published := driver.finishLaunchReturn(start.generation, actions)
 	if launchObservation == nil || published == nil {
 		invariant(supervisorDriverOperation, "launch returned before publication")
@@ -151,39 +161,74 @@ func (driver *supervisorDriver) launchManaged(start installedStart, spec Spec) m
 	return managedObservedLaunch{result: published, receipt: receipt}
 }
 
+func (driver *supervisorDriver) reserveLaunch(cell *pendingStartCell, spec Spec) {
+	driver.mutex.Lock()
+	defer driver.mutex.Unlock()
+	_, duplicated := driver.reservations[cell]
+	if cell == nil || duplicated || driver.emergencyStarted {
+		invariant(supervisorDriverOperation, "launch reservation is invalid or duplicated")
+	}
+	driver.reservations[cell] = spec
+}
+
 func (driver *supervisorDriver) stageLaunch(
-	generation attemptGeneration,
+	start installedStart,
 	spec Spec,
-) (attemptObservation, []supervisorAction) {
+) (attemptObservation, []supervisorAction, observationResult, bool) {
+	generation := start.generation
 	registeredAt := driver.now()
 	driver.mutex.Lock()
-	if generation == 0 || driver.attempts[generation] != nil {
+	if attempt := driver.attempts[generation]; attempt != nil {
+		if _, reserved := driver.reservations[start.cell]; !attempt.preempted || reserved {
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "launch generation is duplicated")
+		}
+		wake := attempt.launchWake
 		driver.mutex.Unlock()
-		invariant(supervisorDriverOperation, "launch generation is zero or duplicated")
+		<-wake
+		driver.mutex.Lock()
+		attempt = driver.requireAttempt(generation)
+		if attempt.launchResult == nil || !attempt.receiptReady {
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "preempted launch lacks publication or runtime receipt")
+		}
+		result := attempt.launchResult
+		receipt := attempt.runtimeReceipt
+		driver.mutex.Unlock()
+
+		return brokerLaunchObservation(result), nil, receipt, true
 	}
+	if _, ok := driver.reservations[start.cell]; generation == 0 || !ok {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "launch generation is zero or unreserved")
+	}
+	delete(driver.reservations, start.cell)
 	launchBy := registeredAt.Add(driver.launchProgress)
 	driver.attempts[generation] = &supervisorDrivenAttempt{
 		spec: spec, terminal: make(chan Terminal, 1), launchBy: launchBy,
 		launchWake: make(chan struct{}, 1), launchPublished: make(chan struct{}),
 	}
-	driver.mutex.Unlock()
-	if driver.prepare != nil {
-		driver.prepare(generation, spec)
-	}
-	actions := driver.reduce(supervisorEvent{
+	actions := driver.reduceLocked(supervisorEvent{
 		kind: supervisorProspectiveRegistered, generation: generation,
 		attempt: attemptIdentity(spec.Attempt), at: registeredAt,
 		launchBy: launchBy, profile: spec.Profile,
 		commandDeadline: spec.Deadline,
 	})
 	if len(actions) != 1 || actions[0].kind != supervisorLaunchNative {
+		driver.mutex.Unlock()
 		invariant(supervisorDriverOperation, "prospective registration did not issue native launch")
 	}
-	driver.runtime.acknowledgeStartRegistration(generation)
-	driver.mutex.Lock()
 	driver.requireAttempt(generation).launchAction = actions[0]
 	driver.mutex.Unlock()
-	go driver.executeLaunch(actions[0])
+	if driver.prepare != nil {
+		driver.prepare(generation, spec)
+	}
+	driver.mutex.Lock()
+	preempted := driver.requireAttempt(generation).emergencyReturn
+	driver.mutex.Unlock()
+	if !preempted {
+		go driver.executeLaunch(actions[0])
+	}
 	boundary := driver.launchBoundary(launchBy)
 	for {
 		select {
@@ -205,7 +250,7 @@ func (driver *supervisorDriver) stageLaunch(
 				driver.mutex.Unlock()
 				leaveRecorder()
 
-				return observation, actions
+				return observation, actions, observationResult{}, false
 			}
 			event := attempt.launchEvent
 			if event != nil && event.completion != nil && event.at.Before(launchBy) {
@@ -216,7 +261,7 @@ func (driver *supervisorDriver) stageLaunch(
 				driver.mutex.Unlock()
 				leaveRecorder()
 
-				return observation, publication
+				return observation, publication, observationResult{}, false
 			}
 			driver.mutex.Unlock()
 			leaveRecorder()
@@ -246,7 +291,7 @@ func (driver *supervisorDriver) stageLaunch(
 			driver.mutex.Unlock()
 			leaveRecorder()
 
-			return observation, publication
+			return observation, publication, observationResult{}, false
 		}
 	}
 }
@@ -511,9 +556,9 @@ func (driver *supervisorDriver) publishOwned(action supervisorAction) {
 
 func (driver *supervisorDriver) publishNotReleased(action supervisorAction) {
 	driver.mutex.Lock()
-	defer driver.mutex.Unlock()
 	attempt := driver.requireAttempt(action.generation)
 	if attempt.launchResult != nil {
+		driver.mutex.Unlock()
 		invariant(supervisorDriverOperation, "not-released launch was published twice")
 	}
 	var err error
@@ -527,6 +572,13 @@ func (driver *supervisorDriver) publishNotReleased(action supervisorAction) {
 		}
 	}
 	attempt.launchResult = NotReleased{Kind: action.launchFailure, Err: err}
+	if attempt.preempted {
+		select {
+		case attempt.launchWake <- struct{}{}:
+		default:
+		}
+	}
+	driver.mutex.Unlock()
 }
 
 func (driver *supervisorDriver) rememberMonitor(action supervisorAction, sample bool) {
@@ -1020,7 +1072,6 @@ func (driver *supervisorDriver) waitManaged(
 }
 
 func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
-	driver.runtime.awaitStartRegistrations()
 	leaveRecorder := driver.recorder.enter()
 	recorderReleased := false
 	defer func() {
@@ -1034,6 +1085,7 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 		invariant(supervisorDriverOperation, "emergency drain was duplicated")
 	}
 	driver.emergencyStarted = true
+	preempted := driver.preemptReservedLaunchesLocked(request)
 	snapshots := make([]supervisorEmergencySnapshot, 0, len(driver.state.attempts))
 	returning := make(map[attemptGeneration]struct{})
 	for _, state := range driver.state.attempts {
@@ -1080,7 +1132,9 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 				}
 				snapshot.completion = attempt.launchEvent.completion
 			}
-			returning[state.generation] = struct{}{}
+			if !attempt.preempted {
+				returning[state.generation] = struct{}{}
+			}
 		case supervisorLaunchReportedUnconfirmed:
 			attempt := driver.requireAttempt(state.generation)
 			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
@@ -1193,11 +1247,62 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 	driver.mutex.Unlock()
 	leaveRecorder()
 	recorderReleased = true
+	for _, generation := range preempted {
+		receipt := driver.runtime.observeAttempt(generation, launchNotReleased{reason: launchFailed})
+		driver.recordRuntimeReceipt(generation, receipt)
+	}
 	for _, action := range remaining {
 		driver.run(action)
 	}
 
 	return <-driver.emergency
+}
+
+func (driver *supervisorDriver) preemptReservedLaunchesLocked(request EmergencyRequest) []attemptGeneration {
+	type reservation struct {
+		generation attemptGeneration
+		cell       *pendingStartCell
+		spec       Spec
+	}
+	reservations := make([]reservation, 0, len(driver.reservations))
+	for cell, spec := range driver.reservations {
+		if generation := cell.installedGeneration(); generation != 0 {
+			reservations = append(reservations, reservation{generation: generation, cell: cell, spec: spec})
+		}
+	}
+	slices.SortFunc(reservations, func(left, right reservation) int {
+		return cmp.Compare(left.generation, right.generation)
+	})
+	preempted := make([]attemptGeneration, 0, len(reservations))
+	for _, reserved := range reservations {
+		launchBy := request.At.Add(driver.launchProgress)
+		driver.attempts[reserved.generation] = &supervisorDrivenAttempt{
+			spec: reserved.spec, terminal: make(chan Terminal, 1), launchBy: launchBy,
+			launchWake: make(chan struct{}, 1), launchPublished: make(chan struct{}), preempted: true,
+		}
+		actions := driver.reduceLocked(supervisorEvent{
+			kind: supervisorProspectiveRegistered, generation: reserved.generation,
+			attempt: attemptIdentity(reserved.spec.Attempt), at: request.At,
+			launchBy: launchBy, profile: reserved.spec.Profile, commandDeadline: reserved.spec.Deadline,
+		})
+		if len(actions) != 1 || actions[0].kind != supervisorLaunchNative {
+			invariant(supervisorDriverOperation, "reserved launch registration did not issue native launch")
+		}
+		attempt := driver.requireAttempt(reserved.generation)
+		attempt.launchAction = actions[0]
+		completion := supervisorLaunchCompletion{
+			generation: reserved.generation, action: actions[0].token, at: request.At,
+			kind: supervisorLaunchProvenNotReleased, failure: LaunchFailed,
+		}
+		attempt.launchEvent = &supervisorEvent{
+			kind: supervisorLaunchCompleted, generation: reserved.generation,
+			at: request.At, completion: &completion,
+		}
+		delete(driver.reservations, reserved.cell)
+		preempted = append(preempted, reserved.generation)
+	}
+
+	return preempted
 }
 
 func snapshotsCompletion(

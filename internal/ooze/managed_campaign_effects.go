@@ -92,8 +92,10 @@ func (runner *managedCampaignRunner) execute(
 		return runner.advance(admissionGrantedEvent{attempt: effect.attempt, grant: campaignAdmissionFact(grant)})
 	case campaignEffectRequestStartCommitment:
 		grant := runner.authority(effect.grant)
+		cell := &pendingStartCell{}
+		runner.attempts.reserveLaunch(cell, effect.spec)
 		prepared := runner.runtime.startCommitted(grant, startInstallation{
-			grant: grant, cell: &pendingStartCell{},
+			grant: grant, cell: cell,
 		})
 		if prepared.result.decision == startCommittedAccepted {
 			runner.starts[prepared.result.generation] = prepared.start
