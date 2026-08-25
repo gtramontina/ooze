@@ -632,7 +632,8 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 		}
 	case simulationRuntimeAuthority:
-		if malformed.runtimeOperation != simulationRequestAdmission {
+		if malformed.runtimeOperation != simulationRequestAdmission &&
+			malformed.runtimeOperation != simulationAcknowledgeGrantReturn {
 			return ViolationResult{failure: fmt.Errorf("malformed runtime operation is not implemented")}
 		}
 	case simulationSupervisorAuthority:
@@ -672,7 +673,20 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return simulationEmergencySweep(runtime, closure)
 		})
 	case simulationRuntimeAuthority:
-		simulationAdvanceRuntimeGuarded(&runtime, malformed.runtimeAdmission.production())
+		switch malformed.runtimeOperation {
+		case simulationRequestAdmission:
+			simulationAdvanceRuntimeGuarded(&runtime, "request admission", func(state processRuntime) processRuntime {
+				next, _ := state.requestAdmission(malformed.runtimeAdmission.production())
+
+				return next
+			})
+		case simulationAcknowledgeGrantReturn:
+			simulationAdvanceRuntimeGuarded(&runtime, "acknowledge grant return", func(state processRuntime) processRuntime {
+				next, _ := state.acknowledgeGrantReturn(malformed.runtimeAdmission.production())
+
+				return next
+			})
+		}
 	case simulationSupervisorAuthority:
 		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor.production())
 	}
@@ -680,7 +694,11 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
 }
 
-func simulationAdvanceRuntimeGuarded(runtime *processRuntime, request admissionRequest) {
+func simulationAdvanceRuntimeGuarded(
+	runtime *processRuntime,
+	operation string,
+	advance func(processRuntime) processRuntime,
+) {
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
@@ -688,7 +706,7 @@ func simulationAdvanceRuntimeGuarded(runtime *processRuntime, request admissionR
 		}
 		violation, ok := recovered.(runtimeInvariantViolation)
 		if !ok {
-			violation = runtimeInvariantViolation{operation: "request admission", reason: "unexpected panic"}
+			violation = runtimeInvariantViolation{operation: operation, reason: "unexpected panic"}
 		}
 		var closure runtimeClosure
 		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
@@ -696,7 +714,7 @@ func simulationAdvanceRuntimeGuarded(runtime *processRuntime, request admissionR
 		panic(violation)
 	}()
 
-	*runtime, _ = runtime.requestAdmission(request)
+	*runtime = advance(*runtime)
 }
 
 func simulationAdvanceSupervisorGuarded(
