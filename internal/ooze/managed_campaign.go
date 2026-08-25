@@ -171,6 +171,10 @@ func (runner *managedCampaignRunner) execute(
 		})
 	case campaignEffectLaunchAttempt:
 		return runner.launch(effect, request)
+	case campaignEffectStopAttempt:
+		runner.attempts.stop(effect.generation)
+
+		return nil
 	case campaignEffectCancelAdmission:
 		cancelled := runner.runtime.cancelAdmission(effect.request)
 
