@@ -329,6 +329,22 @@ func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing
 	}
 }
 
+func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(1), repository: managedPanickingRepository{},
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{},
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if outcome, ok := result.outcome.(abortedOutcome); !ok || outcome.cause != "snapshot exploded" {
+		t.Fatalf("boundary outcome = %#v, want typed snapshot abort", result.outcome)
+	}
+}
+
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	heldCampaign := shell.registerCampaign(campaignProvenance{lineage: 99})
@@ -362,8 +378,9 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.failure.(cleanupUnconfirmedFault); !ok || attempts.emergencies != 1 {
-		t.Fatalf("failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	if _, ok := result.outcome.(abortedOutcome); !ok || result.failure != nil || attempts.emergencies != 1 {
+		t.Fatalf("outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort",
+			result.outcome, result.failure, attempts.emergencies)
 	}
 }
 
@@ -371,6 +388,13 @@ type managedMemoryRepository struct {
 	files            []*gosourcefile.GoSourceFile
 	materializations int
 	snapshot         *managedMemoryTemporaryRepository
+}
+
+type managedPanickingRepository struct{}
+
+func (managedPanickingRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile { return nil }
+func (managedPanickingRepository) MaterializeTemporaryRepository(string) TemporaryRepository {
+	panic("snapshot exploded")
 }
 
 func (r *managedMemoryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
