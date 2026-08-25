@@ -34,6 +34,9 @@ var selfMutationProductionShards = []selfMutationShard{ //nolint:gochecknoglobal
 	{name: "campaign-cycle", paths: []string{
 		"internal/ooze/managed_campaign_cycle.go",
 	}, packages: []string{"./internal/ooze"}},
+	{name: "campaign-emergency", paths: []string{
+		"internal/ooze/managed_campaign_emergency.go",
+	}, packages: []string{"./internal/ooze"}},
 	{name: "campaign-effects", paths: []string{
 		"internal/ooze/managed_campaign_effects.go",
 	}, packages: []string{"./internal/ooze"}},
@@ -51,6 +54,7 @@ func TestSelfMutationShardsPartitionSelectedProduction(t *testing.T) {
 		"internal/ooze/managed_attempt_system.go":         "attempt-system",
 		"internal/ooze/managed_campaign.go":               "campaign-runner",
 		"internal/ooze/managed_campaign_cycle.go":         "campaign-cycle",
+		"internal/ooze/managed_campaign_emergency.go":     "campaign-emergency",
 		"internal/ooze/managed_campaign_effects.go":       "campaign-effects",
 		"internal/ooze/supervisor_native_darwin.go":       "darwin",
 	}
@@ -70,12 +74,13 @@ func TestSelfMutationShardsPartitionSelectedProduction(t *testing.T) {
 
 func TestSelfMutationShardsUseOwningPackageTests(t *testing.T) {
 	want := map[string][]string{
-		"repository":       {"./internal/fsrepository", "./internal/ignoredrepository"},
-		"attempt-system":   {"./internal/ooze"},
-		"campaign-runner":  {"./internal/ooze"},
-		"campaign-cycle":   {"./internal/ooze"},
-		"campaign-effects": {"./internal/ooze"},
-		"darwin":           {"./internal/ooze"},
+		"repository":         {"./internal/fsrepository", "./internal/ignoredrepository"},
+		"attempt-system":     {"./internal/ooze"},
+		"campaign-runner":    {"./internal/ooze"},
+		"campaign-cycle":     {"./internal/ooze"},
+		"campaign-emergency": {"./internal/ooze"},
+		"campaign-effects":   {"./internal/ooze"},
+		"darwin":             {"./internal/ooze"},
 	}
 	for _, shard := range selfMutationProductionShards {
 		if !reflect.DeepEqual(shard.packages, want[shard.name]) {

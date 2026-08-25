@@ -194,22 +194,25 @@ func requireNativeToolchains(t *testing.T, job string) {
 func requireMutationShardRows(t *testing.T, job string) {
 	t.Helper()
 	want := map[string][2]string{
-		"Ubuntu 24.04 / repository":       {"repository", "TestMutationRepository"},
-		"Ubuntu 24.04 / attempt-system":   {"attempt-system", "TestMutationAttemptSystem"},
-		"Ubuntu 24.04 / campaign-runner":  {"campaign-runner", "TestMutationCampaignRunner"},
-		"Ubuntu 24.04 / campaign-cycle":   {"campaign-cycle", "TestMutationCampaignCycle"},
-		"Ubuntu 24.04 / campaign-effects": {"campaign-effects", "TestMutationCampaignEffects"},
-		"macOS 26 / repository":           {"repository", "TestMutationRepository"},
-		"macOS 26 / attempt-system":       {"attempt-system", "TestMutationAttemptSystem"},
-		"macOS 26 / campaign-runner":      {"campaign-runner", "TestMutationCampaignRunner"},
-		"macOS 26 / campaign-cycle":       {"campaign-cycle", "TestMutationCampaignCycle"},
-		"macOS 26 / campaign-effects":     {"campaign-effects", "TestMutationCampaignEffects"},
-		"macOS 26 / darwin":               {"darwin", "TestMutationPlatform"},
-		"Windows 2025 / repository":       {"repository", "TestMutationRepository"},
-		"Windows 2025 / attempt-system":   {"attempt-system", "TestMutationAttemptSystem"},
-		"Windows 2025 / campaign-runner":  {"campaign-runner", "TestMutationCampaignRunner"},
-		"Windows 2025 / campaign-cycle":   {"campaign-cycle", "TestMutationCampaignCycle"},
-		"Windows 2025 / campaign-effects": {"campaign-effects", "TestMutationCampaignEffects"},
+		"Ubuntu 24.04 / repository":         {"repository", "TestMutationRepository"},
+		"Ubuntu 24.04 / attempt-system":     {"attempt-system", "TestMutationAttemptSystem"},
+		"Ubuntu 24.04 / campaign-runner":    {"campaign-runner", "TestMutationCampaignRunner"},
+		"Ubuntu 24.04 / campaign-cycle":     {"campaign-cycle", "TestMutationCampaignCycle"},
+		"Ubuntu 24.04 / campaign-emergency": {"campaign-emergency", "TestMutationCampaignEmergency"},
+		"Ubuntu 24.04 / campaign-effects":   {"campaign-effects", "TestMutationCampaignEffects"},
+		"macOS 26 / repository":             {"repository", "TestMutationRepository"},
+		"macOS 26 / attempt-system":         {"attempt-system", "TestMutationAttemptSystem"},
+		"macOS 26 / campaign-runner":        {"campaign-runner", "TestMutationCampaignRunner"},
+		"macOS 26 / campaign-cycle":         {"campaign-cycle", "TestMutationCampaignCycle"},
+		"macOS 26 / campaign-emergency":     {"campaign-emergency", "TestMutationCampaignEmergency"},
+		"macOS 26 / campaign-effects":       {"campaign-effects", "TestMutationCampaignEffects"},
+		"macOS 26 / darwin":                 {"darwin", "TestMutationPlatform"},
+		"Windows 2025 / repository":         {"repository", "TestMutationRepository"},
+		"Windows 2025 / attempt-system":     {"attempt-system", "TestMutationAttemptSystem"},
+		"Windows 2025 / campaign-runner":    {"campaign-runner", "TestMutationCampaignRunner"},
+		"Windows 2025 / campaign-cycle":     {"campaign-cycle", "TestMutationCampaignCycle"},
+		"Windows 2025 / campaign-emergency": {"campaign-emergency", "TestMutationCampaignEmergency"},
+		"Windows 2025 / campaign-effects":   {"campaign-effects", "TestMutationCampaignEffects"},
 	}
 	rows := workflowMatrixRows(t, job)
 	if len(rows) != len(want) {
@@ -255,9 +258,11 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 		"Ubuntu 24.04 / repository", "Ubuntu 24.04 / attempt-system",
 		"Ubuntu 24.04 / campaign-runner", "Ubuntu 24.04 / campaign-effects",
 		"Ubuntu 24.04 / campaign-cycle",
+		"Ubuntu 24.04 / campaign-emergency",
 		"macOS 26 / repository", "macOS 26 / attempt-system",
 		"macOS 26 / campaign-runner", "macOS 26 / campaign-effects", "macOS 26 / darwin",
 		"macOS 26 / campaign-cycle",
+		"macOS 26 / campaign-emergency",
 	} {
 		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "devbox run -- go test"})
 	}
@@ -265,6 +270,7 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 		"Windows 2025 / repository", "Windows 2025 / attempt-system",
 		"Windows 2025 / campaign-runner", "Windows 2025 / campaign-effects",
 		"Windows 2025 / campaign-cycle",
+		"Windows 2025 / campaign-emergency",
 	} {
 		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "go test"})
 	}

@@ -29,6 +29,10 @@ func TestMutationCampaignCycle(t *testing.T) {
 	runMutationShard(t, "campaign-cycle")
 }
 
+func TestMutationCampaignEmergency(t *testing.T) {
+	runMutationShard(t, "campaign-emergency")
+}
+
 func TestMutationCampaignEffects(t *testing.T) {
 	runMutationShard(t, "campaign-effects")
 }
