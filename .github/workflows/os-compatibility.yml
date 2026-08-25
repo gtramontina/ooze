@@ -57,6 +57,13 @@ jobs:
           go-version: "1.26.6"
           cache: true
 
+      - name: Install gotestsum 1.13.0
+        if: ${{ matrix.toolchain == 'raw-go' }}
+        shell: bash
+        run: |
+          go install gotest.tools/gotestsum@v1.13.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Report Go version
         shell: bash
         run: ${{ matrix.go-command }} version

@@ -238,6 +238,8 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 		"if: ${{ matrix.toolchain == 'raw-go' }}",
 		"go-command: devbox run -- go",
 		"Verify pinned Go 1.26.6",
+		"Install gotestsum 1.13.0",
+		"go install gotest.tools/gotestsum@v1.13.0",
 		`go1.26.6`,
 		`grep -q '"Action":"skip"'`,
 		"unexpected skip in required native evidence",
