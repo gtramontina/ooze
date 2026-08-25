@@ -6,6 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/ooze"
 )
 
 var (
@@ -16,6 +19,14 @@ var (
 type FSTemporaryRepository struct {
 	root    string
 	removed bool
+}
+
+func (r *FSTemporaryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return New(r.Root()).ListGoSourceFiles()
+}
+
+func (r *FSTemporaryRepository) MaterializeTemporaryRepository(temporaryPath string) ooze.TemporaryRepository {
+	return New(r.Root()).MaterializeTemporaryRepository(temporaryPath)
 }
 
 func NewTemporary(root string) *FSTemporaryRepository {

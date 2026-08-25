@@ -19,6 +19,7 @@ type Repository interface {
 }
 
 type TemporaryRepository interface {
+	Repository
 	Root() string
 	Overwrite(filePath string, data []byte)
 	Remove()

@@ -104,6 +104,16 @@ func TestFSTemporaryRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("materializes workspaces from the captured repository", func(t *testing.T) {
+		snapshotRoot := t.TempDir()
+		assert.NoError(t, os.WriteFile(filepath.Join(snapshotRoot, "source.go"), []byte("package snapshot\n"), 0o600))
+		snapshot := fsrepository.NewTemporary(snapshotRoot)
+		workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+
+		workspace := snapshot.MaterializeTemporaryRepository(workspaceRoot)
+		assert.Equal(t, snapshot.ListGoSourceFiles(), workspace.ListGoSourceFiles())
+	})
+
 	t.Run("deleting", func(t *testing.T) {
 		dir := t.TempDir()
 		repository := fsrepository.NewTemporary(dir)
