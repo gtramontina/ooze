@@ -773,6 +773,7 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 				return state.releaseSnapshot(campaignTerminalCompleted)
 			}
 			state.phase = campaignRunning
+			state.drain = campaignDrainIntent{}
 
 			return state.materializePrimaryBatch()
 		}
