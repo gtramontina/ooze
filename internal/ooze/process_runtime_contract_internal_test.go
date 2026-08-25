@@ -4,6 +4,7 @@ package ooze
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -787,6 +788,48 @@ func TestProcessRuntimeTerminalCommitRequiresNoOutstandingCustody(t *testing.T) 
 	runtime, accepted := runtime.commitTerminal(campaign.token)
 	if accepted.decision != terminalCommitted || runtime.hasCampaign(campaign.token) {
 		t.Fatalf("terminal commit=%#v/%#v", accepted, runtime)
+	}
+}
+
+func TestProcessRuntimeTerminalCommitRetiresEmptyConfirmationClosure(t *testing.T) {
+	runtime := newProcessRuntime(2)
+	runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
+	runtime, peerCampaign := runtime.registerCampaign(campaignProvenance{lineage: 22})
+	runtime, admitted := runtime.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "candidate", class: sharedAdmission,
+	})
+	runtime, peerAdmitted := runtime.requestAdmission(admissionRequest{
+		campaign: peerCampaign.token, attempt: "peer", class: sharedAdmission,
+	})
+	runtime, started := runtime.startCommitted(admitted.deliveries[0])
+	runtime, peerStarted := runtime.startCommitted(peerAdmitted.deliveries[0])
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, _ = runtime.observeAttempt(peerStarted.generation, launchOwned{})
+	runtime, provisional := runtime.observeAttempt(started.generation, automaticDeadlineTrip())
+	runtime, _ = runtime.observeAttempt(peerStarted.generation, attemptSettled{})
+	if !provisional.confirmationProvisional || len(runtime.admissions) != 1 ||
+		runtime.admissions[0].grant.class != confirmationBarrierAdmission ||
+		runtime.admissions[0].grant.attempt != "" {
+		t.Fatalf("empty confirmation closure setup=%#v/%#v", provisional, runtime)
+	}
+
+	runtime, committed := runtime.commitTerminal(campaign.token)
+	if committed.decision != terminalCommitted || runtime.hasCampaign(campaign.token) ||
+		slices.ContainsFunc(runtime.admissions, func(admission admittedAttempt) bool {
+			return admission.grant.campaign == campaign.token
+		}) {
+		t.Fatalf("terminal after empty confirmation closure=%#v/%#v", committed, runtime)
+	}
+}
+
+func TestProcessRuntimeTerminalCommitCannotRetireBoundConfirmation(t *testing.T) {
+	runtime := runtimeAtBoundConfirmation(t)
+	campaign := runtime.admissions[runtime.grantedConfirmationIndex()].grant.campaign
+	unchanged := runtime
+
+	runtime, committed := runtime.commitTerminal(campaign)
+	if committed.decision != terminalRejectedOutstanding || !reflect.DeepEqual(runtime, unchanged) {
+		t.Fatalf("terminal with bound confirmation=%#v/%#v", committed, runtime)
 	}
 }
 

@@ -917,12 +917,21 @@ func (r processRuntime) commitTerminal(campaign campaignToken) (processRuntime, 
 	if index < 0 {
 		return r, terminalResult{decision: terminalRejectedUnknown}
 	}
-	for _, admission := range r.admissions {
-		if admission.grant.campaign == campaign {
+	next := r.clone()
+	for admissionAt := 0; admissionAt < len(next.admissions); {
+		admission := next.admissions[admissionAt]
+		if admission.grant.campaign != campaign {
+			admissionAt++
+			continue
+		}
+		emptyConfirmationClosure := admission.grant.class == confirmationBarrierAdmission &&
+			admission.grant.attempt == "" && admission.stage == admissionWaiting &&
+			admission.generation == 0 && admission.disposition == dispositionNone
+		if !emptyConfirmationClosure {
 			return r, terminalResult{decision: terminalRejectedOutstanding}
 		}
+		next.admissions = slices.Delete(next.admissions, admissionAt, admissionAt+1)
 	}
-	next := r.clone()
 	next.campaigns = slices.Delete(next.campaigns, index, index+1)
 
 	return next, terminalResult{decision: terminalCommitted}
