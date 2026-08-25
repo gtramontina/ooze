@@ -221,12 +221,15 @@ func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campai
 		return record.runtimeOperation == simulationRegisterCampaign &&
 			record.runtimeRegistration == event.registration
 	case admissionGrantedEvent:
-		if record.runtimeOperation != simulationRequestAdmission {
-			return false
-		}
-		return slices.ContainsFunc(record.runtimeAdmissionOut.deliveries, func(delivery simulationAdmission) bool {
+		return slices.ContainsFunc(simulationRuntimeDeliveries(record), func(delivery simulationAdmission) bool {
 			return campaignAdmissionFact(delivery.production()) == event.grant
 		})
+	case admissionCancelledEvent:
+		return record.runtimeOperation == simulationCancelAdmission &&
+			campaignAdmissionFact(record.runtimeAdmissionToken.production()) == event.request &&
+			record.runtimeAdmissionOut.decision == event.result.decision &&
+			campaignAdmissionFact(record.runtimeAdmissionOut.request.production()) == event.result.request &&
+			record.runtimeAdmissionOut.fatalEpoch == event.result.fatalEpoch
 	case admissionRejectedEvent:
 		return record.runtimeOperation == simulationRequestAdmission &&
 			record.runtimeAdmissionOut.decision == event.result.decision &&
@@ -253,6 +256,21 @@ func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campai
 			record.runtimeTerminal == terminalResult(event.result)
 	default:
 		return false
+	}
+}
+
+func simulationRuntimeDeliveries(record simulationRecord) []simulationAdmission {
+	switch record.runtimeOperation {
+	case simulationRequestAdmission, simulationCancelAdmission, simulationAcknowledgeGrantReturn:
+		return record.runtimeAdmissionOut.deliveries
+	case simulationBindConfirmationBarrier:
+		return record.runtimeBarrierOut.deliveries
+	case simulationCompleteConfirmationQueue:
+		return record.runtimeQueueOut.deliveries
+	case simulationObserveAttempt:
+		return record.runtimeObservationOut.deliveries
+	default:
+		return nil
 	}
 }
 

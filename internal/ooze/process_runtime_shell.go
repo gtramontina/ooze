@@ -107,10 +107,22 @@ func (start installedStart) fail(generation attemptGeneration, violation runtime
 }
 
 type processRuntimeShell struct {
-	mutex     sync.Mutex
-	core      processRuntime
-	emergency chan struct{}
-	recorder  *simulationRecorder
+	mutex         sync.Mutex
+	core          processRuntime
+	emergency     chan struct{}
+	recorder      *simulationRecorder
+	notifications runtimeNotificationQueue
+}
+
+type runtimeNotificationQueue struct {
+	active bool
+	values []runtimeNotification
+}
+
+type runtimeNotification struct {
+	delivery  chan admissionGrant
+	grant     admissionGrant
+	closeOnly bool
 }
 
 func newProcessRuntimeShell(capacity int) *processRuntimeShell {
@@ -148,7 +160,7 @@ func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissi
 		if result.decision == admissionAccepted {
 			s.deliver(result.deliveries)
 		} else {
-			close(delivery)
+			s.closeDelivery(delivery)
 		}
 
 		return admissionAwait{
@@ -172,11 +184,13 @@ func (s *processRuntimeShell) emergencySettlementRequired() bool {
 }
 
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
-	return underRuntimeLock(s, "cancel admission", func(result admissionResult, _ processRuntime) simulationRecord {
+	var recorded admissionResult
+
+	return underRuntimeLock(s, "cancel admission", func(admissionResult, processRuntime) simulationRecord {
 		return simulationRecord{
 			runtimeOperation:      simulationCancelAdmission,
 			runtimeAdmissionToken: simulationTraceAdmission(token),
-			runtimeAdmissionOut:   simulationTraceAdmissionResult(result),
+			runtimeAdmissionOut:   simulationTraceAdmissionResult(recorded),
 		}
 	}, func() (result admissionResult) {
 		if token.delivery == nil {
@@ -189,6 +203,7 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 			}
 		}
 		s.core, result = s.core.cancelAdmission(token)
+		recorded = result
 		if result.decision == admissionCancelledWaiting {
 			s.closeWaiting([]admissionRequestToken{token})
 		}
@@ -224,7 +239,7 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 		if result.decision == barrierBound {
 			s.deliver(result.deliveries)
 		} else {
-			close(delivery)
+			s.closeDelivery(delivery)
 		}
 
 		return barrierAwait{decision: result.decision, request: result.request, delivery: delivery}
@@ -232,13 +247,16 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 }
 
 func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) confirmationQueueResult {
-	return underRuntimeLock(s, "complete confirmation queue", func(result confirmationQueueResult, _ processRuntime) simulationRecord {
+	var recorded confirmationQueueResult
+
+	return underRuntimeLock(s, "complete confirmation queue", func(confirmationQueueResult, processRuntime) simulationRecord {
 		return simulationRecord{
 			runtimeOperation: simulationCompleteConfirmationQueue, runtimeCampaign: campaign,
-			runtimeQueueOut: simulationTraceConfirmationQueueResult(result),
+			runtimeQueueOut: simulationTraceConfirmationQueueResult(recorded),
 		}
 	}, func() (result confirmationQueueResult) {
 		s.core, result = s.core.completeConfirmationQueue(campaign)
+		recorded = result
 		s.deliver(result.deliveries)
 		result.deliveries = nil
 
@@ -293,14 +311,17 @@ func (s *processRuntimeShell) failLaunchInvariant(generation attemptGeneration, 
 }
 
 func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, observed attemptObservation) observationResult {
-	return underRuntimeLock(s, observeOperation, func(result observationResult, _ processRuntime) simulationRecord {
+	var recorded observationResult
+
+	return underRuntimeLock(s, observeOperation, func(observationResult, processRuntime) simulationRecord {
 		return simulationRecord{
 			runtimeOperation: simulationObserveAttempt, runtimeGeneration: generation,
 			runtimeObservation:    simulationTraceObservation(observed),
-			runtimeObservationOut: simulationTraceObservationResult(result),
+			runtimeObservationOut: simulationTraceObservationResult(recorded),
 		}
 	}, func() (result observationResult) {
 		s.core, result = s.core.observeAttempt(generation, observed)
+		recorded = result
 		s.closeWaiting(result.cancelledWaiting)
 		s.assertReturnable(result.compensatedGrants)
 		s.deliver(result.deliveries)
@@ -353,7 +374,7 @@ func (s *processRuntimeShell) closeWaiting(requests []admissionRequestToken) {
 		if request.delivery == nil {
 			invariant("close waiting admission", "cancelled waiter has no delivery")
 		}
-		close(request.delivery)
+		s.closeDelivery(request.delivery)
 	}
 }
 
@@ -374,6 +395,7 @@ func underRuntimeLock[T any](
 	leaveRecorder := shell.recorder.enter()
 	defer leaveRecorder()
 	shell.mutex.Lock()
+	shell.beginRuntimeNotifications()
 	reservation := shell.recorder.reserve(simulationRuntimeAuthority)
 	wasOpen := shell.core.open()
 	defer func() {
@@ -385,6 +407,7 @@ func underRuntimeLock[T any](
 			if shell.core.lifecycle <= runtimeFatalSettledClosing {
 				shell.closeCore(runtimeFatalCause(violation.reason))
 			}
+			shell.flushRuntimeNotifications()
 			shell.broadcastEmergency(wasOpen)
 			shell.mutex.Unlock()
 			panic(violation)
@@ -400,6 +423,7 @@ func underRuntimeLock[T any](
 		runtimeRecord.runtimeOperationName = operation
 	}
 	shell.recorder.recordRuntime(reservation, runtimeRecord, shell.core)
+	shell.flushRuntimeNotifications()
 
 	return result
 }
@@ -461,7 +485,53 @@ func (s *processRuntimeShell) deliver(deliveries []admissionGrant) {
 		if grant.delivery == nil {
 			invariant("deliver grant", "request has no delivery")
 		}
+	}
+	if s.notifications.active {
+		for _, grant := range deliveries {
+			s.notifications.values = append(s.notifications.values, runtimeNotification{
+				delivery: grant.delivery, grant: grant,
+			})
+		}
+
+		return
+	}
+	for _, grant := range deliveries {
 		grant.delivery <- grant
 		close(grant.delivery)
+	}
+}
+
+func (s *processRuntimeShell) closeDelivery(delivery chan admissionGrant) {
+	if delivery == nil {
+		invariant("close admission delivery", "delivery is nil")
+	}
+	if s.notifications.active {
+		s.notifications.values = append(s.notifications.values, runtimeNotification{
+			delivery: delivery, closeOnly: true,
+		})
+
+		return
+	}
+	close(delivery)
+}
+
+func (s *processRuntimeShell) beginRuntimeNotifications() {
+	if s.notifications.active || len(s.notifications.values) != 0 {
+		invariant("begin runtime notifications", "prior operation left notifications pending")
+	}
+	s.notifications.active = true
+}
+
+func (s *processRuntimeShell) flushRuntimeNotifications() {
+	if !s.notifications.active {
+		return
+	}
+	notifications := s.notifications.values
+	s.notifications = runtimeNotificationQueue{}
+	for _, notification := range notifications {
+		if !notification.closeOnly {
+			notification.delivery <- notification.grant
+		}
+		close(notification.delivery)
 	}
 }
