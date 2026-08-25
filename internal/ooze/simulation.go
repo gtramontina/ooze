@@ -731,25 +731,27 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 		width--
 	}
 	for index := 0; index < len(shrunk.definition.catalogue); {
-		candidate := simulationCloneTrace(shrunk)
-		candidate.definition.catalogue = slices.Delete(candidate.definition.catalogue, index, index+1)
+		definition := shrunk.definition
+		definition.catalogue = slices.Delete(slices.Clone(definition.catalogue), index, index+1)
+		candidate, ok := simulationExploreShrinkCandidate(shrunk, definition)
+		if !ok {
+			index++
+			continue
+		}
 		if simulationPreservesFailure(candidate, key) {
 			shrunk = candidate
 			continue
 		}
 		index++
 	}
-	for capacity := 1; capacity < shrunk.definition.capacity; capacity++ {
-		candidate := simulationCloneTrace(shrunk)
-		candidate.definition.capacity = capacity
-		if simulationPreservesFailure(candidate, key) {
-			shrunk = candidate
-			break
+	for parallelism := 1; parallelism < shrunk.definition.capacity; parallelism++ {
+		definition := shrunk.definition
+		definition.capacity = parallelism
+		definition.campaign.peers = parallelism
+		candidate, ok := simulationExploreShrinkCandidate(shrunk, definition)
+		if !ok {
+			continue
 		}
-	}
-	for peers := 1; peers < shrunk.definition.campaign.peers; peers++ {
-		candidate := simulationCloneTrace(shrunk)
-		candidate.definition.campaign.peers = peers
 		if simulationPreservesFailure(candidate, key) {
 			shrunk = candidate
 			break
@@ -762,6 +764,65 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 	}
 
 	return shrunk
+}
+
+func simulationExploreShrinkCandidate(
+	trace simulationTrace,
+	definition simulationDefinition,
+) (simulationTrace, bool) {
+	explored := Explore(definition, nil)
+	if explored.failure != nil {
+		return simulationTrace{}, false
+	}
+	candidate := explored.trace
+	if len(trace.records) == 0 {
+		candidate.records = nil
+	} else {
+		cut := trace.records[len(trace.records)-1]
+		ordinal := 0
+		for _, record := range trace.records {
+			if simulationSameRecordKind(record, cut) {
+				ordinal++
+			}
+		}
+		candidateCut := -1
+		for index, record := range candidate.records {
+			if !simulationSameRecordKind(record, cut) {
+				continue
+			}
+			ordinal--
+			if ordinal == 0 {
+				candidateCut = index
+				break
+			}
+		}
+		if candidateCut < 0 {
+			return simulationTrace{}, false
+		}
+		candidate.records = slices.Clone(candidate.records[:candidateCut+1])
+	}
+	if trace.malformed != nil {
+		malformed := *trace.malformed
+		candidate.malformed = &malformed
+	}
+
+	return candidate, true
+}
+
+func simulationSameRecordKind(left, right simulationRecord) bool {
+	if left.authority != right.authority {
+		return false
+	}
+	switch left.authority {
+	case simulationCampaignAuthority:
+		return left.campaignEvent.kind == right.campaignEvent.kind
+	case simulationRuntimeAuthority:
+		return left.runtimeOperation == right.runtimeOperation
+	case simulationSupervisorAuthority:
+		return left.supervisorEvent.kind == right.supervisorEvent.kind
+	default:
+		return false
+	}
 }
 
 func simulationRenumberRecords(records []simulationRecord) {

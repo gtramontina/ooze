@@ -212,6 +212,20 @@ func TestSimulationExploresEveryCatalogueMemberInStableOrder(t *testing.T) {
 	}
 }
 
+func TestSimulationExploresOneMutantWithSparePeerCapacity(t *testing.T) {
+	result := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-spare-capacity", lineage: 43, command: []string{"test"},
+			profile: AutomaticProfile, peers: 4,
+		},
+		capacity: 4, catalogue: []mutantIdentity{"mutant-a"},
+	}, nil)
+	completed, ok := result.world.campaign.outcome.(completedOutcome)
+	if result.failure != nil || !ok || len(completed.mutants) != 1 {
+		t.Fatalf("spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
+	}
+}
+
 func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{
@@ -534,6 +548,44 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	second := ReplayViolation(shrunk, *shrunk.malformed)
 	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
 		t.Fatalf("shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
+	}
+}
+
+func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-shrink-causal", lineage: 42, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, nil)
+	if explored.failure != nil {
+		t.Fatalf("causal shrink exploration failure=%v", explored.failure)
+	}
+	malformed := simulationMalformedFact{
+		authority: simulationCampaignAuthority,
+		campaign: simulationTraceCampaignEvent(campaignEvent{
+			id: 1, payload: snapshotEstablishedEvent{},
+		}),
+	}
+	counterexample := simulationCloneTrace(explored.trace)
+	counterexample.malformed = &malformed
+	key := ReplayViolation(counterexample, malformed).key
+
+	shrunk := Shrink(counterexample, key)
+	if len(shrunk.definition.catalogue) != 0 {
+		t.Fatalf("causal shrink catalogue=%v, want no unrelated mutants", shrunk.definition.catalogue)
+	}
+	if len(shrunk.records) >= len(counterexample.records) {
+		t.Fatalf("causal shrink records=%d, want fewer than %d", len(shrunk.records), len(counterexample.records))
+	}
+	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 {
+		t.Fatalf("causal shrink capacity/peers=%d/%d, want 1/1",
+			shrunk.definition.capacity, shrunk.definition.campaign.peers)
+	}
+	replayed := ReplayViolation(shrunk, *shrunk.malformed)
+	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {
+		t.Fatalf("causal shrink replay=%#v, want key %#v", replayed, key)
 	}
 }
 
