@@ -50,9 +50,11 @@ func (recorder *simulationRecorder) recordCampaign(
 	if recorder == nil {
 		return
 	}
+	projectedState := simulationProjectCampaign(state)
 	recorder.append(simulationRecord{
 		sequence: recorder.next.Add(1), authority: simulationCampaignAuthority,
-		campaignEvent: event, campaignState: state.clone(), campaignEffects: slices.Clone(effects),
+		campaignEvent: simulationProjectCampaignEvent(event, state), campaignState: projectedState,
+		campaignEffects: simulationProjectCampaignEffects(effects, state),
 	})
 }
 
@@ -98,7 +100,7 @@ func (recorder *simulationRecorder) quiescent(
 	driver.mutex.Lock()
 	supervisorState := cloneSupervisorState(driver.state)
 	driver.mutex.Unlock()
-	campaignState := runner.state.clone()
+	campaignState := simulationProjectCampaign(runner.state)
 
 	return simulationTrace{
 			definition: simulationDefinition{
@@ -118,4 +120,111 @@ func simulationProjectRuntime(state processRuntime) processRuntime {
 	}
 
 	return state
+}
+
+func simulationProjectCampaign(state campaignState) campaignState {
+	state = state.clone()
+	logicalSnapshot := simulationLogicalSnapshot(state.definition.identity)
+	if state.snapshot != "" {
+		state.snapshot = logicalSnapshot
+	}
+	for index := range state.attempts {
+		if state.attempts[index].workspace != "" {
+			state.attempts[index].workspace = simulationLogicalWorkspace(state.attempts[index].identity)
+		}
+	}
+	for index := range state.obligations {
+		switch state.obligations[index].kind {
+		case campaignResourceSnapshot:
+			if state.snapshot != "" {
+				state.obligations[index].identity = string(logicalSnapshot)
+			}
+		case campaignResourceWorkspace:
+			state.obligations[index].identity = simulationLogicalWorkspace(state.obligations[index].attempt)
+		}
+	}
+	for index := range state.artifactResidue {
+		state.artifactResidue[index] = "artifact-residue"
+	}
+
+	return state
+}
+
+func simulationProjectCampaignEvent(event campaignEvent, state campaignState) campaignEvent {
+	logicalSnapshot := simulationLogicalSnapshot(state.definition.identity)
+	switch payload := event.payload.(type) {
+	case snapshotEstablishedEvent:
+		payload.snapshot = logicalSnapshot
+		event.payload = payload
+	case catalogueDiscoveredEvent:
+		payload.snapshot = logicalSnapshot
+		event.payload = payload
+	case workspaceMaterializedEvent:
+		payload.snapshot = logicalSnapshot
+		payload.workspace = simulationLogicalWorkspace(payload.attempt)
+		event.payload = payload
+	case workspaceMaterializationFailedEvent:
+		for index := range payload.artifactResidue {
+			payload.artifactResidue[index] = "artifact-residue"
+		}
+		event.payload = payload
+	case resourceSettledEvent:
+		payload.identity = simulationLogicalResource(payload.kind, payload.identity, "", state)
+		event.payload = payload
+	case resourceSettlementFailedEvent:
+		payload.identity = simulationLogicalResource(payload.kind, payload.identity, "", state)
+		event.payload = payload
+	}
+
+	return event
+}
+
+func simulationProjectCampaignEffects(effects []campaignEffect, state campaignState) []campaignEffect {
+	projected := slices.Clone(effects)
+	for index := range projected {
+		effect := &projected[index]
+		if effect.snapshot != "" {
+			effect.snapshot = simulationLogicalSnapshot(state.definition.identity)
+		}
+		if effect.workspace != "" {
+			effect.workspace = simulationLogicalWorkspace(effect.attempt)
+		}
+		if effect.spec.Dir != "" {
+			effect.spec.Dir = simulationLogicalWorkspace(effect.attempt)
+		}
+	}
+
+	return projected
+}
+
+func simulationLogicalResource(
+	kind campaignResourceKind,
+	identity string,
+	attempt attemptIdentity,
+	state campaignState,
+) string {
+	switch kind {
+	case campaignResourceSnapshot:
+		return string(simulationLogicalSnapshot(state.definition.identity))
+	case campaignResourceWorkspace:
+		if attempt != "" {
+			return simulationLogicalWorkspace(attempt)
+		}
+		for _, candidate := range state.attempts {
+			if candidate.workspace == identity {
+				return simulationLogicalWorkspace(candidate.identity)
+			}
+		}
+		return "workspace:settled"
+	default:
+		return identity
+	}
+}
+
+func simulationLogicalSnapshot(campaign campaignIdentity) snapshotIdentity {
+	return snapshotIdentity("snapshot:" + string(campaign))
+}
+
+func simulationLogicalWorkspace(attempt attemptIdentity) string {
+	return "workspace:" + string(attempt)
 }
