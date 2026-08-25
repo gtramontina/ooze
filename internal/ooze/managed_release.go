@@ -55,6 +55,7 @@ const (
 )
 
 type ManagedResidualCustody struct {
+	Attempt     string
 	Generation  uint64
 	Stage       ManagedResidualStage
 	Transferred bool
@@ -144,7 +145,8 @@ func presentManagedRelease(result managedCampaignResult) ManagedReleaseResult {
 					panic("managed residual stage is invalid")
 				}
 				presented[index] = ManagedResidualCustody{
-					Generation: uint64(custody.generation), Stage: stage, Transferred: custody.transferred,
+					Attempt: string(custody.attempt), Generation: uint64(custody.generation),
+					Stage: stage, Transferred: custody.transferred,
 				}
 			}
 			return ManagedReleaseResult{

@@ -287,7 +287,7 @@ func TestProcessRuntimeShellTerminalSettlementIsGenerationCorrelated(t *testing.
 	})
 	snapshot := shell.snapshot()
 	if snapshot.lifecycle != runtimeFatalClosing || !reflect.DeepEqual(snapshot.residualCustody(), []residualCustody{{
-		generation: started.generation, stage: admissionOwned,
+		generation: started.generation, attempt: grant.attempt, stage: admissionOwned,
 	}}) {
 		t.Fatalf("stale generation did not close with retained custody: %#v", snapshot)
 	}

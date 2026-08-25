@@ -367,8 +367,8 @@ func TestProcessRuntimeFatalClosurePreservesStableCorrelatedResidualCustody(t *t
 		t.Fatalf("closure uncommitted outputs=%#v", closed)
 	}
 	wantResidual := []residualCustody{
-		{generation: owned.generation, stage: admissionOwned, transferred: false},
-		{generation: prospective.generation, stage: admissionProspective, transferred: false},
+		{generation: owned.generation, attempt: "owned", stage: admissionOwned, transferred: false},
+		{generation: prospective.generation, attempt: "prospective", stage: admissionProspective, transferred: false},
 	}
 	if got := runtime.residualCustody(); !reflect.DeepEqual(got, wantResidual) {
 		t.Fatalf("residual=%#v, want %#v", got, wantResidual)
@@ -393,6 +393,7 @@ func TestProcessRuntimeFatalClosurePreservesStableCorrelatedResidualCustody(t *t
 	}
 	wantResidual = []residualCustody{{
 		generation:  prospective.generation,
+		attempt:     "prospective",
 		stage:       admissionProspective,
 		transferred: true,
 	}}
@@ -708,7 +709,9 @@ func TestProcessRuntimeDrainUnconfirmedNeverLooksLikeRelease(t *testing.T) {
 	if !result.runtimeClosureInProgress || len(result.deliveries) != 0 || runtime.admissionIndex(waiting.request) >= 0 {
 		t.Fatalf("drain-unconfirmed result/state=%#v/%#v", result, runtime)
 	}
-	want := []residualCustody{{generation: started.generation, stage: admissionOwned, transferred: true}}
+	want := []residualCustody{{
+		generation: started.generation, attempt: "a", stage: admissionOwned, transferred: true,
+	}}
 	if !reflect.DeepEqual(runtime.residualCustody(), want) {
 		t.Fatalf("drain-unconfirmed residual=%#v, want %#v", runtime.residualCustody(), want)
 	}
@@ -1016,7 +1019,9 @@ func TestProcessRuntimeFinalClosureWaitsForCompensatedGrantReturn(t *testing.T) 
 				}
 				runtime, returned = runtime.acknowledgeGrantReturn(granted.deliveries[0])
 			}
-			want := []residualCustody{{generation: generation, stage: admissionOwned, transferred: true}}
+			want := []residualCustody{{
+				generation: generation, attempt: "owned", stage: admissionOwned, transferred: true,
+			}}
 			if returned.decision != admissionReturnedAfterClosure || runtime.lifecycle != runtimeClosedUnconfirmed ||
 				!reflect.DeepEqual(runtime.residualCustody(), want) {
 				t.Fatalf("return/final closure=%#v/%#v", returned, runtime)
@@ -1290,7 +1295,9 @@ func TestProcessRuntimeLateOwnedLaunchCanJoinDrainSeed(t *testing.T) {
 		runtimeFatalCause(fmt.Sprintf("launch unconfirmed generation=%d", generation)),
 		runtimeFatalCause(fmt.Sprintf("drain unconfirmed generation=%d", generation)),
 	}
-	wantResidual := []residualCustody{{generation: generation, stage: admissionOwned, transferred: true}}
+	wantResidual := []residualCustody{{
+		generation: generation, attempt: "attempt", stage: admissionOwned, transferred: true,
+	}}
 	if !reflect.DeepEqual(runtime.fatalCauses, wantCauses) ||
 		!reflect.DeepEqual(runtime.residualCustody(), wantResidual) {
 		t.Fatalf("late-owned drain state=%#v, want causes/residual %#v/%#v", runtime, wantCauses, wantResidual)
@@ -1324,7 +1331,7 @@ func TestProcessRuntimeNoReleaseCannotDeleteSettledEmergencyCustody(t *testing.T
 	}
 	runtime, returned := runtime.acknowledgeGrantReturn(pending.deliveries[0])
 	want := []residualCustody{{
-		generation: started.generation, stage: admissionProspective, transferred: true,
+		generation: started.generation, attempt: "prospective", stage: admissionProspective, transferred: true,
 	}}
 	if returned.decision != admissionReturnedAfterClosure || runtime.lifecycle != runtimeClosedUnconfirmed ||
 		!reflect.DeepEqual(runtime.residualCustody(), want) {

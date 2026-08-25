@@ -25,10 +25,13 @@ jobs:
         include:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
+            acceptance-count: 5
           - name: macOS 26
             runner: macos-26
+            acceptance-count: 6
           - name: Windows 2025
             runner: windows-2025
+            acceptance-count: 7
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,8 +52,12 @@ jobs:
       - name: Native acceptance
         if: ${{ always() }}
         env:
-          ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
-        run: go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run '${{ env.ACCEPTANCE_TESTS }}' ./internal/ooze
+          ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+        shell: bash
+        run: |
+          selected="$(go test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze | grep -c '^Test')"
+          test "$selected" -eq "${{ matrix.acceptance-count }}"
+          go test -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze
 
   stress:
     name: Stress / ${{ matrix.name }}
@@ -58,7 +65,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       GOTOOLCHAIN: local
-      ACCEPTANCE_TESTS: ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+      ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
     strategy:
       fail-fast: false
       matrix:

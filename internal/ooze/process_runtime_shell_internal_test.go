@@ -227,7 +227,9 @@ func TestProcessRuntimeShellFatalCloseProgressesWhileNativeLaunchIsBlocked(t *te
 		!result.runtimeClosureInProgress {
 		t.Fatalf("cell/close/start=%d/%#v/%#v", installed, closed, result)
 	}
-	want := []residualCustody{{generation: result.generation, stage: admissionOwned, transferred: false}}
+	want := []residualCustody{{
+		generation: result.generation, attempt: grant.attempt, stage: admissionOwned, transferred: false,
+	}}
 	if got := shell.snapshot().residualCustody(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("late-owned residual=%#v, want %#v", got, want)
 	}
@@ -339,7 +341,8 @@ func TestInstalledStartNativeFailureBroadcastsBeforePanicking(t *testing.T) {
 				t.Fatal("native failure panicked before broadcasting emergency")
 			}
 			want := []residualCustody{{
-				generation: prepared.result.generation, stage: admissionProspective, transferred: true,
+				generation: prepared.result.generation, attempt: grant.attempt,
+				stage: admissionProspective, transferred: true,
 			}}
 			snapshot := shell.snapshot()
 			if snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
@@ -469,8 +472,8 @@ func TestInstalledStartRejectsConcurrentCrossPairWithoutConsumingCustody(t *test
 		t.Fatalf("cross-pair calls/panics=%d/%#v", launchCalls, panics)
 	}
 	want := []residualCustody{
-		{generation: preparedA.result.generation, stage: admissionProspective, transferred: true},
-		{generation: preparedB.result.generation, stage: admissionProspective, transferred: true},
+		{generation: preparedA.result.generation, attempt: grantA.attempt, stage: admissionProspective, transferred: true},
+		{generation: preparedB.result.generation, attempt: grantB.attempt, stage: admissionProspective, transferred: true},
 	}
 	snapshot := shell.snapshot()
 	if got := snapshot.residualCustody(); snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(got, want) {
@@ -513,7 +516,8 @@ func TestInstalledStartCopiesLaunchExactlyOnceConcurrently(t *testing.T) {
 			t.Fatalf("sample %d calls/panics=%d/%#v", sample, launchCalls, panics)
 		}
 		want := []residualCustody{{
-			generation: prepared.result.generation, stage: admissionProspective, transferred: true,
+			generation: prepared.result.generation, attempt: grant.attempt,
+			stage: admissionProspective, transferred: true,
 		}}
 		snapshot := shell.snapshot()
 		if snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
@@ -877,7 +881,9 @@ func TestProcessRuntimeShellSerializesFatalCloseAgainstStartCommit(t *testing.T)
 		residual := shell.snapshot().residualCustody()
 		switch prepared.result.decision {
 		case startCommittedAccepted:
-			want := []residualCustody{{generation: prepared.result.generation, stage: admissionProspective}}
+			want := []residualCustody{{
+				generation: prepared.result.generation, attempt: grant.attempt, stage: admissionProspective,
+			}}
 			if cell.installedGeneration() != prepared.result.generation || !reflect.DeepEqual(residual, want) {
 				t.Fatalf("sample %d accepted cell/residual=%d/%#v, want %#v", sample,
 					cell.installedGeneration(), residual, want)
@@ -961,7 +967,7 @@ func TestProcessRuntimeShellSerializesGrantReturnAgainstEmergencySettlement(t *t
 		wait.Wait()
 		snapshot := shell.snapshot()
 		want := []residualCustody{{
-			generation: started.generation, stage: admissionOwned, transferred: true,
+			generation: started.generation, attempt: "owned", stage: admissionOwned, transferred: true,
 		}}
 		if returned.decision != admissionReturnedAfterClosure ||
 			snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
