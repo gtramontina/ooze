@@ -2,6 +2,8 @@ package ooze_test
 
 import (
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -31,6 +33,87 @@ func workflowJob(t *testing.T, path, name string) string {
 	}
 	t.Fatalf("workflow %s has no %q job", path, name)
 	return ""
+}
+
+func TestSelfMutationSubprocessSkipsTaggedMutationEntryPoint(t *testing.T) {
+	configured := ooze.Options{}
+	for _, option := range selfMutationOptions("campaign-runner") {
+		configured = option(configured)
+	}
+	var skip *regexp.Regexp
+	for _, argument := range configured.TestCommand {
+		if expression, found := strings.CutPrefix(argument, "-skip="); found {
+			skip = regexp.MustCompile(expression)
+		}
+	}
+	if skip == nil {
+		t.Fatal("self-mutation subprocess has no test-selection exclusion")
+	}
+	if !skip.MatchString("TestMutationCampaign") {
+		t.Error("self-mutation subprocess selects its tagged mutation entry point")
+	}
+	if skip.MatchString("TestOptions") {
+		t.Error("self-mutation subprocess excludes an ordinary production test")
+	}
+}
+
+func TestSelfMutationSubprocessSkipsFilesystemReentrantNativeFixture(t *testing.T) {
+	configured := ooze.Options{}
+	for _, option := range selfMutationOptions("campaign-runner") {
+		configured = option(configured)
+	}
+	var skip *regexp.Regexp
+	for _, argument := range configured.TestCommand {
+		if expression, found := strings.CutPrefix(argument, "-skip="); found {
+			skip = regexp.MustCompile(expression)
+		}
+	}
+	if skip == nil {
+		t.Fatal("self-mutation subprocess has no test-selection exclusion")
+	}
+	const fixture = "TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember"
+	if !skip.MatchString(fixture) {
+		t.Errorf("self-mutation subprocess selects filesystem-reentrant native fixture %q", fixture)
+	}
+	if skip.MatchString("TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary") {
+		t.Error("self-mutation subprocess excludes an in-memory managed campaign fixture")
+	}
+}
+
+func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
+	configured := ooze.Options{}
+	for _, option := range selfMutationOptions("campaign-runner") {
+		configured = option(configured)
+	}
+	arguments := make([]string, 0, len(configured.TestCommand)+1)
+	for _, argument := range configured.TestCommand[1:] {
+		switch argument {
+		case "--format-hide-empty-pkg":
+			argument = "--format=testname"
+		}
+		if strings.Contains(argument, `"`) {
+			t.Fatalf("self-mutation subprocess argument contains literal quote characters: %q", argument)
+		}
+		if strings.HasPrefix(argument, "./") {
+			if argument == "./internal/ooze" {
+				arguments = append(arguments,
+					"-run=^TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement$",
+					argument,
+				)
+			}
+			continue
+		}
+		arguments = append(arguments, argument)
+	}
+	command := exec.Command(configured.TestCommand[0], arguments...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run self-mutation subprocess selection probe: %v\n%s", err, output)
+	}
+	const fixture = "TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement"
+	if !strings.Contains(string(output), fixture) {
+		t.Fatalf("self-mutation subprocess skipped managed campaign fixture %q:\n%s", fixture, output)
+	}
 }
 
 func requireContract(t *testing.T, subject, contract string, required ...string) {
@@ -108,6 +191,40 @@ func requireNativeToolchains(t *testing.T, job string) {
 	})
 }
 
+func requireMutationShardRows(t *testing.T, job string) {
+	t.Helper()
+	want := map[string][2]string{
+		"Ubuntu 24.04 / repository":       {"repository", "TestMutationRepository"},
+		"Ubuntu 24.04 / attempt-system":   {"attempt-system", "TestMutationAttemptSystem"},
+		"Ubuntu 24.04 / campaign-runner":  {"campaign-runner", "TestMutationCampaignRunner"},
+		"Ubuntu 24.04 / campaign-cycle":   {"campaign-cycle", "TestMutationCampaignCycle"},
+		"Ubuntu 24.04 / campaign-effects": {"campaign-effects", "TestMutationCampaignEffects"},
+		"macOS 26 / repository":           {"repository", "TestMutationRepository"},
+		"macOS 26 / attempt-system":       {"attempt-system", "TestMutationAttemptSystem"},
+		"macOS 26 / campaign-runner":      {"campaign-runner", "TestMutationCampaignRunner"},
+		"macOS 26 / campaign-cycle":       {"campaign-cycle", "TestMutationCampaignCycle"},
+		"macOS 26 / campaign-effects":     {"campaign-effects", "TestMutationCampaignEffects"},
+		"macOS 26 / darwin":               {"darwin", "TestMutationPlatform"},
+		"Windows 2025 / repository":       {"repository", "TestMutationRepository"},
+		"Windows 2025 / attempt-system":   {"attempt-system", "TestMutationAttemptSystem"},
+		"Windows 2025 / campaign-runner":  {"campaign-runner", "TestMutationCampaignRunner"},
+		"Windows 2025 / campaign-cycle":   {"campaign-cycle", "TestMutationCampaignCycle"},
+		"Windows 2025 / campaign-effects": {"campaign-effects", "TestMutationCampaignEffects"},
+	}
+	rows := workflowMatrixRows(t, job)
+	if len(rows) != len(want) {
+		t.Errorf("mutation matrix has %d rows, want %d", len(rows), len(want))
+	}
+	for name, selection := range want {
+		requireMatrixRow(t, job, name, map[string]string{
+			"catalogue-shard": selection[0], "mutation-test": selection[1],
+		})
+	}
+	if strings.Contains(job, "OOZE_") {
+		t.Error("mutation workflow uses a forbidden OOZE_* selector")
+	}
+}
+
 func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "test")
 	requireNativeToolchains(t, testJob)
@@ -133,10 +250,24 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/mutation.yml", "mutation")
 	requireNativeToolchains(t, mutationJob)
-	for _, name := range []string{"Ubuntu 24.04", "macOS 26"} {
+	requireMutationShardRows(t, mutationJob)
+	for _, name := range []string{
+		"Ubuntu 24.04 / repository", "Ubuntu 24.04 / attempt-system",
+		"Ubuntu 24.04 / campaign-runner", "Ubuntu 24.04 / campaign-effects",
+		"Ubuntu 24.04 / campaign-cycle",
+		"macOS 26 / repository", "macOS 26 / attempt-system",
+		"macOS 26 / campaign-runner", "macOS 26 / campaign-effects", "macOS 26 / darwin",
+		"macOS 26 / campaign-cycle",
+	} {
 		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "devbox run -- go test"})
 	}
-	requireMatrixRow(t, mutationJob, "Windows 2025", map[string]string{"test-command": "go test"})
+	for _, name := range []string{
+		"Windows 2025 / repository", "Windows 2025 / attempt-system",
+		"Windows 2025 / campaign-runner", "Windows 2025 / campaign-effects",
+		"Windows 2025 / campaign-cycle",
+	} {
+		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "go test"})
+	}
 	requireContract(t, mutationJob, "mutation job",
 		"toolchain: devbox",
 		"toolchain: raw-go",
@@ -145,6 +276,7 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 		"go-command: devbox run -- go",
 		"test-command: devbox run -- go test",
 		"Verify pinned Go 1.26.6",
+		"-run=^${{ matrix.mutation-test }}$",
 	)
 }
 
@@ -165,12 +297,15 @@ func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T
 
 func TestSelfMutationCommandKeepsAutomaticProfileWithoutCrossingItsOwnFuse(t *testing.T) {
 	configured := ooze.Options{}
-	for _, option := range selfMutationOptions() {
+	for _, option := range selfMutationOptions("campaign-runner") {
 		configured = option(configured)
 	}
 	command := strings.Join(configured.TestCommand, " ")
-	if !strings.Contains(command, "-skip=^TestDarwinNativeSupervisorTripsAutomaticDescendantFuse$") {
+	if !strings.Contains(command, "TestDarwinNativeSupervisorTripsAutomaticDescendantFuse") {
 		t.Error("self-mutation command does not exclude its deliberate 65-descendant fuse fixture")
+	}
+	if !strings.Contains(command, "TestRelease") {
+		t.Error("self-mutation command does not exclude tests that start nested mutation campaigns")
 	}
 	excludesPrototype := false
 	for _, pattern := range configured.IgnoreSourceFilesPatterns {
@@ -187,6 +322,7 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithoutCrossingItsOwnFuse(t *te
 func TestManualNativeWorkflowRunsExactCandidateMutationGate(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "mutation-evidence")
 	requireNativeToolchains(t, mutationJob)
+	requireMutationShardRows(t, mutationJob)
 	requireContract(t, mutationJob, "manual mutation evidence job",
 		"Mutation evidence / ${{ matrix.name }}",
 		"Mutation campaign acceptance",
@@ -194,5 +330,6 @@ func TestManualNativeWorkflowRunsExactCandidateMutationGate(t *testing.T) {
 		"go install gotest.tools/gotestsum@v1.13.0",
 		"github.event_name == 'workflow_dispatch'",
 		"-timeout=30m -count=1 -v -tags=mutation",
+		"-run=^${{ matrix.mutation-test }}$",
 	)
 }
