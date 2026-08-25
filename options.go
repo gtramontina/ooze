@@ -37,8 +37,9 @@ func WithRepositoryRoot(repositoryRoot string) func(Options) Options {
 
 // WithTestCommand configures the test command to run, as string. You may
 // configure it as you wish, as a `makefile` phony target, for example. Or
-// simply run the standard `go test` command with extra flags, such as `timeout`
-// and `tags`.
+// simply run the standard `go test` command with extra flags. The command is
+// opaque: an inner timeout that exits before Ooze's deadline is reported as an
+// ordinary killed mutant rather than as timed out.
 func WithTestCommand(testCommand string) func(Options) Options {
 	return func(options Options) Options {
 		testCommandParts := strings.Split(testCommand, " ")
@@ -69,7 +70,8 @@ func Serial() func(Options) Options {
 }
 
 // WithMutationTimeout configures the absolute deadline for every primary and
-// confirmation attempt. The baseline keeps its separate managed bound.
+// confirmation attempt. The baseline keeps its separate managed bound. Omitting
+// this option leaves the deadline baseline-derived.
 func WithMutationTimeout(timeout time.Duration) func(Options) Options {
 	if timeout < 0 {
 		panic("mutation timeout must be positive")

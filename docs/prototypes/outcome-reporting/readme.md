@@ -5,6 +5,8 @@ semantics](https://github.com/gtramontina/ooze/issues/63). Both files carry `//g
 ignore`, so they are excluded from `go build ./...`, from linting, and — per the
 build-constraint rule in source discovery — from Ooze's own mutant catalogue.
 
+The production projection now lives in `internal/ooze/managed_report.go`. The prototype remains the decision artifact; the current user-facing sample is `.assets/report.txt`.
+
 ## `render.go`
 
 Renders every user-visible presentation the resolution fixes, against realistic counts

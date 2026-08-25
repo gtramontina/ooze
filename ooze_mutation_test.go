@@ -13,7 +13,7 @@ func TestMutation(t *testing.T) {
 		t,
 		ooze.ForceColors(),
 		ooze.WithRepositoryRoot("."),
-		ooze.WithTestCommand("gotestsum --format-hide-empty-pkg --max-fails=1 -- -timeout=60s -failfast ./..."),
+		ooze.WithTestCommand("gotestsum --format-hide-empty-pkg --max-fails=1 -- -failfast ./..."),
 		ooze.WithMinimumThreshold(0.5),
 		ooze.IgnoreSourceFiles("(^release\\.go$|testdata\\/.*)"),
 	)

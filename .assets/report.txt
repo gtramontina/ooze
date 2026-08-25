@@ -1,0 +1,16 @@
+Mutant survived: internal/gotextdiff/gotextdiff.go → Integer Increment
+--- internal/gotextdiff/gotextdiff.go (original)
++++ internal/gotextdiff/gotextdiff.go (mutated with 'Integer Increment')
+@@ -14,1 +14,1 @@
+- retries := 0
++ retries := 1
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ • Total:                      143    ┃
+┃ • Detected:                   133    ┃
+┃   ├ killed:                   129    ┃
+┃   ├ timed out:                  3    ┃
+┃   └ runaway:                    1    ┃
+┃ • Survived:                    10    ┃
+┠┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┨
+┃ ✓ Score:     0.93 (minimum: 0.50)    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
