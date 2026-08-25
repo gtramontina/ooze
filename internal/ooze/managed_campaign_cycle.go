@@ -45,8 +45,9 @@ func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []cam
 	runner.nextEvent++
 	var effects []campaignEffect
 	event := campaignEvent{id: runner.nextEvent, payload: payload}
+	previous := runner.state
 	runner.state, effects = advanceCampaign(runner.state, event)
-	runner.recorder.recordCampaign(reservation, event, runner.state, effects)
+	runner.recorder.recordCampaign(reservation, event, previous, runner.state, effects)
 
 	return effects
 }

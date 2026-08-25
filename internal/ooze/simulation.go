@@ -480,7 +480,9 @@ func simulationExplorePendingMoves(
 
 	return SimulationResult{
 		trace: trace,
-		world: simulationWorld{campaign: campaign, runtime: runtime, supervisor: supervisor},
+		world: simulationWorld{
+			campaign: campaign, runtime: runtime, supervisor: simulationProjectSupervisorState(supervisor),
+		},
 	}
 }
 
@@ -686,7 +688,10 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					return simulationEffectEnablesExternalFact(effect, payload)
 				})
 				if !ok {
-					return simulationReplayFailure(trace, "external campaign fact is not enabled at record %d", index)
+					return simulationReplayFailure(
+						trace, "external campaign fact is not enabled at record %d (%s): effects=%v",
+						index, payload.campaignEventName(), simulationEffectKinds(effects),
+					)
 				}
 				effects = remaining
 			}
@@ -756,7 +761,9 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 
 	return SimulationResult{
 		trace: trace,
-		world: simulationWorld{campaign: campaign, runtime: runtime, supervisor: supervisor},
+		world: simulationWorld{
+			campaign: campaign, runtime: runtime, supervisor: simulationProjectSupervisorState(supervisor),
+		},
 	}
 }
 

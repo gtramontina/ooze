@@ -253,16 +253,6 @@ func simulationTraceRunningIntent(value supervisorRunningIntent) simulationSuper
 	}
 }
 
-func (intent simulationSupervisorRunningIntent) production() supervisorRunningIntent {
-	return supervisorRunningIntent{
-		latched: intent.latched, kind: intent.kind,
-		at: intent.at.production(), drainBy: intent.drainBy.production(),
-		duration: intent.duration.production(), count: intent.count,
-		stop: intent.stop.production(), exitCode: intent.exitCode, exitSignal: intent.exitSignal,
-		observationSource: intent.observationSource, diagnostics: intent.diagnostics,
-	}
-}
-
 func simulationTraceRunningBundle(value *supervisorRunningBundle) *simulationSupervisorRunningBundle {
 	if value == nil {
 		return nil
@@ -486,17 +476,6 @@ func simulationTraceSupervisorTerminal(value supervisorTerminalEvidence) simulat
 		commandDuration: simulationTraceDuration(value.commandDuration),
 		firedBound:      value.firedBound, exitCode: value.exitCode, exitSignal: value.exitSignal,
 		count: value.count, output: value.output, diagnostics: value.diagnostics,
-	}
-}
-
-func (terminal simulationSupervisorTerminalEvidence) production() supervisorTerminalEvidence {
-	return supervisorTerminalEvidence{
-		kind: terminal.kind, profile: terminal.profile,
-		commandDeadline: terminal.commandDeadline.production(),
-		launchDuration:  terminal.launchDuration.production(),
-		commandDuration: terminal.commandDuration.production(),
-		firedBound:      terminal.firedBound, exitCode: terminal.exitCode, exitSignal: terminal.exitSignal,
-		count: terminal.count, output: terminal.output, diagnostics: terminal.diagnostics,
 	}
 }
 

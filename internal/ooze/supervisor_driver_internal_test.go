@@ -618,20 +618,14 @@ func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
 
 func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
-	campaign, _ := beginCampaign(campaignDefinition{
-		identity: "recorder-reentry", lineage: 191, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
-	})
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	fixture := newRunningReducerFixture(t, SerialProfile)
 	reentered := make(chan struct{})
 	returned := make(chan struct{})
-	var driver *supervisorDriver
-	driver = &supervisorDriver{
+	driver := &supervisorDriver{
 		state: fixture.state, recorder: recorder,
 		execute: func(supervisorAction) *supervisorEvent {
-			recorder.quiescent(runner, shell, driver)
+			leaveRecorder := recorder.enter()
+			leaveRecorder()
 			close(reentered)
 
 			return nil
@@ -660,7 +654,7 @@ func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T
 	select {
 	case <-reentered:
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("native action could not enter a quiescent recorder cut")
+		t.Fatal("native action could not enter a recorder owner cut")
 	}
 	<-returned
 }

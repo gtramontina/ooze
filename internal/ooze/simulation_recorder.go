@@ -9,10 +9,18 @@ import (
 )
 
 type simulationRecorder struct {
-	gate    sync.RWMutex
-	mutex   sync.Mutex
-	next    atomic.Uint64
-	records []simulationRecord
+	gate        sync.RWMutex
+	mutex       sync.Mutex
+	next        atomic.Uint64
+	records     []simulationRecord
+	actionMutex sync.Mutex
+	actions     map[supervisorActionToken]simulationInFlightAction
+	actionWake  chan struct{}
+}
+
+type simulationInFlightAction struct {
+	kind       supervisorActionKind
+	generation attemptGeneration
 }
 
 type simulationReservation struct {
@@ -20,7 +28,12 @@ type simulationReservation struct {
 	authority simulationAuthority
 }
 
-func newSimulationRecorder() *simulationRecorder { return &simulationRecorder{} }
+func newSimulationRecorder() *simulationRecorder {
+	return &simulationRecorder{
+		actions:    make(map[supervisorActionToken]simulationInFlightAction),
+		actionWake: make(chan struct{}, 1),
+	}
+}
 
 func (recorder *simulationRecorder) enter() func() {
 	if recorder == nil {
@@ -56,16 +69,23 @@ func (recorder *simulationRecorder) recordRuntime(
 func (recorder *simulationRecorder) recordCampaign(
 	reservation simulationReservation,
 	event campaignEvent,
+	previous campaignState,
 	state campaignState,
 	effects []campaignEffect,
 ) {
 	if recorder == nil {
 		return
 	}
+	switch payload := event.payload.(type) {
+	case attemptTerminalEvent:
+		recorder.recordSupervisorDelivery(supervisorDeliverTerminal, payload.generation)
+	case runtimeEmergencySettledEvent:
+		recorder.recordSupervisorDelivery(supervisorDeliverEmergencySettlement, 0)
+	}
 	projectedState := simulationProjectCampaign(state)
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority,
-		campaignEvent: simulationProjectCampaignEvent(event, state), campaignState: projectedState,
+		campaignEvent: simulationProjectCampaignEvent(event, previous), campaignState: projectedState,
 		campaignEffects: simulationProjectCampaignEffects(effects, state),
 	})
 }
@@ -79,6 +99,7 @@ func (recorder *simulationRecorder) recordSupervisor(
 	if recorder == nil {
 		return
 	}
+	recorder.recordSupervisorActions(actions)
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority,
 		supervisorEvent:   simulationTraceSupervisorEvent(event),
@@ -93,12 +114,92 @@ func (recorder *simulationRecorder) append(record simulationRecord) {
 	recorder.mutex.Unlock()
 }
 
+func (recorder *simulationRecorder) recordSupervisorActions(actions []supervisorAction) {
+	if recorder == nil {
+		return
+	}
+	recorder.actionMutex.Lock()
+	defer recorder.actionMutex.Unlock()
+	for _, action := range actions {
+		_, found := recorder.actions[action.token]
+		if action.token == 0 || found {
+			panic("simulation recorder action is zero or duplicated")
+		}
+		recorder.actions[action.token] = simulationInFlightAction{
+			kind: action.kind, generation: action.generation,
+		}
+	}
+}
+
+func (recorder *simulationRecorder) recordSupervisorCompletion(action supervisorPendingAction) {
+	if recorder == nil {
+		return
+	}
+	recorder.actionMutex.Lock()
+	pending, found := recorder.actions[action.token]
+	if !found || pending.kind != action.kind {
+		recorder.actionMutex.Unlock()
+		panic("simulation recorder action completion is stale or wrong")
+	}
+	delete(recorder.actions, action.token)
+	recorder.actionMutex.Unlock()
+	select {
+	case recorder.actionWake <- struct{}{}:
+	default:
+	}
+}
+
+func (recorder *simulationRecorder) recordSupervisorAction(action supervisorAction) {
+	recorder.recordSupervisorCompletion(supervisorPendingAction{kind: action.kind, token: action.token})
+}
+
+func (recorder *simulationRecorder) recordSupervisorDelivery(
+	kind supervisorActionKind,
+	generation attemptGeneration,
+) {
+	if recorder == nil {
+		return
+	}
+	recorder.actionMutex.Lock()
+	var matched supervisorActionToken
+	for token, action := range recorder.actions {
+		if action.kind != kind || action.generation != generation {
+			continue
+		}
+		if matched != 0 {
+			recorder.actionMutex.Unlock()
+			panic("simulation recorder delivery action is ambiguous")
+		}
+		matched = token
+	}
+	if matched == 0 {
+		recorder.actionMutex.Unlock()
+		panic("simulation recorder delivery action is absent")
+	}
+	delete(recorder.actions, matched)
+	recorder.actionMutex.Unlock()
+	select {
+	case recorder.actionWake <- struct{}{}:
+	default:
+	}
+}
+
 func (recorder *simulationRecorder) quiescent(
 	runner *managedCampaignRunner,
 	runtime *processRuntimeShell,
 	driver *supervisorDriver,
 ) (simulationTrace, simulationWorld) {
-	recorder.gate.Lock()
+	for {
+		recorder.gate.Lock()
+		recorder.actionMutex.Lock()
+		pending := len(recorder.actions)
+		recorder.actionMutex.Unlock()
+		if pending == 0 {
+			break
+		}
+		recorder.gate.Unlock()
+		<-recorder.actionWake
+	}
 	defer recorder.gate.Unlock()
 
 	recorder.mutex.Lock()
@@ -158,7 +259,10 @@ func simulationProjectCampaign(state campaignState) campaignState {
 				state.obligations[index].identity = string(logicalSnapshot)
 			}
 		case campaignResourceWorkspace:
-			state.obligations[index].identity = simulationLogicalWorkspace(state.obligations[index].attempt)
+			attemptAt := state.attemptIndex(state.obligations[index].attempt)
+			if attemptAt >= 0 && state.attempts[attemptAt].workspace != "" {
+				state.obligations[index].identity = simulationLogicalWorkspace(state.obligations[index].attempt)
+			}
 		}
 	}
 	for index := range state.artifactResidue {
@@ -251,70 +355,6 @@ func simulationLogicalWorkspace(attempt attemptIdentity) string {
 	return "workspace:" + string(attempt)
 }
 
-func simulationProjectSupervisorEvent(event supervisorEvent) supervisorEvent {
-	event.at = simulationCanonicalTime(event.at)
-	event.launchBy = simulationCanonicalTime(event.launchBy)
-	event.drainBy = simulationCanonicalTime(event.drainBy)
-	if event.completion != nil {
-		completion := *event.completion
-		completion.at = simulationCanonicalTime(completion.at)
-		event.completion = &completion
-	}
-	if event.running != nil {
-		running := *event.running
-		running.facts = slices.Clone(running.facts)
-		for index := range running.facts {
-			running.facts[index].at = simulationCanonicalTime(running.facts[index].at)
-			running.facts[index].stop = simulationProjectStop(running.facts[index].stop)
-		}
-		running.exitRecheck.at = simulationCanonicalTime(running.exitRecheck.at)
-		running.drainBy = simulationCanonicalTime(running.drainBy)
-		event.running = &running
-	}
-	if event.drain != nil {
-		drain := *event.drain
-		drain.at = simulationCanonicalTime(drain.at)
-		event.drain = &drain
-	}
-	if event.output != nil {
-		output := *event.output
-		output.at = simulationCanonicalTime(output.at)
-		event.output = &output
-	}
-	if event.seal != nil {
-		seal := *event.seal
-		seal.at = simulationCanonicalTime(seal.at)
-		event.seal = &seal
-	}
-	if event.release != nil {
-		release := *event.release
-		release.at = simulationCanonicalTime(release.at)
-		event.release = &release
-	}
-	event.emergencySnapshots = slices.Clone(event.emergencySnapshots)
-	for index := range event.emergencySnapshots {
-		snapshot := &event.emergencySnapshots[index]
-		if snapshot.completion != nil {
-			completion := *snapshot.completion
-			completion.at = simulationCanonicalTime(completion.at)
-			snapshot.completion = &completion
-		}
-		if snapshot.running != nil {
-			running := *snapshot.running
-			running.facts = slices.Clone(running.facts)
-			for factAt := range running.facts {
-				running.facts[factAt].at = simulationCanonicalTime(running.facts[factAt].at)
-				running.facts[factAt].stop = simulationProjectStop(running.facts[factAt].stop)
-			}
-			running.exitRecheck.at = simulationCanonicalTime(running.exitRecheck.at)
-			running.drainBy = simulationCanonicalTime(running.drainBy)
-			snapshot.running = &running
-		}
-	}
-
-	return event
-}
-
 func simulationProjectSupervisorState(state supervisorState) supervisorState {
 	state = cloneSupervisorState(state)
 	state.emergency.at = simulationCanonicalTime(state.emergency.at)
@@ -334,21 +374,6 @@ func simulationProjectSupervisorState(state supervisorState) supervisorState {
 	}
 
 	return state
-}
-
-func simulationProjectSupervisorActions(actions []supervisorAction) []supervisorAction {
-	actions = slices.Clone(actions)
-	for index := range actions {
-		actions[index].at = simulationCanonicalTime(actions[index].at)
-		actions[index].drainBy = simulationCanonicalTime(actions[index].drainBy)
-		actions[index].intent.at = simulationCanonicalTime(actions[index].intent.at)
-		actions[index].intent.drainBy = simulationCanonicalTime(actions[index].intent.drainBy)
-		actions[index].intent.stop = simulationProjectStop(actions[index].intent.stop)
-		actions[index].resolutions = slices.Clone(actions[index].resolutions)
-		actions[index].residuals = slices.Clone(actions[index].residuals)
-	}
-
-	return actions
 }
 
 func simulationProjectStop(stop StopRequest) StopRequest {

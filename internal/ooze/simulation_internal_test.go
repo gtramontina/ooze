@@ -5,8 +5,13 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/viruses"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
 )
 
 func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *testing.T) {
@@ -396,7 +401,10 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		at: time.Unix(100, 0), launchBy: time.Unix(101, 0),
 		profile: AutomaticProfile, commandDeadline: time.Second,
 	}
-	driver.reduce(event)
+	actions := driver.reduce(event)
+	for _, action := range actions {
+		recorder.recordSupervisorAction(action)
+	}
 
 	trace, projection := recorder.quiescent(runner, shell, driver)
 	if got, want := simulationAuthorities(trace), []simulationAuthority{
@@ -429,6 +437,40 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 }
 
+func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	campaign, _ := beginCampaign(campaignDefinition{
+		identity: "campaign-action-barrier", lineage: 511, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1,
+	})
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+	action := supervisorAction{kind: supervisorLaunchNative, token: 71, generation: 9}
+	recorder.recordSupervisorActions([]supervisorAction{action})
+
+	started := make(chan struct{})
+	completed := make(chan struct{})
+	go func() {
+		close(started)
+		recorder.quiescent(runner, shell, driver)
+		close(completed)
+	}()
+	<-started
+	select {
+	case <-completed:
+		t.Fatal("quiescence returned with a supervisor action still in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	recorder.recordSupervisorCompletion(supervisorPendingAction{kind: action.kind, token: action.token})
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("quiescence did not resume after the matching action cut")
+	}
+}
+
 func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
@@ -457,6 +499,117 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 	if !reflect.DeepEqual(replayed.world, production) {
 		t.Fatalf("recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
+	}
+}
+
+func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	var clockMutex sync.Mutex
+	now := time.Unix(10_000, 0)
+	exitCodes := make(map[attemptGeneration]int)
+	tick := func() time.Time {
+		clockMutex.Lock()
+		defer clockMutex.Unlock()
+		now = now.Add(time.Nanosecond)
+
+		return now
+	}
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell, now: tick, launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
+		prepare: func(generation attemptGeneration, spec Spec) {
+			clockMutex.Lock()
+			defer clockMutex.Unlock()
+			if spec.Deadline != baselineBootstrapDeadline {
+				exitCodes[generation] = 1
+			}
+		},
+		execute: func(action supervisorAction) *supervisorEvent {
+			at := tick()
+			switch action.kind {
+			case supervisorLaunchNative:
+				return &supervisorEvent{
+					kind: supervisorLaunchCompleted, generation: action.generation, at: at,
+					completion: &supervisorLaunchCompletion{
+						generation: action.generation, action: action.token, at: at,
+						kind: supervisorLaunchReleased,
+					},
+				}
+			case supervisorWaitRoot:
+				clockMutex.Lock()
+				exitCode := exitCodes[action.generation]
+				clockMutex.Unlock()
+				return &supervisorEvent{
+					kind: supervisorRunningObserved, generation: action.generation, at: at,
+					drainBy: at.Add(5 * time.Second),
+					running: &supervisorRunningBundle{
+						generation: action.generation, waitAction: action.token,
+						facts: []supervisorRunningFact{{
+							generation: action.generation, action: action.token,
+							kind: supervisorRunningRootExited, at: at, exitCode: exitCode,
+						}},
+					},
+				}
+			case supervisorObserveEmptiness:
+				return &supervisorEvent{
+					kind: supervisorDrainCompleted, generation: action.generation, at: at,
+					drain: &supervisorDrainCompletion{
+						generation: action.generation,
+						action:     supervisorPendingAction{kind: action.kind, token: action.token},
+						at:         at, kind: supervisorDrainObservedEmpty,
+					},
+				}
+			case supervisorCaptureOutput:
+				return &supervisorEvent{
+					kind: supervisorOutputCompleted, generation: action.generation, at: at,
+					output: &supervisorOutputCompletion{
+						generation: action.generation,
+						action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: at, ref: 1,
+					},
+				}
+			case supervisorReleaseDomain:
+				return &supervisorEvent{
+					kind: supervisorReleaseCompleted, generation: action.generation, at: at,
+					release: &supervisorReleaseCompletion{
+						generation: action.generation,
+						action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: at,
+					},
+				}
+			default:
+				t.Fatalf("unexpected scripted native action: %#v", action)
+
+				return nil
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	attempts := &nativeManagedAttemptSystem{driver: driver}
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: shell, repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-recorded-managed", lineage: 521, command: []string{"test"},
+		profile: SerialProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+	if completed, ok := result.outcome.(completedOutcome); !ok || len(completed.mutants) != 1 {
+		t.Fatalf("managed outcome=%#v, want one completed mutant", result.outcome)
+	}
+
+	trace, production := recorder.quiescent(runner, shell, driver)
+	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
+		t.Fatalf("managed trace retained a production capability at %s", path)
+	}
+	replayed := ReplayLegal(trace)
+	if replayed.failure != nil {
+		t.Fatalf("non-empty production trace did not replay: %v", replayed.failure)
+	}
+	if !reflect.DeepEqual(replayed.world, production) {
+		t.Fatalf("non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 	}
 }
 
