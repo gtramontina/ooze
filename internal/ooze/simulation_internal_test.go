@@ -326,6 +326,54 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 	}
 }
 
+func TestSimulationExploresGlobalDrainExpiryThroughEmergencySettlement(t *testing.T) {
+	expired := false
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		for index, move := range moves {
+			if move.action.kind == supervisorObserveEmptiness && move.variant == 1 &&
+				move.attemptKind == campaignAttemptPrimary {
+				expired = true
+
+				return index
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-drain-expiry", lineage: 253, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, choices)
+	if explored.failure != nil || !expired {
+		var last simulationRecord
+		for _, record := range explored.trace.records {
+			if record.authority == simulationCampaignAuthority {
+				last = record
+			}
+		}
+		t.Fatalf("drain-expiry exploration failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%T",
+			explored.failure, expired, last.campaignState.phase, last.campaignEvent.kind,
+			len(last.campaignState.obligations), last.campaignState.failure)
+	}
+	if _, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault); !ok ||
+		explored.world.runtime.lifecycle != runtimeClosedUnconfirmed {
+		t.Fatalf("drain-expiry world=%#v", explored.world)
+	}
+	replayed := ReplayLegal(explored.trace)
+	if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("drain-expiry replay failure=%v world-equal=%v",
+			replayed.failure, reflect.DeepEqual(replayed.world, explored.world))
+	}
+}
+
 func TestSimulationChoiceStreamSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	definition := simulationDefinition{
 		campaign: campaignDefinition{
