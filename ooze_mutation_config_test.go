@@ -94,7 +94,7 @@ func TestSelfMutationShardsUseOwningPackageTests(t *testing.T) {
 	}
 }
 
-const selfMutationSubprocessSkip = "^(TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorTripsAutomaticDescendantFuse|TestNativeSupervisorDrainsWideFanout|TestMutation|TestRelease)"
+const selfMutationSubprocessSkip = "^(TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorTripsAutomaticDescendantFuse|TestNativeSupervisorDrainsWideFanout)$"
 
 func selfMutationOptions(shardName string) []ooze.Option {
 	shard, found := selfMutationShardNamed(shardName)

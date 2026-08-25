@@ -1,6 +1,7 @@
 package ooze_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -35,7 +36,7 @@ func workflowJob(t *testing.T, path, name string) string {
 	return ""
 }
 
-func TestSelfMutationSubprocessSkipsTaggedMutationEntryPoint(t *testing.T) {
+func TestSelfMutationSubprocessDoesNotExcludeRootEntryPoints(t *testing.T) {
 	configured := ooze.Options{}
 	for _, option := range selfMutationOptions("campaign-runner") {
 		configured = option(configured)
@@ -49,8 +50,8 @@ func TestSelfMutationSubprocessSkipsTaggedMutationEntryPoint(t *testing.T) {
 	if skip == nil {
 		t.Fatal("self-mutation subprocess has no test-selection exclusion")
 	}
-	if !skip.MatchString("TestMutationCampaign") {
-		t.Error("self-mutation subprocess selects its tagged mutation entry point")
+	if skip.MatchString("TestMutationCampaignRunner") {
+		t.Error("self-mutation subprocess excludes a root entry point from an unselected package")
 	}
 	if skip.MatchString("TestOptions") {
 		t.Error("self-mutation subprocess excludes an ordinary production test")
@@ -102,7 +103,7 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 		if strings.HasPrefix(argument, "./") {
 			if argument == "./internal/ooze" {
 				arguments = append(arguments,
-					"-run=^TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement$",
+					"-run=^(TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement|TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged)$",
 					argument,
 				)
 			}
@@ -115,9 +116,14 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run self-mutation subprocess selection probe: %v\n%s", err, output)
 	}
-	const fixture = "TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement"
-	if !strings.Contains(string(output), fixture) {
-		t.Fatalf("self-mutation subprocess skipped managed campaign fixture %q:\n%s", fixture, output)
+	fixtures := []string{
+		"TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement",
+		"TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged",
+	}
+	for _, fixture := range fixtures {
+		if !strings.Contains(string(output), fixture) {
+			t.Fatalf("self-mutation subprocess skipped ordinary owning-package fixture %q:\n%s", fixture, output)
+		}
 	}
 }
 
@@ -170,17 +176,49 @@ func requireMatrixRow(t *testing.T, job, name string, want map[string]string) {
 
 func requireMatrixRunner(t *testing.T, job, runner string, want map[string]string) {
 	t.Helper()
+	for _, violation := range matrixRunnerContractViolations(t, job, runner, want) {
+		t.Error(violation)
+	}
+}
+
+func matrixRunnerContractViolations(t *testing.T, job, runner string, want map[string]string) []string {
+	t.Helper()
+	var violations []string
+	found := false
 	for name, row := range workflowMatrixRows(t, job) {
 		if row["runner"] == runner {
+			found = true
 			for key, value := range want {
 				if row[key] != value {
-					t.Errorf("matrix %q %s = %q, want %q", name, key, row[key], value)
+					violations = append(violations,
+						fmt.Sprintf("matrix %q %s = %q, want %q", name, key, row[key], value))
 				}
 			}
-			return
 		}
 	}
-	t.Fatalf("matrix has no row for runner %q", runner)
+	if !found {
+		violations = append(violations, fmt.Sprintf("matrix has no row for runner %q", runner))
+	}
+	return violations
+}
+
+func TestMatrixRunnerContractChecksEveryMatchingRow(t *testing.T) {
+	job := strings.Join([]string{
+		"          - name: first",
+		"            runner: ubuntu-24.04",
+		"            toolchain: devbox",
+		"            go-command: devbox run -- go",
+		"          - name: second",
+		"            runner: ubuntu-24.04",
+		"            toolchain: raw-go",
+		"            go-command: devbox run -- go",
+	}, "\n")
+	violations := matrixRunnerContractViolations(t, job, "ubuntu-24.04", map[string]string{
+		"toolchain": "devbox", "go-command": "devbox run -- go",
+	})
+	if len(violations) != 1 {
+		t.Fatalf("runner contract violations=%#v, want the drifted second row", violations)
+	}
 }
 
 func requireNativeToolchains(t *testing.T, job string) {
@@ -308,7 +346,7 @@ func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T
 	)
 }
 
-func TestSelfMutationCommandKeepsAutomaticProfileWithoutCrossingItsOwnFuse(t *testing.T) {
+func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing.T) {
 	configured := ooze.Options{}
 	for _, option := range selfMutationOptions("campaign-runner") {
 		configured = option(configured)
@@ -317,8 +355,10 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithoutCrossingItsOwnFuse(t *te
 	if !strings.Contains(command, "TestDarwinNativeSupervisorTripsAutomaticDescendantFuse") {
 		t.Error("self-mutation command does not exclude its deliberate 65-descendant fuse fixture")
 	}
-	if !strings.Contains(command, "TestRelease") {
-		t.Error("self-mutation command does not exclude tests that start nested mutation campaigns")
+	for _, argument := range configured.TestCommand {
+		if argument == "." || argument == "./..." {
+			t.Errorf("self-mutation command selects root or full-module package %q", argument)
+		}
 	}
 	excludesPrototype := false
 	for _, pattern := range configured.IgnoreSourceFilesPatterns {
