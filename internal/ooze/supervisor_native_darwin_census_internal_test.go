@@ -17,41 +17,73 @@ import (
 )
 
 const (
+	darwinCensusFixtureRole   = "OOZE_DARWIN_CENSUS_FIXTURE_ROLE"
+	darwinCensusFixtureShape  = "OOZE_DARWIN_CENSUS_FIXTURE_SHAPE"
 	darwinLimitFixtureRole    = "OOZE_DARWIN_LIMIT_FIXTURE_ROLE"
 	darwinLimitFixtureShape   = "OOZE_DARWIN_LIMIT_FIXTURE_SHAPE"
 	darwinLimitFixtureRelease = "OOZE_DARWIN_LIMIT_FIXTURE_RELEASE"
 )
 
 func TestDarwinManagedCensusInstrumentsPerDescendantShape(t *testing.T) {
+	if os.Getenv(darwinCensusFixtureRole) == "setsid" {
+		if _, err := syscall.Setsid(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv(darwinCensusFixtureShape),
+			[]byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(30 * time.Second)
+
+		return
+	}
+	setsidPlant := darwinCensusFixtureRole + "=setsid " + darwinCensusFixtureShape +
+		"=%[1]s/shape '" + strings.ReplaceAll(os.Args[0], "'", "'\"'\"'") +
+		"' -test.run=^TestDarwinManagedCensusInstrumentsPerDescendantShape$ &\n"
 	for _, shape := range []struct {
-		name, plant, parent  string
-		group, root, managed [2]bool
+		name, plant, parent                   string
+		group, root, managed, rejectConflated [2]bool
 	}{
 		{
 			name: "plain child", plant: "/bin/sleep 30 &\necho $! > %[1]s/shape\n", parent: "root",
 			group: [2]bool{true, true}, root: [2]bool{true, false}, managed: [2]bool{true, true},
+			rejectConflated: [2]bool{false, true},
 		},
 		{
 			name: "double-forked orphan", plant: "/bin/sh -c '/bin/sleep 30 & echo $! > %[1]s/shape'\n",
 			parent: "init", group: [2]bool{true, true}, root: [2]bool{false, false}, managed: [2]bool{true, true},
+			rejectConflated: [2]bool{true, true},
 		},
 		{
 			name: "direct-root escapee", plant: "set -m\n/bin/sleep 30 &\necho $! > %[1]s/shape\nset +m\n",
 			parent: "root", group: [2]bool{false, false}, root: [2]bool{true, false}, managed: [2]bool{true, false},
+			rejectConflated: [2]bool{true, false},
+		},
+		{
+			name: "setsid escapee", plant: setsidPlant,
+			parent: "root", group: [2]bool{false, false}, root: [2]bool{true, false}, managed: [2]bool{true, false},
+			rejectConflated: [2]bool{true, false},
+		},
+		{
+			name:   "grandchild with middle alive",
+			plant:  "/bin/sh -c '/bin/sleep 30 & echo $! > %[1]s/shape; /bin/sleep 30' &\n",
+			parent: "middle", group: [2]bool{true, true}, root: [2]bool{true, false}, managed: [2]bool{true, true},
+			rejectConflated: [2]bool{false, true},
 		},
 		{
 			name:   "escapee behind live group member",
 			plant:  "/bin/sh -c 'set -m; /bin/sleep 30 & echo $! > %[1]s/shape; set +m; /bin/sleep 30' &\n",
 			parent: "middle", group: [2]bool{true, true}, root: [2]bool{true, false}, managed: [2]bool{true, true},
+			rejectConflated: [2]bool{false, true},
 		},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
 			root, descendant, release := plantManagedDarwinShape(t, shape.plant, shape.parent)
 			assertManagedDarwinCensus(t, root.Process.Pid, descendant,
-				shape.group[0], shape.root[0], shape.managed[0])
+				shape.group[0], shape.root[0], shape.managed[0], shape.rejectConflated[0])
 			releaseManagedDarwinRoot(t, root, release)
 			assertManagedDarwinCensus(t, root.Process.Pid, descendant,
-				shape.group[1], shape.root[1], shape.managed[1])
+				shape.group[1], shape.root[1], shape.managed[1], shape.rejectConflated[1])
 		})
 	}
 }
@@ -200,6 +232,7 @@ func assertManagedDarwinCensus(
 	t *testing.T,
 	root, descendant int,
 	wantGroup, wantRoot, wantManaged bool,
+	wantRejectConflated bool,
 ) {
 	t.Helper()
 	processes, err := darwinProcessCensus()
@@ -221,6 +254,10 @@ func assertManagedDarwinCensus(
 		t.Fatalf("census group/root/managed=%t/%t/%t, want %t/%t/%t",
 			groupOccupied, fromRoot[int32(descendant)], managedPIDs[int32(descendant)],
 			wantGroup, wantRoot, wantManaged)
+	}
+	brokenGroupOccupied := fromRoot[int32(descendant)]
+	if rejected := brokenGroupOccupied != wantGroup; rejected != wantRejectConflated {
+		t.Fatalf("conflated root/group instrument rejected=%t, want %t", rejected, wantRejectConflated)
 	}
 }
 
