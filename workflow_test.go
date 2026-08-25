@@ -48,3 +48,26 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 		}
 	}
 }
+
+func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T) {
+	workflow, err := os.ReadFile(".github/workflows/os-compatibility.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflow)
+
+	for _, required := range []string{
+		"performance:",
+		"PERFORMANCE_SAMPLES: 10",
+		"github.event_name == 'workflow_dispatch'",
+		"path: performance-baseline",
+		"path: performance-candidate",
+		"Collect interleaved A/B samples",
+		"performance-evidence-${{ matrix.name }}",
+		".github/performance/collect.sh",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("native workflow is missing performance evidence contract %q", required)
+		}
+	}
+}

@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "23 4 * * 2"
   workflow_dispatch:
+    inputs:
+      performance-baseline:
+        description: Revision for the legacy A side of the performance comparison
+        required: false
+        default: 87c15dcb180492ba96f30278efc0146dd248f09b
 
 permissions:
   contents: read
@@ -131,6 +136,65 @@ jobs:
             echo "unexpected skip in required native evidence" >&2
             exit 1
           fi
+
+  performance:
+    name: Performance evidence / ${{ matrix.name }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GOTOOLCHAIN: local
+      PERFORMANCE_SAMPLES: 10
+      PERFORMANCE_TOOLCHAIN: ${{ matrix.toolchain }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu-24.04
+            runner: ubuntu-24.04
+            toolchain: devbox
+          - name: macOS-26
+            runner: macos-26
+            toolchain: devbox
+          - name: Windows-2025
+            runner: windows-2025
+            toolchain: raw-go
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: performance-candidate
+
+      - name: Check out baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.performance-baseline || '87c15dcb180492ba96f30278efc0146dd248f09b' }}
+          path: performance-baseline
+
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
+      - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: performance-candidate/go.sum
+
+      - name: Collect interleaved A/B samples
+        shell: bash
+        run: performance-candidate/.github/performance/collect.sh performance-baseline performance-candidate performance.jsonl
+
+      - name: Upload raw performance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-evidence-${{ matrix.name }}
+          path: performance.jsonl
+          if-no-files-found: error
+          retention-days: 30
 
   required:
     name: OS Compatibility
