@@ -15,6 +15,11 @@ type simulationRecorder struct {
 	records []simulationRecord
 }
 
+type simulationReservation struct {
+	sequence  uint64
+	authority simulationAuthority
+}
+
 func newSimulationRecorder() *simulationRecorder { return &simulationRecorder{} }
 
 func (recorder *simulationRecorder) enter() func() {
@@ -26,24 +31,30 @@ func (recorder *simulationRecorder) enter() func() {
 	return recorder.gate.RUnlock
 }
 
-func (recorder *simulationRecorder) recordRuntime(operation string, state processRuntime) {
+func (recorder *simulationRecorder) reserve(authority simulationAuthority) simulationReservation {
+	if recorder == nil {
+		return simulationReservation{}
+	}
+
+	return simulationReservation{sequence: recorder.next.Add(1), authority: authority}
+}
+
+func (recorder *simulationRecorder) recordRuntime(
+	reservation simulationReservation,
+	record simulationRecord,
+	state processRuntime,
+) {
 	if recorder == nil {
 		return
 	}
-	record := simulationRecord{
-		sequence: recorder.next.Add(1), authority: simulationRuntimeAuthority,
-		runtimeOperationName: operation, runtimeState: simulationProjectRuntime(state),
-	}
-	if operation == "register campaign" && len(state.campaigns) != 0 {
-		token := state.campaigns[len(state.campaigns)-1].token
-		record.runtimeOperation = simulationRegisterCampaign
-		record.runtimeProvenance = campaignProvenance{lineage: token.lineage}
-		record.runtimeRegistration = campaignRegistration{decision: campaignRegistered, token: token}
-	}
+	record.sequence = reservation.sequence
+	record.authority = reservation.authority
+	record.runtimeState = simulationProjectRuntime(state)
 	recorder.append(record)
 }
 
 func (recorder *simulationRecorder) recordCampaign(
+	reservation simulationReservation,
 	event campaignEvent,
 	state campaignState,
 	effects []campaignEffect,
@@ -53,13 +64,14 @@ func (recorder *simulationRecorder) recordCampaign(
 	}
 	projectedState := simulationProjectCampaign(state)
 	recorder.append(simulationRecord{
-		sequence: recorder.next.Add(1), authority: simulationCampaignAuthority,
+		sequence: reservation.sequence, authority: reservation.authority,
 		campaignEvent: simulationProjectCampaignEvent(event, state), campaignState: projectedState,
 		campaignEffects: simulationProjectCampaignEffects(effects, state),
 	})
 }
 
 func (recorder *simulationRecorder) recordSupervisor(
+	reservation simulationReservation,
 	event supervisorEvent,
 	state supervisorState,
 	actions []supervisorAction,
@@ -68,7 +80,7 @@ func (recorder *simulationRecorder) recordSupervisor(
 		return
 	}
 	recorder.append(simulationRecord{
-		sequence: recorder.next.Add(1), authority: simulationSupervisorAuthority,
+		sequence: reservation.sequence, authority: reservation.authority,
 		supervisorEvent:   simulationProjectSupervisorEvent(event),
 		supervisorState:   simulationProjectSupervisorState(state),
 		supervisorActions: simulationProjectSupervisorActions(actions),
@@ -103,10 +115,14 @@ func (recorder *simulationRecorder) quiescent(
 	supervisorState := simulationProjectSupervisorState(driver.state)
 	driver.mutex.Unlock()
 	campaignState := simulationProjectCampaign(runner.state)
+	definition := campaignState.definition
+	definition.baselineDeadline = 0
+	definition.command = slices.Clone(definition.command)
+	definition.env = slices.Clone(definition.env)
 
 	return simulationTrace{
 			definition: simulationDefinition{
-				campaign: campaignState.definition, capacity: runtimeState.capacity,
+				campaign: definition, capacity: runtimeState.capacity,
 				catalogue: slices.Clone(campaignState.catalogue),
 			},
 			records: records,

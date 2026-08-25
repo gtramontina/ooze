@@ -127,15 +127,23 @@ func newProcessRuntimeShellWithRecorder(capacity int, recorder *simulationRecord
 func (s *processRuntimeShell) runtimeEmergency() <-chan struct{} { return s.emergency }
 
 func (s *processRuntimeShell) registerCampaign(p campaignProvenance) campaignRegistration {
-	return applyCore(s, "register campaign", p, processRuntime.registerCampaign)
+	return applyCore(s, "register campaign", simulationRegisterCampaign, p, processRuntime.registerCampaign)
 }
 
 func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissionAwait {
-	return underRuntimeLock(s, "request admission", func() admissionAwait {
+	var recorded admissionResult
+
+	return underRuntimeLock(s, "request admission", func(result admissionAwait, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationRequestAdmission, runtimeAdmission: request,
+			runtimeAdmissionOut: recorded,
+		}
+	}, func() admissionAwait {
 		delivery := make(chan admissionGrant, 1)
 		request.delivery = delivery
 		var result admissionResult
 		s.core, result = s.core.requestAdmission(request)
+		recorded = result
 		if result.decision == admissionAccepted {
 			s.deliver(result.deliveries)
 		} else {
@@ -163,7 +171,12 @@ func (s *processRuntimeShell) emergencySettlementRequired() bool {
 }
 
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
-	return underRuntimeLock(s, "cancel admission", func() (result admissionResult) {
+	return underRuntimeLock(s, "cancel admission", func(result admissionResult, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationCancelAdmission, runtimeAdmissionToken: token,
+			runtimeAdmissionOut: result,
+		}
+	}, func() (result admissionResult) {
 		if token.delivery == nil {
 			for _, admission := range s.core.admissions {
 				if sameAdmissionRequest(campaignAdmissionFact(admission.grant), campaignAdmissionFact(token)) {
@@ -185,15 +198,26 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 }
 
 func (s *processRuntimeShell) acknowledgeGrantReturn(grant admissionGrant) admissionResult {
-	return applyCore(s, "acknowledge grant return", grant, processRuntime.acknowledgeGrantReturn)
+	return applyCore(
+		s, "acknowledge grant return", simulationAcknowledgeGrantReturn,
+		grant, processRuntime.acknowledgeGrantReturn,
+	)
 }
 
 func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBinding) barrierAwait {
-	return underRuntimeLock(s, "bind confirmation barrier", func() barrierAwait {
+	var recorded barrierResult
+
+	return underRuntimeLock(s, "bind confirmation barrier", func(result barrierAwait, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationBindConfirmationBarrier, runtimeBarrier: binding,
+			runtimeBarrierOut: recorded,
+		}
+	}, func() barrierAwait {
 		delivery := make(chan admissionGrant, 1)
 		binding.delivery = delivery
 		var result barrierResult
 		s.core, result = s.core.sealAndBindConfirmationBarrier(binding)
+		recorded = result
 		if result.decision == barrierBound {
 			s.deliver(result.deliveries)
 		} else {
@@ -205,7 +229,12 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 }
 
 func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) confirmationQueueResult {
-	return underRuntimeLock(s, "complete confirmation queue", func() (result confirmationQueueResult) {
+	return underRuntimeLock(s, "complete confirmation queue", func(result confirmationQueueResult, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationCompleteConfirmationQueue, runtimeCampaign: campaign,
+			runtimeQueueOut: result,
+		}
+	}, func() (result confirmationQueueResult) {
 		s.core, result = s.core.completeConfirmationQueue(campaign)
 		s.deliver(result.deliveries)
 		result.deliveries = nil
@@ -216,7 +245,12 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 
 // No executable value enters this lock; only the post-unlock return accepts a native thunk.
 func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation startInstallation) preparedStart {
-	return underRuntimeLock(s, startInstallerOperation, func() preparedStart {
+	return underRuntimeLock(s, startInstallerOperation, func(result preparedStart, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationStartCommitted, runtimeGrant: grant,
+			runtimeStart: result.result,
+		}
+	}, func() preparedStart {
 		if installation.grant != grant {
 			invariant(startInstallerOperation, "installation grant is stale or wrong")
 		}
@@ -233,7 +267,7 @@ func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation 
 }
 
 func (s *processRuntimeShell) failLaunchInvariant(generation attemptGeneration, violation runtimeInvariantViolation) {
-	underRuntimeLock(s, violation.operation, func() struct{} {
+	underRuntimeLock(s, violation.operation, nil, func() struct{} {
 		wasOpen := s.core.open()
 		cause := runtimeFatalCause(violation.reason)
 		if generation != 0 {
@@ -256,7 +290,12 @@ func (s *processRuntimeShell) failLaunchInvariant(generation attemptGeneration, 
 }
 
 func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, observed attemptObservation) observationResult {
-	return underRuntimeLock(s, observeOperation, func() (result observationResult) {
+	return underRuntimeLock(s, observeOperation, func(result observationResult, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationObserveAttempt, runtimeGeneration: generation,
+			runtimeObservation: observed, runtimeObservationOut: result,
+		}
+	}, func() (result observationResult) {
 		s.core, result = s.core.observeAttempt(generation, observed)
 		s.closeWaiting(result.cancelledWaiting)
 		s.assertReturnable(result.compensatedGrants)
@@ -268,15 +307,20 @@ func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, obser
 }
 
 func (s *processRuntimeShell) settleEmergency(sweep emergencySweep) emergencySettlement {
-	return applyCore(s, settleEmergencyOperation, sweep, processRuntime.settleEmergency)
+	return applyCore(s, settleEmergencyOperation, simulationSettleEmergency, sweep, processRuntime.settleEmergency)
 }
 
 func (s *processRuntimeShell) commitTerminal(campaign campaignToken) terminalResult {
-	return applyCore(s, "commit terminal", campaign, processRuntime.commitTerminal)
+	return applyCore(s, "commit terminal", simulationCommitTerminal, campaign, processRuntime.commitTerminal)
 }
 
 func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) terminalResult {
-	return underRuntimeLock(s, "authorize forced abort", func() (result terminalResult) {
+	return underRuntimeLock(s, "authorize forced abort", func(result terminalResult, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationAuthorizeForcedAbort, runtimeCampaign: campaign,
+			runtimeFatalEpoch: epoch, runtimeTerminal: result,
+		}
+	}, func() (result terminalResult) {
 		s.core, result = s.core.authorizeForcedAbort(campaign, epoch)
 
 		return result
@@ -284,7 +328,11 @@ func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch
 }
 
 func (s *processRuntimeShell) closeRuntime(cause runtimeFatalCause) runtimeClosure {
-	return underRuntimeLock(s, "close runtime", func() runtimeClosure { return s.closeCore(cause) })
+	return underRuntimeLock(s, "close runtime", func(result runtimeClosure, _ processRuntime) simulationRecord {
+		return simulationRecord{
+			runtimeOperation: simulationCloseRuntime, runtimeFatalCause: cause, runtimeClosure: result,
+		}
+	}, func() runtimeClosure { return s.closeCore(cause) })
 }
 
 func (s *processRuntimeShell) closeCore(cause runtimeFatalCause) (result runtimeClosure) {
@@ -312,10 +360,16 @@ func (s *processRuntimeShell) assertReturnable(grants []admissionGrant) {
 	}
 }
 
-func underRuntimeLock[T any](shell *processRuntimeShell, operation string, apply func() T) (result T) {
+func underRuntimeLock[T any](
+	shell *processRuntimeShell,
+	operation string,
+	record func(T, processRuntime) simulationRecord,
+	apply func() T,
+) (result T) {
 	leaveRecorder := shell.recorder.enter()
 	defer leaveRecorder()
 	shell.mutex.Lock()
+	reservation := shell.recorder.reserve(simulationRuntimeAuthority)
 	wasOpen := shell.core.open()
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -335,7 +389,12 @@ func underRuntimeLock[T any](shell *processRuntimeShell, operation string, apply
 	}()
 
 	result = apply()
-	shell.recorder.recordRuntime(operation, shell.core)
+	runtimeRecord := simulationRecord{runtimeOperationName: operation}
+	if record != nil {
+		runtimeRecord = record(result, shell.core)
+		runtimeRecord.runtimeOperationName = operation
+	}
+	shell.recorder.recordRuntime(reservation, runtimeRecord, shell.core)
 
 	return result
 }
@@ -350,12 +409,46 @@ func (s *processRuntimeShell) broadcastEmergency(wasOpen bool) {
 	close(s.emergency)
 }
 
-func applyCore[I, O any](s *processRuntimeShell, operation string, input I, reduce func(processRuntime, I) (processRuntime, O)) O {
-	return underRuntimeLock(s, operation, func() (result O) {
+func applyCore[I, O any](
+	s *processRuntimeShell,
+	operationName string,
+	operation simulationRuntimeOperation,
+	input I,
+	reduce func(processRuntime, I) (processRuntime, O),
+) O {
+	return underRuntimeLock(s, operationName, func(result O, _ processRuntime) simulationRecord {
+		return simulationRuntimeRecord(operation, input, result)
+	}, func() (result O) {
 		s.core, result = reduce(s.core, input)
 
 		return result
 	})
+}
+
+func simulationRuntimeRecord[I, O any](
+	operation simulationRuntimeOperation,
+	input I,
+	result O,
+) simulationRecord {
+	record := simulationRecord{runtimeOperation: operation}
+	switch operation {
+	case simulationRegisterCampaign:
+		record.runtimeProvenance = any(input).(campaignProvenance)
+		record.runtimeRegistration = any(result).(campaignRegistration)
+	case simulationAcknowledgeGrantReturn:
+		record.runtimeGrant = any(input).(admissionGrant)
+		record.runtimeAdmissionOut = any(result).(admissionResult)
+	case simulationSettleEmergency:
+		record.runtimeSweep = any(input).(emergencySweep)
+		record.runtimeEmergencyOut = any(result).(emergencySettlement)
+	case simulationCommitTerminal:
+		record.runtimeCampaign = any(input).(campaignToken)
+		record.runtimeTerminal = any(result).(terminalResult)
+	default:
+		invariant("record runtime", "runtime operation has no typed trace projection")
+	}
+
+	return record
 }
 
 func (s *processRuntimeShell) deliver(deliveries []admissionGrant) {
