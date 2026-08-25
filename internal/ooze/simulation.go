@@ -780,6 +780,18 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 			break
 		}
 	}
+	canonical := shrunk.definition
+	canonical.campaign.identity = "campaign-1"
+	canonical.campaign.lineage = 1
+	canonical.catalogue = make([]mutantIdentity, len(shrunk.definition.catalogue))
+	for index := range canonical.catalogue {
+		canonical.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
+	}
+	if candidate, ok := simulationExploreShrinkCandidateWithChoices(
+		shrunk, canonical, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)},
+	); ok && simulationPreservesFailure(candidate, key) {
+		shrunk = candidate
+	}
 	first := ReplayViolation(shrunk, *shrunk.malformed)
 	second := ReplayViolation(shrunk, *shrunk.malformed)
 	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
@@ -834,10 +846,50 @@ func simulationExploreShrinkCandidateWithChoices(
 	}
 	if trace.malformed != nil {
 		malformed := *trace.malformed
+		if len(trace.records) != 0 && len(candidate.records) != 0 {
+			malformed = simulationRepairMalformedCut(
+				malformed, trace.records[len(trace.records)-1], candidate.records[len(candidate.records)-1],
+			)
+		}
 		candidate.malformed = &malformed
 	}
 
 	return candidate, true
+}
+
+func simulationRepairMalformedCut(
+	malformed simulationMalformedFact,
+	before, after simulationRecord,
+) simulationMalformedFact {
+	if malformed.authority != simulationSupervisorAuthority ||
+		before.authority != simulationSupervisorAuthority || after.authority != simulationSupervisorAuthority {
+		return malformed
+	}
+	if malformed.supervisor.generation == before.supervisorEvent.generation {
+		malformed.supervisor.generation = after.supervisorEvent.generation
+	}
+	if malformed.supervisor.attempt == before.supervisorEvent.attempt {
+		malformed.supervisor.attempt = after.supervisorEvent.attempt
+	}
+	completion := malformed.supervisor.completion
+	beforeCompletion := before.supervisorEvent.completion
+	afterCompletion := after.supervisorEvent.completion
+	if completion == nil || beforeCompletion == nil || afterCompletion == nil {
+		return malformed
+	}
+	copy := *completion
+	if copy.generation == beforeCompletion.generation {
+		copy.generation = afterCompletion.generation
+	}
+	if copy.action == beforeCompletion.action {
+		copy.action = afterCompletion.action
+	}
+	if copy.at == beforeCompletion.at {
+		copy.at = afterCompletion.at
+	}
+	malformed.supervisor.completion = &copy
+
+	return malformed
 }
 
 func (source *simulationShrinkChoiceSource) choose(limit int) int {

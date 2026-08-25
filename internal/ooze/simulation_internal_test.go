@@ -631,6 +631,13 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	if distance := simulationChoiceDistance(shrunk.choices); distance >= originalDistance {
 		t.Fatalf("boundary choice distance=%d, want less than %d", distance, originalDistance)
 	}
+	if shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 ||
+		!reflect.DeepEqual(shrunk.definition.catalogue, []mutantIdentity{"mutant-1"}) {
+		t.Fatalf("canonical shrink definition=%#v", shrunk.definition)
+	}
+	if shrunk.malformed.supervisor.completion == nil || shrunk.malformed.supervisor.completion.action != 999 {
+		t.Fatalf("canonical shrink changed the intended corruption=%#v", shrunk.malformed)
+	}
 	replayed := ReplayViolation(shrunk, *shrunk.malformed)
 	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {
 		t.Fatalf("boundary shrink replay=%#v, want key %#v", replayed, key)
