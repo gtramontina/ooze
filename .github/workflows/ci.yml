@@ -29,8 +29,14 @@ jobs:
     - name: "🧹 Lint"
       run: devbox run -- make lint
 
+    - name: "🧼 Isolated lint"
+      run: devbox run -- golangci-lint run --no-config ./...
+
     - name: "🧪 Test"
       run: devbox run -- make test
+
+    - name: "🎲 Deterministic simulation contract"
+      run: devbox run -- go -C docs/prototypes/deterministic-simulation-contract test -race -count=1 ./...
 
     - name: "🧭 Cross-compile supported and sentinel targets"
       run: devbox run -- make test.crosscompile
