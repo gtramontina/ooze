@@ -1058,6 +1058,48 @@ func TestSimulationLivenessFailureKeyIgnoresRawOwnerIdentities(t *testing.T) {
 	}
 }
 
+func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T) {
+	key := FailureKey{
+		property: "Explore", kind: simulationLivenessFailureKind,
+		liveness: simulationLivenessRepeatedWorld, identities: []string{"owner-source-1#1"},
+	}
+	trace := simulationTrace{
+		definition: simulationDefinition{
+			campaign: campaignDefinition{
+				identity: "campaign-liveness-shrink", lineage: 49, command: []string{"test"},
+				profile: AutomaticProfile, peers: 3,
+			},
+			capacity: 3, catalogue: []mutantIdentity{"unrelated", "required"},
+		},
+		choices: []simulationChoiceRecord{{limit: 4, selected: 3}},
+	}
+	evaluate := func(definition simulationDefinition, choices simulationChoiceSource) SimulationResult {
+		candidate := simulationCloneTrace(trace)
+		candidate.definition = definition
+		if source, ok := choices.(*simulationShrinkChoiceSource); ok {
+			candidate.choices = slices.Clone(source.choices)
+		}
+		if len(definition.catalogue) == 0 {
+			return SimulationResult{trace: candidate}
+		}
+
+		return SimulationResult{
+			trace: candidate, key: key,
+			failure: simulationLivenessFailure{kind: simulationLivenessRepeatedWorld},
+		}
+	}
+
+	shrunk := simulationShrinkLivenessWith(trace, key, evaluate)
+	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 ||
+		len(shrunk.definition.catalogue) != 1 ||
+		shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 {
+		t.Fatalf("liveness shrunk definition=%#v", shrunk.definition)
+	}
+	if len(shrunk.choices) != 1 || shrunk.choices[0].selected != 0 {
+		t.Fatalf("liveness shrunk choices=%#v", shrunk.choices)
+	}
+}
+
 func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
@@ -2032,6 +2074,7 @@ func simulationRecordedActionSummary(trace simulationTrace) []string {
 
 	return summary
 }
+
 
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))

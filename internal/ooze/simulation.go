@@ -1070,6 +1070,9 @@ func simulationEmergencySweep(runtime processRuntime, closure runtimeClosure) em
 
 // Shrink removes semantic records and definition members while retaining one typed failure.
 func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
+	if key.kind == simulationLivenessFailureKind {
+		return simulationShrinkLivenessWith(trace, key, Explore)
+	}
 	if trace.malformed == nil && key.kind != simulationReplayFailureKind {
 		panic("simulation shrink requires a reproducible failure")
 	}
@@ -1162,6 +1165,75 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 		if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
 			panic("simulation shrink did not retain a deterministic failure")
 		}
+	}
+
+	return shrunk
+}
+
+type simulationExploreEvaluator func(simulationDefinition, simulationChoiceSource) SimulationResult
+
+func simulationShrinkLivenessWith(
+	trace simulationTrace,
+	key FailureKey,
+	evaluate simulationExploreEvaluator,
+) simulationTrace {
+	shrunk := simulationCloneTrace(trace)
+	preserves := func(definition simulationDefinition, choices []simulationChoiceRecord) (simulationTrace, bool) {
+		result := evaluate(definition, &simulationShrinkChoiceSource{choices: slices.Clone(choices)})
+
+		return result.trace, result.failure != nil && reflect.DeepEqual(result.key, key)
+	}
+	for index := 0; index < len(shrunk.definition.catalogue); {
+		definition := shrunk.definition
+		definition.catalogue = slices.Delete(slices.Clone(definition.catalogue), index, index+1)
+		candidate, ok := preserves(definition, shrunk.choices)
+		if !ok {
+			index++
+			continue
+		}
+		shrunk = candidate
+	}
+	for parallelism := 1; parallelism < shrunk.definition.capacity; parallelism++ {
+		definition := shrunk.definition
+		definition.capacity = parallelism
+		definition.campaign.peers = parallelism
+		candidate, ok := preserves(definition, shrunk.choices)
+		if !ok {
+			continue
+		}
+		shrunk = candidate
+		break
+	}
+	for choiceAt := 0; choiceAt < len(shrunk.choices); choiceAt++ {
+		choice := shrunk.choices[choiceAt]
+		if choice.recovery || choice.selected == 0 {
+			continue
+		}
+		for selected := 0; selected < choice.selected; selected++ {
+			choices := slices.Clone(shrunk.choices[:choiceAt+1])
+			choices[choiceAt].selected = selected
+			candidate, ok := preserves(shrunk.definition, choices)
+			if !ok {
+				continue
+			}
+			shrunk = candidate
+			break
+		}
+	}
+	canonical := shrunk.definition
+	canonical.campaign.identity = "campaign-1"
+	canonical.campaign.lineage = 1
+	canonical.catalogue = make([]mutantIdentity, len(shrunk.definition.catalogue))
+	for index := range canonical.catalogue {
+		canonical.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
+	}
+	if candidate, ok := preserves(canonical, shrunk.choices); ok {
+		shrunk = candidate
+	}
+	first := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
+	second := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
+	if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+		panic("simulation shrink did not retain a deterministic liveness failure")
 	}
 
 	return shrunk
