@@ -3,6 +3,7 @@ package ooze_test
 import (
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/gtramontina/ooze"
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
@@ -43,9 +44,14 @@ func TestOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("can configure parallel", func(t *testing.T) {
-		options := ooze.Parallel()(ooze.Options{})
-		assert.Equal(t, true, options.Parallel)
+	t.Run("can configure serial execution", func(t *testing.T) {
+		options := ooze.Serial()(ooze.Options{})
+		assert.True(t, options.Serial)
+	})
+
+	t.Run("can configure an absolute mutation timeout", func(t *testing.T) {
+		options := ooze.WithMutationTimeout(37 * time.Second)(ooze.Options{})
+		assert.Equal(t, 37*time.Second, options.MutationTimeout)
 	})
 
 	t.Run("can configure source files to ignore", func(t *testing.T) {

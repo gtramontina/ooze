@@ -51,7 +51,8 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 	TestRunner:                cmdtestrunner.New("go", "test", "-count=1", "./..."),
 	TemporaryDir:              fstemporarydir.New("ooze-"),
 	MinimumThreshold:          1.0,
-	Parallel:                  false,
+	Serial:                    false,
+	MutationTimeout:           0,
 	IgnoreSourceFilesPatterns: nil,
 	Viruses: []viruses.Virus{
 		arithmetic.New(),
@@ -132,7 +133,7 @@ func Release(t *testing.T, options ...Option) {
 		}
 	})
 
-	lab = testingtlaboratory.New(t, lab, opts.Parallel)
+	lab = testingtlaboratory.New(t, lab, !opts.Serial)
 
 	logger.Logf("%s %s", color.Yellow("┃"), color.Green("Releasing Ooze…"))
 	ooze.New(opts.Repository, lab, reporter).Release(
