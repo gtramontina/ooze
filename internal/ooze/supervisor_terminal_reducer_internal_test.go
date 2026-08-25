@@ -69,6 +69,7 @@ func TestSupervisorReducerTerminalReleaseStoresEvidenceBeforeRuntimeSettlement(t
 			}
 			wantEvidence := supervisorTerminalEvidence{
 				kind:            test.wantKind,
+				profile:         attempt.profile,
 				commandDeadline: attempt.commandDeadline,
 				launchDuration:  attempt.startedAt.Sub(attempt.registeredAt),
 				commandDuration: attempt.intent.duration,

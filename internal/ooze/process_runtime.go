@@ -4,6 +4,7 @@ package ooze
 import (
 	"slices"
 	"strconv"
+	"time"
 )
 
 const (
@@ -67,6 +68,8 @@ type admissionAuthority struct {
 	campaign campaignToken
 	attempt  attemptIdentity
 	class    admissionClass
+	profile  Profile
+	deadline time.Duration
 	delivery chan admissionAuthority
 }
 
@@ -183,15 +186,16 @@ const (
 type attemptObservation interface{ attemptObservation() }
 
 type (
-	launchOwned              struct{}
-	launchNotReleased        struct{ reason launchNotReleasedReason }
-	attemptSettled           struct{}
-	launchUnconfirmed        struct{}
-	drainUnconfirmed         struct{}
-	attemptStopped           struct{}
-	attemptInfrastructure    struct{ cause string }
-	confirmationContinues    struct{ outcome confirmationOutcome }
-	confirmationQueueDrained struct{ outcome confirmationOutcome }
+	launchOwned       struct{}
+	launchNotReleased struct{ reason launchNotReleasedReason }
+	attemptSettled    struct {
+		profile  Profile
+		deadline time.Duration
+	}
+	launchUnconfirmed     struct{}
+	drainUnconfirmed      struct{}
+	attemptStopped        struct{}
+	attemptInfrastructure struct{ cause string }
 )
 
 type confirmationOutcome uint8
@@ -208,18 +212,20 @@ const (
 	fuseTrip
 )
 
-type attemptTripped struct{ kind attemptTripKind }
+type attemptTripped struct {
+	kind     attemptTripKind
+	profile  Profile
+	deadline time.Duration
+}
 
-func (launchOwned) attemptObservation()              {}
-func (launchNotReleased) attemptObservation()        {}
-func (attemptSettled) attemptObservation()           {}
-func (attemptTripped) attemptObservation()           {}
-func (launchUnconfirmed) attemptObservation()        {}
-func (drainUnconfirmed) attemptObservation()         {}
-func (attemptStopped) attemptObservation()           {}
-func (attemptInfrastructure) attemptObservation()    {}
-func (confirmationContinues) attemptObservation()    {}
-func (confirmationQueueDrained) attemptObservation() {}
+func (launchOwned) attemptObservation()           {}
+func (launchNotReleased) attemptObservation()     {}
+func (attemptSettled) attemptObservation()        {}
+func (attemptTripped) attemptObservation()        {}
+func (launchUnconfirmed) attemptObservation()     {}
+func (drainUnconfirmed) attemptObservation()      {}
+func (attemptStopped) attemptObservation()        {}
+func (attemptInfrastructure) attemptObservation() {}
 
 type observationResult struct {
 	generation                                      attemptGeneration
@@ -281,6 +287,8 @@ type terminalResult struct {
 type barrierBinding struct {
 	campaign campaignToken
 	attempt  attemptIdentity
+	profile  Profile
+	deadline time.Duration
 	delivery chan admissionGrant
 }
 
@@ -290,11 +298,25 @@ const (
 	barrierBound barrierDecision = iota + 1
 	barrierRejectedMissing
 	barrierRejectedClosureOutstanding
+	barrierRejectedExecutionMismatch
 )
 
 type barrierResult struct {
 	decision   barrierDecision
 	request    admissionRequestToken
+	deliveries []admissionGrant
+}
+
+type confirmationQueueDecision uint8
+
+const (
+	confirmationQueueCompleted confirmationQueueDecision = iota + 1
+	confirmationQueueRejectedMissing
+	confirmationQueueRejectedOutstanding
+)
+
+type confirmationQueueResult struct {
+	decision   confirmationQueueDecision
 	deliveries []admissionGrant
 }
 
@@ -339,6 +361,10 @@ func (r processRuntime) requestAdmission(request admissionRequest) (processRunti
 	token := request
 	if request.attempt == "" || request.class < sharedAdmission || request.class > confirmationAdmission {
 		invariant("request admission", "invalid request")
+	}
+	if request.class == confirmationAdmission &&
+		((request.profile != AutomaticProfile && request.profile != SerialProfile) || request.deadline <= 0) {
+		invariant("request admission", "confirmation execution facts are invalid")
 	}
 	if !r.open() {
 		return r, admissionResult{
@@ -477,10 +503,6 @@ func (r processRuntime) observeAttempt(generation attemptGeneration, observation
 		return next.observeLaunchUnconfirmed(generation, index)
 	case drainUnconfirmed:
 		return next.observeDrainUnconfirmed(generation, index)
-	case confirmationContinues:
-		return next.observeConfirmation(generation, index, observed.outcome, false)
-	case confirmationQueueDrained:
-		return next.observeConfirmation(generation, index, observed.outcome, true)
 	default:
 		invariant(observeOperation, "unknown observation")
 	}
@@ -500,6 +522,10 @@ func (r processRuntime) observeOwnedTerminal(
 		if observed.kind != deadlineTrip && observed.kind != fuseTrip {
 			invariant(observeOperation, "trip kind is invalid")
 		}
+		if observed.kind == deadlineTrip &&
+			((observed.profile != AutomaticProfile && observed.profile != SerialProfile) || observed.deadline <= 0) {
+			invariant(observeOperation, "deadline trip execution facts are invalid")
+		}
 		tripKind = observed.kind
 	case attemptInfrastructure:
 		if observed.cause == "" {
@@ -518,8 +544,17 @@ func (r processRuntime) observeOwnedTerminal(
 
 		return r, observationResult{generation: generation, runtimeClosureInProgress: true}
 	}
+	if admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission {
+		outcome := confirmationRejected
+		if settled, ordinary := observation.(attemptSettled); ordinary &&
+			settled.profile == admission.grant.profile && settled.deadline == admission.grant.deadline {
+			outcome = confirmationPressureAccepted
+		}
+
+		return r.observeConfirmation(generation, index, outcome)
+	}
 	if tripKind != 0 {
-		return r.observeTrip(generation, index, attemptTripped{kind: tripKind})
+		return r.observeTrip(generation, index, observation.(attemptTripped))
 	}
 
 	return r.releaseOwned(generation, index)
@@ -585,8 +620,14 @@ func (r processRuntime) observeTrip(generation attemptGeneration, index int, obs
 	result := observationResult{generation: generation, settlementAcknowledged: true}
 	if provisional {
 		result.confirmationProvisional = true
-		if r.unboundBarrierIndex(tripped.grant.campaign) < 0 {
-			r, result.cancelledWaiting, result.compensatedGrants = r.installBarrier(tripped.grant.campaign)
+		barrierAt := r.unboundBarrierIndex(tripped.grant.campaign)
+		if barrierAt < 0 {
+			r, result.cancelledWaiting, result.compensatedGrants = r.installBarrier(
+				tripped.grant.campaign, observed.profile, observed.deadline,
+			)
+		} else if r.admissions[barrierAt].grant.profile != observed.profile ||
+			r.admissions[barrierAt].grant.deadline != observed.deadline {
+			invariant(observeOperation, "provisional primary execution facts changed")
 		}
 		index = r.admissionIndexByGeneration(generation)
 	}
@@ -596,7 +637,11 @@ func (r processRuntime) observeTrip(generation attemptGeneration, index int, obs
 	return r, result
 }
 
-func (r processRuntime) installBarrier(campaign campaignToken) (processRuntime, []admissionRequestToken, []admissionRequestToken) {
+func (r processRuntime) installBarrier(
+	campaign campaignToken,
+	profile Profile,
+	deadline time.Duration,
+) (processRuntime, []admissionRequestToken, []admissionRequestToken) {
 	campaignAt := r.campaignIndex(campaign)
 	if campaignAt < 0 {
 		invariant("install confirmation barrier", "campaign disappeared")
@@ -621,7 +666,10 @@ func (r processRuntime) installBarrier(campaign campaignToken) (processRuntime, 
 		}
 	}
 	r.admissions = append(kept, admittedAttempt{ //nolint:gocritic // Replaces the filtered source slice.
-		grant: admissionAuthority{campaign: campaign, class: confirmationBarrierAdmission},
+		grant: admissionAuthority{
+			campaign: campaign, class: confirmationBarrierAdmission,
+			profile: profile, deadline: deadline,
+		},
 		stage: admissionWaiting,
 	})
 
@@ -674,7 +722,6 @@ func (r processRuntime) observeConfirmation(
 	generation attemptGeneration,
 	index int,
 	outcome confirmationOutcome,
-	queueDrained bool,
 ) (processRuntime, observationResult) {
 	admission := r.admissions[index]
 	validClass := admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission
@@ -691,23 +738,24 @@ func (r processRuntime) observeConfirmation(
 		r.mode = singleAdmission
 	}
 	r.admissions = slices.Delete(r.admissions, index, index+1)
-	if queueDrained {
-		r.campaigns[campaignAt].primaryGateOpen = true
-	}
 	r, deliveries := r.grantAvailable()
 	result := observationResult{generation: generation, settlementAcknowledged: true}
 	result.deliveries = deliveries
 	result.pressureTransitioned = transitioned
 	result.confirmationObserved = true
-	result.confirmationQueueDrained = queueDrained
 
 	return r, result
 }
 
 func (r processRuntime) sealAndBindConfirmationBarrier(binding barrierBinding) (processRuntime, barrierResult) {
 	index := r.unboundBarrierIndex(binding.campaign)
-	if !r.open() || binding.attempt == "" || index < 0 {
+	validProfile := binding.profile == AutomaticProfile || binding.profile == SerialProfile
+	if !r.open() || binding.attempt == "" || !validProfile || binding.deadline <= 0 || index < 0 {
 		return r, barrierResult{decision: barrierRejectedMissing}
+	}
+	barrier := r.admissions[index].grant
+	if binding.profile != barrier.profile || binding.deadline != barrier.deadline {
+		return r, barrierResult{decision: barrierRejectedExecutionMismatch}
 	}
 	for _, admission := range r.admissions {
 		if admission.grant.campaign == binding.campaign && admission.committed() {
@@ -717,12 +765,31 @@ func (r processRuntime) sealAndBindConfirmationBarrier(binding barrierBinding) (
 	next := r.clone()
 	request := admissionAuthority{
 		campaign: binding.campaign, attempt: binding.attempt, class: confirmationBarrierAdmission,
+		profile: binding.profile, deadline: binding.deadline,
 		delivery: binding.delivery,
 	}
 	next.admissions[index].grant = request
 	next, deliveries := next.grantAvailable()
 
 	return next, barrierResult{decision: barrierBound, request: request, deliveries: deliveries}
+}
+
+func (r processRuntime) completeConfirmationQueue(campaign campaignToken) (processRuntime, confirmationQueueResult) {
+	campaignAt := r.campaignIndex(campaign)
+	if !r.open() || campaignAt < 0 || r.campaigns[campaignAt].primaryGateOpen {
+		return r, confirmationQueueResult{decision: confirmationQueueRejectedMissing}
+	}
+	for _, admission := range r.admissions {
+		if admission.grant.campaign == campaign &&
+			(admission.grant.class == confirmationAdmission || admission.grant.class == confirmationBarrierAdmission) {
+			return r, confirmationQueueResult{decision: confirmationQueueRejectedOutstanding}
+		}
+	}
+	next := r.clone()
+	next.campaigns[campaignAt].primaryGateOpen = true
+	next, deliveries := next.grantAvailable()
+
+	return next, confirmationQueueResult{decision: confirmationQueueCompleted, deliveries: deliveries}
 }
 
 func (r processRuntime) closeRuntime(cause runtimeFatalCause) (processRuntime, runtimeClosure) {

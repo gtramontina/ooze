@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 func (s *processRuntimeShell) snapshot() processRuntime {
@@ -13,6 +14,23 @@ func (s *processRuntimeShell) snapshot() processRuntime {
 	defer s.mutex.Unlock()
 
 	return s.core.clone()
+}
+
+func TestProcessRuntimeShellCompletesSealedConfirmationQueue(t *testing.T) {
+	core := runtimeAtBoundConfirmation(t)
+	barrierAt := core.grantedConfirmationIndex()
+	grant := core.admissions[barrierAt].grant
+	core, started := core.startCommitted(grant)
+	core, _ = core.observeAttempt(started.generation, launchOwned{})
+	core, _ = core.observeAttempt(started.generation, automaticDeadlineTrip())
+	shell := &processRuntimeShell{core: core, emergency: make(chan struct{})}
+
+	result := shell.completeConfirmationQueue(grant.campaign)
+	snapshot := shell.snapshot()
+	if result.decision != confirmationQueueCompleted ||
+		!snapshot.campaigns[snapshot.campaignIndex(grant.campaign)].primaryGateOpen {
+		t.Fatalf("queue completion/state = %#v/%#v", result, snapshot)
+	}
 }
 
 func (cell *pendingStartCell) installedGeneration() attemptGeneration {
@@ -109,7 +127,7 @@ func TestProcessRuntimeShellFatalClosureDoesNotEmitUnboundBarrierDelivery(t *tes
 	requestB := shell.requestAdmission(admissionRequest{campaign: campaignB.token, attempt: "b", class: sharedAdmission})
 	startedA := startOwned(shell, <-requestA.delivery)
 	_ = startOwned(shell, <-requestB.delivery)
-	shell.observeAttempt(startedA.generation, attemptTripped{kind: deadlineTrip})
+	shell.observeAttempt(startedA.generation, automaticDeadlineTrip())
 	if shell.snapshot().unboundBarrierIndex(campaignA.token) < 0 {
 		t.Fatalf("setup has no unbound barrier: %#v", shell.snapshot())
 	}
@@ -127,12 +145,13 @@ func TestProcessRuntimeShellBindsBarrierToBufferedOneShot(t *testing.T) {
 	requestB := shell.requestAdmission(admissionRequest{campaign: campaignB.token, attempt: "b", class: sharedAdmission})
 	startedA := startOwned(shell, <-requestA.delivery)
 	startedB := startOwned(shell, <-requestB.delivery)
-	shell.observeAttempt(startedA.generation, attemptTripped{kind: deadlineTrip})
+	shell.observeAttempt(startedA.generation, automaticDeadlineTrip())
 	shell.observeAttempt(startedB.generation, attemptSettled{})
 
 	confirmation := shell.sealAndBindConfirmationBarrier(barrierBinding{
 		campaign: campaignA.token,
 		attempt:  confirmationAttempt,
+		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
 	if confirmation.decision != barrierBound || cap(confirmation.delivery) != 1 || len(confirmation.delivery) != 1 {
 		t.Fatalf("confirmation await=%#v cap/len=%d/%d", confirmation, cap(confirmation.delivery), len(confirmation.delivery))
@@ -588,7 +607,7 @@ func TestProcessRuntimeShellSerializesGateClosureAgainstStartCommit(t *testing.T
 		go func() {
 			defer wait.Done()
 			<-begin
-			shell.observeAttempt(generationA1, attemptTripped{kind: deadlineTrip})
+			shell.observeAttempt(generationA1, automaticDeadlineTrip())
 		}()
 		close(begin)
 		wait.Wait()

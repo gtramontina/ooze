@@ -355,6 +355,57 @@ func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T
 	}
 }
 
+func TestDarwinNativeSupervisorReturnsRuntimeProvedOverlapDeadlineForClassification(t *testing.T) {
+	shell := newProcessRuntimeShell(2)
+	grants := make(map[attemptIdentity]admissionGrant)
+	for index, attempt := range []attemptIdentity{"darwin-overlap-deadline", "darwin-overlap-peer"} {
+		campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(120 + index)})
+		requested := shell.requestAdmission(admissionRequest{
+			campaign: campaign.token, attempt: attempt, class: sharedAdmission,
+		})
+		grants[attempt] = <-requested.delivery
+	}
+	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
+	supervisor := newDrivenSupervisorForTest(
+		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
+			grant, ok := grants[attempt]
+			if !ok {
+				t.Fatalf("start attempt = %q, want registered overlap attempt", attempt)
+			}
+
+			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+		},
+		driver,
+	)
+
+	primaryLaunch := supervisor.Launch(Spec{
+		Attempt: "darwin-overlap-deadline", Command: []string{"/bin/sh", "-c", "sleep 10"},
+		Dir: t.TempDir(), Env: os.Environ(), Profile: AutomaticProfile, Deadline: 500 * time.Millisecond,
+	})
+	primary, ok := primaryLaunch.(Owned)
+	if !ok || primary.Attempt == nil {
+		t.Fatalf("primary launch = %#v, want Owned", primaryLaunch)
+	}
+	peerLaunch := supervisor.Launch(Spec{
+		Attempt: "darwin-overlap-peer", Command: []string{"/bin/sh", "-c", "sleep 1"},
+		Dir: t.TempDir(), Env: os.Environ(), Profile: AutomaticProfile, Deadline: 2 * time.Second,
+	})
+	peer, ok := peerLaunch.(Owned)
+	if !ok || peer.Attempt == nil {
+		t.Fatalf("peer launch = %#v, want Owned", peerLaunch)
+	}
+
+	terminal := primary.Attempt.Wait()
+	disposition := ClassifyPrimaryMutation(terminal)
+	provisional, ok := disposition.(MutationNeedsConfirmation)
+	if !ok || provisional.Primary() != terminal {
+		t.Fatalf("overlapped public terminal = %#v, want MutationNeedsConfirmation", disposition)
+	}
+	if settled, ok := peer.Attempt.Wait().(Settled); !ok || !settled.Exit.Passed() {
+		t.Fatalf("overlap peer terminal = %#v, want passing Settled", settled)
+	}
+}
+
 func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 103})
