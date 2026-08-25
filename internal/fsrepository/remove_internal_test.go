@@ -31,4 +31,24 @@ func TestRemoveRepositoryUsingRetriesOnlyTransientFailures(t *testing.T) {
 	if !errors.Is(err, permanent) || calls != 1 || waits != 0 {
 		t.Fatalf("permanent result err=%v calls=%d waits=%d, want permanent/1/0", err, calls, waits)
 	}
+
+	t.Run("bounded exhaustion", func(t *testing.T) {
+		calls := 0
+		var delays []time.Duration
+		err := removeRepositoryUsing("workspace", func(string) error {
+			calls++
+			return transient
+		}, func(error) bool { return true }, func(delay time.Duration) {
+			delays = append(delays, delay)
+		})
+		if !errors.Is(err, transient) || calls != temporaryRepositoryRemoveAttempts ||
+			len(delays) != temporaryRepositoryRemoveAttempts-1 {
+			t.Fatalf("exhaustion err=%v calls=%d waits=%d", err, calls, len(delays))
+		}
+		for index, delay := range delays {
+			if delay != temporaryRepositoryRemoveDelay {
+				t.Fatalf("wait %d = %s, want %s", index, delay, temporaryRepositoryRemoveDelay)
+			}
+		}
+	})
 }
