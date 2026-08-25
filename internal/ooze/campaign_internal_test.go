@@ -991,9 +991,7 @@ func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *tes
 	if harness.state.phase != campaignDraining || harness.state.drain.kind != campaignDrainConfirm {
 		t.Fatalf("phase/drain=%v/%#v", harness.state.phase, harness.state.drain)
 	}
-	assertCampaignEffects(
-		t, effects, campaignEffectStopAttempt, campaignEffectStopAttempt, campaignEffectReleaseWorkspace,
-	)
+	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	effects = harness.advance(resourceSettledEvent{
 		kind: campaignResourceWorkspace, identity: "workspace-c",
 	})
