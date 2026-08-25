@@ -167,6 +167,30 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 	}
 }
 
+func TestSimulationExploresEveryCatalogueMemberInStableOrder(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-catalogue", lineage: 24, command: []string{"test"},
+			profile: SerialProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, simulationChoiceBytes{0})
+	completed, ok := explored.world.campaign.outcome.(completedOutcome)
+	if explored.failure != nil || !ok {
+		t.Fatalf("catalogue exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	}
+	got := make([]mutantIdentity, len(completed.mutants))
+	for index, mutant := range completed.mutants {
+		got[index] = mutant.mutant
+	}
+	if want := []mutantIdentity{"mutant-a", "mutant-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("completed catalogue order=%v, want %v", got, want)
+	}
+	if explored.world.campaign.commandCount() != 3 {
+		t.Fatalf("command count=%d, want baseline plus two primaries", explored.world.campaign.commandCount())
+	}
+}
+
 func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{

@@ -270,7 +270,10 @@ func simulationExploreAttempt(
 		at: completedAt, completion: &completion,
 	})
 	wait := simulationSupervisorAction(actions, supervisorWaitRoot)
-	sample := simulationSupervisorAction(actions, supervisorSampleRunning)
+	sample := supervisorAction{}
+	if launchEffect.spec.Profile == AutomaticProfile {
+		sample = simulationSupervisorAction(actions, supervisorSampleRunning)
+	}
 
 	var launchReceipt observationResult
 	runtime, launchReceipt = runtime.observeAttempt(launchEffect.generation, launchOwned{})
@@ -381,7 +384,7 @@ func simulationExploreAttempt(
 	payload = resourceSettledEvent{kind: campaignResourceWorkspace, identity: workspaceRelease.workspace}
 	campaign, effects = simulationAdvanceCampaign(campaign, payload)
 	trace.records = append(trace.records, simulationCampaignRecord(trace, campaign, effects, payload))
-	if launchEffect.attemptKind == campaignAttemptBaseline && exitCode == 0 {
+	if len(effects) == 1 && effects[0].kind == campaignEffectMaterializeWorkspace {
 		return simulationExploreAttempt(
 			definition, trace, campaign, effects, runtime, registration, supervisor,
 			primaryExit, primaryExit, launchAtBoundary, attemptOrdinal+1,
