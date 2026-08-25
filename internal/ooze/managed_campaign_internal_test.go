@@ -345,6 +345,28 @@ func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
 	}
 }
 
+func TestManagedCampaignCleansWorkspaceAcquiredBeforeMutationPanic(t *testing.T) {
+	repository := &managedPartialWorkspaceRepository{}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(1), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{
+			terminals: []Terminal{Settled{
+				Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second},
+			}},
+		},
+	})
+
+	result := runner.run(managedCampaignRequest{
+		identity: "campaign-a", lineage: 11, command: []string{"test"},
+		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	if _, ok := result.outcome.(abortedOutcome); !ok || repository.workspace == nil || !repository.workspace.removed {
+		t.Fatalf("outcome/workspace = %#v/%#v, want aborted with acquired workspace removed",
+			result.outcome, repository.workspace)
+	}
+}
+
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	heldCampaign := shell.registerCampaign(campaignProvenance{lineage: 99})
@@ -396,6 +418,50 @@ func (managedPanickingRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFi
 func (managedPanickingRepository) MaterializeTemporaryRepository(string) TemporaryRepository {
 	panic("snapshot exploded")
 }
+
+type managedPartialWorkspaceRepository struct {
+	snapshot  *managedPartialSnapshot
+	workspace *managedPartialWorkspace
+}
+
+func (r *managedPartialWorkspaceRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}
+}
+func (r *managedPartialWorkspaceRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+	r.snapshot = &managedPartialSnapshot{owner: r, root: path}
+	return r.snapshot
+}
+
+type managedPartialSnapshot struct {
+	owner *managedPartialWorkspaceRepository
+	root  string
+}
+
+func (r *managedPartialSnapshot) Root() string { return r.root }
+func (r *managedPartialSnapshot) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return r.owner.ListGoSourceFiles()
+}
+func (r *managedPartialSnapshot) MaterializeTemporaryRepository(path string) TemporaryRepository {
+	r.owner.workspace = &managedPartialWorkspace{root: path}
+	return r.owner.workspace
+}
+func (*managedPartialSnapshot) Overwrite(string, []byte) {}
+func (*managedPartialSnapshot) Remove()                  {}
+
+type managedPartialWorkspace struct {
+	root    string
+	removed bool
+}
+
+func (r *managedPartialWorkspace) Root() string                                  { return r.root }
+func (*managedPartialWorkspace) ListGoSourceFiles() []*gosourcefile.GoSourceFile { return nil }
+func (*managedPartialWorkspace) MaterializeTemporaryRepository(string) TemporaryRepository {
+	panic("nested workspace is invalid")
+}
+func (*managedPartialWorkspace) Overwrite(string, []byte) { panic("mutation write exploded") }
+func (r *managedPartialWorkspace) Remove()                { r.removed = true }
 
 func (r *managedMemoryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return append([]*gosourcefile.GoSourceFile(nil), r.files...)

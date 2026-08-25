@@ -263,6 +263,7 @@ type campaignRuntimeClosure struct {
 
 type campaignResidualCustody struct {
 	generation  attemptGeneration
+	attempt     attemptIdentity
 	stage       admissionStage
 	transferred bool
 }
@@ -1384,16 +1385,33 @@ func (state campaignState) onRuntimeEmergencySettled(
 			state.removeAttemptObligation(campaignResourceAdmission, state.attempts[attemptAt].identity, generation)
 			state.removeAttemptObligation(campaignResourceExecutionDomain, state.attempts[attemptAt].identity, generation)
 			state.attempts[attemptAt].stage = campaignAttemptSettled
+			transferred := slices.ContainsFunc(event.settlement.residual, func(residual campaignResidualCustody) bool {
+				return residual.generation == generation
+			})
+			if transferred {
+				workspace := state.attempts[attemptAt].workspace
+				workspaceAt := state.obligationIndex(campaignResourceWorkspace, workspace)
+				if workspaceAt < 0 {
+					campaignInvariant("settle runtime emergency", "transferred workspace obligation is missing")
+				}
+				state.obligations = slices.Delete(state.obligations, workspaceAt, workspaceAt+1)
+				state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
+				continue
+			}
 			effects = append(effects, campaignEffect{
 				kind: campaignEffectReleaseWorkspace, attempt: state.attempts[attemptAt].identity,
 				workspace: state.attempts[attemptAt].workspace,
 			})
 		}
-		if len(effects) == 0 && len(state.obligations) == 1 &&
-			state.obligations[0].kind == campaignResourceRegistration {
-			state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
+		if len(effects) == 0 && len(state.attempts) == 0 {
+			if state.obligationIndex(campaignResourceSnapshot, string(state.snapshot)) >= 0 {
+				return state.releaseSnapshot(campaignTerminalAborted)
+			}
+			if len(state.obligations) == 1 && state.obligations[0].kind == campaignResourceRegistration {
+				state.candidate = campaignTerminalCandidate{kind: campaignTerminalAborted}
 
-			return state.proposeTerminal()
+				return state.proposeTerminal()
+			}
 		}
 
 		return state.emitAll(effects)

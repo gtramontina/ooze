@@ -196,14 +196,24 @@ func (runner *managedCampaignRunner) execute(
 	case campaignEffectDiscoverCatalogue:
 		return runner.discover(effect, request)
 	case campaignEffectMaterializeWorkspace:
-		workspace, cause := managedBoundary(func() TemporaryRepository {
-			materialized := runner.snapshot.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
+		var workspace TemporaryRepository
+		_, cause := managedBoundary(func() struct{} {
+			workspace = runner.snapshot.MaterializeTemporaryRepository(runner.temporaryDirectory.New())
 			if mutation := runner.mutations[effect.mutant]; mutation != nil {
-				mutation.WriteTo(materialized)
+				mutation.WriteTo(workspace)
 			}
-			return materialized
+			return struct{}{}
 		})
 		if cause != "" {
+			if workspace != nil {
+				root, rootCause := managedBoundary(workspace.Root)
+				_, cleanupCause := managedBoundary(func() struct{} { workspace.Remove(); return struct{}{} })
+				if cleanupCause != "" {
+					cause += fmt.Sprintf("; workspace cleanup unconfirmed root=%q: %s", root, cleanupCause)
+				} else if rootCause != "" {
+					cause += "; workspace root observation failed: " + rootCause
+				}
+			}
 			return runner.advance(workspaceMaterializationFailedEvent{attempt: effect.attempt, cause: cause})
 		}
 		runner.workspaces[workspace.Root()] = workspace

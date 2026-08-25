@@ -3,6 +3,7 @@ package ooze
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -642,6 +643,29 @@ func TestCampaignWithoutElectedResidualOwnershipForceAborts(t *testing.T) {
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
 	if effects[0].fatalEpoch != closure.epoch {
 		t.Fatalf("forced-abort epoch = %d, want %d", effects[0].fatalEpoch, closure.epoch)
+	}
+}
+
+func TestCampaignTransfersNonOwnedResidualWithoutDeletingItsWorkspace(t *testing.T) {
+	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a"}, 1)
+	attempt := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
+	harness.advance(runtimeEmergencyStartedEvent{closure: campaignRuntimeClosure{epoch: 7}})
+	effects := harness.advance(runtimeEmergencySettledEvent{
+		epoch: 7,
+		settlement: campaignEmergencySettlement{
+			epoch: 7, owner: campaignToken{id: 99, lineage: 99},
+			acknowledged: []attemptGeneration{attempt.generation},
+			residual: []campaignResidualCustody{{
+				attempt: attempt.attempt, generation: attempt.generation,
+				stage: admissionOwned, transferred: true,
+			}},
+		},
+	})
+	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
+	if slices.ContainsFunc(effects, func(effect campaignEffect) bool {
+		return effect.kind == campaignEffectReleaseWorkspace
+	}) {
+		t.Fatalf("transferred residual deleted its backing workspace: %#v", effects)
 	}
 }
 

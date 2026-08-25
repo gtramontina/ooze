@@ -246,6 +246,7 @@ type runtimeClosure struct {
 
 type residualCustody struct {
 	generation  attemptGeneration
+	attempt     attemptIdentity
 	stage       admissionStage
 	transferred bool
 }
@@ -1017,7 +1018,7 @@ func (r processRuntime) residualCustody() []residualCustody {
 	for _, admission := range r.admissions {
 		if admission.committed() {
 			residual = append(residual, residualCustody{
-				generation: admission.generation, stage: admission.stage,
+				generation: admission.generation, attempt: admission.grant.attempt, stage: admission.stage,
 				transferred: admission.disposition == dispositionCustodyTransferred ||
 					admission.disposition == dispositionCustodySettled,
 			})

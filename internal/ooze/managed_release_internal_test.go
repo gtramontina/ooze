@@ -62,14 +62,14 @@ func TestManagedProcessRejectsRecursiveReleaseWhileCallerOwnsWait(t *testing.T) 
 func TestManagedCleanupFailureRetainsOrderedResidualEvidence(t *testing.T) {
 	result := presentManagedRelease(managedCampaignResult{failure: cleanupUnconfirmedFault{
 		residual: nonEmptyResidualCustody{
-			head: campaignResidualCustody{generation: 7, stage: admissionOwned, transferred: true},
-			tail: []campaignResidualCustody{{generation: 9, stage: admissionProspective}},
+			head: campaignResidualCustody{attempt: "campaign-1:2", generation: 7, stage: admissionOwned, transferred: true},
+			tail: []campaignResidualCustody{{attempt: "campaign-1:3", generation: 9, stage: admissionProspective}},
 		},
 	}})
 
 	want := []ManagedResidualCustody{
-		{Generation: 7, Stage: ManagedResidualOwned, Transferred: true},
-		{Generation: 9, Stage: ManagedResidualProspective},
+		{Attempt: "campaign-1:2", Generation: 7, Stage: ManagedResidualOwned, Transferred: true},
+		{Attempt: "campaign-1:3", Generation: 9, Stage: ManagedResidualProspective},
 	}
 	if result.Outcome != ManagedCleanupUnconfirmed || !reflect.DeepEqual(result.Residual, want) {
 		t.Fatalf("cleanup result = %#v, want ordered residual %#v", result, want)
