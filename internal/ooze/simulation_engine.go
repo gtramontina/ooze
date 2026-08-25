@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 )
@@ -53,12 +54,14 @@ const (
 )
 
 type simulationLivenessFailure struct {
-	kind simulationLivenessKind
-	live []simulationCausalSource
+	kind        simulationLivenessKind
+	live        []simulationCausalSource
+	diagnostics []string
 }
 
 func (failure simulationLivenessFailure) Error() string {
-	return fmt.Sprintf("simulation liveness failure kind=%d live=%v", failure.kind, failure.live)
+	return fmt.Sprintf("simulation liveness failure kind=%d live=%v pending=%v",
+		failure.kind, failure.live, failure.diagnostics)
 }
 
 func simulationExploreEngine(
@@ -76,7 +79,7 @@ func simulationExploreEngine(
 	recoverySteps := 0
 	recoveryBound := 32 * (1 + 2*max(1, len(definition.catalogue)))
 	seenRecovery := make(map[string]struct{})
-	for engine.campaign.outcome == nil && engine.campaign.failure == nil {
+	for (engine.campaign.outcome == nil && engine.campaign.failure == nil) || len(engine.pending) != 0 {
 		moves := engine.enabledMoves()
 		if len(moves) == 0 {
 			return simulationLivenessResult(engine, simulationLivenessNoMove)
@@ -88,7 +91,7 @@ func simulationExploreEngine(
 				return simulationLivenessResult(engine, simulationLivenessRecoveryBound)
 			}
 			cut := fmt.Sprintf("%#v|%#v|%#v", simulationTraceCampaignState(engine.campaign),
-				simulationTraceRuntimeState(engine.runtime), engine.liveSources())
+				simulationTraceRuntimeState(engine.runtime), engine.pending)
 			if _, found := seenRecovery[cut]; found {
 				return simulationLivenessResult(engine, simulationLivenessRepeatedWorld)
 			}
@@ -123,7 +126,16 @@ func simulationLivenessResult(engine simulationEngine, kind simulationLivenessKi
 		ordinals[source.kind]++
 		identities[index] = fmt.Sprintf("owner-source-%d#%d", source.kind, ordinals[source.kind])
 	}
-	failure := simulationLivenessFailure{kind: kind, live: live}
+	diagnostics := make([]string, len(engine.pending))
+	for index, move := range engine.pending {
+		supervisorKind := supervisorEventKind(0)
+		if move.supervisorDelivery != nil {
+			supervisorKind = move.supervisorDelivery.kind
+		}
+		diagnostics[index] = fmt.Sprintf("source=%v effect=%d action=%d campaign=%T supervisor=%d",
+			move.source, move.effect.kind, move.action.kind, move.delivery, supervisorKind)
+	}
+	failure := simulationLivenessFailure{kind: kind, live: live, diagnostics: diagnostics}
 
 	return SimulationResult{
 		trace: engine.trace,
@@ -178,18 +190,22 @@ func (cursor *simulationChoiceCursor) exhausted() bool {
 }
 
 func (engine *simulationEngine) apply(move simulationEngineMove) error {
+	if move.delivery != nil {
+		return engine.applyCampaign(move.source, move.delivery)
+	}
 	if move.source.kind == simulationOwnerDeliverySource {
 		if move.supervisorDelivery != nil {
 			return engine.applySupervisor(move.source, *move.supervisorDelivery)
 		}
-		return engine.applyCampaign(move.source, move.delivery)
+		return fmt.Errorf("simulation owner delivery is absent")
 	}
 	if move.source.kind == simulationSupervisorActionSource {
 		return engine.applySupervisorAction(move)
 	}
 	if move.source.kind != simulationCampaignEffectSource || move.effect.id == 0 ||
 		uint64(move.effect.id) != move.source.identity {
-		return fmt.Errorf("simulation move source is invalid")
+		return fmt.Errorf("simulation move source=%v effect=%d/%d is invalid",
+			move.source, move.effect.id, move.effect.kind)
 	}
 	switch move.effect.kind {
 	case campaignEffectRegister:
@@ -253,6 +269,20 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		engine.enqueueDelivery(sequence, startCommittedEvent{
 			attempt: move.effect.attempt, grant: move.effect.grant, result: campaignStartEvidence(result),
 		})
+	case campaignEffectReturnAdmission:
+		grant := runtimeAdmissionRequest(move.effect.grant)
+		var result admissionResult
+		engine.runtime, result = engine.runtime.acknowledgeGrantReturn(grant)
+		sequence := engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation:    simulationAcknowledgeGrantReturn,
+			runtimeGrant:        simulationTraceAdmission(grant),
+			runtimeState:        simulationTraceRuntimeState(engine.runtime),
+			runtimeAdmissionOut: simulationTraceAdmissionResult(result),
+		})
+		engine.enqueueDelivery(sequence, grantReturnAcknowledgedEvent{
+			grant: move.effect.grant, result: campaignAdmissionEvidence(result),
+		})
 	case campaignEffectBindConfirmationBarrier:
 		binding := runtimeBarrierBinding(move.effect.binding)
 		var result barrierResult
@@ -275,6 +305,35 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			kind: supervisorProspectiveRegistered, generation: move.effect.generation,
 			attempt: move.effect.attempt, at: registeredAt, launchBy: registeredAt.Add(time.Second),
 			profile: move.effect.spec.Profile, commandDeadline: move.effect.spec.Deadline,
+		})
+	case campaignEffectStopAttempt:
+		attempt, found := simulationSupervisorAttemptIfPresent(engine.supervisor, move.effect.generation)
+		if !found {
+			if _, registered := engine.launches[move.effect.generation]; registered {
+				return nil
+			}
+
+			return fmt.Errorf("simulation stop effect has no registered generation %d", move.effect.generation)
+		}
+		if attempt.phase >= supervisorReleasingDomain {
+			return nil
+		}
+		if attempt.phase != supervisorRunning && attempt.phase != supervisorIntentLatched &&
+			attempt.phase != supervisorEmergencyDraining {
+			return fmt.Errorf("simulation stop effect reached phase %d before stop admission sealed", attempt.phase)
+		}
+		at := attempt.lastEventAt.Add(time.Nanosecond)
+		drainBy := at.Add(5 * time.Second)
+		return engine.applySupervisor(move.source, supervisorEvent{
+			kind: supervisorRunningObserved, generation: move.effect.generation, at: at, drainBy: drainBy,
+			running: &supervisorRunningBundle{
+				generation: move.effect.generation,
+				waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
+				facts: []supervisorRunningFact{{
+					generation: move.effect.generation, kind: supervisorRunningStopRequested,
+					at: at, stop: StopRequest{At: at, DrainBy: drainBy},
+				}},
+			},
 		})
 	case campaignEffectReleaseWorkspace:
 		return engine.applyCampaign(move.source, resourceSettledEvent{
@@ -334,10 +393,51 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			attempt: launch.attempt, generation: launch.generation,
 			result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceipt(result),
 		})
+	case supervisorPublishNotReleased, supervisorPublishLaunchUnconfirmed:
+		launch := engine.launches[action.generation]
+		observation := attemptObservation(launchUnconfirmed{})
+		launchResult := campaignLaunchObservation{
+			kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved,
+		}
+		if action.kind == supervisorPublishNotReleased {
+			observation = launchObservationFromAction(action)
+			launchResult = campaignLaunchObservation{
+				kind: campaignLaunchNotReleased, failure: action.launchFailure,
+			}
+		}
+		var result observationResult
+		engine.runtime, result = engine.runtime.observeAttempt(action.generation, observation)
+		sequence := engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
+			runtimeObservation:    simulationTraceObservation(observation),
+			runtimeState:          simulationTraceRuntimeState(engine.runtime),
+			runtimeObservationOut: simulationTraceObservationResult(result),
+		})
+		engine.enqueueDelivery(sequence, attemptLaunchEvent{
+			attempt: launch.attempt, generation: launch.generation,
+			result: launchResult, receipt: campaignReceipt(result),
+		})
+	case supervisorCloseProspective, supervisorAdoptOwned:
+		observation := attemptObservation(launchOwned{})
+		if action.kind == supervisorCloseProspective {
+			observation = launchObservationFromAction(action)
+		}
+		var result observationResult
+		engine.runtime, result = engine.runtime.observeAttempt(action.generation, observation)
+		engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
+			runtimeObservation:    simulationTraceObservation(observation),
+			runtimeState:          simulationTraceRuntimeState(engine.runtime),
+			runtimeObservationOut: simulationTraceObservationResult(result),
+		})
+	case supervisorRevokeLaunchRelease:
+		return nil
 	case supervisorWaitRoot, supervisorSampleRunning:
 		return engine.applyHealthyRunning(move)
 	case supervisorForceOwned:
-		at := action.at.Add(time.Nanosecond)
+		at := simulationCompletionAt(engine.supervisor, action.generation, action.at.Add(time.Nanosecond))
 		completion := supervisorDrainCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -353,6 +453,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			at = action.drainBy
 			kind = supervisorDrainObservedResidual
 		}
+		at = simulationCompletionAt(engine.supervisor, action.generation, at)
 		completion := supervisorDrainCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -362,30 +463,34 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
 		})
 	case supervisorCaptureOutput:
+		at := simulationCompletionAt(engine.supervisor, action.generation, action.at)
 		completion := supervisorOutputCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: action.at, ref: 1,
+			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
+			at: at, ref: 1,
 		}
 		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorOutputCompleted, generation: action.generation, at: action.at, output: &completion,
+			kind: supervisorOutputCompleted, generation: action.generation, at: at, output: &completion,
 		})
 	case supervisorSealStopAdmission:
+		at := simulationCompletionAt(engine.supervisor, action.generation, action.at)
 		completion := supervisorStopSealCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: action.at,
+			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
+			at: at,
 		}
 		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorStopAdmissionSealed, generation: action.generation, at: action.at, seal: &completion,
+			kind: supervisorStopAdmissionSealed, generation: action.generation, at: at, seal: &completion,
 		})
 	case supervisorReleaseDomain:
+		at := simulationCompletionAt(engine.supervisor, action.generation, action.at)
 		completion := supervisorReleaseCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: action.at,
+			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
+			at: at,
 		}
 		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorReleaseCompleted, generation: action.generation, at: action.at, release: &completion,
+			kind: supervisorReleaseCompleted, generation: action.generation, at: at, release: &completion,
 		})
 	case supervisorTransferResidualCustody:
+		wasOpen := engine.runtime.open()
 		var receipt observationResult
 		engine.runtime, receipt = engine.runtime.observeAttempt(action.generation, drainUnconfirmed{})
 		engine.receipts[action.generation] = receipt
@@ -401,7 +506,6 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeObservationOut: simulationTraceObservationResult(receipt),
 			runtimeClosure:        simulationTraceRuntimeClosure(closure),
 		})
-		engine.enqueueDelivery(sequence, runtimeEmergencyStartedEvent{closure: campaignClosure(closure)})
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorRuntimeCompleted, generation: action.generation,
 			runtime: &supervisorRuntimeCompletion{
@@ -410,13 +514,20 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 				kind:       supervisorRuntimeClosurePending,
 			},
 		})
-		emergencyAt := action.at.Add(time.Nanosecond)
-		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-			kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
-			emergencySnapshots: simulationEmergencySnapshots(engine.supervisor),
-		})
+		if wasOpen {
+			emergencyAt := action.at.Add(time.Nanosecond)
+			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
+				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
+			})
+		}
 	case supervisorSettleEmergency:
 		resolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(action.resolutions)
+		if runtimeResiduals := engine.runtime.residualCustody(); len(resolutions) != len(runtimeResiduals) {
+			return fmt.Errorf(
+				"simulation emergency action %d resolves generations %v with runtime residuals %v",
+				action.token, acknowledged, runtimeResiduals,
+			)
+		}
 		var settlement emergencySettlement
 		engine.runtime, settlement = engine.runtime.settleEmergency(emergencySweep{resolutions: resolutions})
 		validateSupervisorRuntimeSettlement(settlement, acknowledged, residuals)
@@ -452,9 +563,14 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeObservationOut: simulationTraceObservationResult(receipt),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, receipt.deliveries)
-		kind := supervisorRuntimeAcknowledged
-		if receipt.confirmationProvisional {
-			kind = supervisorRuntimeProvisionalDeadline
+		kind := supervisorRuntimeClosurePending
+		if receipt.settlementAcknowledged {
+			kind = supervisorRuntimeAcknowledged
+			if receipt.confirmationProvisional {
+				kind = supervisorRuntimeProvisionalDeadline
+			}
+		} else if !receipt.runtimeClosureInProgress {
+			return fmt.Errorf("simulation runtime returned no terminal disposition")
 		}
 		completion := supervisorRuntimeCompletion{
 			generation: action.generation,
@@ -492,7 +608,11 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 
 			return nil
 		}
-		return engine.applyCampaign(move.source, event)
+		engine.pending = append(engine.pending, simulationEngineMove{
+			source: move.source, action: action, delivery: event,
+		})
+
+		return nil
 	default:
 		return fmt.Errorf("simulation engine supervisor action %v is not implemented", action.kind)
 	}
@@ -503,6 +623,9 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 func (engine *simulationEngine) applyCampaign(source simulationCausalSource, payload campaignEventPayload) error {
 	state, effects := simulationAdvanceCampaign(engine.campaign, payload)
 	engine.campaign = state
+	if _, settled := payload.(runtimeEmergencySettledEvent); settled {
+		engine.retireCampaignTerminals()
+	}
 	record := simulationCampaignRecord(engine.trace, state, effects, payload)
 	record.source = source
 	engine.trace.records = append(engine.trace.records, record)
@@ -511,10 +634,27 @@ func (engine *simulationEngine) applyCampaign(source simulationCausalSource, pay
 	return nil
 }
 
+func (engine *simulationEngine) retireCampaignTerminals() {
+	for index := 0; index < len(engine.pending); {
+		move := engine.pending[index]
+		if move.source.kind != simulationSupervisorActionSource ||
+			move.action.kind != supervisorDeliverTerminal {
+			index++
+			continue
+		}
+		engine.pending = slices.Delete(engine.pending, index, index+1)
+	}
+}
+
 func (engine *simulationEngine) applySupervisor(
 	source simulationCausalSource,
 	event supervisorEvent,
 ) error {
+	if event.kind == supervisorEmergencyStarted && source.kind == simulationOwnerDeliverySource {
+		event.at = simulationEmergencyAt(engine.supervisor, event.at)
+		event.drainBy = event.at.Add(5 * time.Second)
+		event.emergencySnapshots = simulationEmergencySnapshots(engine.supervisor, event.at)
+	}
 	state, actions := reduceSupervisor(engine.supervisor, event)
 	engine.supervisor = state
 	record := simulationRecord{
@@ -647,7 +787,54 @@ func (engine *simulationEngine) enqueueSupervisorDelivery(sequence uint64, event
 
 func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 	moves := make([]simulationEngineMove, 0, len(engine.pending)+2)
+	firstRuntimeCustodyAction := engine.firstRuntimeCustodyAction()
 	for _, move := range engine.pending {
+		if move.effect.kind == campaignEffectStopAttempt && !engine.supervisorAcceptsStop(move.effect.generation) {
+			continue
+		}
+		if move.source.kind == simulationSupervisorActionSource &&
+			move.action.token != engine.firstSupervisorAction(move.action.generation) {
+			continue
+		}
+		if move.source.kind == simulationOwnerDeliverySource && move.delivery != nil &&
+			engine.hasPendingCampaignEffect() {
+			continue
+		}
+		if move.delivery != nil && simulationAttemptTerminalDelivery(move.delivery) &&
+			engine.campaignEmergencyRequested() {
+			continue
+		}
+		if move.source.kind == simulationOwnerDeliverySource && move.supervisorDelivery != nil &&
+			move.supervisorDelivery.kind == supervisorEmergencyStarted &&
+			(!engine.campaignEmergencyRequested() ||
+				!simulationEmergencyCutReady(engine.supervisor, move.supervisorDelivery.at) ||
+				!engine.emergencyCampaignCutReady()) {
+			continue
+		}
+		if token := engine.runtimeCustodyToken(move); token != 0 && token != firstRuntimeCustodyAction {
+			continue
+		}
+		if move.action.kind == supervisorDeliverEmergencySettlement {
+			if _, requested := engine.campaign.runtimeEmergencySettlementRequest(); !requested ||
+				engine.hasPendingEmergencyCampaignIngress() {
+				continue
+			}
+		}
+		if move.source.kind == simulationSupervisorActionSource &&
+			move.action.kind == supervisorDeliverTerminal &&
+			engine.hasPendingLaunchDelivery(move.action.generation) {
+			continue
+		}
+		if move.source.kind == simulationSupervisorActionSource &&
+			move.action.kind == supervisorTransferResidualCustody &&
+			!simulationRuntimeOwnsResidualTransfer(engine.runtime, move.action.generation) {
+			continue
+		}
+		if move.source.kind == simulationSupervisorActionSource &&
+			move.action.kind == supervisorSettleRuntime &&
+			!simulationRuntimeOwnsTerminalSettlement(engine.runtime, move.action.generation) {
+			continue
+		}
 		if move.source.kind == simulationSupervisorActionSource {
 			launch := engine.launches[move.action.generation]
 			move.attemptKind, move.mutant = launch.attemptKind, launch.mutant
@@ -682,10 +869,103 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 	return moves
 }
 
+func (engine simulationEngine) supervisorAcceptsStop(generation attemptGeneration) bool {
+	for _, attempt := range engine.supervisor.attempts {
+		if attempt.generation != generation {
+			continue
+		}
+
+		return attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
+			attempt.phase == supervisorEmergencyDraining || attempt.phase >= supervisorReleasingDomain
+	}
+
+	_, registered := engine.launches[generation]
+
+	return registered
+}
+
+func (engine simulationEngine) firstSupervisorAction(generation attemptGeneration) supervisorActionToken {
+	var first supervisorActionToken
+	for _, move := range engine.pending {
+		if move.source.kind != simulationSupervisorActionSource || move.action.generation != generation ||
+			(first != 0 && move.action.token >= first) {
+			continue
+		}
+		first = move.action.token
+	}
+
+	return first
+}
+
+func (engine simulationEngine) firstRuntimeCustodyAction() supervisorActionToken {
+	var first supervisorActionToken
+	for _, move := range engine.pending {
+		token := engine.runtimeCustodyToken(move)
+		if token == 0 || (first != 0 && token >= first) {
+			continue
+		}
+		first = token
+	}
+
+	return first
+}
+
+func (engine simulationEngine) runtimeCustodyToken(move simulationEngineMove) supervisorActionToken {
+	if simulationMutatesRuntimeCustody(move.action.kind) {
+		return move.action.token
+	}
+	if move.source.kind != simulationOwnerDeliverySource || move.supervisorDelivery == nil ||
+		(move.supervisorDelivery.kind != supervisorRuntimeCompleted &&
+			move.supervisorDelivery.kind != supervisorEmergencySettlementCompleted) {
+		return 0
+	}
+	for _, record := range engine.trace.records {
+		if record.sequence == move.source.identity && record.source.kind == simulationSupervisorActionSource {
+			return supervisorActionToken(record.source.identity)
+		}
+	}
+
+	return 0
+}
+
+func simulationMutatesRuntimeCustody(kind supervisorActionKind) bool {
+	return kind == supervisorTransferResidualCustody || kind == supervisorSettleRuntime ||
+		kind == supervisorSettleEmergency
+}
+
+func simulationRuntimeOwnsResidualTransfer(runtime processRuntime, generation attemptGeneration) bool {
+	index := runtime.admissionIndexByGeneration(generation)
+	if index < 0 {
+		return false
+	}
+	admission := runtime.admissions[index]
+
+	return admission.stage == admissionOwned && runtime.lifecycle <= runtimeFatalClosing &&
+		(admission.disposition == dispositionNone || admission.disposition == dispositionFatalSeeded)
+}
+
+func simulationRuntimeOwnsTerminalSettlement(runtime processRuntime, generation attemptGeneration) bool {
+	index := runtime.admissionIndexByGeneration(generation)
+	if index < 0 {
+		return false
+	}
+	admission := runtime.admissions[index]
+
+	return admission.stage == admissionOwned && admission.disposition == dispositionNone &&
+		(runtime.lifecycle == runtimeOpen || runtime.lifecycle == runtimeFatalClosing)
+}
+
+func (engine simulationEngine) hasPendingLaunchDelivery(generation attemptGeneration) bool {
+	return slices.ContainsFunc(engine.pending, func(move simulationEngineMove) bool {
+		launch, ok := move.delivery.(attemptLaunchEvent)
+
+		return ok && launch.generation == generation
+	})
+}
+
 func (engine *simulationEngine) consume(selected simulationEngineMove) bool {
 	for index, pending := range engine.pending {
-		if pending.source != selected.source || pending.effect.id != selected.effect.id ||
-			pending.action.token != selected.action.token {
+		if !simulationSamePendingMove(pending, selected) {
 			continue
 		}
 		engine.pending = slices.Delete(engine.pending, index, index+1)
@@ -694,6 +974,23 @@ func (engine *simulationEngine) consume(selected simulationEngineMove) bool {
 	}
 
 	return false
+}
+
+func simulationSamePendingMove(pending, selected simulationEngineMove) bool {
+	if pending.source != selected.source {
+		return false
+	}
+	switch selected.source.kind {
+	case simulationCampaignEffectSource:
+		return pending.effect.id == selected.effect.id
+	case simulationSupervisorActionSource:
+		return pending.action.token == selected.action.token
+	case simulationOwnerDeliverySource:
+		return reflect.DeepEqual(pending.delivery, selected.delivery) &&
+			reflect.DeepEqual(pending.supervisorDelivery, selected.supervisorDelivery)
+	default:
+		return false
+	}
 }
 
 func (engine simulationEngine) liveSources() []simulationCausalSource {
@@ -705,12 +1002,37 @@ func (engine simulationEngine) liveSources() []simulationCausalSource {
 }
 
 func simulationSupervisorAttempt(state supervisorState, generation attemptGeneration) supervisorAttemptState {
-	for _, attempt := range state.attempts {
-		if attempt.generation == generation {
-			return attempt
-		}
+	attempt, found := simulationSupervisorAttemptIfPresent(state, generation)
+	if found {
+		return attempt
 	}
 	panic("simulation supervisor attempt is absent")
+}
+
+func simulationSupervisorAttemptIfPresent(
+	state supervisorState,
+	generation attemptGeneration,
+) (supervisorAttemptState, bool) {
+	for _, attempt := range state.attempts {
+		if attempt.generation == generation {
+			return attempt, true
+		}
+	}
+
+	return supervisorAttemptState{}, false
+}
+
+func simulationCompletionAt(
+	state supervisorState,
+	generation attemptGeneration,
+	at time.Time,
+) time.Time {
+	attempt := simulationSupervisorAttempt(state, generation)
+	if attempt.lastEventAt.After(at) {
+		return attempt.lastEventAt
+	}
+
+	return at
 }
 
 func simulationCampaignAttemptMutant(state campaignState, identity attemptIdentity) mutantIdentity {
@@ -722,12 +1044,85 @@ func simulationCampaignAttemptMutant(state campaignState, identity attemptIdenti
 	panic("simulation campaign attempt is absent")
 }
 
-func simulationEmergencySnapshots(state supervisorState) []supervisorEmergencySnapshot {
+func simulationEmergencyAt(state supervisorState, at time.Time) time.Time {
+	for _, attempt := range state.attempts {
+		if attempt.lastEventAt.After(at) {
+			at = attempt.lastEventAt
+		}
+	}
+
+	return at
+}
+
+func simulationEmergencyCutReady(state supervisorState, at time.Time) bool {
+	at = simulationEmergencyAt(state, at)
+	for _, attempt := range state.attempts {
+		if attempt.phase == supervisorLaunchEstablishing && at.After(attempt.launchBy) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (engine simulationEngine) emergencyCampaignCutReady() bool {
+	for _, move := range engine.pending {
+		if move.source.kind == simulationCampaignEffectSource &&
+			move.effect.kind != campaignEffectProposeTerminal {
+			return false
+		}
+		if committed, ok := move.delivery.(startCommittedEvent); ok &&
+			committed.result.decision == startCommittedAccepted {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (engine simulationEngine) hasPendingCampaignEffect() bool {
+	return slices.ContainsFunc(engine.pending, func(move simulationEngineMove) bool {
+		return move.source.kind == simulationCampaignEffectSource
+	})
+}
+
+func (engine simulationEngine) hasPendingEmergencyCampaignIngress() bool {
+	return slices.ContainsFunc(engine.pending, func(move simulationEngineMove) bool {
+		return move.delivery != nil && !simulationAttemptTerminalDelivery(move.delivery)
+	})
+}
+
+func simulationAttemptTerminalDelivery(payload campaignEventPayload) bool {
+	_, terminal := payload.(attemptTerminalEvent)
+
+	return terminal
+}
+
+func (engine simulationEngine) campaignEmergencyRequested() bool {
+	_, requested := engine.campaign.runtimeEmergencySettlementRequest()
+
+	return requested
+}
+
+func simulationEmergencySnapshots(state supervisorState, at time.Time) []supervisorEmergencySnapshot {
 	snapshots := make([]supervisorEmergencySnapshot, 0, len(state.attempts))
 	for _, attempt := range state.attempts {
-		if attempt.phase != supervisorLaunchClosedNotReleased {
-			snapshots = append(snapshots, supervisorEmergencySnapshot{generation: attempt.generation})
+		if attempt.phase == supervisorLaunchClosedNotReleased {
+			continue
 		}
+		snapshot := supervisorEmergencySnapshot{generation: attempt.generation}
+		if attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched {
+			snapshot.running = &supervisorRunningBundle{
+				generation: attempt.generation, waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
+			}
+			if attempt.phase == supervisorRunning && !at.Before(attempt.deadlineAt) {
+				snapshot.running.exitRecheck = supervisorExitRecheck{
+					performed: true, at: attempt.deadlineAt,
+				}
+				snapshot.running.drainBy = attempt.deadlineAt.Add(5 * time.Second)
+			}
+		}
+		snapshots = append(snapshots, snapshot)
 	}
 
 	return snapshots
