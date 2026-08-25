@@ -41,12 +41,12 @@ review; it is never converted into a green timing claim.
 ## Final native run
 
 The final collection ran at candidate revision
-`9544f38f6d737c059fc19cfaa549f9498407ec9f` in
-[run 32859862542](https://github.com/gtramontina/ooze/actions/runs/32859862542).
+`4be3aa90f634e566527f46b63a8476d1802afe0f` in
+[run 32863293268](https://github.com/gtramontina/ooze/actions/runs/32863293268).
 All 29 jobs passed. The raw artifacts are
-[Ubuntu 24.04](https://github.com/gtramontina/ooze/actions/runs/32859862542/artifacts/9567804632),
-[Windows 2025](https://github.com/gtramontina/ooze/actions/runs/32859862542/artifacts/9567742144),
-and [macOS 26](https://github.com/gtramontina/ooze/actions/runs/32859862542/artifacts/9567903704).
+[Ubuntu 24.04](https://github.com/gtramontina/ooze/actions/runs/32863293268/artifacts/9569097093),
+[Windows 2025](https://github.com/gtramontina/ooze/actions/runs/32863293268/artifacts/9569089176),
+and [macOS 26](https://github.com/gtramontina/ooze/actions/runs/32863293268/artifacts/9569262731).
 The baseline revision was
 `87c15dcb180492ba96f30278efc0146dd248f09b`. All platforms used Go 1.26.6.
 The native targets were Linux amd64 on `ubuntu24`, Windows amd64 on
@@ -58,43 +58,43 @@ throughput is mutants per second, and memory is bytes of summed live-helper Go
 
 ### Ubuntu 24.04 raw distribution
 
-- Baseline wall: `[778, 780, 780, 778, 779, 777, 777, 776, 773, 777]`
-- Candidate wall: `[280, 279, 279, 280, 277, 282, 278, 278, 277, 279]`
-- Baseline throughput: `[20.558708499053868, 20.498528728349786, 20.494163414684838, 20.540354805770072, 20.520116966564817, 20.570192255856412, 20.57571181147759, 20.596800905398293, 20.694057797530807, 20.566591444272763]`
-- Candidate throughput: `[56.98319998504761, 57.19644387830768, 57.25464807009932, 57.07259242452437, 57.58109347828078, 56.67803511152556, 57.432746675414826, 57.43047655848931, 57.564623476435756, 57.19136338494748]`
-- Baseline memory: `[12540168, 12609816, 12609816, 12540168, 13064456, 12540168, 12540168, 12802312, 12540168, 12540168]`
-- Candidate memory: `[39157824, 39157824, 39227472, 34963520, 34963520, 30769216, 34963520, 34963520, 34963520, 30769216]`
+- Baseline wall: `[799, 787, 792, 796, 787, 791, 794, 795, 796, 795]`
+- Candidate wall: `[281, 282, 286, 285, 284, 282, 283, 287, 287, 283]`
+- Baseline throughput: `[20.01990604282721, 20.308969955927832, 20.183207184861487, 20.087462947968394, 20.316657944915878, 20.21629701734048, 20.148901515575815, 20.11551629421378, 20.08883117925714, 20.116117446558672]`
+- Candidate throughput: `[56.80411634437336, 56.62695344098974, 55.91996323849577, 56.125018113034166, 56.23108258983132, 56.72167158595999, 56.45365559225184, 55.58844055749995, 55.73450298225746, 56.46666878416674]`
+- Baseline memory: `[12540168, 12802312, 12609816, 12609816, 12540168, 12609816, 12802312, 12802312, 12540168, 12540168]`
+- Candidate memory: `[39157824, 34963520, 30769216, 34963520, 30769216, 34963520, 39227472, 34963520, 30838864, 39227472]`
 
-The median wall time was 777.5 ms for the baseline and 279 ms for the
-candidate. Median throughput was 20.562649971663316 and 57.2255459742035.
+The median wall time was 794.5 ms for the baseline and 283.5 ms for the
+candidate. Median throughput was 20.132509481067245 and 56.342369091041576.
 Every candidate sample settled 16 of 16 healthy mutants, issued 17 commands,
 reached the expected peak of four helpers, and reported only `GOMAXPROCS=1`.
 
 ### Windows 2025 raw distribution
 
-- Baseline wall: `[1175, 1117, 1143, 1163, 1129, 1141, 1140, 1111, 1101, 1130]`
-- Candidate wall: `[553, 519, 511, 513, 495, 514, 520, 503, 491, 480]`
-- Baseline throughput: `[13.607383774657643, 14.320965598265945, 13.992229765005748, 13.752633951729116, 14.163445810567808, 14.013934054630518, 14.031209443775673, 14.388942097997688, 14.52210563996832, 14.149852956496808]`
-- Candidate throughput: `[28.89387910259223, 30.798435978424926, 31.26516849190115, 31.16374581212819, 32.282315303794746, 31.101708028050627, 30.7274650532699, 31.775354598062616, 32.5240469590321, 33.31900616068424]`
-- Baseline memory: `[12208376, 12208376, 12732664, 12732664, 12732664, 12732664, 12732664, 8538360, 12208376, 12732664]`
-- Candidate memory: `[40444896, 32056288, 32056288, 36250592, 36250592, 32056288, 36250592, 40444896, 36250592, 40444896]`
+- Baseline wall: `[1099, 1109, 1164, 1103, 1160, 1138, 1108, 1125, 1145, 1115]`
+- Candidate wall: `[463, 471, 506, 474, 471, 504, 492, 480, 485, 493]`
+- Baseline throughput: `[14.553440415122333, 14.426377910690803, 13.73786538643499, 14.494891094447622, 13.787009827639112, 14.057210562693445, 14.431883494290926, 14.210391597537553, 13.961833408625427, 14.3446785994071]`
+- Candidate throughput: `[34.5011170814815, 33.90366358750769, 31.588060108129877, 33.74609019908084, 33.92196421741605, 31.712695662377126, 32.49128116776914, 33.275046543471355, 32.97187910860524, 32.438924600991086]`
+- Baseline memory: `[12470520, 12732664, 12208376, 12732664, 12470520, 12732664, 12732664, 12732664, 12732664, 12732664]`
+- Candidate memory: `[36250592, 36250592, 36250592, 36250592, 44639200, 40444896, 32056288, 32056288, 36250592, 40444896]`
 
-The median wall time was 1,135 ms for the baseline and 512 ms for the
-candidate. Median throughput was 14.09053120013624 and 31.21445715201467.
+The median wall time was 1,120 ms for the baseline and 482.5 ms for the
+candidate. Median throughput was 14.277535098472327 and 33.1234628260383.
 Every candidate sample settled 16 of 16 healthy mutants, issued 17 commands,
 reached the expected peak of four helpers, and reported only `GOMAXPROCS=1`.
 
 ### macOS 26 raw distribution
 
-- Baseline wall: `[868, 865, 870, 882, 869, 895, 914, 890, 870, 922]`
-- Candidate wall: `[358, 363, 370, 367, 379, 360, 361, 365, 371, 365]`
-- Baseline throughput: `[18.423098850018885, 18.482672679767028, 18.3741552265377, 18.1260069088884, 18.40229456738777, 17.867948060010207, 17.504392407272434, 17.96808222868231, 18.38741068325316, 17.345618909976917]`
-- Candidate throughput: `[44.612816435709554, 44.06595158184717, 43.16394885267378, 43.57885436541177, 42.18088805105577, 44.44181077335822, 44.200502607230185, 43.75261126180346, 43.11789544247213, 43.76250404146725]`
-- Baseline memory: `[12671256, 12863752, 12601608, 12601608, 12863752, 12601608, 12671256, 12601608, 12671256, 12601608]`
-- Candidate memory: `[29944104, 34138408, 25749800, 29944104, 25819448, 29944104, 27189792, 31453744, 27189792, 25749800]`
+- Baseline wall: `[982, 958, 910, 930, 943, 979, 976, 933, 915, 902]`
+- Candidate wall: `[369, 380, 363, 391, 423, 373, 383, 367, 378, 368]`
+- Baseline throughput: `[16.2930038830108, 16.6996259530106, 17.56892715620835, 17.190764124877564, 16.95979659335795, 16.329681290946464, 16.38768972111609, 17.14762250389588, 17.480601874428334, 17.72720927846831]`
+- Candidate throughput: `[43.27738758148817, 42.07219120483525, 43.98427932581655, 40.82147263957508, 37.76048091295365, 42.843591620379364, 41.72302621740411, 43.513891770513276, 42.272852770258936, 43.372427667382205]`
+- Baseline memory: `[12671256, 12863752, 12601608, 12671256, 12601608, 12601608, 12601608, 12601608, 12601608, 12671256]`
+- Candidate memory: `[24435480, 34138408, 30013752, 27189792, 25749800, 29944104, 31453744, 29944104, 28504112, 31384096]`
 
-The median wall time was 876 ms for the baseline and 365 ms for the candidate.
-Median throughput was 18.250081067713047 and 43.75755765163535. Every
+The median wall time was 938 ms for the baseline and 375.5 ms for the candidate.
+Median throughput was 17.053709548626916 and 42.558222195319146. Every
 candidate sample settled 16 of 16 healthy mutants, issued 17 commands, reached
 the expected peak of three helpers, and reported only `GOMAXPROCS=1`.
 
@@ -103,14 +103,14 @@ the expected peak of three helpers, and reported only `GOMAXPROCS=1`.
 Each native confirmation observation issued exactly five commands: one
 baseline, two primary attempts, and two confirmations. Both hanging mutants
 were confirmed once with a 120 ms resolved deadline. Summed confirmation time
-was 240 ms on every platform. Total wall time was 395 ms on Ubuntu, 473 ms on
-Windows, and 390 ms on macOS. These figures are kept out of the healthy
+was 240 ms on every platform. Total wall time was 396 ms on Ubuntu, 486 ms on
+Windows, and 387 ms on macOS. These figures are kept out of the healthy
 throughput distributions.
 
 ## Memory tradeoff
 
-Mean candidate helper `MemStats.Sys` was 2.80 times the baseline on Ubuntu,
-2.98 times on Windows, and 2.27 times on macOS. This is the expected cost of
+Mean candidate helper `MemStats.Sys` was 2.77 times the baseline on Ubuntu,
+2.94 times on Windows, and 2.31 times on macOS. This is the expected cost of
 holding three or four Go helpers concurrently rather than one. It is reserved
 Go runtime memory summed across the named helper tree, not resident memory for
 the runner or the whole job. The evidence supports higher throughput with a
