@@ -456,12 +456,16 @@ func simulationExplorePendingMoves(
 	attemptOrdinal int,
 	choices simulationChoiceSource,
 ) SimulationResult {
-	for len(effects) != 0 && effects[0].kind == campaignEffectMaterializeWorkspace {
+	for {
+		enabled := simulationEnabledMoves(effects, nil, definition.catalogue)
+		if len(enabled) == 0 || enabled[0].effect.kind != campaignEffectMaterializeWorkspace {
+			break
+		}
 		pending := make([]simulationPendingAttempt, 0, len(effects))
-		materializations := slices.Clone(effects)
+		materializations := enabled
 		for len(materializations) != 0 {
 			selected := simulationChooseMove(choices, len(materializations))
-			materialize := materializations[selected]
+			materialize := materializations[selected].effect
 			materializations = slices.Delete(materializations, selected, selected+1)
 			if materialize.kind != campaignEffectMaterializeWorkspace {
 				return SimulationResult{trace: trace, failure: fmt.Errorf("attempt wave contains effect %v", materialize.kind)}
@@ -527,7 +531,8 @@ func simulationChooseMove(choices simulationChoiceSource, limit int) int {
 }
 
 func simulationRequireOnlyEffect(effects []campaignEffect, kind campaignEffectKind) {
-	if len(effects) != 1 || effects[0].kind != kind {
+	moves := simulationEnabledMoves(effects, nil, nil)
+	if len(moves) != 1 || moves[0].effect.kind != kind {
 		panic(fmt.Sprintf("simulation effect=%#v, want one %v", effects, kind))
 	}
 }
@@ -535,7 +540,7 @@ func simulationRequireOnlyEffect(effects []campaignEffect, kind campaignEffectKi
 func simulationOnlyEffect(effects []campaignEffect, kind campaignEffectKind) campaignEffect {
 	simulationRequireOnlyEffect(effects, kind)
 
-	return effects[0]
+	return simulationEnabledMoves(effects, nil, nil)[0].effect
 }
 
 func simulationRecordSupervisor(
@@ -558,20 +563,21 @@ func simulationOnlySupervisorAction(
 	actions []supervisorAction,
 	kind supervisorActionKind,
 ) supervisorAction {
-	if len(actions) != 1 || actions[0].kind != kind {
+	moves := simulationEnabledMoves(nil, actions, nil)
+	if len(moves) != 1 || moves[0].action.kind != kind {
 		panic(fmt.Sprintf("simulation supervisor actions=%#v, want one %v", actions, kind))
 	}
 
-	return actions[0]
+	return moves[0].action
 }
 
 func simulationSupervisorAction(
 	actions []supervisorAction,
 	kind supervisorActionKind,
 ) supervisorAction {
-	for _, action := range actions {
-		if action.kind == kind {
-			return action
+	for _, move := range simulationEnabledMoves(nil, actions, nil) {
+		if move.action.kind == kind {
+			return move.action
 		}
 	}
 	panic(fmt.Sprintf("simulation supervisor actions=%#v, want %v", actions, kind))
@@ -657,6 +663,67 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				delivered = admissionGrantedEvent{
 					attempt: requestEffect.attempt, grant: campaignAdmissionFact(admission.deliveries[0]),
 				}
+			case simulationCancelAdmission:
+				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
+					return effect.kind == campaignEffectCancelAdmission && reflect.DeepEqual(
+						record.runtimeAdmissionToken, simulationTraceAdmission(runtimeAdmissionRequest(effect.request)),
+					)
+				})
+				if !ok {
+					return simulationReplayFailure(trace, "admission cancellation is not enabled at record %d", index)
+				}
+				effects = remaining
+				var cancelled admissionResult
+				runtime, cancelled = runtime.cancelAdmission(record.runtimeAdmissionToken.production())
+				if !reflect.DeepEqual(simulationTraceAdmissionResult(cancelled), record.runtimeAdmissionOut) {
+					return simulationReplayFailure(trace, "admission cancellation diverged at record %d", index)
+				}
+				delivered = admissionCancelledEvent{
+					attempt: cancelEffect.attempt, request: cancelEffect.request,
+					result: campaignAdmissionEvidence(cancelled),
+				}
+			case simulationAcknowledgeGrantReturn:
+				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
+					return effect.kind == campaignEffectReturnAdmission && reflect.DeepEqual(
+						record.runtimeGrant, simulationTraceAdmission(runtimeAdmissionRequest(effect.grant)),
+					)
+				})
+				if !ok {
+					return simulationReplayFailure(trace, "grant return is not enabled at record %d", index)
+				}
+				effects = remaining
+				var returned admissionResult
+				runtime, returned = runtime.acknowledgeGrantReturn(record.runtimeGrant.production())
+				if !reflect.DeepEqual(simulationTraceAdmissionResult(returned), record.runtimeAdmissionOut) {
+					return simulationReplayFailure(trace, "grant return diverged at record %d", index)
+				}
+				delivered = grantReturnAcknowledgedEvent{
+					grant: returnEffect.grant, result: campaignAdmissionEvidence(returned),
+				}
+			case simulationBindConfirmationBarrier:
+				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
+					return effect.kind == campaignEffectBindConfirmationBarrier && reflect.DeepEqual(
+						record.runtimeBarrier, simulationTraceBarrierBinding(runtimeBarrierBinding(effect.binding)),
+					)
+				})
+				if !ok {
+					return simulationReplayFailure(trace, "confirmation barrier is not enabled at record %d", index)
+				}
+				effects = remaining
+				var bound barrierResult
+				runtime, bound = runtime.sealAndBindConfirmationBarrier(record.runtimeBarrier.production())
+				if !reflect.DeepEqual(simulationTraceBarrierResult(bound), record.runtimeBarrierOut) {
+					return simulationReplayFailure(trace, "confirmation barrier diverged at record %d", index)
+				}
+				delivered = confirmationBarrierBoundEvent{
+					attempt: bindingEffect.attempt, result: campaignBarrierEvidence(bound),
+				}
+			case simulationCompleteConfirmationQueue:
+				var completed confirmationQueueResult
+				runtime, completed = runtime.completeConfirmationQueue(record.runtimeCampaign)
+				if !reflect.DeepEqual(simulationTraceConfirmationQueueResult(completed), record.runtimeQueueOut) {
+					return simulationReplayFailure(trace, "confirmation queue completion diverged at record %d", index)
+				}
 			case simulationStartCommitted:
 				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectRequestStartCommitment && reflect.DeepEqual(
@@ -711,6 +778,36 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					return simulationReplayFailure(trace, "terminal commitment diverged at record %d", index)
 				}
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
+			case simulationSettleEmergency:
+				var settlement emergencySettlement
+				runtime, settlement = runtime.settleEmergency(record.runtimeSweep.production())
+				if !reflect.DeepEqual(simulationTraceEmergencySettlement(settlement), record.runtimeEmergencyOut) {
+					return simulationReplayFailure(trace, "emergency settlement diverged at record %d", index)
+				}
+				delivered = runtimeEmergencySettledEvent{
+					epoch: settlement.epoch, settlement: campaignSettlement(settlement),
+				}
+			case simulationAuthorizeForcedAbort:
+				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
+					return effect.kind == campaignEffectProposeTerminal && effect.fatalEpoch == record.runtimeFatalEpoch
+				})
+				if !ok {
+					return simulationReplayFailure(trace, "forced abort is not enabled at record %d", index)
+				}
+				effects = remaining
+				var terminal terminalResult
+				runtime, terminal = runtime.authorizeForcedAbort(record.runtimeCampaign, record.runtimeFatalEpoch)
+				if !reflect.DeepEqual(terminal, record.runtimeTerminal) {
+					return simulationReplayFailure(trace, "forced abort diverged at record %d", index)
+				}
+				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
+			case simulationCloseRuntime:
+				var closure runtimeClosure
+				runtime, closure = runtime.closeRuntime(record.runtimeFatalCause)
+				if !reflect.DeepEqual(simulationTraceRuntimeClosure(closure), record.runtimeClosure) {
+					return simulationReplayFailure(trace, "runtime closure diverged at record %d", index)
+				}
+				delivered = runtimeEmergencyStartedEvent{closure: campaignClosure(closure)}
 			default:
 				return simulationReplayFailure(trace, "runtime operation is invalid at record %d", index)
 			}

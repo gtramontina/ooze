@@ -772,6 +772,30 @@ func TestSimulationCausalTerminalConsumesRecordedResolvedDeadline(t *testing.T) 
 	}
 }
 
+func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
+	effects := []campaignEffect{
+		{id: 9, kind: campaignEffectLaunchAttempt, attempt: "attempt-b", generation: 3},
+		{id: 4, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-b", mutant: "mutant-b"},
+		{id: 3, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-a", mutant: "mutant-a"},
+	}
+	actions := []supervisorAction{
+		{kind: supervisorWaitRoot, generation: 3, token: 8},
+		{kind: supervisorSampleRunning, generation: 3, token: 7},
+	}
+
+	got := simulationEnabledMoves(effects, actions, []mutantIdentity{"mutant-a", "mutant-b"})
+	want := []simulationEnabledMove{
+		{authority: simulationCampaignAuthority, effect: effects[2]},
+		{authority: simulationCampaignAuthority, effect: effects[1]},
+		{authority: simulationSupervisorAuthority, effect: effects[0]},
+		{authority: simulationSupervisorAuthority, action: actions[1]},
+		{authority: simulationSupervisorAuthority, action: actions[0]},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("enabled moves=%#v, want %#v", got, want)
+	}
+}
+
 func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)

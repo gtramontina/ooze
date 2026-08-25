@@ -170,6 +170,13 @@ func simulationTraceBarrierBinding(value barrierBinding) simulationBarrierBindin
 	}
 }
 
+func (binding simulationBarrierBinding) production() barrierBinding {
+	return barrierBinding{
+		campaign: binding.campaign, attempt: binding.attempt,
+		profile: binding.profile, deadline: binding.deadline.production(),
+	}
+}
+
 type simulationBarrierResult struct {
 	decision   barrierDecision
 	request    simulationAdmission
@@ -240,6 +247,10 @@ type simulationEmergencySweepRecord struct{ resolutions []emergencyResolution }
 
 func simulationTraceEmergencySweep(value emergencySweep) simulationEmergencySweepRecord {
 	return simulationEmergencySweepRecord{resolutions: slices.Clone(value.resolutions)}
+}
+
+func (sweep simulationEmergencySweepRecord) production() emergencySweep {
+	return emergencySweep{resolutions: slices.Clone(sweep.resolutions)}
 }
 
 type simulationEmergencySettlement struct {
