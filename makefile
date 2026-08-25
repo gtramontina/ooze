@@ -19,7 +19,11 @@ test.failfast: $(pre-reqs)
 .PHONY: test.failfast
 
 test.mutation: $(pre-reqs)
-	@go test -timeout=30m -count=1 -v -tags=mutation
+	@tests="TestMutationRepository TestMutationAttemptSystem TestMutationCampaignRunner TestMutationCampaignCycle TestMutationCampaignEffects"; \
+		if test "$$(go env GOOS)" = darwin; then tests="$$tests TestMutationPlatform"; fi; \
+		for test_name in $$tests; do \
+			go test -timeout=30m -count=1 -v -tags=mutation -run="^$$test_name$$"; \
+		done
 .PHONY: test.mutation
 
 # Adversarial process fixtures, including explicit platform-limit assertions.

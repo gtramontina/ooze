@@ -218,18 +218,102 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Ubuntu 24.04
+          - name: Ubuntu 24.04 / repository
             runner: ubuntu-24.04
             toolchain: devbox
             go-command: devbox run -- go
-          - name: macOS 26
+            catalogue-shard: repository
+            mutation-test: TestMutationRepository
+          - name: Ubuntu 24.04 / attempt-system
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: attempt-system
+            mutation-test: TestMutationAttemptSystem
+          - name: Ubuntu 24.04 / campaign-runner
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: campaign-runner
+            mutation-test: TestMutationCampaignRunner
+          - name: Ubuntu 24.04 / campaign-cycle
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: campaign-cycle
+            mutation-test: TestMutationCampaignCycle
+          - name: Ubuntu 24.04 / campaign-effects
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: campaign-effects
+            mutation-test: TestMutationCampaignEffects
+          - name: macOS 26 / repository
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
-          - name: Windows 2025
+            catalogue-shard: repository
+            mutation-test: TestMutationRepository
+          - name: macOS 26 / attempt-system
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: attempt-system
+            mutation-test: TestMutationAttemptSystem
+          - name: macOS 26 / campaign-runner
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: campaign-runner
+            mutation-test: TestMutationCampaignRunner
+          - name: macOS 26 / campaign-cycle
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: campaign-cycle
+            mutation-test: TestMutationCampaignCycle
+          - name: macOS 26 / campaign-effects
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: campaign-effects
+            mutation-test: TestMutationCampaignEffects
+          - name: macOS 26 / darwin
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            catalogue-shard: darwin
+            mutation-test: TestMutationPlatform
+          - name: Windows 2025 / repository
             runner: windows-2025
             toolchain: raw-go
             go-command: go
+            catalogue-shard: repository
+            mutation-test: TestMutationRepository
+          - name: Windows 2025 / attempt-system
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+            catalogue-shard: attempt-system
+            mutation-test: TestMutationAttemptSystem
+          - name: Windows 2025 / campaign-runner
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+            catalogue-shard: campaign-runner
+            mutation-test: TestMutationCampaignRunner
+          - name: Windows 2025 / campaign-cycle
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+            catalogue-shard: campaign-cycle
+            mutation-test: TestMutationCampaignCycle
+          - name: Windows 2025 / campaign-effects
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+            catalogue-shard: campaign-effects
+            mutation-test: TestMutationCampaignEffects
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -259,7 +343,7 @@ jobs:
 
       - name: Mutation campaign acceptance
         shell: bash
-        run: ${{ matrix.go-command }} test -timeout=30m -count=1 -v -tags=mutation
+        run: ${{ matrix.go-command }} test -timeout=30m -count=1 -v -tags=mutation -run=^${{ matrix.mutation-test }}$
 
   required:
     name: OS Compatibility
