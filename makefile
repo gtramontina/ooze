@@ -2,7 +2,7 @@ PATH := $(PWD)/.bin:$(PATH)
 SHELL := /usr/bin/env bash -eu -o pipefail
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 STRESS_COUNT ?= 10
-ACCEPTANCE_TESTS := ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$$
+ACCEPTANCE_TESTS := ^(TestSupervisedDomainPlatformContract|TestSupervisedDomainDrainsAWideFanout|TestFixtureTeardownTreatsAnUnreapedDescendantAsDrained|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinCensusInstrumentsPerDescendantShape|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$$
 MAKEFLAGS += --warn-undefined-variables --output-sync=line --jobs $(CPUS)
 
 .git/.hooks.log:

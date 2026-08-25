@@ -196,6 +196,47 @@ func TestWindowsNativeSupervisorDrainsChildInNestedJob(t *testing.T) {
 	assertWindowsFixtureProcessStopped(t, childProcess, child)
 }
 
+func TestWindowsNativeJobKillOnCloseStopsExactSubject(t *testing.T) {
+	role := os.Getenv(windowsJobFixtureRole)
+	if role != "" {
+		runWindowsJobFixture(t, role)
+
+		return
+	}
+
+	markerPath := filepath.Join(t.TempDir(), "kill-on-close.marker")
+	command := exec.Command(os.Args[0], "-test.run=^TestWindowsNativeJobKillOnCloseStopsExactSubject$")
+	command.Env = windowsJobFixtureEnvironment("kill-on-close-subject",
+		"OOZE_WINDOWS_NESTED_MARKER="+markerPath)
+	state, err := prepareNativeCommand(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = closeNativeDomain(state)
+		}
+	})
+	if err = command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = releaseNativeCommand(command, state); err != nil {
+		t.Fatal(err)
+	}
+	subject := command.Process.Pid
+	subjectProcess := retainWindowsFixtureProcess(t, subject)
+	if err = command.Process.Release(); err != nil {
+		t.Fatal(err)
+	}
+	awaitWindowsFixtureFile(t, markerPath, 2*time.Second)
+	if err = closeNativeDomain(state); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	assertWindowsFixtureProcessStopped(t, subjectProcess, subject)
+}
+
 func runWindowsJobFixture(t *testing.T, role string) {
 	t.Helper()
 	switch role {
@@ -218,6 +259,8 @@ func runWindowsJobFixture(t *testing.T, role string) {
 	case "nested-root":
 		runWindowsNestedJobRoot(t)
 	case "nested-child":
+		runWindowsNestedJobChild(t)
+	case "kill-on-close-subject":
 		runWindowsNestedJobChild(t)
 	case "matrix-direct-root", "matrix-deep-root", "matrix-nested-root":
 		runWindowsMatrixRoot(t, role)
