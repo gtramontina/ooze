@@ -125,6 +125,43 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 	}
 }
 
+func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-shrink", lineage: 41, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity:  1,
+		catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, simulationChoiceBytes{simulationChooseBaselineFailure})
+	malformed := simulationMalformedFact{
+		authority: simulationCampaignAuthority,
+		campaign:  snapshotEstablishedEvent{},
+	}
+	counterexample := simulationTrace{
+		definition: explored.trace.definition,
+		records:    append([]simulationRecord(nil), explored.trace.records[:4]...),
+		malformed:  &malformed,
+	}
+	key := ReplayViolation(counterexample, malformed).key
+
+	shrunk := Shrink(counterexample, key)
+	if len(shrunk.records) >= len(counterexample.records) {
+		t.Fatalf("record count was not reduced: got=%d input=%d", len(shrunk.records), len(counterexample.records))
+	}
+	if len(shrunk.definition.catalogue) != 0 {
+		t.Fatalf("shrunk catalogue=%v, want no unrelated members", shrunk.definition.catalogue)
+	}
+	if shrunk.malformed == nil {
+		t.Fatal("shrink removed the one intended corruption")
+	}
+	first := ReplayViolation(shrunk, *shrunk.malformed)
+	second := ReplayViolation(shrunk, *shrunk.malformed)
+	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+		t.Fatalf("shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
+	}
+}
+
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))
 	for _, record := range trace.records {
