@@ -757,6 +757,21 @@ func TestSimulationTraceContainsOnlyCapabilityFreeDTOs(t *testing.T) {
 	}
 }
 
+func TestSimulationCausalTerminalConsumesRecordedResolvedDeadline(t *testing.T) {
+	recorded := attemptTerminalEvent{
+		attempt: "baseline", generation: 7,
+		terminal:                 Settled{ExecutionData: ExecutionData{Deadline: time.Minute}},
+		resolvedMutationDeadline: mutationDeadlineResolution{duration: 37 * time.Second},
+	}
+	derived := recorded
+	derived.resolvedMutationDeadline.duration = 99 * time.Second
+
+	merged, ok := simulationCausalCampaignPayload(recorded, derived).(attemptTerminalEvent)
+	if !ok || merged.resolvedMutationDeadline != recorded.resolvedMutationDeadline {
+		t.Fatalf("merged terminal=%#v, want recorded deadline %#v", merged, recorded.resolvedMutationDeadline)
+	}
+}
+
 func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
