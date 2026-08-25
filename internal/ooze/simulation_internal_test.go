@@ -87,8 +87,19 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	if _, ok := explored.world.campaign.outcome.(abortedOutcome); !ok {
 		t.Fatalf("explored outcome=%#v, want aborted baseline", explored.world.campaign.outcome)
 	}
-	if got := countSimulationAuthority(explored.trace, simulationSupervisorAuthority); got != 8 {
-		t.Fatalf("supervisor record count=%d, want 8 for complete supervised lifecycle", got)
+	var supervisorKinds []supervisorEventKind
+	for _, record := range explored.trace.records {
+		if record.authority == simulationSupervisorAuthority {
+			supervisorKinds = append(supervisorKinds, record.supervisorEvent.kind)
+		}
+	}
+	wantSupervisorKinds := []supervisorEventKind{
+		supervisorProspectiveRegistered, supervisorLaunchCompleted, supervisorRunningObserved,
+		supervisorDrainCompleted, supervisorDrainCompleted, supervisorOutputCompleted,
+		supervisorStopAdmissionSealed, supervisorReleaseCompleted, supervisorRuntimeCompleted,
+	}
+	if !reflect.DeepEqual(supervisorKinds, wantSupervisorKinds) {
+		t.Fatalf("supervisor lifecycle=%v, want %v", supervisorKinds, wantSupervisorKinds)
 	}
 	if len(explored.world.supervisor.attempts) != 0 || len(explored.world.runtime.campaigns) != 0 {
 		t.Fatalf("terminal world is not quiescent: %#v", explored.world)
@@ -374,7 +385,7 @@ func TestSimulationExploresGlobalDrainExpiryThroughEmergencySettlement(t *testin
 	}
 }
 
-func TestSimulationChoiceStreamSelectsEnabledPeerSettlementOrder(t *testing.T) {
+func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	definition := simulationDefinition{
 		campaign: campaignDefinition{
 			identity: "campaign-choice-order", lineage: 251, command: []string{"test"},
@@ -382,8 +393,19 @@ func TestSimulationChoiceStreamSelectsEnabledPeerSettlementOrder(t *testing.T) {
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}
-	first := Explore(definition, simulationChoiceBytes{0, 0, 0})
-	second := Explore(definition, simulationChoiceBytes{0, 0, 1})
+	explorePreferred := func(preferred mutantIdentity) SimulationResult {
+		return Explore(definition, simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+			for index, move := range moves {
+				if move.effect.kind == campaignEffectMaterializeWorkspace && move.effect.mutant == preferred {
+					return index
+				}
+			}
+
+			return 0
+		}))
+	}
+	first := explorePreferred("mutant-a")
+	second := explorePreferred("mutant-b")
 	if first.failure != nil || second.failure != nil {
 		t.Fatalf("choice exploration failures=%v/%v", first.failure, second.failure)
 	}
@@ -1354,27 +1376,334 @@ func simulationForbiddenValuePath(value reflect.Value, path string) string {
 	return ""
 }
 
+func TestSimulationFuzzInputDrivesSustainedLegalChoices(t *testing.T) {
+	definition, choices := simulationFuzzInput([]byte{2, 2, 4, 5, 6, 7})
+	if definition.capacity != 3 || definition.campaign.peers != 3 || len(definition.catalogue) != 3 ||
+		len(choices) != 4 {
+		t.Fatalf("fuzz definition/choices=%#v/%v", definition, choices)
+	}
+	explored := Explore(definition, choices)
+	if explored.failure != nil {
+		t.Fatalf("sustained fuzz exploration failed: %v", explored.failure)
+	}
+	nonRecovery := 0
+	for _, choice := range explored.trace.choices {
+		if !choice.recovery {
+			nonRecovery++
+		}
+	}
+	if nonRecovery < len(choices) {
+		t.Fatalf("exploration consumed %d choices, want at least %d: %#v", nonRecovery, len(choices), explored.trace.choices)
+	}
+}
+
+func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
+	firstEvent := supervisorEvent{kind: supervisorRuntimeCompleted, generation: 1}
+	secondEvent := supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)}
+	first := simulationEngineMove{
+		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
+		supervisorDelivery: &firstEvent,
+	}
+	second := simulationEngineMove{
+		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
+		supervisorDelivery: &secondEvent,
+	}
+	engine := simulationEngine{pending: []simulationEngineMove{first, second}}
+
+	if !engine.consume(second) || len(engine.pending) != 1 ||
+		!reflect.DeepEqual(engine.pending[0].supervisorDelivery, first.supervisorDelivery) {
+		t.Fatalf("pending delivery after consuming second=%#v, want first", engine.pending)
+	}
+}
+
+func TestSimulationSelectsOneTypedActionFromACompoundOwnerCut(t *testing.T) {
+	want := supervisorAction{kind: supervisorDeliverTerminal, token: 10}
+	actions := []supervisorAction{
+		want,
+		{kind: supervisorSettleEmergency, token: 11},
+	}
+	if got := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal); !reflect.DeepEqual(got, want) {
+		t.Fatalf("selected action=%#v, want %#v", got, want)
+	}
+}
+
+func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
+	launch := attemptLaunchEvent{attempt: "attempt-a", generation: 2}
+	engine := simulationEngine{pending: []simulationEngineMove{
+		{
+			source:   simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 9},
+			delivery: launch,
+		},
+		{
+			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
+			action: supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10},
+		},
+	}}
+
+	moves := engine.enabledMoves()
+	if len(moves) != 1 || !reflect.DeepEqual(moves[0].delivery, launch) {
+		t.Fatalf("enabled moves=%#v, want only the causal launch delivery", moves)
+	}
+}
+
+func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T) {
+	engine := simulationEngine{
+		runtime: processRuntime{
+			lifecycle: runtimeFatalClosing,
+			admissions: []admittedAttempt{{
+				grant: admissionGrant{attempt: "attempt-a"}, stage: admissionOwned,
+				generation: 2, disposition: dispositionCustodyTransferred,
+			}},
+		},
+		pending: []simulationEngineMove{{
+			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
+			action: supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9},
+		}},
+	}
+
+	if moves := engine.enabledMoves(); len(moves) != 0 {
+		t.Fatalf("enabled stale residual transfer=%#v", moves)
+	}
+}
+
+func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
+	engine := simulationEngine{
+		runtime: processRuntime{
+			lifecycle: runtimeOpen,
+			admissions: []admittedAttempt{{
+				grant: admissionGrant{attempt: "attempt-a"}, stage: admissionOwned, generation: 2,
+			}},
+		},
+		pending: []simulationEngineMove{
+			{
+				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
+				action: supervisorAction{kind: supervisorSettleRuntime, generation: 2, token: 10},
+			},
+			{
+				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 11},
+				action: supervisorAction{kind: supervisorSettleEmergency, token: 11},
+			},
+		},
+	}
+
+	moves := engine.enabledMoves()
+	if len(moves) != 1 || moves[0].action.token != 10 {
+		t.Fatalf("enabled runtime custody actions=%#v, want token 10 only", moves)
+	}
+}
+
+func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing.T) {
+	engine := simulationEngine{pending: []simulationEngineMove{
+		{
+			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
+			action: supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10},
+		},
+		{
+			source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 12},
+			effect: campaignEffect{id: 12, kind: campaignEffectReleaseSnapshot},
+		},
+	}}
+
+	engine.retireCampaignTerminals()
+	if len(engine.pending) != 1 || engine.pending[0].effect.id != 12 {
+		t.Fatalf("pending work after emergency terminal retirement=%#v", engine.pending)
+	}
+}
+
+func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {
+	completion := supervisorEvent{kind: supervisorRuntimeCompleted, generation: 2}
+	engine := simulationEngine{
+		trace: simulationTrace{records: []simulationRecord{{
+			sequence: 19,
+			source:   simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
+		}}},
+		pending: []simulationEngineMove{
+			{
+				source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
+				supervisorDelivery: &completion,
+			},
+			{
+				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 11},
+				action: supervisorAction{kind: supervisorSettleEmergency, token: 11},
+			},
+		},
+	}
+
+	moves := engine.enabledMoves()
+	if len(moves) != 1 || moves[0].source.identity != 19 {
+		t.Fatalf("enabled runtime custody moves=%#v, want completion cut 19 only", moves)
+	}
+}
+
+func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
+	engine := simulationEngine{pending: []simulationEngineMove{{
+		source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 12},
+		action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 12},
+	}}}
+
+	if moves := engine.enabledMoves(); len(moves) != 0 {
+		t.Fatalf("enabled unrequested emergency settlement=%#v", moves)
+	}
+}
+
+func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testing.T) {
+	launch := attemptLaunchEvent{attempt: "attempt-a", generation: 2}
+	engine := simulationEngine{
+		campaign: campaignState{drain: campaignDrainIntent{kind: campaignDrainRuntimeEmergency, epoch: 1}},
+		pending: []simulationEngineMove{
+			{
+				source:   simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
+				delivery: launch,
+			},
+			{
+				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 20},
+				action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 20},
+			},
+		},
+	}
+
+	moves := engine.enabledMoves()
+	if len(moves) != 1 || !reflect.DeepEqual(moves[0].delivery, launch) {
+		t.Fatalf("enabled emergency settlement moves=%#v, want published campaign ingress", moves)
+	}
+}
+
+func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
+	emergency := supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)}
+	start := startCommittedEvent{
+		attempt: "attempt-b",
+		result:  campaignStartResult{decision: startCommittedAccepted, generation: 4},
+	}
+	engine := simulationEngine{
+		campaign: campaignState{drain: campaignDrainIntent{kind: campaignDrainRuntimeEmergency, epoch: 1}},
+		pending: []simulationEngineMove{
+			{
+				source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 20},
+				supervisorDelivery: &emergency,
+			},
+			{
+				source:   simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 21},
+				delivery: start,
+			},
+		},
+	}
+
+	moves := engine.enabledMoves()
+	if len(moves) != 1 || !reflect.DeepEqual(moves[0].delivery, start) {
+		t.Fatalf("enabled emergency cut moves=%#v, want committed start delivery only", moves)
+	}
+}
+
+func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
+	const generation attemptGeneration = 4
+	launch := simulationEngineMove{
+		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 19},
+		effect: campaignEffect{id: 19, kind: campaignEffectLaunchAttempt, generation: generation},
+	}
+	stop := simulationEngineMove{
+		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 20},
+		effect: campaignEffect{id: 20, kind: campaignEffectStopAttempt, generation: generation},
+	}
+	launchAction := simulationEngineMove{
+		source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 21},
+		action: supervisorAction{kind: supervisorLaunchNative, generation: generation, token: 21},
+	}
+	tests := []simulationEngine{
+		{pending: []simulationEngineMove{launch, stop}},
+		{
+			supervisor: supervisorState{attempts: []supervisorAttemptState{{
+				generation: generation, phase: supervisorLaunchEstablishing,
+			}}},
+			pending: []simulationEngineMove{launchAction, stop},
+		},
+	}
+	for _, engine := range tests {
+		moves := engine.enabledMoves()
+		if len(moves) == 0 {
+			t.Fatal("attempt ownership made no progress")
+		}
+		for _, move := range moves {
+			if move.effect.kind == campaignEffectStopAttempt {
+				t.Fatalf("enabled stop before supervisor ownership: %#v", moves)
+			}
+		}
+	}
+	completed := simulationEngine{
+		launches: map[attemptGeneration]campaignEffect{generation: launch.effect},
+		pending:  []simulationEngineMove{stop},
+	}
+	moves := completed.enabledMoves()
+	if len(moves) != 1 || moves[0].effect.kind != campaignEffectStopAttempt {
+		t.Fatalf("completed generation retained disabled stop: %#v", moves)
+	}
+	if !completed.consume(moves[0]) {
+		t.Fatal("completed generation stop was not pending")
+	}
+	if err := completed.apply(moves[0]); err != nil {
+		t.Fatalf("completed generation stop=%v, want no-op", err)
+	}
+}
+
+func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {
+	engine := simulationEngine{pending: []simulationEngineMove{
+		{
+			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 26},
+			action: supervisorAction{kind: supervisorSealStopAdmission, generation: 4, token: 26},
+		},
+		{
+			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 27},
+			action: supervisorAction{kind: supervisorReleaseDomain, generation: 4, token: 27},
+		},
+	}}
+
+	moves := engine.enabledMoves()
+	if len(moves) != 1 || moves[0].action.token != 26 {
+		t.Fatalf("enabled same-generation actions=%#v, want token 26 only", moves)
+	}
+}
+
+func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceBytes) {
+	capacity := 1
+	definition := simulationDefinition{campaign: campaignDefinition{
+		identity: "campaign-fuzz", lineage: 61, command: []string{"test"},
+		profile: AutomaticProfile, peers: capacity,
+	}, capacity: capacity}
+	if len(source) == 0 {
+		return definition, nil
+	}
+	mutants := 1 + int(source[0]%3)
+	definition.catalogue = make([]mutantIdentity, mutants)
+	for index := range definition.catalogue {
+		definition.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
+	}
+	if len(source) > 1 {
+		capacity = 1 + int(source[1]%3)
+		definition.capacity = capacity
+		definition.campaign.peers = capacity
+	}
+	if len(source) <= 2 {
+		return definition, nil
+	}
+
+	return definition, slices.Clone(simulationChoiceBytes(source[2:]))
+}
+
 func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{1, 7, 9})
 	f.Fuzz(func(t *testing.T, source []byte) {
-		definition := simulationDefinition{
-			campaign: campaignDefinition{
-				identity: "campaign-fuzz", lineage: 61, command: []string{"test"},
-				profile: AutomaticProfile, peers: 1,
-			},
-			capacity: 1,
-		}
-		choices := simulationChoiceBytes(nil)
-		if len(source) != 0 && source[0]&1 != 0 {
-			definition.catalogue = []mutantIdentity{"mutant-a"}
-			choices = simulationChoiceBytes{simulationChooseBaselineFailure}
-		}
+		definition, choices := simulationFuzzInput(source)
 		explored := Explore(definition, choices)
+		if explored.failure != nil {
+			t.Fatalf("legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure,
+				simulationTraceRuntimeState(explored.world.runtime), simulationRecordedActionSummary(explored.trace))
+		}
 		replayed := ReplayLegal(explored.trace)
-		if explored.failure != nil || replayed.failure != nil ||
-			!reflect.DeepEqual(explored.world, replayed.world) {
-			t.Fatalf("legal replay diverged: explored=%#v replayed=%#v", explored, replayed)
+		if replayed.failure != nil {
+			t.Fatalf("legal replay failed: %v", replayed.failure)
+		}
+		if !reflect.DeepEqual(explored.world, replayed.world) {
+			t.Fatalf("legal replay world diverged:\nexplored=%#v\nreplayed=%#v", explored.world, replayed.world)
 		}
 		prefix := simulationTrace{
 			definition: explored.trace.definition,
@@ -1394,6 +1723,20 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	})
 }
 
+func simulationRecordedActionSummary(trace simulationTrace) []string {
+	var summary []string
+	for _, record := range trace.records {
+		for _, action := range record.supervisorActions {
+			summary = append(summary, fmt.Sprintf(
+				"record=%d kind=%d generation=%d token=%d",
+				record.sequence, action.kind, action.generation, action.token,
+			))
+		}
+	}
+
+	return summary
+}
+
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))
 	for _, record := range trace.records {
@@ -1401,15 +1744,4 @@ func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	}
 
 	return authorities
-}
-
-func countSimulationAuthority(trace simulationTrace, authority simulationAuthority) int {
-	count := 0
-	for _, record := range trace.records {
-		if record.authority == authority {
-			count++
-		}
-	}
-
-	return count
 }

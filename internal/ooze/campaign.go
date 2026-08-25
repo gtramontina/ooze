@@ -124,6 +124,7 @@ type campaignState struct {
 	drain                    campaignDrainIntent
 	confirmationBarrierBound bool
 	pendingGrantReturns      []campaignAdmission
+	acknowledgedGrantReturns []campaignAdmission
 	singleAdmissionFallback  bool
 }
 
@@ -547,7 +548,15 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 		campaignInvariant("advance", "terminal campaign accepts no event")
 	}
 	if state.failure != nil {
-		campaignInvariant("advance", "failed campaign accepts no event")
+		_, resourceSettlement := event.payload.(resourceSettledEvent)
+		_, grantReturnSettlement := event.payload.(grantReturnAcknowledgedEvent)
+		start, startRejection := event.payload.(startCommittedEvent)
+		startRejection = startRejection && state.acknowledgedStartRejection(start)
+		grant, compensatedGrantDelivery := event.payload.(admissionGrantedEvent)
+		compensatedGrantDelivery = compensatedGrantDelivery && state.compensatedGrantDelivery(grant)
+		if !resourceSettlement && !grantReturnSettlement && !startRejection && !compensatedGrantDelivery {
+			campaignInvariant("advance", "failed campaign accepts only resource settlement")
+		}
 	}
 	if event.payload == nil || event.id == 0 || event.id != campaignEventID(len(state.trace)+1) {
 		campaignInvariant("advance", "event identity is invalid")
@@ -740,6 +749,7 @@ func (state campaignState) onCatalogueDiscovered(event catalogueDiscoveredEvent)
 }
 
 func (state campaignState) onResourceSettled(event resourceSettledEvent) (campaignState, []campaignEffect) {
+	failed := state.failure != nil
 	index := state.obligationIndex(event.kind, event.identity)
 	if index < 0 || event.kind == campaignResourceRegistration {
 		campaignInvariant("settle resource", "resource obligation is unknown")
@@ -754,6 +764,16 @@ func (state campaignState) onResourceSettled(event resourceSettledEvent) (campai
 		}
 		kind := state.attempts[attemptAt].kind
 		state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
+		if failed {
+			if len(state.attempts) == 0 &&
+				state.obligationIndex(campaignResourceSnapshot, string(state.snapshot)) >= 0 {
+				return state.emit(campaignEffect{
+					kind: campaignEffectReleaseSnapshot, snapshot: state.snapshot,
+				})
+			}
+
+			return state, nil
+		}
 		if kind == campaignAttemptBaseline {
 			if state.drain.kind == campaignDrainAbort || state.drain.kind == campaignDrainRuntimeEmergency {
 				return state.releaseSnapshot(campaignTerminalAborted)
@@ -1004,6 +1024,14 @@ func (state campaignState) onAdmissionGranted(event admissionGrantedEvent) (camp
 	return state.acceptGrant(attemptAt, event.grant)
 }
 
+func (state campaignState) compensatedGrantDelivery(event admissionGrantedEvent) bool {
+	attemptAt := state.attemptIndex(event.attempt)
+
+	return attemptAt >= 0 && state.attempts[attemptAt].stage == campaignAttemptAdmissionWaiting &&
+		sameAdmissionRequest(event.grant, state.attempts[attemptAt].request) &&
+		slices.Contains(state.pendingGrantReturns, event.grant)
+}
+
 func (state campaignState) onAdmissionCancelled(
 	event admissionCancelledEvent,
 ) (campaignState, []campaignEffect) {
@@ -1127,6 +1155,7 @@ func (state campaignState) onGrantReturnAcknowledged(
 		campaignInvariant("acknowledge grant return", "grant return acknowledgement is invalid")
 	}
 	state.pendingGrantReturns = slices.Delete(state.pendingGrantReturns, returnAt, returnAt+1)
+	state.acknowledgedGrantReturns = append(state.acknowledgedGrantReturns, event.grant)
 	state.removeAttemptObligation(campaignResourceAdmission, event.grant.attempt, 0)
 	state.attempts[attemptAt].stage = campaignAttemptSettled
 	mutantAt := state.mutantIndex(state.attempts[attemptAt].mutant)
@@ -1141,12 +1170,26 @@ func (state campaignState) onGrantReturnAcknowledged(
 }
 
 func (state campaignState) onStartCommitted(event startCommittedEvent) (campaignState, []campaignEffect) {
+	if state.acknowledgedStartRejection(event) {
+		return state, nil
+	}
 	attemptAt := state.attemptIndex(event.attempt)
+	rejected := event.result.decision == startCommittedRejectedGrant ||
+		event.result.decision == startCommittedRejectedGate ||
+		event.result.decision == startCommittedRejectedClosed
 	if attemptAt < 0 || event.grant != state.attempts[attemptAt].grant {
 		campaignInvariant("start committed", "commitment is stale or unauthorized")
 	}
-	if event.result.decision == startCommittedRejectedGrant || event.result.decision == startCommittedRejectedGate ||
-		event.result.decision == startCommittedRejectedClosed {
+	if rejected {
+		if state.attempts[attemptAt].stage == campaignAttemptGranted {
+			state.attempts[attemptAt].stage = campaignAttemptReturningGrant
+			state.removeAttemptObligation(campaignResourcePendingStart, event.grant.attempt, 0)
+			state.pendingGrantReturns = append(state.pendingGrantReturns, event.grant)
+
+			return state.emit(campaignEffect{
+				kind: campaignEffectReturnAdmission, attempt: event.attempt, grant: event.grant,
+			})
+		}
 		if state.attempts[attemptAt].stage != campaignAttemptReturningGrant || event.result.generation != 0 ||
 			!slices.Contains(state.pendingGrantReturns, event.grant) {
 			campaignInvariant("start committed", "rejected commitment lacks grant compensation")
@@ -1191,6 +1234,19 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 			len(state.drain.provisionals) == 1,
 		spec: spec,
 	})
+}
+
+func (state campaignState) acknowledgedStartRejection(event startCommittedEvent) bool {
+	if event.result.generation != 0 || event.result.settlementAcknowledged ||
+		event.attempt != event.grant.attempt || !slices.Contains(state.acknowledgedGrantReturns, event.grant) {
+		return false
+	}
+	if event.result.decision == startCommittedRejectedClosed {
+		return event.result.runtimeClosureInProgress
+	}
+
+	return !event.result.runtimeClosureInProgress &&
+		(event.result.decision == startCommittedRejectedGrant || event.result.decision == startCommittedRejectedGate)
 }
 
 func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignState, []campaignEffect) {
@@ -1242,7 +1298,10 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 			kind: campaignDrainRuntimeEmergency, cause: "prospective launch unresolved",
 			epoch: event.receipt.fatalEpoch,
 		}
-		return state.applyRuntimeCompensations(event.receipt)
+		var effects []campaignEffect
+		state, effects = state.applyRuntimeCompensations(event.receipt)
+
+		return state.emitAll(effects)
 	default:
 		campaignInvariant("observe launch", "launch result kind is invalid")
 	}
@@ -1270,7 +1329,10 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			kind: campaignDrainRuntimeEmergency, cause: "execution-domain drainage unconfirmed",
 			epoch: event.receipt.fatalEpoch,
 		}
-		return state.applyRuntimeCompensations(event.receipt)
+		var effects []campaignEffect
+		state, effects = state.applyRuntimeCompensations(event.receipt)
+
+		return state.emitAll(effects)
 	}
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptOwned ||
 		event.generation != state.attempts[attemptAt].generation || event.terminal == nil ||
@@ -1616,10 +1678,12 @@ func (state campaignState) onRuntimeEmergencyStarted(
 	}
 	state.candidate = campaignTerminalCandidate{}
 
-	return state.applyRuntimeCompensations(campaignRuntimeReceipt{
+	state, effects := state.applyRuntimeCompensations(campaignRuntimeReceipt{
 		cancelledWaiting:  event.closure.cancelledWaiting,
 		compensatedGrants: event.closure.compensatedGrants,
 	})
+
+	return state.emitAll(effects)
 }
 
 func (state campaignState) applyRuntimeCompensations(
@@ -1644,10 +1708,23 @@ func (state campaignState) applyRuntimeCompensations(
 		})
 	}
 	for _, grant := range receipt.compensatedGrants {
+		if slices.Contains(state.acknowledgedGrantReturns, grant) {
+			continue
+		}
 		if slices.Contains(state.pendingGrantReturns, grant) {
-			campaignInvariant("compensate grant", "grant return is duplicated")
+			attemptAt := state.attemptIndex(grant.attempt)
+			if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptReturningGrant ||
+				state.attempts[attemptAt].grant != grant {
+				campaignInvariant("compensate grant", "grant return is duplicated")
+			}
+
+			continue
 		}
 		attemptAt := state.attemptIndex(grant.attempt)
+		if attemptAt >= 0 && state.attempts[attemptAt].stage == campaignAttemptSettled &&
+			state.attempts[attemptAt].grant == grant {
+			continue
+		}
 		if attemptAt < 0 || (state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting &&
 			state.attempts[attemptAt].stage != campaignAttemptGranted) {
 			campaignInvariant("compensate grant", "grant return is stale or wrong")
@@ -1942,6 +2019,7 @@ func (state campaignState) clone() campaignState {
 	state.attempts = slices.Clone(state.attempts)
 	state.drain.provisionals = slices.Clone(state.drain.provisionals)
 	state.pendingGrantReturns = slices.Clone(state.pendingGrantReturns)
+	state.acknowledgedGrantReturns = slices.Clone(state.acknowledgedGrantReturns)
 	state.obligations = slices.Clone(state.obligations)
 	state.trace = slices.Clone(state.trace)
 	for index := range state.trace {

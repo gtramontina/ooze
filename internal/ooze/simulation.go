@@ -199,12 +199,20 @@ func simulationOnlySupervisorAction(
 	actions []supervisorAction,
 	kind supervisorActionKind,
 ) supervisorAction {
-	moves := simulationEnabledMoves(nil, actions, nil)
-	if len(moves) != 1 || moves[0].action.kind != kind {
+	var matched supervisorAction
+	count := 0
+	for _, action := range actions {
+		if action.kind != kind {
+			continue
+		}
+		matched = action
+		count++
+	}
+	if count != 1 {
 		panic(fmt.Sprintf("simulation supervisor actions=%#v, want one %v", actions, kind))
 	}
 
-	return moves[0].action
+	return matched
 }
 
 func simulationAdvanceCampaign(
@@ -247,6 +255,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 	pendingDeliveries := make(map[simulationCausalSource][]campaignEventPayload)
 	activeLaunches := make(map[attemptGeneration]campaignEffect)
 	terminalReceipts := make(map[attemptGeneration]observationResult)
+	actionKinds := make(map[supervisorActionToken]supervisorActionKind)
 	barrierAt := 0
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
@@ -254,6 +263,7 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 		}
 		switch record.authority {
 		case simulationRuntimeAuthority:
+			delivered = nil
 			switch record.runtimeOperation {
 			case simulationRegisterCampaign:
 				registrationEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
@@ -282,12 +292,23 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				effects = remaining
 				var admission admissionResult
 				runtime, admission = runtime.requestAdmission(record.runtimeAdmission.production())
-				if !reflect.DeepEqual(simulationTraceAdmissionResult(admission), record.runtimeAdmissionOut) ||
-					len(admission.deliveries) != 1 {
+				if !reflect.DeepEqual(simulationTraceAdmissionResult(admission), record.runtimeAdmissionOut) {
 					return simulationReplayFailure(trace, "admission decision diverged at record %d", index)
 				}
-				delivered = admissionGrantedEvent{
-					attempt: requestEffect.attempt, grant: campaignAdmissionFact(admission.deliveries[0]),
+				if admission.decision != admissionAccepted {
+					delivered = admissionRejectedEvent{
+						attempt: requestEffect.attempt, result: campaignAdmissionEvidence(admission),
+						cause: "simulation admission rejected",
+					}
+					break
+				}
+				source := simulationCausalSource{
+					kind: simulationOwnerDeliverySource, identity: record.sequence,
+				}
+				for _, grant := range admission.deliveries {
+					pendingDeliveries[source] = append(pendingDeliveries[source], admissionGrantedEvent{
+						attempt: grant.attempt, grant: campaignAdmissionFact(grant),
+					})
 				}
 			case simulationCancelAdmission:
 				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
@@ -389,8 +410,15 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				if !reflect.DeepEqual(simulationTraceObservationResult(observation), record.runtimeObservationOut) {
 					return simulationReplayFailure(trace, "attempt observation diverged at record %d", index)
 				}
+				actionKind := supervisorActionKind(0)
+				if record.source.kind == simulationSupervisorActionSource {
+					actionKind = actionKinds[supervisorActionToken(record.source.identity)]
+				}
 				switch record.runtimeObservation.kind {
 				case simulationLaunchOwnedObservation:
+					if actionKind != supervisorPublishOwned {
+						break
+					}
 					activeLaunch, found := activeLaunches[record.runtimeGeneration]
 					if !found {
 						return simulationReplayFailure(trace, "owned observation has no causal launch at record %d", index)
@@ -398,6 +426,40 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					delivered = attemptLaunchEvent{
 						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
 						result:  campaignLaunchObservation{kind: campaignLaunchOwned},
+						receipt: campaignReceipt(observation),
+					}
+				case simulationLaunchNotReleasedObservation:
+					if actionKind != supervisorPublishNotReleased {
+						break
+					}
+					activeLaunch, found := activeLaunches[record.runtimeGeneration]
+					if !found {
+						return simulationReplayFailure(trace, "not-released observation has no causal launch at record %d", index)
+					}
+					failure := LaunchFailed
+					if record.runtimeObservation.reason == launchResourceExhausted {
+						failure = LaunchResourceExhausted
+					}
+					delivered = attemptLaunchEvent{
+						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
+						result: campaignLaunchObservation{
+							kind: campaignLaunchNotReleased, failure: failure,
+						},
+						receipt: campaignReceipt(observation),
+					}
+				case simulationLaunchUnconfirmedObservation:
+					if actionKind != supervisorPublishLaunchUnconfirmed {
+						break
+					}
+					activeLaunch, found := activeLaunches[record.runtimeGeneration]
+					if !found {
+						return simulationReplayFailure(trace, "unconfirmed observation has no causal launch at record %d", index)
+					}
+					delivered = attemptLaunchEvent{
+						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
+						result: campaignLaunchObservation{
+							kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved,
+						},
 						receipt: campaignReceipt(observation),
 					}
 				case simulationDrainUnconfirmedObservation:
@@ -409,7 +471,6 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					if !reflect.DeepEqual(simulationTraceRuntimeClosure(closure), record.runtimeClosure) {
 						return simulationReplayFailure(trace, "runtime emergency closure diverged at record %d", index)
 					}
-					delivered = runtimeEmergencyStartedEvent{closure: campaignClosure(closure)}
 				default:
 					terminalReceipts[record.runtimeGeneration] = observation
 				}
@@ -543,20 +604,37 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 				activeLaunches[event.generation] = launchEffect
 				effects = remaining
 			}
+			if record.supervisorEvent.kind == supervisorRunningObserved && event.running != nil &&
+				slices.ContainsFunc(event.running.facts, func(fact supervisorRunningFact) bool {
+					return fact.kind == supervisorRunningStopRequested
+				}) {
+				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
+					return effect.kind == campaignEffectStopAttempt && effect.generation == event.generation
+				})
+				if !ok {
+					return simulationReplayFailure(trace, "supervisor stop is not enabled at record %d", index)
+				}
+				effects = remaining
+			}
 			var actions []supervisorAction
 			supervisor, actions = reduceSupervisor(supervisor, event)
+			for _, action := range actions {
+				actionKinds[action.token] = action.kind
+			}
 			if !reflect.DeepEqual(simulationTraceSupervisorState(supervisor), record.supervisorState) ||
 				!reflect.DeepEqual(simulationTraceSupervisorActions(actions), record.supervisorActions) {
 				return simulationReplayFailure(trace, "supervisor transition diverged at record %d", index)
 			}
-			if record.supervisorEvent.kind == supervisorRuntimeCompleted {
-				activeLaunch, found := activeLaunches[event.generation]
+			for _, action := range actions {
+				if action.kind != supervisorDeliverTerminal {
+					continue
+				}
+				activeLaunch, found := activeLaunches[action.generation]
 				if !found {
 					return simulationReplayFailure(trace, "runtime completion has no causal launch at record %d", index)
 				}
-				deliver := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)
 				terminal := publicTerminal(
-					deliver.terminal, func(supervisorOutputRef) string { return "" }, nil, deliver.runtimeKind,
+					action.terminal, func(supervisorOutputRef) string { return "" }, nil, action.runtimeKind,
 				)
 				receipt, found := terminalReceipts[activeLaunch.generation]
 				if !found {
@@ -568,9 +646,9 @@ func ReplayLegal(trace simulationTrace) (result SimulationResult) {
 					terminal: terminal, receipt: campaignReceipt(receipt),
 				}
 				pendingDeliveries[simulationCausalSource{
-					kind: simulationSupervisorActionSource, identity: uint64(deliver.token),
+					kind: simulationSupervisorActionSource, identity: uint64(action.token),
 				}] = append(pendingDeliveries[simulationCausalSource{
-					kind: simulationSupervisorActionSource, identity: uint64(deliver.token),
+					kind: simulationSupervisorActionSource, identity: uint64(action.token),
 				}], terminalEvent)
 				delivered = terminalEvent
 			}

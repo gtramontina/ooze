@@ -464,7 +464,10 @@ func (r processRuntime) startCommitted(grant admissionGrant) (processRuntime, st
 		invariant("start committed", "grant campaign disappeared")
 	}
 	if grant.class.primary() && !r.campaigns[campaignAt].primaryGateOpen {
-		return r, startCommittedResult{decision: startCommittedRejectedGate}
+		next := r.clone()
+		next.admissions[index].disposition = dispositionReturnedAfterGate
+
+		return next, startCommittedResult{decision: startCommittedRejectedGate}
 	}
 	next := r.clone()
 	next.nextID++
