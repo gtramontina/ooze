@@ -142,8 +142,8 @@ func simulationSelectEngineMove(
 
 		return selected, false
 	}
-	if cursor, ok := choices.(*simulationChoiceCursor); ok {
-		recovery = cursor.at >= len(cursor.values)
+	if exhaustion, ok := choices.(interface{ exhausted() bool }); ok {
+		recovery = exhaustion.exhausted()
 	}
 	selected := 0
 	if limit > 1 && choices != nil && !recovery {
@@ -154,6 +154,10 @@ func simulationSelectEngineMove(
 	})
 
 	return selected, recovery
+}
+
+func (cursor *simulationChoiceCursor) exhausted() bool {
+	return cursor.at >= len(cursor.values)
 }
 
 func (engine *simulationEngine) apply(move simulationEngineMove) error {

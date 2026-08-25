@@ -589,6 +589,63 @@ func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testin
 	}
 }
 
+func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-shrink-boundary", lineage: 45, command: []string{"test"},
+			profile: AutomaticProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, simulationChoiceBytes(slices.Repeat([]byte{2}, 64)))
+	if explored.failure != nil {
+		t.Fatalf("boundary shrink exploration failure=%v", explored.failure)
+	}
+	prefixLength := 0
+	var malformedEvent supervisorEvent
+	for index, record := range explored.trace.records {
+		if record.authority != simulationSupervisorAuthority ||
+			record.supervisorEvent.kind != supervisorLaunchCompleted {
+			continue
+		}
+		prefixLength = index + 1
+		malformedEvent = record.supervisorEvent.production()
+		completion := *malformedEvent.completion
+		completion.action = 999
+		malformedEvent.completion = &completion
+		break
+	}
+	if prefixLength == 0 {
+		t.Fatal("boundary shrink trace has no launch completion")
+	}
+	malformed := simulationMalformedFact{
+		authority: simulationSupervisorAuthority,
+		supervisor: simulationTraceSupervisorEvent(malformedEvent),
+	}
+	counterexample := simulationCloneTrace(explored.trace)
+	counterexample.records = slices.Clone(counterexample.records[:prefixLength])
+	counterexample.malformed = &malformed
+	key := ReplayViolation(counterexample, malformed).key
+	originalDistance := simulationChoiceDistance(counterexample.choices)
+
+	shrunk := Shrink(counterexample, key)
+	if distance := simulationChoiceDistance(shrunk.choices); distance >= originalDistance {
+		t.Fatalf("boundary choice distance=%d, want less than %d", distance, originalDistance)
+	}
+	replayed := ReplayViolation(shrunk, *shrunk.malformed)
+	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {
+		t.Fatalf("boundary shrink replay=%#v, want key %#v", replayed, key)
+	}
+}
+
+func simulationChoiceDistance(choices []simulationChoiceRecord) int {
+	distance := 0
+	for _, choice := range choices {
+		distance += choice.selected
+	}
+
+	return distance
+}
+
 func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
