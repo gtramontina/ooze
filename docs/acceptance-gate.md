@@ -39,6 +39,12 @@ Every pull request requires:
 4. Linux/Darwin/Windows and unsupported-sentinel cross-compilation; and
 5. isolated `golangci-lint run --no-config ./...` evidence.
 
+Toolchain layering is deliberate. Primary Ubuntu CI validates the Devbox
+environment. Native OS Compatibility and mutation matrices instead use the
+SHA-pinned `actions/setup-go` action with exact Go 1.26.6 symmetrically on
+Linux, Darwin, and Windows, preserving one native command path for the
+kernel-specific evidence.
+
 The existing mutation workflow remains a post-CI `main` gate across Linux,
 Darwin, and Windows. Before the final landing decision, #72 runs it against the
 exact candidate revision and also supplies isolated deliberate
