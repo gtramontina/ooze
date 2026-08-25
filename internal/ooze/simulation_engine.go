@@ -24,6 +24,8 @@ type simulationEngineMove struct {
 	effect             campaignEffect
 	action             supervisorAction
 	variant            uint8
+	attemptKind        campaignAttemptKind
+	mutant             mutantIdentity
 	delivery           campaignEventPayload
 	supervisorDelivery *supervisorEvent
 }
@@ -80,7 +82,7 @@ func simulationExploreEngine(
 				kind: simulationLivenessNoMove, live: engine.liveSources(),
 			}}
 		}
-		selected, recovery := simulationSelectEngineMove(&engine.trace, choices, len(moves))
+		selected, recovery := simulationSelectEngineMove(&engine.trace, choices, moves)
 		if recovery {
 			recoverySteps++
 			if recoverySteps > recoveryBound {
@@ -123,9 +125,23 @@ func simulationExploreEngine(
 func simulationSelectEngineMove(
 	trace *simulationTrace,
 	choices simulationChoiceSource,
-	limit int,
+	moves []simulationEngineMove,
 ) (int, bool) {
+	limit := len(moves)
 	recovery := choices == nil
+	if focused, ok := choices.(interface {
+		chooseMove([]simulationEngineMove) int
+	}); ok {
+		selected := focused.chooseMove(slices.Clone(moves))
+		if selected < 0 || selected >= limit {
+			panic("focused simulation choice is outside the enabled set")
+		}
+		trace.choices = append(trace.choices, simulationChoiceRecord{
+			limit: limit, selected: selected,
+		})
+
+		return selected, false
+	}
 	if cursor, ok := choices.(*simulationChoiceCursor); ok {
 		recovery = cursor.at >= len(cursor.values)
 	}
@@ -216,7 +232,22 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		engine.enqueueDelivery(sequence, startCommittedEvent{
 			attempt: move.effect.attempt, grant: move.effect.grant, result: campaignStartEvidence(result),
 		})
+	case campaignEffectBindConfirmationBarrier:
+		binding := runtimeBarrierBinding(move.effect.binding)
+		var result barrierResult
+		engine.runtime, result = engine.runtime.sealAndBindConfirmationBarrier(binding)
+		sequence := engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation:  simulationBindConfirmationBarrier,
+			runtimeBarrier:    simulationTraceBarrierBinding(binding),
+			runtimeState:      simulationTraceRuntimeState(engine.runtime),
+			runtimeBarrierOut: simulationTraceBarrierResult(result),
+		})
+		engine.enqueueDelivery(sequence, confirmationBarrierBoundEvent{
+			attempt: move.effect.attempt, result: campaignBarrierEvidence(result),
+		})
 	case campaignEffectLaunchAttempt:
+		move.effect.mutant = simulationCampaignAttemptMutant(engine.campaign, move.effect.attempt)
 		engine.launches[move.effect.generation] = move.effect
 		registeredAt := time.Unix(int64(1_000+engine.attempts*100), 0)
 		return engine.applySupervisor(move.source, supervisorEvent{
@@ -340,6 +371,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeState:          simulationTraceRuntimeState(engine.runtime),
 			runtimeObservationOut: simulationTraceObservationResult(receipt),
 		})
+		engine.enqueueAdmissionDeliveries(sequence, receipt.deliveries)
 		kind := supervisorRuntimeAcknowledged
 		if receipt.confirmationProvisional {
 			kind = supervisorRuntimeProvisionalDeadline
@@ -363,6 +395,22 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			event.resolvedMutationDeadline = resolveBaselineMutationDeadline(
 				terminalExecutionData(terminal).CommandDuration, engine.definition.campaign.peers,
 			)
+		}
+		if launch.completesConfirmationQueue {
+			var completed confirmationQueueResult
+			engine.runtime, completed = engine.runtime.completeConfirmationQueue(engine.registration.token)
+			sequence := engine.append(simulationRecord{
+				authority: simulationRuntimeAuthority, source: move.source,
+				runtimeOperation: simulationCompleteConfirmationQueue,
+				runtimeCampaign:  engine.registration.token,
+				runtimeState:     simulationTraceRuntimeState(engine.runtime),
+				runtimeQueueOut:  simulationTraceConfirmationQueueResult(completed),
+			})
+			event.receipt.confirmationQueueDrained = completed.decision == confirmationQueueCompleted
+			engine.enqueueAdmissionDeliveries(sequence, completed.deliveries)
+			engine.enqueueDelivery(sequence, event)
+
+			return nil
 		}
 		return engine.applyCampaign(move.source, event)
 	default:
@@ -499,6 +547,17 @@ func (engine *simulationEngine) enqueueDelivery(sequence uint64, payload campaig
 	})
 }
 
+func (engine *simulationEngine) enqueueAdmissionDeliveries(
+	sequence uint64,
+	deliveries []admissionGrant,
+) {
+	for _, grant := range deliveries {
+		engine.enqueueDelivery(sequence, admissionGrantedEvent{
+			attempt: grant.attempt, grant: campaignAdmissionFact(grant),
+		})
+	}
+}
+
 func (engine *simulationEngine) enqueueSupervisorDelivery(sequence uint64, event supervisorEvent) {
 	engine.pending = append(engine.pending, simulationEngineMove{
 		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: sequence},
@@ -509,6 +568,10 @@ func (engine *simulationEngine) enqueueSupervisorDelivery(sequence uint64, event
 func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 	moves := make([]simulationEngineMove, 0, len(engine.pending)+2)
 	for _, move := range engine.pending {
+		if move.source.kind == simulationSupervisorActionSource {
+			launch := engine.launches[move.action.generation]
+			move.attemptKind, move.mutant = launch.attemptKind, launch.mutant
+		}
 		if move.source.kind == simulationSupervisorActionSource &&
 			move.action.kind == supervisorSampleRunning {
 			continue
@@ -568,4 +631,13 @@ func simulationSupervisorAttempt(state supervisorState, generation attemptGenera
 		}
 	}
 	panic("simulation supervisor attempt is absent")
+}
+
+func simulationCampaignAttemptMutant(state campaignState, identity attemptIdentity) mutantIdentity {
+	for _, attempt := range state.attempts {
+		if attempt.identity == identity {
+			return attempt.mutant
+		}
+	}
+	panic("simulation campaign attempt is absent")
 }

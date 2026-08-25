@@ -14,6 +14,14 @@ import (
 	"github.com/gtramontina/ooze/viruses/integerincrement"
 )
 
+type simulationFocusedChoiceSource func([]simulationEngineMove) int
+
+func (simulationFocusedChoiceSource) choose(int) int { return 0 }
+
+func (source simulationFocusedChoiceSource) chooseMove(moves []simulationEngineMove) int {
+	return source(moves)
+}
+
 func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *testing.T) {
 	definition := simulationDefinition{
 		campaign: campaignDefinition{
@@ -234,6 +242,58 @@ func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T)
 	}
 	if !reflect.DeepEqual(replayed.world, explored.world) {
 		t.Fatalf("overlap replay world diverged:\n got=%#v\nwant=%#v", replayed.world, explored.world)
+	}
+}
+
+func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) {
+	timedOut := false
+	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		if !timedOut {
+			peerReady := false
+			for _, move := range moves {
+				peerReady = peerReady || move.action.kind == supervisorWaitRoot &&
+					move.attemptKind == campaignAttemptPrimary && move.mutant == "mutant-b"
+			}
+			if peerReady {
+				for index, move := range moves {
+					if move.action.kind == supervisorWaitRoot && move.variant == 2 &&
+						move.attemptKind == campaignAttemptPrimary && move.mutant == "mutant-a" {
+						timedOut = true
+
+						return index
+					}
+				}
+			}
+		}
+		for index, move := range moves {
+			if move.action.kind != supervisorWaitRoot {
+				return index
+			}
+		}
+
+		return 0
+	})
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-confirmation", lineage: 252, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, choices)
+	completed, ok := explored.world.campaign.outcome.(completedOutcome)
+	if explored.failure != nil || !ok || !timedOut || len(completed.mutants) != 2 {
+		t.Fatalf("confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	}
+	if completed.mutants[0].kind != mutantSurvived ||
+		completed.mutants[0].primary.kind != campaignEvidenceDeadline ||
+		completed.mutants[0].confirmation.kind != campaignEvidenceSettled ||
+		!completed.singleAdmissionFallback || explored.world.campaign.commandCount() != 4 {
+		t.Fatalf("confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
+	}
+	replayed := ReplayLegal(explored.trace)
+	if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
+		t.Fatalf("confirmation replay failure=%v world-equal=%v",
+			replayed.failure, reflect.DeepEqual(replayed.world, explored.world))
 	}
 }
 
