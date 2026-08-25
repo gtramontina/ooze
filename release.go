@@ -3,6 +3,7 @@ package ooze
 import (
 	"flag"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/gtramontina/ooze/internal/cmdtestrunner"
@@ -10,19 +11,17 @@ import (
 	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
+	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gotextdiff"
 	"github.com/gtramontina/ooze/internal/ignoredrepository"
 	"github.com/gtramontina/ooze/internal/iologger"
-	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/prettydiff"
+	"github.com/gtramontina/ooze/internal/result"
 	"github.com/gtramontina/ooze/internal/scorecalculator"
-	"github.com/gtramontina/ooze/internal/testingtlaboratory"
-	"github.com/gtramontina/ooze/internal/verboselaboratory"
 	"github.com/gtramontina/ooze/internal/verbosereporter"
 	"github.com/gtramontina/ooze/internal/verboserepository"
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
-	"github.com/gtramontina/ooze/internal/verbosetestrunner"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/arithmetic"
 	"github.com/gtramontina/ooze/viruses/arithmeticassignment"
@@ -49,6 +48,7 @@ func init() { //nolint:gochecknoinits
 var defaultOptions = Options{ //nolint:gochecknoglobals
 	Repository:                fsrepository.New("."),
 	TestRunner:                cmdtestrunner.New("go", "test", "-count=1", "./..."),
+	TestCommand:               []string{"go", "test", "-count=1", "./..."},
 	TemporaryDir:              fstemporarydir.New("ooze-"),
 	MinimumThreshold:          1.0,
 	Serial:                    false,
@@ -83,7 +83,8 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 //   - WithRepositoryRoot: `.`
 //   - WithTestCommand: `go test -count=1 ./...`
 //   - WithMinimumThreshold: `1.0`
-//   - Parallel: `false`
+//   - Serial: `false` (automatic managed admission is the default)
+//   - WithMutationTimeout: baseline-derived
 //   - IgnoreSourceFiles: `nil`
 //   - WithViruses: all available (see viruses.Virus' implementations)
 //
@@ -116,29 +117,37 @@ func Release(t *testing.T, options ...Option) {
 	if verbose() {
 		opts.Repository = verboserepository.New(logger, opts.Repository)
 		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
-		opts.TestRunner = verbosetestrunner.New(logger, opts.TestRunner)
 		reporter = verbosereporter.New(logger, reporter)
 	}
 
-	var lab ooze.Laboratory = laboratory.New(opts.TestRunner, opts.TemporaryDir)
-	if verbose() {
-		lab = verboselaboratory.New(logger, lab)
-	}
-
-	t.Cleanup(func() {
-		t.Helper()
-		res := reporter.Summarize()
-		if !res.IsOk() {
-			t.Fail()
-		}
-	})
-
-	lab = testingtlaboratory.New(t, lab, !opts.Serial)
-
 	logger.Logf("%s %s", color.Yellow("┃"), color.Green("Releasing Ooze…"))
-	ooze.New(opts.Repository, lab, reporter).Release(
-		opts.Viruses...,
-	)
+	profile := ooze.AutomaticProfile
+	if opts.Serial {
+		profile = ooze.SerialProfile
+	}
+	managed := ooze.ProcessManagedRelease(ooze.ManagedReleaseConfiguration{
+		Lineage: uint64(reflect.ValueOf(t).Pointer()), Repository: opts.Repository,
+		TemporaryDir: opts.TemporaryDir, Command: opts.TestCommand,
+		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
+		Viruses: opts.Viruses,
+	})
+	if managed.Outcome == ooze.ManagedCleanupUnconfirmed {
+		panic(managed.Cause)
+	}
+	if managed.Outcome != ooze.ManagedCompleted {
+		t.Fail()
+		return
+	}
+	for _, mutation := range managed.Mutations {
+		outcome := result.Ok("mutant killed")
+		if mutation.Outcome == ooze.ManagedSurvived {
+			outcome = result.Err[string]("mutant survived")
+		}
+		reporter.AddDiagnostic(ooze.NewDiagnostic(future.Resolved(outcome), mutation.File))
+	}
+	if !reporter.Summarize().IsOk() {
+		t.Fail()
+	}
 }
 
 func verbose() bool {

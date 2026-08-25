@@ -45,6 +45,8 @@ type supervisorDrivenAttempt struct {
 	launchConsumed  bool
 	launchReturn    []supervisorAction
 	emergencyReturn bool
+	runtimeReceipt  observationResult
+	receiptReady    bool
 }
 
 type supervisorDriver struct {
@@ -69,6 +71,8 @@ type supervisorDriver struct {
 	emergencyStarted  bool
 	emergencyReturns  int
 	emergencyDeferred []supervisorAction
+	emergencyReceipt  emergencySettlement
+	emergencyReady    bool
 }
 
 func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorDriver {
@@ -125,6 +129,10 @@ func newDrivenSupervisorForTest(
 }
 
 func (driver *supervisorDriver) launchInstalled(start installedStart, spec Spec) LaunchResult {
+	return driver.launchManaged(start, spec).result
+}
+
+func (driver *supervisorDriver) launchManaged(start installedStart, spec Spec) managedObservedLaunch {
 	var actions []supervisorAction
 	var launchObservation attemptObservation
 	observed := start.launch(func(generation attemptGeneration) attemptObservation {
@@ -132,13 +140,13 @@ func (driver *supervisorDriver) launchInstalled(start installedStart, spec Spec)
 
 		return launchObservation
 	})
-	start.shell.observeAttempt(start.generation, observed)
+	receipt := start.shell.observeAttempt(start.generation, observed)
 	published := driver.finishLaunchReturn(start.generation, actions)
 	if launchObservation == nil || published == nil {
 		invariant(supervisorDriverOperation, "launch returned before publication")
 	}
 
-	return published
+	return managedObservedLaunch{result: published, receipt: receipt}
 }
 
 func (driver *supervisorDriver) stageLaunch(
@@ -869,6 +877,7 @@ func (driver *supervisorDriver) sealStopAdmission(action supervisorAction) {
 
 func (driver *supervisorDriver) settleRuntime(action supervisorAction) {
 	receipt := driver.runtime.observeAttempt(action.generation, terminalObservation(action.terminal))
+	driver.recordRuntimeReceipt(action.generation, receipt)
 	kind := supervisorRuntimeClosurePending
 	if receipt.settlementAcknowledged {
 		kind = supervisorRuntimeAcknowledged
@@ -891,6 +900,7 @@ func (driver *supervisorDriver) settleRuntime(action supervisorAction) {
 
 func (driver *supervisorDriver) transferResidualCustody(action supervisorAction) {
 	receipt := driver.runtime.observeAttempt(action.generation, drainUnconfirmed{})
+	driver.recordRuntimeReceipt(action.generation, receipt)
 	if receipt.settlementAcknowledged || receipt.confirmationProvisional ||
 		!receipt.runtimeClosureInProgress {
 		invariant(supervisorDriverOperation, "runtime rejected residual custody transfer")
@@ -941,6 +951,37 @@ func (driver *supervisorDriver) deliverTerminal(action supervisorAction) {
 	attempt.terminalReady = true
 	driver.mutex.Unlock()
 	delivery <- terminal
+}
+
+func (driver *supervisorDriver) recordRuntimeReceipt(generation attemptGeneration, receipt observationResult) {
+	driver.mutex.Lock()
+	defer driver.mutex.Unlock()
+	attempt := driver.requireAttempt(generation)
+	if attempt.receiptReady {
+		invariant(supervisorDriverOperation, "runtime receipt was duplicated")
+	}
+	attempt.runtimeReceipt = receipt
+	attempt.receiptReady = true
+}
+
+func (driver *supervisorDriver) waitManaged(
+	generation attemptGeneration,
+	owned *OwnedAttempt,
+) managedObservedTerminal {
+	if owned == nil {
+		invariant(supervisorDriverOperation, "managed wait lacks owned attempt")
+	}
+	terminal := owned.Wait()
+	driver.mutex.Lock()
+	attempt := driver.requireAttempt(generation)
+	if !attempt.receiptReady {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "managed terminal lacks runtime receipt")
+	}
+	receipt := attempt.runtimeReceipt
+	driver.mutex.Unlock()
+
+	return managedObservedTerminal{terminal: terminal, receipt: receipt}
 }
 
 func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
@@ -1133,7 +1174,19 @@ func (driver *supervisorDriver) executeEmergency(action supervisorAction) {
 	state := cloneSupervisorState(driver.state)
 	driver.mutex.Unlock()
 	executor := supervisorEmergencyExecutor{
-		settleEmergency:            driver.runtime.settleEmergency,
+		settleEmergency: func(sweep emergencySweep) emergencySettlement {
+			settlement := driver.runtime.settleEmergency(sweep)
+			driver.mutex.Lock()
+			if driver.emergencyReady {
+				driver.mutex.Unlock()
+				invariant(supervisorDriverOperation, "emergency runtime receipt was duplicated")
+			}
+			driver.emergencyReceipt = settlement
+			driver.emergencyReady = true
+			driver.mutex.Unlock()
+
+			return settlement
+		},
 		deliverEmergencySettlement: driver.deliverEmergencySettlement,
 	}
 	event := executor.execute(state, action)

@@ -66,6 +66,14 @@ type managedCampaignRunner struct {
 	workspaces map[string]TemporaryRepository
 	starts     map[attemptGeneration]installedStart
 	owned      map[attemptGeneration]*OwnedAttempt
+	terminals  chan managedTerminalObservation
+	pending    int
+}
+
+type managedTerminalObservation struct {
+	attempt    attemptIdentity
+	generation attemptGeneration
+	observed   managedObservedTerminal
 }
 
 func newManagedCampaignRunner(construction managedCampaignConstruction) *managedCampaignRunner {
@@ -80,6 +88,7 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		workspaces:                  make(map[string]TemporaryRepository),
 		starts:                      make(map[attemptGeneration]installedStart),
 		owned:                       make(map[attemptGeneration]*OwnedAttempt),
+		terminals:                   make(chan managedTerminalObservation),
 	}
 }
 
@@ -91,12 +100,17 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 	}
 	var effects []campaignEffect
 	runner.state, effects = beginCampaign(definition)
-	for len(effects) != 0 {
+	for len(effects) != 0 || runner.pending != 0 {
 		var next []campaignEffect
 		for _, effect := range effects {
 			next = append(next, runner.execute(effect, request)...)
 		}
 		effects = next
+		if len(effects) == 0 && runner.pending != 0 {
+			terminal := <-runner.terminals
+			runner.pending--
+			effects = runner.settle(terminal, request)
+		}
 	}
 
 	return managedCampaignResult{
@@ -257,9 +271,24 @@ func (runner *managedCampaignRunner) launch(
 	if owned == nil {
 		return effects
 	}
-	observed := runner.attempts.wait(effect.generation, owned)
-	delete(runner.owned, effect.generation)
-	attemptAt := runner.state.attemptIndex(effect.attempt)
+	runner.pending++
+	go func() {
+		runner.terminals <- managedTerminalObservation{
+			attempt: effect.attempt, generation: effect.generation,
+			observed: runner.attempts.wait(effect.generation, owned),
+		}
+	}()
+
+	return effects
+}
+
+func (runner *managedCampaignRunner) settle(
+	terminal managedTerminalObservation,
+	request managedCampaignRequest,
+) []campaignEffect {
+	delete(runner.owned, terminal.generation)
+	attemptAt := runner.state.attemptIndex(terminal.attempt)
+	observed := terminal.observed
 	if attemptAt >= 0 && runner.state.attempts[attemptAt].kind == campaignAttemptConfirmation &&
 		len(runner.state.drain.provisionals) == 1 {
 		completed := runner.runtime.completeConfirmationQueue(runner.state.runtimeToken)
@@ -269,7 +298,7 @@ func (runner *managedCampaignRunner) launch(
 		observed.receipt.confirmationQueueDrained = true
 	}
 	terminalEvent := attemptTerminalEvent{
-		attempt: effect.attempt, generation: effect.generation,
+		attempt: terminal.attempt, generation: terminal.generation,
 		terminal: observed.terminal, receipt: observed.receipt,
 	}
 	if attemptAt >= 0 && runner.state.attempts[attemptAt].kind == campaignAttemptBaseline {
@@ -287,7 +316,7 @@ func (runner *managedCampaignRunner) launch(
 		}
 	}
 
-	return append(effects, runner.advance(terminalEvent)...)
+	return runner.advance(terminalEvent)
 }
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
