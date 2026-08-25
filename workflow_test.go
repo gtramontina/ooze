@@ -14,7 +14,7 @@ func workflowJob(t *testing.T, path, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(string(contents), "\n")
+	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
 	header := "  " + name + ":"
 	start := -1
 	for index, line := range lines {
@@ -190,6 +190,8 @@ func TestManualNativeWorkflowRunsExactCandidateMutationGate(t *testing.T) {
 	requireContract(t, mutationJob, "manual mutation evidence job",
 		"Mutation evidence / ${{ matrix.name }}",
 		"Mutation campaign acceptance",
+		"Install gotestsum 1.13.0",
+		"go install gotest.tools/gotestsum@v1.13.0",
 		"github.event_name == 'workflow_dispatch'",
 		"-timeout=30m -count=1 -v -tags=mutation",
 	)
