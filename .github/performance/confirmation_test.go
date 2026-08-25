@@ -44,7 +44,7 @@ func TestPerformanceConfirmationEvidence(t *testing.T) {
 		return
 	}
 	if runtime.GOMAXPROCS(0) < 2 {
-		t.Fatal("confirmation evidence requires at least two detected admission slots")
+		t.Fatal("confirmation evidence requires detected admission capacity of at least two")
 	}
 	repository := t.TempDir()
 	if err := os.WriteFile(
