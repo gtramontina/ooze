@@ -1247,63 +1247,22 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 		}
 		width--
 	}
-	for index := 0; index < len(shrunk.definition.catalogue); {
-		definition := shrunk.definition
-		definition.catalogue = slices.Delete(slices.Clone(definition.catalogue), index, index+1)
-		candidate, ok := simulationExploreShrinkCandidate(shrunk, definition)
-		if !ok {
-			index++
-			continue
-		}
-		if simulationPreservesFailure(candidate, key) && simulationTraceShrinks(candidate, shrunk) {
-			shrunk = candidate
-			continue
-		}
-		index++
-	}
-	for parallelism := 1; parallelism < shrunk.definition.capacity; parallelism++ {
-		definition := shrunk.definition
-		definition.capacity = parallelism
-		definition.campaign.peers = parallelism
-		candidate, ok := simulationExploreShrinkCandidate(shrunk, definition)
-		if !ok {
-			continue
-		}
-		if simulationPreservesFailure(candidate, key) && simulationTraceShrinks(candidate, shrunk) {
-			shrunk = candidate
-			break
-		}
-	}
-	for choiceAt := 0; choiceAt < len(shrunk.choices); choiceAt++ {
-		choice := shrunk.choices[choiceAt]
-		if choice.recovery || choice.selected == 0 {
-			continue
-		}
-		for selected := 0; selected < choice.selected; selected++ {
-			choices := slices.Clone(shrunk.choices[:choiceAt+1])
-			choices[choiceAt].selected = selected
+	shrunk = simulationShrinkDefinitionAndChoices(shrunk, simulationShrinkPreservers{
+		definition: func(trace simulationTrace, definition simulationDefinition) (simulationTrace, bool) {
+			candidate, ok := simulationExploreShrinkCandidate(trace, definition)
+
+			return candidate, ok && simulationPreservesFailure(candidate, key)
+		},
+		choices: func(
+			trace simulationTrace, definition simulationDefinition, choices []simulationChoiceRecord,
+		) (simulationTrace, bool) {
 			candidate, ok := simulationExploreShrinkCandidateWithChoices(
-				shrunk, shrunk.definition, &simulationShrinkChoiceSource{choices: choices},
+				trace, definition, &simulationShrinkChoiceSource{choices: slices.Clone(choices)},
 			)
-			if !ok || !simulationPreservesFailure(candidate, key) || !simulationTraceShrinks(candidate, shrunk) {
-				continue
-			}
-			shrunk = candidate
-			break
-		}
-	}
-	canonical := shrunk.definition
-	canonical.campaign.identity = "campaign-1"
-	canonical.campaign.lineage = 1
-	canonical.catalogue = make([]mutantIdentity, len(shrunk.definition.catalogue))
-	for index := range canonical.catalogue {
-		canonical.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
-	}
-	if candidate, ok := simulationExploreShrinkCandidateWithChoices(
-		shrunk, canonical, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)},
-	); ok && simulationPreservesFailure(candidate, key) && simulationTraceShrinks(candidate, shrunk) {
-		shrunk = candidate
-	}
+
+			return candidate, ok && simulationPreservesFailure(candidate, key)
+		},
+	})
 	if key.kind == simulationReplayFailureKind {
 		first := ReplayLegal(shrunk)
 		second := ReplayLegal(shrunk)
@@ -1322,6 +1281,11 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 }
 
 type simulationExploreEvaluator func(simulationDefinition, simulationChoiceSource) SimulationResult
+
+type simulationShrinkPreservers struct {
+	definition func(simulationTrace, simulationDefinition) (simulationTrace, bool)
+	choices    func(simulationTrace, simulationDefinition, []simulationChoiceRecord) (simulationTrace, bool)
+}
 
 func simulationShrinkLivenessWith(
 	trace simulationTrace,
@@ -1369,10 +1333,33 @@ func simulationShrinkLivenessOnceWith(
 		}
 		width--
 	}
+	shrunk = simulationShrinkDefinitionAndChoices(shrunk, simulationShrinkPreservers{
+		definition: func(trace simulationTrace, definition simulationDefinition) (simulationTrace, bool) {
+			return preserves(definition, trace.choices)
+		},
+		choices: func(
+			_ simulationTrace, definition simulationDefinition, choices []simulationChoiceRecord,
+		) (simulationTrace, bool) {
+			return preserves(definition, choices)
+		},
+	})
+	first := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
+	second := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
+	if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
+		panic("simulation shrink did not retain a deterministic liveness failure")
+	}
+
+	return shrunk
+}
+
+func simulationShrinkDefinitionAndChoices(
+	shrunk simulationTrace,
+	preservers simulationShrinkPreservers,
+) simulationTrace {
 	for index := 0; index < len(shrunk.definition.catalogue); {
 		definition := shrunk.definition
 		definition.catalogue = slices.Delete(slices.Clone(definition.catalogue), index, index+1)
-		candidate, ok := preserves(definition, shrunk.choices)
+		candidate, ok := preservers.definition(shrunk, definition)
 		if !ok || !simulationTraceShrinks(candidate, shrunk) {
 			index++
 			continue
@@ -1383,7 +1370,7 @@ func simulationShrinkLivenessOnceWith(
 		definition := shrunk.definition
 		definition.capacity = parallelism
 		definition.campaign.peers = parallelism
-		candidate, ok := preserves(definition, shrunk.choices)
+		candidate, ok := preservers.definition(shrunk, definition)
 		if !ok || !simulationTraceShrinks(candidate, shrunk) {
 			continue
 		}
@@ -1398,7 +1385,7 @@ func simulationShrinkLivenessOnceWith(
 		for selected := 0; selected < choice.selected; selected++ {
 			choices := slices.Clone(shrunk.choices[:choiceAt+1])
 			choices[choiceAt].selected = selected
-			candidate, ok := preserves(shrunk.definition, choices)
+			candidate, ok := preservers.choices(shrunk, shrunk.definition, choices)
 			if !ok || !simulationTraceShrinks(candidate, shrunk) {
 				continue
 			}
@@ -1413,13 +1400,9 @@ func simulationShrinkLivenessOnceWith(
 	for index := range canonical.catalogue {
 		canonical.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
 	}
-	if candidate, ok := preserves(canonical, shrunk.choices); ok && simulationTraceShrinks(candidate, shrunk) {
+	if candidate, ok := preservers.choices(shrunk, canonical, shrunk.choices); ok &&
+		simulationTraceShrinks(candidate, shrunk) {
 		shrunk = candidate
-	}
-	first := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
-	second := evaluate(shrunk.definition, &simulationShrinkChoiceSource{choices: slices.Clone(shrunk.choices)})
-	if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
-		panic("simulation shrink did not retain a deterministic liveness failure")
 	}
 
 	return shrunk
