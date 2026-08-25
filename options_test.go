@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze"
-	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
@@ -24,11 +23,11 @@ func TestOptions(t *testing.T) {
 	t.Run("can configure test command to run", func(t *testing.T) {
 		{
 			options := ooze.WithTestCommand("yes")(ooze.Options{})
-			assert.Equal(t, cmdtestrunner.New("yes", []string{}...), options.TestRunner)
+			assert.Equal(t, []string{"yes"}, options.TestCommand)
 		}
 		{
 			options := ooze.WithTestCommand("echo some value")(ooze.Options{})
-			assert.Equal(t, cmdtestrunner.New("echo", "some", "value"), options.TestRunner)
+			assert.Equal(t, []string{"echo", "some", "value"}, options.TestCommand)
 		}
 	})
 

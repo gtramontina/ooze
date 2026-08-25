@@ -4,22 +4,17 @@ import (
 	"flag"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/color"
-	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
-	"github.com/gtramontina/ooze/internal/future"
 	"github.com/gtramontina/ooze/internal/gotextdiff"
 	"github.com/gtramontina/ooze/internal/ignoredrepository"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/internal/prettydiff"
-	"github.com/gtramontina/ooze/internal/result"
-	"github.com/gtramontina/ooze/internal/scorecalculator"
-	"github.com/gtramontina/ooze/internal/verbosereporter"
 	"github.com/gtramontina/ooze/internal/verboserepository"
 	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/viruses"
@@ -47,7 +42,6 @@ func init() { //nolint:gochecknoinits
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
 	Repository:                fsrepository.New("."),
-	TestRunner:                cmdtestrunner.New("go", "test", "-count=1", "./..."),
 	TestCommand:               []string{"go", "test", "-count=1", "./..."},
 	TemporaryDir:              fstemporarydir.New("ooze-"),
 	MinimumThreshold:          1.0,
@@ -103,13 +97,6 @@ func Release(t *testing.T, options ...Option) {
 
 	var logger ooze.Logger = iologger.New(os.Stdout)
 
-	var reporter ooze.Reporter = consolereporter.New(
-		logger,
-		prettydiff.New(gotextdiff.New()),
-		scorecalculator.New(),
-		opts.MinimumThreshold,
-	)
-
 	if opts.IgnoreSourceFilesPatterns != nil {
 		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPatterns, opts.Repository)
 	}
@@ -117,7 +104,6 @@ func Release(t *testing.T, options ...Option) {
 	if verbose() {
 		opts.Repository = verboserepository.New(logger, opts.Repository)
 		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
-		reporter = verbosereporter.New(logger, reporter)
 	}
 
 	logger.Logf("%s %s", color.Yellow("┃"), color.Green("Releasing Ooze…"))
@@ -138,16 +124,30 @@ func Release(t *testing.T, options ...Option) {
 		t.Fail()
 		return
 	}
-	for _, mutation := range managed.Mutations {
-		outcome := result.Ok("mutant killed")
-		if mutation.Outcome == ooze.ManagedSurvived {
-			outcome = result.Err[string]("mutant survived")
-		}
-		reporter.AddDiagnostic(ooze.NewDiagnostic(future.Resolved(outcome), mutation.File))
-	}
-	if !reporter.Summarize().IsOk() {
+	if !summarizeManagedCompatibility(logger, managed.Mutations, opts.MinimumThreshold) {
 		t.Fail()
 	}
+}
+
+func summarizeManagedCompatibility(
+	logger ooze.Logger,
+	mutations []ooze.ManagedMutationResult,
+	minimumThreshold float32,
+) bool {
+	detected := 0
+	differ := prettydiff.New(gotextdiff.New())
+	for _, mutation := range mutations {
+		if mutation.Outcome != ooze.ManagedSurvived {
+			detected++
+
+			continue
+		}
+		logger.Logf("Mutant survived: %s\n%s", mutation.File.Label(), strings.TrimSpace(mutation.File.Diff(differ)))
+	}
+	score := float32(detected) / float32(len(mutations))
+	logger.Logf("Mutation score: %.2f (minimum: %.2f)", score, minimumThreshold)
+
+	return score >= minimumThreshold
 }
 
 func verbose() bool {

@@ -5,10 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/fsrepository"
-	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -17,9 +15,8 @@ type Option func(Options) Options
 
 type Options struct {
 	Repository                ooze.Repository
-	TestRunner                laboratory.TestRunner
 	TestCommand               []string
-	TemporaryDir              laboratory.TemporaryDirectory
+	TemporaryDir              ooze.ManagedTemporaryDirectory
 	MinimumThreshold          float32
 	Serial                    bool
 	MutationTimeout           time.Duration
@@ -46,7 +43,6 @@ func WithTestCommand(testCommand string) func(Options) Options {
 	return func(options Options) Options {
 		testCommandParts := strings.Split(testCommand, " ")
 		options.TestCommand = append([]string(nil), testCommandParts...)
-		options.TestRunner = cmdtestrunner.New(testCommandParts[0], testCommandParts[1:]...)
 
 		return options
 	}
