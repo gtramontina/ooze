@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSupervisorReducerTerminalReleaseStoresEvidenceBeforeRuntimeSettlement(t *testing.T) {
@@ -39,12 +41,10 @@ func TestSupervisorReducerTerminalReleaseStoresEvidenceBeforeRuntimeSettlement(t
 			)
 			before := cloneSupervisorState(fixture.state)
 			attempt := supervisorAttemptByGeneration(t, fixture.state, fixture.generation)
-			if attempt.phase != supervisorReleasingDomain ||
-				attempt.pendingAction != (supervisorPendingAction{
-					kind: fixture.release.kind, token: fixture.release.token,
-				}) {
-				t.Fatalf("release fixture = %#v action=%#v", attempt, fixture.release)
-			}
+			assert.Equal(t, supervisorReleasingDomain, attempt.phase, "release fixture = %#v action=%#v", attempt, fixture.release)
+			assert.Equal(t, (supervisorPendingAction{
+				kind: fixture.release.kind, token: fixture.release.token,
+			}), attempt.pendingAction, "release fixture = %#v action=%#v", attempt, fixture.release)
 
 			at := fixture.release.at.Add(time.Nanosecond)
 			completion := supervisorReleaseCompletion{
@@ -106,15 +106,9 @@ func TestSupervisorReducerTerminalReleaseStoresEvidenceBeforeRuntimeSettlement(t
 			wantAttempt.releaseDiagnostic = test.releaseDiagnostic
 			wantAttempt.terminal = wantEvidence
 
-			if !reflect.DeepEqual(actions, []supervisorAction{wantAction}) {
-				t.Fatalf("release actions = %#v, want %#v", actions, []supervisorAction{wantAction})
-			}
-			if !reflect.DeepEqual(next, wantState) {
-				t.Fatalf("release next state = %#v, want %#v", next, wantState)
-			}
-			if !reflect.DeepEqual(fixture.state, before) {
-				t.Fatalf("release transition mutated its input: before=%#v after=%#v", before, fixture.state)
-			}
+			assert.Equal(t, []supervisorAction{wantAction}, actions, "release actions = %#v, want %#v", actions, []supervisorAction{wantAction})
+			assert.Equal(t, wantState, next, "release next state = %#v, want %#v", next, wantState)
+			assert.Equal(t, before, fixture.state, "release transition mutated its input: before=%#v after=%#v", before, fixture.state)
 		})
 	}
 }
@@ -135,12 +129,11 @@ func TestSupervisorReducerTerminalReleaseEmergencyPreservesRuntimeSettlementInFl
 	})
 	assertSupervisorActions(t, settleActions, supervisorSettleRuntime)
 	settlingAttempt := supervisorAttemptByGeneration(t, settling, fixture.generation)
-	if settlingAttempt.phase != supervisorSettlingRuntime ||
-		settlingAttempt.pendingAction != (supervisorPendingAction{
-			kind: supervisorSettleRuntime, token: settleActions[0].token,
-		}) || settlingAttempt.releaseDiagnostic != 0 {
-		t.Fatalf("runtime settlement fixture = %#v actions=%#v", settlingAttempt, settleActions)
-	}
+	assert.Equal(t, supervisorSettlingRuntime, settlingAttempt.phase, "runtime settlement fixture = %#v actions=%#v", settlingAttempt, settleActions)
+	assert.Equal(t, (supervisorPendingAction{
+		kind: supervisorSettleRuntime, token: settleActions[0].token,
+	}), settlingAttempt.pendingAction, "runtime settlement fixture = %#v actions=%#v", settlingAttempt, settleActions)
+	assert.EqualValues(t, 0, settlingAttempt.releaseDiagnostic, "runtime settlement fixture = %#v actions=%#v", settlingAttempt, settleActions)
 
 	emergencyAt := releaseAt.Add(time.Nanosecond)
 	emergencyDrainBy := settlingAttempt.drain.effectiveDrainBy.Add(time.Second)
@@ -149,18 +142,12 @@ func TestSupervisorReducerTerminalReleaseEmergencyPreservesRuntimeSettlementInFl
 		kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 		emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 	})
-	if len(actions) != 0 {
-		t.Fatalf("emergency competed with runtime settlement: %#v", actions)
-	}
+	assert.EqualValues(t, 0, len(actions), "emergency competed with runtime settlement: %#v", actions)
 	want := cloneSupervisorState(settling)
 	want.emergency = supervisorEmergencyEpoch{active: true, at: emergencyAt, drainBy: emergencyDrainBy}
 	want.attempts[0].lastEventAt = emergencyAt
-	if !reflect.DeepEqual(next, want) {
-		t.Fatalf("runtime-settlement emergency state = %#v, want %#v", next, want)
-	}
-	if !reflect.DeepEqual(settling, before) {
-		t.Fatalf("runtime-settlement emergency mutated input: before=%#v after=%#v", before, settling)
-	}
+	assert.Equal(t, want, next, "runtime-settlement emergency state = %#v, want %#v", next, want)
+	assert.Equal(t, before, settling, "runtime-settlement emergency mutated input: before=%#v after=%#v", before, settling)
 }
 
 func TestSupervisorReducerTerminalReleaseRejectsMalformedCompletionByteStable(t *testing.T) {
@@ -255,9 +242,7 @@ func TestSupervisorReducerTerminalReleaseRejectsMalformedCompletionByteStable(t 
 			assertSupervisorInvariant(t, func() {
 				reduceSupervisor(state, event)
 			})
-			if !reflect.DeepEqual(state, before) {
-				t.Fatalf("rejected release completion mutated input: before=%#v after=%#v", before, state)
-			}
+			assert.Equal(t, before, state, "rejected release completion mutated input: before=%#v after=%#v", before, state)
 		})
 	}
 
@@ -278,13 +263,7 @@ func TestSupervisorReducerTerminalReleaseRejectsMalformedCompletionByteStable(t 
 		})
 		assertSupervisorActions(t, actions, supervisorSettleRuntime)
 		attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-		if attempt.terminal.commandDuration != attempt.commandDeadline {
-			t.Fatalf(
-				"deadline-equal root exit duration = %s, want %s",
-				attempt.terminal.commandDuration,
-				attempt.commandDeadline,
-			)
-		}
+		assert.Equal(t, attempt.commandDeadline, attempt.terminal.commandDuration, "deadline-equal root exit duration = %s, want %s", attempt.terminal.commandDuration, attempt.commandDeadline)
 	})
 
 	completion := supervisorReleaseCompletion{
@@ -305,9 +284,7 @@ func TestSupervisorReducerTerminalReleaseRejectsMalformedCompletionByteStable(t 
 	assertSupervisorInvariant(t, func() {
 		reduceSupervisor(settling, event)
 	})
-	if !reflect.DeepEqual(settling, before) {
-		t.Fatalf("duplicate release completion mutated input: before=%#v after=%#v", before, settling)
-	}
+	assert.Equal(t, before, settling, "duplicate release completion mutated input: before=%#v after=%#v", before, settling)
 }
 
 func TestSupervisorReducerTerminalReleaseLateAdoptionAwaitsEmergencySettlement(t *testing.T) {
@@ -327,12 +304,10 @@ func assertLateAdoptedRelease(
 	t.Helper()
 	fixture := newLateAdoptedReleaseReducerFixture(t)
 	fixtureAttempt := supervisorAttemptByGeneration(t, fixture.state, fixture.generation)
-	if fixtureAttempt.intent != (supervisorRunningIntent{}) ||
-		fixtureAttempt.pendingAction != (supervisorPendingAction{
-			kind: fixture.release.kind, token: fixture.release.token,
-		}) {
-		t.Fatalf("late-adopted release fixture manufactured intent or lost action: %#v", fixtureAttempt)
-	}
+	assert.Equal(t, (supervisorRunningIntent{}), fixtureAttempt.intent, "late-adopted release fixture manufactured intent or lost action: %#v", fixtureAttempt)
+	assert.Equal(t, (supervisorPendingAction{
+		kind: fixture.release.kind, token: fixture.release.token,
+	}), fixtureAttempt.pendingAction, "late-adopted release fixture manufactured intent or lost action: %#v", fixtureAttempt)
 
 	at := fixture.release.at.Add(time.Nanosecond)
 	completion := supervisorReleaseCompletion{
@@ -349,20 +324,14 @@ func assertLateAdoptedRelease(
 		at:         at,
 		release:    &completion,
 	})
-	if len(actions) != 0 {
-		t.Fatalf("late-adopted sweep emitted ordinary settlement or delivery: %#v", actions)
-	}
+	assert.EqualValues(t, 0, len(actions), "late-adopted sweep emitted ordinary settlement or delivery: %#v", actions)
 	wantReleased := cloneSupervisorState(fixture.state)
 	wantReleased.attempts[0].phase = supervisorAwaitingEmergencySettlement
 	wantReleased.attempts[0].lastEventAt = at
 	wantReleased.attempts[0].pendingAction = supervisorPendingAction{}
 	wantReleased.attempts[0].releaseDiagnostic = diagnostic
-	if !reflect.DeepEqual(next, wantReleased) {
-		t.Fatalf("late-adopted release state = %#v, want %#v", next, wantReleased)
-	}
-	if !reflect.DeepEqual(fixture.state, beforeRelease) {
-		t.Fatalf("late-adopted release mutated its input: before=%#v after=%#v", beforeRelease, fixture.state)
-	}
+	assert.Equal(t, wantReleased, next, "late-adopted release state = %#v, want %#v", next, wantReleased)
+	assert.Equal(t, beforeRelease, fixture.state, "late-adopted release mutated its input: before=%#v after=%#v", beforeRelease, fixture.state)
 
 	return fixture, next, fixtureAttempt
 }
@@ -397,15 +366,9 @@ func assertLateAdoptedEmergencyContinuation(
 	wantEmergency.emergency.pendingAction = supervisorPendingAction{
 		kind: settle.kind, token: settle.token,
 	}
-	if !reflect.DeepEqual(emergencyActions, []supervisorAction{settle}) {
-		t.Fatalf("settled late-adopted sweep actions = %#v, want %#v", emergencyActions, []supervisorAction{settle})
-	}
-	if !reflect.DeepEqual(afterEmergency, wantEmergency) {
-		t.Fatalf("post-release emergency state = %#v, want %#v", afterEmergency, wantEmergency)
-	}
-	if !reflect.DeepEqual(released, beforeEmergency) {
-		t.Fatalf("post-release emergency mutated its input: before=%#v after=%#v", beforeEmergency, released)
-	}
+	assert.Equal(t, []supervisorAction{settle}, emergencyActions, "settled late-adopted sweep actions = %#v, want %#v", emergencyActions, []supervisorAction{settle})
+	assert.Equal(t, wantEmergency, afterEmergency, "post-release emergency state = %#v, want %#v", afterEmergency, wantEmergency)
+	assert.Equal(t, beforeEmergency, released, "post-release emergency mutated its input: before=%#v after=%#v", beforeEmergency, released)
 	assertLateAdoptedEmergencyState(t, afterEmergency, fixture, fixtureAttempt)
 }
 
@@ -417,14 +380,13 @@ func assertLateAdoptedEmergencyState(
 ) {
 	t.Helper()
 	after := supervisorAttemptByGeneration(t, afterEmergency, fixture.generation)
-	if after.phase != supervisorAwaitingEmergencySettlement ||
-		after.pendingAction != (supervisorPendingAction{}) ||
-		after.terminal != (supervisorTerminalEvidence{}) ||
-		after.intent != (supervisorRunningIntent{}) || after.releaseDiagnostic != 707 ||
-		!after.drain.effectiveDrainBy.Equal(fixtureAttempt.drain.effectiveDrainBy) ||
-		afterEmergency.nextAction != fixture.state.nextAction+1 {
-		t.Fatalf("post-release emergency restarted or lengthened completed drainage: %#v", after)
-	}
+	assert.Equal(t, supervisorAwaitingEmergencySettlement, after.phase, "post-release emergency restarted or lengthened completed drainage: %#v", after)
+	assert.Equal(t, (supervisorPendingAction{}), after.pendingAction, "post-release emergency restarted or lengthened completed drainage: %#v", after)
+	assert.Equal(t, (supervisorTerminalEvidence{}), after.terminal, "post-release emergency restarted or lengthened completed drainage: %#v", after)
+	assert.Equal(t, (supervisorRunningIntent{}), after.intent, "post-release emergency restarted or lengthened completed drainage: %#v", after)
+	assert.EqualValues(t, 707, after.releaseDiagnostic, "post-release emergency restarted or lengthened completed drainage: %#v", after)
+	assert.True(t, after.drain.effectiveDrainBy.Equal(fixtureAttempt.drain.effectiveDrainBy), "post-release emergency restarted or lengthened completed drainage: %#v", after)
+	assert.Equal(t, fixture.state.nextAction+1, afterEmergency.nextAction, "post-release emergency restarted or lengthened completed drainage: %#v", after)
 }
 
 type terminalReleaseReducerFixture struct {
@@ -543,12 +505,11 @@ func newLateAdoptedReleaseReducerFixture(t *testing.T) terminalReleaseReducerFix
 func TestSupervisorReducerTerminalReleaseDataRemainsCapabilityFree(t *testing.T) {
 	diagnosticsType := reflect.TypeOf(supervisorTerminalDiagnostics{})
 	wantDiagnosticFields := []string{"wait", "running", "drain", "control", "release"}
-	if diagnosticsType.NumField() != len(wantDiagnosticFields) {
-		t.Fatalf("terminal diagnostics fields = %d, want exactly %d", diagnosticsType.NumField(), len(wantDiagnosticFields))
-	}
+	assert.Equal(t, len(wantDiagnosticFields), diagnosticsType.NumField(), "terminal diagnostics fields = %d, want exactly %d", diagnosticsType.NumField(), len(wantDiagnosticFields))
 	for index, want := range wantDiagnosticFields {
-		if got := diagnosticsType.Field(index).Name; got != want {
-			t.Fatalf("terminal diagnostics field %d = %q, want %q", index, got, want)
+		{
+			got := diagnosticsType.Field(index).Name
+			assert.Equal(t, want, got, "terminal diagnostics field %d = %q, want %q", index, got, want)
 		}
 	}
 

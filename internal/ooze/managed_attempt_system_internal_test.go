@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNativeManagedAttemptSystemUsesManagedControlBounds(t *testing.T) {
@@ -11,19 +14,11 @@ func TestNativeManagedAttemptSystemUsesManagedControlBounds(t *testing.T) {
 	if errors.Is(err, ErrUnsupportedPlatform) {
 		t.Skip("native supervision is unavailable on this operating system")
 	}
-	if err != nil {
-		t.Fatalf("construct managed attempt system: %v", err)
-	}
-	if system == nil || system.driver == nil {
-		t.Fatal("managed attempt system returned without its native driver")
-	}
-	if system.driver.launchProgress != time.Second || system.driver.drainEpoch != 5*time.Second {
-		t.Fatalf(
-			"managed control bounds = %v/%v, want 1s/5s",
-			system.driver.launchProgress,
-			system.driver.drainEpoch,
-		)
-	}
+	require.NoError(t, err, "construct managed attempt system: %v", err)
+	require.NotNil(t, system, "managed attempt system returned without its native driver")
+	require.NotNil(t, system.driver, "managed attempt system returned without its native driver")
+	assert.Equal(t, time.Second, system.driver.launchProgress, "managed control bounds = %v/%v, want 1s/5s", system.driver.launchProgress, system.driver.drainEpoch)
+	assert.Equal(t, 5*time.Second, system.driver.drainEpoch, "managed control bounds = %v/%v, want 1s/5s", system.driver.launchProgress, system.driver.drainEpoch)
 }
 
 func TestNativeManagedAttemptSystemAcceptsMatchingEmergencyEpoch(t *testing.T) {
@@ -32,9 +27,7 @@ func TestNativeManagedAttemptSystemAcceptsMatchingEmergencyEpoch(t *testing.T) {
 
 	observed := system.emergency(7)
 
-	if observed.epoch != 7 {
-		t.Fatalf("managed emergency epoch = %d, want 7", observed.epoch)
-	}
+	assert.EqualValues(t, 7, observed.epoch, "managed emergency epoch = %d, want 7", observed.epoch)
 }
 
 func TestNativeManagedAttemptSystemStopsThroughOwnedAdmission(t *testing.T) {
@@ -52,9 +45,7 @@ func TestNativeManagedAttemptSystemStopsThroughOwnedAdmission(t *testing.T) {
 
 		system.stop(owned)
 
-		if called {
-			t.Fatal("managed stop bypassed sealed owned-attempt admission")
-		}
+		assert.False(t, called, "managed stop bypassed sealed owned-attempt admission")
 	})
 
 	t.Run("owned peer", func(t *testing.T) {
@@ -65,8 +56,7 @@ func TestNativeManagedAttemptSystemStopsThroughOwnedAdmission(t *testing.T) {
 
 		system.stop(owned)
 
-		if !request.At.Equal(now) || !request.DrainBy.Equal(now.Add(5*time.Second)) {
-			t.Fatalf("managed stop request = %#v", request)
-		}
+		assert.True(t, request.At.Equal(now), "managed stop request = %#v", request)
+		assert.True(t, request.DrainBy.Equal(now.Add(5*time.Second)), "managed stop request = %#v", request)
 	})
 }

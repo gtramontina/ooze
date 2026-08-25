@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged(t *testing.T) {
@@ -16,15 +19,9 @@ func TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged(t *testing.T) {
 		Override:         override,
 		Profile:          AutomaticProfile,
 	})
-	if err != nil {
-		t.Fatalf("new mutation attempt plan: %v", err)
-	}
-	if plan.Deadline() != override {
-		t.Fatalf("deadline = %s, want absolute override %s", plan.Deadline(), override)
-	}
-	if plan.Profile() != AutomaticProfile {
-		t.Fatalf("profile = %v, want automatic", plan.Profile())
-	}
+	require.NoError(t, err, "new mutation attempt plan: %v", err)
+	require.Equal(t, override, plan.Deadline(), "deadline = %s, want absolute override %s", plan.Deadline(), override)
+	assert.Equal(t, AutomaticProfile, plan.Profile(), "profile = %v, want automatic", plan.Profile())
 }
 
 func TestMutationAttemptPlanRejectsUnresolvedFacts(t *testing.T) {
@@ -50,9 +47,7 @@ func TestMutationAttemptPlanRejectsUnresolvedFacts(t *testing.T) {
 			t.Parallel()
 
 			_, err := NewMutationAttemptPlan(input)
-			if !errors.Is(err, ErrInvalidMutationAttemptPlan) {
-				t.Fatalf("error = %v, want ErrInvalidMutationAttemptPlan", err)
-			}
+			assert.ErrorIs(t, err, ErrInvalidMutationAttemptPlan, "error = %v, want ErrInvalidMutationAttemptPlan", err)
 		})
 	}
 }
@@ -65,12 +60,8 @@ func TestMutationAttemptPlanDerivesDeadlineFromPermittedPeers(t *testing.T) {
 		Peers:            14,
 		Profile:          AutomaticProfile,
 	})
-	if err != nil {
-		t.Fatalf("new mutation attempt plan: %v", err)
-	}
-	if plan.Deadline() != 588*time.Second {
-		t.Fatalf("deadline = %s, want 24.5 * 24s", plan.Deadline())
-	}
+	require.NoError(t, err, "new mutation attempt plan: %v", err)
+	assert.Equal(t, 588*time.Second, plan.Deadline(), "deadline = %s, want 24.5 * 24s", plan.Deadline())
 }
 
 func TestMutationAttemptPlanAppliesTwentySecondFloor(t *testing.T) {
@@ -81,12 +72,8 @@ func TestMutationAttemptPlanAppliesTwentySecondFloor(t *testing.T) {
 		Peers:            1,
 		Profile:          SerialProfile,
 	})
-	if err != nil {
-		t.Fatalf("new mutation attempt plan: %v", err)
-	}
-	if plan.Deadline() != 20*time.Second {
-		t.Fatalf("deadline = %s, want 20s floor", plan.Deadline())
-	}
+	require.NoError(t, err, "new mutation attempt plan: %v", err)
+	assert.Equal(t, 20*time.Second, plan.Deadline(), "deadline = %s, want 20s floor", plan.Deadline())
 }
 
 func TestMutationAttemptPlanRejectsUnrepresentableDerivedDeadline(t *testing.T) {
@@ -97,9 +84,7 @@ func TestMutationAttemptPlanRejectsUnrepresentableDerivedDeadline(t *testing.T) 
 		Peers:            2,
 		Profile:          AutomaticProfile,
 	})
-	if !errors.Is(err, ErrInvalidMutationAttemptPlan) {
-		t.Fatalf("error = %v, want ErrInvalidMutationAttemptPlan", err)
-	}
+	assert.ErrorIs(t, err, ErrInvalidMutationAttemptPlan, "error = %v, want ErrInvalidMutationAttemptPlan", err)
 }
 
 func TestMutationAttemptPlanBuildsConfirmationFromPrimaryExecutionFacts(t *testing.T) {
@@ -111,30 +96,27 @@ func TestMutationAttemptPlanBuildsConfirmationFromPrimaryExecutionFacts(t *testi
 		Override:         31 * time.Second,
 		Profile:          AutomaticProfile,
 	})
-	if err != nil {
-		t.Fatalf("new mutation attempt plan: %v", err)
-	}
+	require.NoError(t, err, "new mutation attempt plan: %v", err)
 	primary := Spec{
 		Attempt: "primary/a", Command: []string{"opaque-test", "--flag"},
 		Dir: "/snapshot/primary", Env: []string{"GOMAXPROCS=1", "OPAQUE=value"},
 		Profile: AutomaticProfile, Deadline: 31 * time.Second,
 	}
 	confirmation, err := plan.ConfirmationSpec(primary, "confirmation/a", "/snapshot/confirmation")
-	if err != nil {
-		t.Fatalf("confirmation spec: %v", err)
-	}
-	if confirmation.Attempt != "confirmation/a" || confirmation.Dir != "/snapshot/confirmation" ||
-		confirmation.Profile != primary.Profile || confirmation.Deadline != primary.Deadline ||
-		len(confirmation.Command) != 2 || confirmation.Command[0] != "opaque-test" ||
-		len(confirmation.Env) != 2 || confirmation.Env[1] != "OPAQUE=value" {
-		t.Fatalf("confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
-	}
+	require.NoError(t, err, "confirmation spec: %v", err)
+	assert.EqualValues(t, "confirmation/a", confirmation.Attempt, "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	assert.EqualValues(t, "/snapshot/confirmation", confirmation.Dir, "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	assert.Equal(t, primary.Profile, confirmation.Profile, "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	assert.Equal(t, primary.Deadline, confirmation.Deadline, "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	require.Len(t, confirmation.Command, 2, "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	assert.EqualValues(t, "opaque-test", confirmation.Command[0], "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	require.Len(t, confirmation.Env, 2, "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
+	assert.EqualValues(t, "OPAQUE=value", confirmation.Env[1], "confirmation spec = %#v, want fresh identity/workspace and primary execution facts", confirmation)
 
 	primary.Command[0] = "changed"
 	primary.Env[1] = "changed"
-	if confirmation.Command[0] != "opaque-test" || confirmation.Env[1] != "OPAQUE=value" {
-		t.Fatalf("confirmation aliases primary slices: %#v", confirmation)
-	}
+	assert.EqualValues(t, "opaque-test", confirmation.Command[0], "confirmation aliases primary slices: %#v", confirmation)
+	assert.EqualValues(t, "OPAQUE=value", confirmation.Env[1], "confirmation aliases primary slices: %#v", confirmation)
 }
 
 func TestMutationAttemptPlanRejectsConfirmationThatChangesOwnedFacts(t *testing.T) {
@@ -146,9 +128,7 @@ func TestMutationAttemptPlanRejectsConfirmationThatChangesOwnedFacts(t *testing.
 		Override:         31 * time.Second,
 		Profile:          AutomaticProfile,
 	})
-	if err != nil {
-		t.Fatalf("new mutation attempt plan: %v", err)
-	}
+	require.NoError(t, err, "new mutation attempt plan: %v", err)
 	valid := Spec{
 		Attempt: "primary/a", Command: []string{"opaque-test"}, Dir: "/snapshot/primary",
 		Profile: AutomaticProfile, Deadline: 31 * time.Second,
@@ -174,9 +154,7 @@ func TestMutationAttemptPlanRejectsConfirmationThatChangesOwnedFacts(t *testing.
 			t.Parallel()
 
 			_, err := plan.ConfirmationSpec(test.primary, test.attempt, test.workspace)
-			if !errors.Is(err, ErrInvalidMutationAttemptPlan) {
-				t.Fatalf("error = %v, want ErrInvalidMutationAttemptPlan", err)
-			}
+			assert.ErrorIs(t, err, ErrInvalidMutationAttemptPlan, "error = %v, want ErrInvalidMutationAttemptPlan", err)
 		})
 	}
 }
@@ -196,13 +174,11 @@ func TestPrimaryNonzeroSettlementStaysKilledAcrossOpaqueOutput(t *testing.T) {
 	}
 	disposition := ClassifyPrimaryMutation(primary)
 	authoritative, ok := disposition.(AttributableMutation)
-	if !ok {
-		t.Fatalf("disposition = %T, want AttributableMutation", disposition)
-	}
-	if authoritative.Outcome != MutationKilled || authoritative.Primary != primary ||
-		authoritative.Confirmation != nil || authoritative.PressureValidated {
-		t.Fatalf("authoritative mutation = %#v, want direct opaque killed result", authoritative)
-	}
+	require.True(t, ok, "disposition = %T, want AttributableMutation", disposition)
+	assert.Equal(t, MutationKilled, authoritative.Outcome, "authoritative mutation = %#v, want direct opaque killed result", authoritative)
+	assert.Equal(t, primary, authoritative.Primary, "authoritative mutation = %#v, want direct opaque killed result", authoritative)
+	assert.Nil(t, authoritative.Confirmation, "authoritative mutation = %#v, want direct opaque killed result", authoritative)
+	assert.False(t, authoritative.PressureValidated, "authoritative mutation = %#v, want direct opaque killed result", authoritative)
 }
 
 func TestPrimaryDeadlineWithoutRuntimeOverlapProofIsDirect(t *testing.T) {
@@ -217,9 +193,9 @@ func TestPrimaryDeadlineWithoutRuntimeOverlapProofIsDirect(t *testing.T) {
 	}
 	direct := ClassifyPrimaryMutation(primary)
 	authoritative, ok := direct.(AttributableMutation)
-	if !ok || authoritative.Outcome != MutationTimedOut || authoritative.Primary != primary {
-		t.Fatalf("non-overlapped deadline = %#v, want direct TimedOut", direct)
-	}
+	require.True(t, ok, "non-overlapped deadline = %#v, want direct TimedOut", direct)
+	assert.Equal(t, MutationTimedOut, authoritative.Outcome, "non-overlapped deadline = %#v, want direct TimedOut", direct)
+	assert.Equal(t, primary, authoritative.Primary, "non-overlapped deadline = %#v, want direct TimedOut", direct)
 }
 
 func TestPrimaryDeadlineConsumesRuntimeIssuedOverlapProof(t *testing.T) {
@@ -236,9 +212,8 @@ func TestPrimaryDeadlineConsumesRuntimeIssuedOverlapProof(t *testing.T) {
 	)
 	disposition := ClassifyPrimaryMutation(primary)
 	provisional, ok := disposition.(MutationNeedsConfirmation)
-	if !ok || provisional.Primary() != primary {
-		t.Fatalf("runtime-proved deadline = %#v, want MutationNeedsConfirmation", disposition)
-	}
+	require.True(t, ok, "runtime-proved deadline = %#v, want MutationNeedsConfirmation", disposition)
+	assert.Equal(t, primary, provisional.Primary(), "runtime-proved deadline = %#v, want MutationNeedsConfirmation", disposition)
 }
 
 func TestPrimaryFuseTripIsDirectRunawayDespiteRecordedOverlap(t *testing.T) {
@@ -252,10 +227,11 @@ func TestPrimaryFuseTripIsDirectRunawayDespiteRecordedOverlap(t *testing.T) {
 	}
 	disposition := ClassifyPrimaryMutation(primary)
 	authoritative, ok := disposition.(AttributableMutation)
-	if !ok || authoritative.Outcome != MutationRunaway || authoritative.Primary != primary ||
-		authoritative.Confirmation != nil || authoritative.PressureValidated {
-		t.Fatalf("fuse disposition = %#v, want direct Runaway", disposition)
-	}
+	require.True(t, ok, "fuse disposition = %#v, want direct Runaway", disposition)
+	assert.Equal(t, MutationRunaway, authoritative.Outcome, "fuse disposition = %#v, want direct Runaway", disposition)
+	assert.Equal(t, primary, authoritative.Primary, "fuse disposition = %#v, want direct Runaway", disposition)
+	assert.Nil(t, authoritative.Confirmation, "fuse disposition = %#v, want direct Runaway", disposition)
+	assert.False(t, authoritative.PressureValidated, "fuse disposition = %#v, want direct Runaway", disposition)
 }
 
 func TestPrimaryUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
@@ -268,17 +244,17 @@ func TestPrimaryUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
 	for _, primary := range uncertain {
 		disposition := ClassifyPrimaryMutation(primary)
 		aborted, ok := disposition.(MutationAborted)
-		if !ok || aborted.Primary != primary || aborted.Confirmation != nil {
-			t.Fatalf("uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
-		}
+		require.True(t, ok, "uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
+		assert.Equal(t, primary, aborted.Primary, "uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
+		assert.Nil(t, aborted.Confirmation, "uncertain %T disposition = %#v, want MutationAborted", primary, disposition)
 	}
 
 	primary := DrainUnconfirmed{Residual: OwnedUndrained}
 	disposition := ClassifyPrimaryMutation(primary)
 	fatal, ok := disposition.(MutationFatalUncertainty)
-	if !ok || fatal.Primary != primary || fatal.Confirmation != nil {
-		t.Fatalf("drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
-	}
+	require.True(t, ok, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+	assert.Equal(t, primary, fatal.Primary, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
+	assert.Nil(t, fatal.Confirmation, "drain-unconfirmed disposition = %#v, want MutationFatalUncertainty", disposition)
 }
 
 func TestOrdinaryConfirmationClassifiesOpaqueExitAndValidatesPressure(t *testing.T) {
@@ -305,10 +281,11 @@ func TestOrdinaryConfirmationClassifiesOpaqueExitAndValidatesPressure(t *testing
 	}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	authoritative, ok := disposition.(AttributableMutation)
-	if !ok || authoritative.Outcome != MutationKilled || authoritative.Primary != primary ||
-		authoritative.Confirmation != confirmation || !authoritative.PressureValidated {
-		t.Fatalf("confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
-	}
+	require.True(t, ok, "confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
+	assert.Equal(t, MutationKilled, authoritative.Outcome, "confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
+	assert.Equal(t, primary, authoritative.Primary, "confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
+	assert.Equal(t, confirmation, authoritative.Confirmation, "confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
+	assert.True(t, authoritative.PressureValidated, "confirmation disposition = %#v, want opaque Killed with validated pressure", disposition)
 }
 
 func TestPassingConfirmationSurvivesAndValidatesPressure(t *testing.T) {
@@ -325,9 +302,9 @@ func TestPassingConfirmationSurvivesAndValidatesPressure(t *testing.T) {
 	confirmation := Settled{ExecutionData: ExecutionData{Deadline: 31 * time.Second}}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	authoritative, ok := disposition.(AttributableMutation)
-	if !ok || authoritative.Outcome != MutationSurvived || !authoritative.PressureValidated {
-		t.Fatalf("passing confirmation = %#v, want Survived with validated pressure", disposition)
-	}
+	require.True(t, ok, "passing confirmation = %#v, want Survived with validated pressure", disposition)
+	assert.Equal(t, MutationSurvived, authoritative.Outcome, "passing confirmation = %#v, want Survived with validated pressure", disposition)
+	assert.True(t, authoritative.PressureValidated, "passing confirmation = %#v, want Survived with validated pressure", disposition)
 }
 
 func TestRepeatedConfirmationDeadlineIsTimedOutWithoutPressure(t *testing.T) {
@@ -349,10 +326,11 @@ func TestRepeatedConfirmationDeadlineIsTimedOutWithoutPressure(t *testing.T) {
 	}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	authoritative, ok := disposition.(AttributableMutation)
-	if !ok || authoritative.Outcome != MutationTimedOut || authoritative.Primary != primary ||
-		authoritative.Confirmation != confirmation || authoritative.PressureValidated {
-		t.Fatalf("repeated deadline = %#v, want TimedOut without pressure", disposition)
-	}
+	require.True(t, ok, "repeated deadline = %#v, want TimedOut without pressure", disposition)
+	assert.Equal(t, MutationTimedOut, authoritative.Outcome, "repeated deadline = %#v, want TimedOut without pressure", disposition)
+	assert.Equal(t, primary, authoritative.Primary, "repeated deadline = %#v, want TimedOut without pressure", disposition)
+	assert.Equal(t, confirmation, authoritative.Confirmation, "repeated deadline = %#v, want TimedOut without pressure", disposition)
+	assert.False(t, authoritative.PressureValidated, "repeated deadline = %#v, want TimedOut without pressure", disposition)
 }
 
 func TestConfirmationFuseTripIsIndependentlyAttributableRunaway(t *testing.T) {
@@ -372,10 +350,11 @@ func TestConfirmationFuseTripIsIndependentlyAttributableRunaway(t *testing.T) {
 	}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	authoritative, ok := disposition.(AttributableMutation)
-	if !ok || authoritative.Outcome != MutationRunaway || authoritative.Primary != primary ||
-		authoritative.Confirmation != confirmation || authoritative.PressureValidated {
-		t.Fatalf("confirmation fuse = %#v, want independent Runaway without pressure", disposition)
-	}
+	require.True(t, ok, "confirmation fuse = %#v, want independent Runaway without pressure", disposition)
+	assert.Equal(t, MutationRunaway, authoritative.Outcome, "confirmation fuse = %#v, want independent Runaway without pressure", disposition)
+	assert.Equal(t, primary, authoritative.Primary, "confirmation fuse = %#v, want independent Runaway without pressure", disposition)
+	assert.Equal(t, confirmation, authoritative.Confirmation, "confirmation fuse = %#v, want independent Runaway without pressure", disposition)
+	assert.False(t, authoritative.PressureValidated, "confirmation fuse = %#v, want independent Runaway without pressure", disposition)
 }
 
 func TestConfirmationWithDifferentResolvedDeadlineAbortsUnscored(t *testing.T) {
@@ -392,9 +371,9 @@ func TestConfirmationWithDifferentResolvedDeadlineAbortsUnscored(t *testing.T) {
 	confirmation := Settled{ExecutionData: ExecutionData{Deadline: 30 * time.Second}}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	aborted, ok := disposition.(MutationAborted)
-	if !ok || aborted.Primary != primary || aborted.Confirmation != confirmation {
-		t.Fatalf("mismatched deadline = %#v, want unscored MutationAborted", disposition)
-	}
+	require.True(t, ok, "mismatched deadline = %#v, want unscored MutationAborted", disposition)
+	assert.Equal(t, primary, aborted.Primary, "mismatched deadline = %#v, want unscored MutationAborted", disposition)
+	assert.Equal(t, confirmation, aborted.Confirmation, "mismatched deadline = %#v, want unscored MutationAborted", disposition)
 }
 
 func TestConfirmationWithDifferentExecutionProfileAbortsUnscored(t *testing.T) {
@@ -413,9 +392,9 @@ func TestConfirmationWithDifferentExecutionProfileAbortsUnscored(t *testing.T) {
 	}}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	aborted, ok := disposition.(MutationAborted)
-	if !ok || aborted.Primary != primary || aborted.Confirmation != confirmation {
-		t.Fatalf("mismatched profile = %#v, want unscored MutationAborted", disposition)
-	}
+	require.True(t, ok, "mismatched profile = %#v, want unscored MutationAborted", disposition)
+	assert.Equal(t, primary, aborted.Primary, "mismatched profile = %#v, want unscored MutationAborted", disposition)
+	assert.Equal(t, confirmation, aborted.Confirmation, "mismatched profile = %#v, want unscored MutationAborted", disposition)
 }
 
 func TestConfirmationUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
@@ -435,9 +414,9 @@ func TestConfirmationUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
 	}
 	disposition := ClassifyMutationConfirmation(provisional, confirmation)
 	aborted, ok := disposition.(MutationAborted)
-	if !ok || aborted.Primary != primary || aborted.Confirmation != confirmation {
-		t.Fatalf("infrastructure confirmation = %#v, want MutationAborted", disposition)
-	}
+	require.True(t, ok, "infrastructure confirmation = %#v, want MutationAborted", disposition)
+	assert.Equal(t, primary, aborted.Primary, "infrastructure confirmation = %#v, want MutationAborted", disposition)
+	assert.Equal(t, confirmation, aborted.Confirmation, "infrastructure confirmation = %#v, want MutationAborted", disposition)
 
 	unconfirmed := DrainUnconfirmed{
 		Residual:      OwnedUndrained,
@@ -445,7 +424,7 @@ func TestConfirmationUncertaintyNeverBecomesMutationEvidence(t *testing.T) {
 	}
 	disposition = ClassifyMutationConfirmation(provisional, unconfirmed)
 	fatal, ok := disposition.(MutationFatalUncertainty)
-	if !ok || fatal.Primary != primary || fatal.Confirmation != unconfirmed {
-		t.Fatalf("unconfirmed confirmation = %#v, want MutationFatalUncertainty", disposition)
-	}
+	require.True(t, ok, "unconfirmed confirmation = %#v, want MutationFatalUncertainty", disposition)
+	assert.Equal(t, primary, fatal.Primary, "unconfirmed confirmation = %#v, want MutationFatalUncertainty", disposition)
+	assert.Equal(t, unconfirmed, fatal.Confirmation, "unconfirmed confirmation = %#v, want MutationFatalUncertainty", disposition)
 }

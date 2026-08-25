@@ -1,9 +1,11 @@
 package ooze
 
 import (
-	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type runtimeTransferReceiptFixture struct {
@@ -58,14 +60,8 @@ func TestSupervisorReducerRuntimeTransferReceiptCommutesWithEmergency(t *testing
 			emergencyFirst, emergencyFirstDelivery := reduceRuntimeTransferReceiptAndEmergency(
 				t, test.build(t), false,
 			)
-			if !reflect.DeepEqual(receiptFirst, emergencyFirst) {
-				t.Fatalf("runtime transfer receipt did not commute: receipt-first=%#v emergency-first=%#v",
-					receiptFirst, emergencyFirst)
-			}
-			if !reflect.DeepEqual(receiptFirstDelivery, emergencyFirstDelivery) {
-				t.Fatalf("runtime transfer delivery changed with ordering: receipt-first=%#v emergency-first=%#v",
-					receiptFirstDelivery, emergencyFirstDelivery)
-			}
+			assert.Equal(t, emergencyFirst, receiptFirst, "runtime transfer receipt did not commute: receipt-first=%#v emergency-first=%#v", receiptFirst, emergencyFirst)
+			assert.Equal(t, emergencyFirstDelivery, receiptFirstDelivery, "runtime transfer delivery changed with ordering: receipt-first=%#v emergency-first=%#v", receiptFirstDelivery, emergencyFirstDelivery)
 		})
 	}
 }
@@ -85,13 +81,8 @@ func TestSupervisorReducerRuntimeTransferReceiptRejectsMalformedCustodyByteStabl
 			assertSupervisorInvariant(t, func() {
 				_, actions = reduceSupervisor(fixture.state, event)
 			})
-			if len(actions) != 0 {
-				t.Fatalf("malformed runtime transfer receipt emitted action: %#v", actions)
-			}
-			if !reflect.DeepEqual(fixture.state, before) {
-				t.Fatalf("malformed runtime transfer receipt mutated input: before=%#v after=%#v",
-					before, fixture.state)
-			}
+			assert.EqualValues(t, 0, len(actions), "malformed runtime transfer receipt emitted action: %#v", actions)
+			assert.Equal(t, before, fixture.state, "malformed runtime transfer receipt mutated input: before=%#v after=%#v", before, fixture.state)
 		})
 	}
 }
@@ -114,13 +105,8 @@ func TestSupervisorReducerRuntimeTransferReceiptRejectsMalformedEmergencyFirstBy
 	assertSupervisorInvariant(t, func() {
 		_, actions = reduceSupervisor(fixture.state, event)
 	})
-	if len(actions) != 0 {
-		t.Fatalf("malformed emergency-first transfer emitted action: %#v", actions)
-	}
-	if !reflect.DeepEqual(fixture.state, before) {
-		t.Fatalf("malformed emergency-first transfer mutated input: before=%#v after=%#v",
-			before, fixture.state)
-	}
+	assert.EqualValues(t, 0, len(actions), "malformed emergency-first transfer emitted action: %#v", actions)
+	assert.Equal(t, before, fixture.state, "malformed emergency-first transfer mutated input: before=%#v after=%#v", before, fixture.state)
 }
 
 func TestSupervisorReducerRuntimeTransferReceiptRejectsDuplicateByteStable(t *testing.T) {
@@ -306,13 +292,14 @@ func completeRuntimeTransferOutputPipeline(
 	state, actions = completeReducerStopSeal(t, state, generation, actions[0], sealAt)
 	assertSupervisorActions(t, actions, supervisorTransferResidualCustody)
 	attempt := supervisorAttemptByGeneration(t, state, generation)
-	if attempt.phase != supervisorTransferringResidualCustody ||
-		attempt.pendingAction != (supervisorPendingAction{
-			kind: supervisorTransferResidualCustody, token: actions[0].token,
-		}) || attempt.drain.decision != supervisorDrainUnconfirmed || attempt.output.final ||
-		attempt.terminal != (supervisorTerminalEvidence{}) || attempt.releaseDiagnostic != 0 {
-		t.Fatalf("runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
-	}
+	require.Equal(t, supervisorTransferringResidualCustody, attempt.phase, "runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
+	assert.Equal(t, (supervisorPendingAction{
+		kind: supervisorTransferResidualCustody, token: actions[0].token,
+	}), attempt.pendingAction, "runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
+	assert.Equal(t, supervisorDrainUnconfirmed, attempt.drain.decision, "runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
+	assert.False(t, attempt.output.final, "runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
+	assert.Equal(t, (supervisorTerminalEvidence{}), attempt.terminal, "runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
+	assert.EqualValues(t, 0, attempt.releaseDiagnostic, "runtime transfer fixture lost residual custody: %#v action=%#v", attempt, actions[0])
 
 	return state, actions[0]
 }
@@ -380,20 +367,12 @@ func assertRuntimeTransferReceiptTransition(
 			kind: settle.kind, token: settle.token,
 		}
 	}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("runtime transfer actions = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, wantState) {
-		t.Fatalf("runtime transfer state = %#v, want %#v", next, wantState)
-	}
+	assert.Equal(t, wantActions, actions, "runtime transfer actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "runtime transfer state = %#v, want %#v", next, wantState)
 	got := supervisorAttemptByGeneration(t, next, fixture.generation)
-	if got.terminal != (supervisorTerminalEvidence{}) ||
-		got.pendingAction != (supervisorPendingAction{}) {
-		t.Fatalf("runtime transfer stored terminal or retained action: %#v", got)
-	}
-	if !reflect.DeepEqual(fixture.state, input) {
-		t.Fatalf("runtime transfer receipt mutated input: before=%#v after=%#v", input, fixture.state)
-	}
+	assert.Equal(t, (supervisorTerminalEvidence{}), got.terminal, "runtime transfer stored terminal or retained action: %#v", got)
+	assert.Equal(t, (supervisorPendingAction{}), got.pendingAction, "runtime transfer stored terminal or retained action: %#v", got)
+	assert.Equal(t, input, fixture.state, "runtime transfer receipt mutated input: before=%#v after=%#v", input, fixture.state)
 }
 
 func reduceRuntimeTransferReceiptAndEmergency(
@@ -464,20 +443,13 @@ func applyRuntimeTransferEmergency(
 			kind: settle.kind, token: settle.token,
 		}
 	}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("runtime transfer emergency actions = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, want) {
-		t.Fatalf("runtime transfer emergency state = %#v, want %#v", next, want)
-	}
+	assert.Equal(t, wantActions, actions, "runtime transfer emergency actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, want, next, "runtime transfer emergency state = %#v, want %#v", next, want)
 	after := supervisorAttemptByGeneration(t, next, generation)
-	if !after.drain.effectiveDrainBy.Equal(wantBound) ||
-		after.phase != state.attempts[targetIndex].phase || after.terminal != (supervisorTerminalEvidence{}) {
-		t.Fatalf("runtime transfer emergency restarted or lengthened custody: %#v", after)
-	}
-	if !reflect.DeepEqual(state, input) {
-		t.Fatalf("runtime transfer emergency mutated input: before=%#v after=%#v", input, state)
-	}
+	assert.True(t, after.drain.effectiveDrainBy.Equal(wantBound), "runtime transfer emergency restarted or lengthened custody: %#v", after)
+	assert.Equal(t, state.attempts[targetIndex].phase, after.phase, "runtime transfer emergency restarted or lengthened custody: %#v", after)
+	assert.Equal(t, (supervisorTerminalEvidence{}), after.terminal, "runtime transfer emergency restarted or lengthened custody: %#v", after)
+	assert.Equal(t, input, state, "runtime transfer emergency mutated input: before=%#v after=%#v", input, state)
 
 	return next, actions
 }
@@ -603,10 +575,6 @@ func assertRuntimeTransferReceiptInvariantByteStable(
 	assertSupervisorInvariant(t, func() {
 		_, actions = reduceSupervisor(state, event)
 	})
-	if len(actions) != 0 {
-		t.Fatalf("rejected runtime transfer receipt emitted action: %#v", actions)
-	}
-	if !reflect.DeepEqual(state, before) {
-		t.Fatalf("rejected runtime transfer receipt mutated input: before=%#v after=%#v", before, state)
-	}
+	assert.EqualValues(t, 0, len(actions), "rejected runtime transfer receipt emitted action: %#v", actions)
+	assert.Equal(t, before, state, "rejected runtime transfer receipt mutated input: before=%#v after=%#v", before, state)
 }

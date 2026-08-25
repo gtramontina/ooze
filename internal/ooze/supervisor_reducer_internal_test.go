@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
@@ -70,20 +73,16 @@ func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
 
 			next, actions := reduceSupervisor(state, event)
 			assertSupervisorActions(t, actions, test.wantActions...)
-			if actions[0].generation != 11 || actions[0].token <= launch.token ||
-				actions[0].launchKind != test.completionKind || actions[0].launchFailure != test.failure {
-				t.Fatalf("classified launch action = %#v, launch token %d", actions[0], launch.token)
-			}
+			assert.EqualValues(t, 11, actions[0].generation, "classified launch action = %#v, launch token %d", actions[0], launch.token)
+			assert.False(t, actions[0].token <= launch.token, "classified launch action = %#v, launch token %d", actions[0], launch.token)
+			assert.Equal(t, test.completionKind, actions[0].launchKind, "classified launch action = %#v, launch token %d", actions[0], launch.token)
+			assert.Equal(t, test.failure, actions[0].launchFailure, "classified launch action = %#v, launch token %d", actions[0], launch.token)
 			attempt := supervisorAttemptByGeneration(t, next, 11)
-			if attempt.phase != test.wantPhase {
-				t.Fatalf("launch phase = %d, want %d", attempt.phase, test.wantPhase)
-			}
-			if test.completionKind == supervisorLaunchReleased &&
+			assert.Equal(t, test.wantPhase, attempt.phase, "launch phase = %d, want %d", attempt.phase, test.wantPhase)
+			assert.False(t, test.completionKind == supervisorLaunchReleased &&
 				(!attempt.startedAt.Equal(test.completion) ||
 					!attempt.deadlineAt.Equal(test.completion.Add(20*time.Second)) ||
-					attempt.waitAction != actions[1].token || attempt.sampleAction != actions[2].token) {
-				t.Fatalf("released completion did not atomically enter running: %#v actions=%#v", attempt, actions)
-			}
+					attempt.waitAction != actions[1].token || attempt.sampleAction != actions[2].token), "released completion did not atomically enter running: %#v actions=%#v", attempt, actions)
 		})
 	}
 
@@ -100,9 +99,7 @@ func TestSupervisorReducerLaunchCompletionBeforeAndAtBoundary(t *testing.T) {
 			kind: supervisorLaunchBoundary, generation: 12, at: launchBy, completion: &completion,
 		})
 		assertSupervisorActions(t, actions, supervisorPublishNotReleased)
-		if supervisorAttemptByGeneration(t, next, 12).phase != supervisorLaunchClosedNotReleased {
-			t.Fatalf("delayed notification lost the serialized boundary snapshot: %#v", next)
-		}
+		assert.Equal(t, supervisorLaunchClosedNotReleased, supervisorAttemptByGeneration(t, next, 12).phase, "delayed notification lost the serialized boundary snapshot: %#v", next)
 	})
 }
 
@@ -123,10 +120,9 @@ func TestSupervisorReducerReleaseUnknownPublishesUnconfirmedAndForcesAdoptedCust
 		supervisorPublishLaunchUnconfirmed, supervisorAdoptOwned, supervisorForceOwned,
 	)
 	attempt := supervisorAttemptByGeneration(t, next, 12)
-	if attempt.phase != supervisorLaunchOwned || !attempt.drain.effectiveDrainBy.Equal(drainBy) ||
-		actions[2].launchKind != supervisorLaunchReleased {
-		t.Fatalf("release-unknown adoption = %#v actions=%#v", attempt, actions)
-	}
+	assert.Equal(t, supervisorLaunchOwned, attempt.phase, "release-unknown adoption = %#v actions=%#v", attempt, actions)
+	assert.True(t, attempt.drain.effectiveDrainBy.Equal(drainBy), "release-unknown adoption = %#v actions=%#v", attempt, actions)
+	assert.Equal(t, supervisorLaunchReleased, actions[2].launchKind, "release-unknown adoption = %#v actions=%#v", attempt, actions)
 }
 
 func TestSupervisorReducerLaunchNilBoundaryRevokesAndLateCompletionRetainsCustody(t *testing.T) {
@@ -158,19 +154,15 @@ func TestSupervisorReducerLaunchNilBoundaryRevokesAndLateCompletionRetainsCustod
 				kind: supervisorLaunchBoundary, generation: test.generation, at: launchBy,
 			})
 			original := supervisorAttemptByGeneration(t, state, test.generation)
-			if original.phase != supervisorLaunchEstablishing || original.releaseRevoked {
-				t.Fatalf("reducer mutated its input state: %#v", original)
-			}
+			assert.Equal(t, supervisorLaunchEstablishing, original.phase, "reducer mutated its input state: %#v", original)
+			assert.False(t, original.releaseRevoked, "reducer mutated its input state: %#v", original)
 			assertSupervisorActions(t, boundaryActions,
 				supervisorRevokeLaunchRelease, supervisorPublishLaunchUnconfirmed)
 			attempt := supervisorAttemptByGeneration(t, unconfirmed, test.generation)
-			if attempt.phase != supervisorLaunchReportedUnconfirmed || !attempt.releaseRevoked {
-				t.Fatalf("nil boundary did not latch custody/revocation: %#v", attempt)
-			}
-			if boundaryActions[0].token <= launch.token ||
-				boundaryActions[1].token <= boundaryActions[0].token {
-				t.Fatalf("nil boundary actions = %#v", boundaryActions)
-			}
+			assert.Equal(t, supervisorLaunchReportedUnconfirmed, attempt.phase, "nil boundary did not latch custody/revocation: %#v", attempt)
+			assert.True(t, attempt.releaseRevoked, "nil boundary did not latch custody/revocation: %#v", attempt)
+			assert.False(t, boundaryActions[0].token <= launch.token, "nil boundary actions = %#v", boundaryActions)
+			assert.False(t, boundaryActions[1].token <= boundaryActions[0].token, "nil boundary actions = %#v", boundaryActions)
 
 			completion := supervisorLaunchCompletion{
 				generation: test.generation,
@@ -188,12 +180,8 @@ func TestSupervisorReducerLaunchNilBoundaryRevokesAndLateCompletionRetainsCustod
 			}
 			next, lateActions := reduceSupervisor(unconfirmed, lateEvent)
 			assertSupervisorActions(t, lateActions, test.wantActions...)
-			if lateActions[0].token <= boundaryActions[len(boundaryActions)-1].token {
-				t.Fatalf("late action token did not advance: boundary=%#v late=%#v", boundaryActions, lateActions)
-			}
-			if supervisorAttemptByGeneration(t, next, test.generation).phase != test.wantPhase {
-				t.Fatalf("late completion phase = %#v", next)
-			}
+			assert.False(t, lateActions[0].token <= boundaryActions[len(boundaryActions)-1].token, "late action token did not advance: boundary=%#v late=%#v", boundaryActions, lateActions)
+			assert.Equal(t, test.wantPhase, supervisorAttemptByGeneration(t, next, test.generation).phase, "late completion phase = %#v", next)
 		})
 	}
 }
@@ -248,15 +236,11 @@ func TestSupervisorReducerLaunchEmergencyUsesSerializedCompletionOrNil(t *testin
 				drainBy: launchBy.Add(time.Second), emergencySnapshots: snapshots,
 			})
 			assertSupervisorActions(t, actions, test.wantActions...)
-			if test.hasCompletion &&
-				(actions[0].launchKind != test.completionKind || actions[0].launchFailure != test.failure) {
-				t.Fatalf("emergency normalized completion = %#v", actions[0])
-			}
+			assert.False(t, test.hasCompletion &&
+				(actions[0].launchKind != test.completionKind || actions[0].launchFailure != test.failure), "emergency normalized completion = %#v", actions[0])
 			assertStrictlyIncreasingActionTokens(t, append([]supervisorAction{launch}, actions...))
 			attempt := supervisorAttemptByGeneration(t, next, test.generation)
-			if attempt.phase != test.wantPhase {
-				t.Fatalf("emergency launch phase = %d, want %d", attempt.phase, test.wantPhase)
-			}
+			assert.Equal(t, test.wantPhase, attempt.phase, "emergency launch phase = %d, want %d", attempt.phase, test.wantPhase)
 		})
 	}
 }
@@ -348,15 +332,14 @@ func TestSupervisorReducerLaunchEmergencyReleasedSnapshotSelectsOwnedIntentThrou
 				wantIntent.drainBy = running.drainBy
 				wantIntent.duration = test.commandDeadline
 			}
-			if attempt.phase != supervisorEmergencyDraining || !attempt.startedAt.Equal(releasedAt) ||
-				!attempt.deadlineAt.Equal(releasedAt.Add(test.commandDeadline)) ||
-				!reflect.DeepEqual(attempt.intent, wantIntent) ||
-				!reflect.DeepEqual(actions[1].intent, wantIntent) ||
-				attempt.pendingAction != (supervisorPendingAction{kind: actions[1].kind, token: actions[1].token}) ||
-				!attempt.drain.effectiveDrainBy.Equal(emergencyDrainBy) ||
-				!actions[1].drainBy.Equal(emergencyDrainBy) {
-				t.Fatalf("serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
-			}
+			assert.Equal(t, supervisorEmergencyDraining, attempt.phase, "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.True(t, attempt.startedAt.Equal(releasedAt), "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.True(t, attempt.deadlineAt.Equal(releasedAt.Add(test.commandDeadline)), "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.Equal(t, wantIntent, attempt.intent, "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.Equal(t, wantIntent, actions[1].intent, "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.Equal(t, (supervisorPendingAction{kind: actions[1].kind, token: actions[1].token}), attempt.pendingAction, "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.True(t, attempt.drain.effectiveDrainBy.Equal(emergencyDrainBy), "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+			assert.True(t, actions[1].drainBy.Equal(emergencyDrainBy), "serialized emergency ownership = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
 		})
 	}
 }
@@ -547,9 +530,8 @@ func TestSupervisorReducerLaunchEmergencyPreOwnedCutDoesNotAuthorizeRunningFacts
 		}},
 	})
 	attempt := supervisorAttemptByGeneration(t, sealed, generation)
-	if attempt.waitAction != 0 || attempt.sampleAction != 0 {
-		t.Fatalf("pre-Owned emergency invented running actions: %#v", attempt)
-	}
+	assert.EqualValues(t, 0, attempt.waitAction, "pre-Owned emergency invented running actions: %#v", attempt)
+	assert.EqualValues(t, 0, attempt.sampleAction, "pre-Owned emergency invented running actions: %#v", attempt)
 
 	for _, test := range []struct {
 		name string
@@ -609,9 +591,7 @@ func TestSupervisorReducerLaunchUnconfirmedEmergencyEstablishesMonotonicFloor(t 
 			emergencySnapshots: []supervisorEmergencySnapshot{{generation: generation}},
 		})
 		attempt := supervisorAttemptByGeneration(t, floored, generation)
-		if !attempt.lastEventAt.Equal(emergencyAt) {
-			t.Errorf("nil-completion emergency floor = %s, want %s", attempt.lastEventAt, emergencyAt)
-		}
+		assert.True(t, attempt.lastEventAt.Equal(emergencyAt), "nil-completion emergency floor = %s, want %s", attempt.lastEventAt, emergencyAt)
 		completion := supervisorLaunchCompletion{
 			generation: generation, action: launch.token,
 			at: completionAt, kind: supervisorLaunchReleased,
@@ -638,9 +618,7 @@ func TestSupervisorReducerLaunchUnconfirmedEmergencyEstablishesMonotonicFloor(t 
 		})
 		assertSupervisorActions(t, actions, supervisorAdoptOwned, supervisorForceOwned)
 		attempt := supervisorAttemptByGeneration(t, floored, generation)
-		if !attempt.lastEventAt.Equal(emergencyAt) {
-			t.Errorf("released-completion emergency floor = %s, want %s", attempt.lastEventAt, emergencyAt)
-		}
+		assert.True(t, attempt.lastEventAt.Equal(emergencyAt), "released-completion emergency floor = %s, want %s", attempt.lastEventAt, emergencyAt)
 		forceCompletion := supervisorDrainCompletion{
 			generation: generation,
 			action: supervisorPendingAction{
@@ -726,18 +704,14 @@ func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersis
 	)
 	wantGenerations := []attemptGeneration{51, 51, 52, 52, 53}
 	for index, action := range actions {
-		if action.generation != wantGenerations[index] || !action.at.Equal(emergencyAt) ||
-			!action.drainBy.Equal(drainBy) {
-			t.Fatalf("emergency action order/request at %d = %#v", index, action)
-		}
+		assert.Equal(t, wantGenerations[index], action.generation, "emergency action order/request at %d = %#v", index, action)
+		assert.True(t, action.at.Equal(emergencyAt), "emergency action order/request at %d = %#v", index, action)
+		assert.True(t, action.drainBy.Equal(drainBy), "emergency action order/request at %d = %#v", index, action)
 	}
-	if !next.emergency.active || !next.emergency.at.Equal(emergencyAt) ||
-		!next.emergency.drainBy.Equal(drainBy) {
-		t.Fatalf("emergency epoch = %#v", next.emergency)
-	}
-	if supervisorAttemptByGeneration(t, next, 54).phase != supervisorLaunchClosedNotReleased {
-		t.Fatalf("closed-not-released attempt reentered emergency: %#v", next)
-	}
+	assert.True(t, next.emergency.active, "emergency epoch = %#v", next.emergency)
+	assert.True(t, next.emergency.at.Equal(emergencyAt), "emergency epoch = %#v", next.emergency)
+	assert.True(t, next.emergency.drainBy.Equal(drainBy), "emergency epoch = %#v", next.emergency)
+	assert.Equal(t, supervisorLaunchClosedNotReleased, supervisorAttemptByGeneration(t, next, 54).phase, "closed-not-released attempt reentered emergency: %#v", next)
 
 	lateReleased := supervisorLaunchCompletion{
 		generation: 51,
@@ -751,15 +725,13 @@ func TestSupervisorReducerLaunchGlobalEmergencyOrdersAllLiveObligationsAndPersis
 	})
 	assertSupervisorActions(t, lateActions, supervisorAdoptOwned, supervisorForceOwned)
 	for _, action := range lateActions {
-		if !action.at.Equal(emergencyAt) || !action.drainBy.Equal(drainBy) {
-			t.Fatalf("late adoption lost emergency request: %#v", lateActions)
-		}
+		assert.True(t, action.at.Equal(emergencyAt), "late adoption lost emergency request: %#v", lateActions)
+		assert.True(t, action.drainBy.Equal(drainBy), "late adoption lost emergency request: %#v", lateActions)
 	}
 	adoptedAttempt := supervisorAttemptByGeneration(t, adopted, 51)
-	if adoptedAttempt.phase != supervisorLaunchOwned ||
-		adoptedAttempt.intent != (supervisorRunningIntent{}) || adoptedAttempt.intent.duration < 0 {
-		t.Fatalf("late release was not adopted: %#v", adopted)
-	}
+	assert.Equal(t, supervisorLaunchOwned, adoptedAttempt.phase, "late release was not adopted: %#v", adopted)
+	assert.Equal(t, (supervisorRunningIntent{}), adoptedAttempt.intent, "late release was not adopted: %#v", adopted)
+	assert.False(t, adoptedAttempt.intent.duration < 0, "late release was not adopted: %#v", adopted)
 
 	t.Run("duplicate emergency", func(t *testing.T) {
 		assertSupervisorInvariant(t, func() { reduceSupervisor(next, event) })
@@ -903,15 +875,14 @@ func appendReducerLaunchWithFacts(
 		commandDeadline: commandDeadline,
 	})
 	assertSupervisorActions(t, actions, supervisorLaunchNative)
-	if actions[0].generation != generation || actions[0].token == 0 {
-		t.Fatalf("native launch action = %#v", actions[0])
-	}
+	assert.Equal(t, generation, actions[0].generation, "native launch action = %#v", actions[0])
+	assert.NotEqual(t, 0, actions[0].token, "native launch action = %#v", actions[0])
 	registered := supervisorAttemptByGeneration(t, state, generation)
-	if registered.attempt != attempt || registered.launchAction != actions[0].token ||
-		registered.phase != supervisorLaunchEstablishing || registered.profile != profile ||
-		registered.commandDeadline != commandDeadline {
-		t.Fatalf("registered launch = %#v action=%#v", registered, actions[0])
-	}
+	assert.Equal(t, attempt, registered.attempt, "registered launch = %#v action=%#v", registered, actions[0])
+	assert.Equal(t, actions[0].token, registered.launchAction, "registered launch = %#v action=%#v", registered, actions[0])
+	assert.Equal(t, supervisorLaunchEstablishing, registered.phase, "registered launch = %#v action=%#v", registered, actions[0])
+	assert.Equal(t, profile, registered.profile, "registered launch = %#v action=%#v", registered, actions[0])
+	assert.Equal(t, commandDeadline, registered.commandDeadline, "registered launch = %#v action=%#v", registered, actions[0])
 
 	return state, actions[0]
 }
@@ -927,7 +898,7 @@ func supervisorAttemptByGeneration(
 			return attempt
 		}
 	}
-	t.Fatalf("generation %d absent from state %#v", generation, state)
+	require.FailNow(t, "generation %d absent from state %#v", generation, state)
 
 	return supervisorAttemptState{}
 }
@@ -938,9 +909,7 @@ func assertSupervisorActions(t *testing.T, actions []supervisorAction, want ...s
 	for index, action := range actions {
 		got[index] = action.kind
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("actions = %v, want %v (%#v)", got, want, actions)
-	}
+	assert.Equal(t, want, got, "actions = %v, want %v (%#v)", got, want, actions)
 	assertStrictlyIncreasingActionTokens(t, actions)
 }
 
@@ -948,9 +917,8 @@ func assertStrictlyIncreasingActionTokens(t *testing.T, actions []supervisorActi
 	t.Helper()
 	var previous supervisorActionToken
 	for _, action := range actions {
-		if action.token == 0 || action.token <= previous {
-			t.Fatalf("action tokens are not strictly increasing: %#v", actions)
-		}
+		assert.NotEqual(t, 0, action.token, "action tokens are not strictly increasing: %#v", actions)
+		assert.False(t, action.token <= previous, "action tokens are not strictly increasing: %#v", actions)
 		previous = action.token
 	}
 }
@@ -958,8 +926,9 @@ func assertStrictlyIncreasingActionTokens(t *testing.T, actions []supervisorActi
 func assertSupervisorInvariant(t *testing.T, action func()) {
 	t.Helper()
 	defer func() {
-		if _, ok := recover().(runtimeInvariantViolation); !ok {
-			t.Fatalf("reducer did not raise runtimeInvariantViolation")
+		{
+			_, ok := recover().(runtimeInvariantViolation)
+			require.True(t, ok, "reducer did not raise runtimeInvariantViolation")
 		}
 	}()
 	action()
@@ -972,8 +941,9 @@ func reduceSupervisorMustAccept(
 ) (next supervisorState, actions []supervisorAction) {
 	t.Helper()
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			t.Fatalf("reducer unexpectedly rejected valid evidence: %v", recovered)
+		{
+			recovered := recover()
+			assert.Nil(t, recovered, "reducer unexpectedly rejected valid evidence: %v", recovered)
 		}
 	}()
 
@@ -990,7 +960,7 @@ func assertReducerDataOnly(t *testing.T, dataType reflect.Type, visiting map[ref
 
 	switch dataType.Kind() {
 	case reflect.Func, reflect.Chan, reflect.Interface, reflect.Map, reflect.UnsafePointer, reflect.Uintptr:
-		t.Fatalf("reducer data contains execution capability at %s: %s", path, dataType)
+		require.FailNow(t, "reducer data contains execution capability at %s: %s", path, dataType)
 	case reflect.Pointer, reflect.Slice, reflect.Array:
 		assertReducerDataOnly(t, dataType.Elem(), visiting, path+" -> "+dataType.String())
 	case reflect.Struct:

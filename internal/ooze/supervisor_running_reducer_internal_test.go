@@ -1,9 +1,10 @@
 package ooze
 
 import (
-	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSupervisorReducerRunningEarliestFactAndExactTiePriority(t *testing.T) {
@@ -80,22 +81,20 @@ func TestSupervisorReducerRunningEarliestFactAndExactTiePriority(t *testing.T) {
 			}
 			next, actions := fixture.reduceBundle(t, fixture.deadlineAt, facts, recheck)
 			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-			if !attempt.intent.latched || attempt.intent.kind != test.want ||
-				attempt.intent.count != test.wantCount ||
-				attempt.intent.duration != attempt.intent.at.Sub(fixture.startedAt) {
-				t.Fatalf("running intent = %#v, want kind=%d count=%#v", attempt.intent, test.want, test.wantCount)
-			}
+			assert.True(t, attempt.intent.latched, "running intent = %#v, want kind=%d count=%#v", attempt.intent, test.want, test.wantCount)
+			assert.Equal(t, test.want, attempt.intent.kind, "running intent = %#v, want kind=%d count=%#v", attempt.intent, test.want, test.wantCount)
+			assert.Equal(t, test.wantCount, attempt.intent.count, "running intent = %#v, want kind=%d count=%#v", attempt.intent, test.want, test.wantCount)
+			assert.Equal(t, attempt.intent.at.Sub(fixture.startedAt), attempt.intent.duration, "running intent = %#v, want kind=%d count=%#v", attempt.intent, test.want, test.wantCount)
 			wantAction := supervisorForceOwned
 			if test.want == supervisorIntentRootExit {
 				wantAction = supervisorObserveEmptiness
 			}
 			assertSupervisorActions(t, actions, wantAction)
-			if actions[0].generation != fixture.generation ||
-				!reflect.DeepEqual(actions[0].intent, attempt.intent) ||
-				!actions[0].drainBy.Equal(fixture.drainByFor(attempt.intent)) ||
-				actions[0].kind == supervisorSampleRunning || actions[0].kind == supervisorWaitRoot {
-				t.Fatalf("intent action = %#v", actions[0])
-			}
+			assert.Equal(t, fixture.generation, actions[0].generation, "intent action = %#v", actions[0])
+			assert.Equal(t, attempt.intent, actions[0].intent, "intent action = %#v", actions[0])
+			assert.True(t, actions[0].drainBy.Equal(fixture.drainByFor(attempt.intent)), "intent action = %#v", actions[0])
+			assert.NotEqual(t, supervisorSampleRunning, actions[0].kind, "intent action = %#v", actions[0])
+			assert.NotEqual(t, supervisorWaitRoot, actions[0].kind, "intent action = %#v", actions[0])
 		})
 	}
 }
@@ -111,9 +110,8 @@ func TestSupervisorReducerRunningDeadlineRechecksExitAndRetainsOnlyValidCountEvi
 		}
 		next, actions := fixture.reduceBundle(t, fixture.deadlineAt, nil, recheck)
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentRootExit || intent.exitCode != 17 {
-			t.Fatalf("deadline exit recheck = %#v", intent)
-		}
+		assert.Equal(t, supervisorIntentRootExit, intent.kind, "deadline exit recheck = %#v", intent)
+		assert.EqualValues(t, 17, intent.exitCode, "deadline exit recheck = %#v", intent)
 		assertSupervisorActions(t, actions, supervisorObserveEmptiness)
 	})
 
@@ -128,10 +126,10 @@ func TestSupervisorReducerRunningDeadlineRechecksExitAndRetainsOnlyValidCountEvi
 		}
 		next, actions := fixture.reduceBundle(t, fixture.deadlineAt, nil, recheck)
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentRootExit || !intent.at.Equal(completedAt) ||
-			intent.duration != completedAt.Sub(fixture.startedAt) || intent.exitCode != 19 {
-			t.Fatalf("deadline recheck root evidence = %#v, want actual earlier completion", intent)
-		}
+		assert.Equal(t, supervisorIntentRootExit, intent.kind, "deadline recheck root evidence = %#v, want actual earlier completion", intent)
+		assert.True(t, intent.at.Equal(completedAt), "deadline recheck root evidence = %#v, want actual earlier completion", intent)
+		assert.Equal(t, completedAt.Sub(fixture.startedAt), intent.duration, "deadline recheck root evidence = %#v, want actual earlier completion", intent)
+		assert.EqualValues(t, 19, intent.exitCode, "deadline recheck root evidence = %#v, want actual earlier completion", intent)
 		assertSupervisorActions(t, actions, supervisorObserveEmptiness)
 	})
 
@@ -145,10 +143,8 @@ func TestSupervisorReducerRunningDeadlineRechecksExitAndRetainsOnlyValidCountEvi
 			performed: true, at: fixture.deadlineAt,
 		})
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentDeadline ||
-			intent.count != (supervisorObservedCount{present: true, value: 7}) {
-			t.Fatalf("automatic deadline peak = %#v", intent)
-		}
+		assert.Equal(t, supervisorIntentDeadline, intent.kind, "automatic deadline peak = %#v", intent)
+		assert.Equal(t, (supervisorObservedCount{present: true, value: 7}), intent.count, "automatic deadline peak = %#v", intent)
 	})
 
 	t.Run("automatic deadline invents no missing peak", func(t *testing.T) {
@@ -157,23 +153,21 @@ func TestSupervisorReducerRunningDeadlineRechecksExitAndRetainsOnlyValidCountEvi
 			performed: true, at: fixture.deadlineAt,
 		})
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentDeadline || intent.count.present || intent.count.value != 0 {
-			t.Fatalf("automatic deadline invented a count: %#v", intent)
-		}
+		assert.Equal(t, supervisorIntentDeadline, intent.kind, "automatic deadline invented a count: %#v", intent)
+		assert.False(t, intent.count.present, "automatic deadline invented a count: %#v", intent)
+		assert.EqualValues(t, 0, intent.count.value, "automatic deadline invented a count: %#v", intent)
 	})
 
 	t.Run("serial deadline neither samples fuse nor carries a count", func(t *testing.T) {
 		fixture := newRunningReducerFixture(t, SerialProfile)
-		if fixture.sampleAction != 0 {
-			t.Fatalf("serial attempt received sample action %d", fixture.sampleAction)
-		}
+		assert.EqualValues(t, 0, fixture.sampleAction, "serial attempt received sample action %d", fixture.sampleAction)
 		next, actions := fixture.reduceBundle(t, fixture.deadlineAt, nil, supervisorExitRecheck{
 			performed: true, at: fixture.deadlineAt,
 		})
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentDeadline || intent.count.present || intent.count.value != 0 {
-			t.Fatalf("serial deadline count = %#v", intent)
-		}
+		assert.Equal(t, supervisorIntentDeadline, intent.kind, "serial deadline count = %#v", intent)
+		assert.False(t, intent.count.present, "serial deadline count = %#v", intent)
+		assert.EqualValues(t, 0, intent.count.value, "serial deadline count = %#v", intent)
 		assertSupervisorActions(t, actions, supervisorForceOwned)
 	})
 
@@ -222,13 +216,9 @@ func TestSupervisorReducerRunningIntentIsFinalAndStopsSamplingAndWaitActions(t *
 			facts:        []supervisorRunningFact{lateFact},
 		},
 	})
-	if len(lateActions) != 0 {
-		t.Fatalf("post-intent facts emitted actions: %#v", lateActions)
-	}
+	assert.EqualValues(t, 0, len(lateActions), "post-intent facts emitted actions: %#v", lateActions)
 	got := supervisorAttemptByGeneration(t, after, fixture.generation).intent
-	if !reflect.DeepEqual(got, before) {
-		t.Fatalf("post-intent facts rewrote intent: before=%#v after=%#v", before, got)
-	}
+	assert.Equal(t, before, got, "post-intent facts rewrote intent: before=%#v after=%#v", before, got)
 }
 
 func TestSupervisorReducerRunningSealedStatesStillValidateLateProvenance(t *testing.T) {
@@ -284,9 +274,8 @@ func TestSupervisorReducerRunningSealedStatesStillValidateLateProvenance(t *test
 					waitAction: fixture.waitAction, facts: []supervisorRunningFact{valid},
 				},
 			})
-			if len(actions) != 0 || !reflect.DeepEqual(unchanged, sealed) {
-				t.Fatalf("valid sealed notification changed state: before=%#v after=%#v actions=%#v", sealed, unchanged, actions)
-			}
+			assert.EqualValues(t, 0, len(actions), "valid sealed notification changed state: before=%#v after=%#v actions=%#v", sealed, unchanged, actions)
+			assert.Equal(t, sealed, unchanged, "valid sealed notification changed state: before=%#v after=%#v actions=%#v", sealed, unchanged, actions)
 
 			for _, malformed := range []struct {
 				name   string
@@ -488,10 +477,8 @@ func TestSupervisorReducerRunningDelayedBoundarySnapshotPreservesReleaseInterval
 	assertSupervisorActions(t, releasedActions,
 		supervisorPublishOwned, supervisorWaitRoot, supervisorSampleRunning)
 	attempt := supervisorAttemptByGeneration(t, state, generation)
-	if !attempt.startedAt.Equal(completionAt) ||
-		!attempt.deadlineAt.Equal(completionAt.Add(20*time.Second)) {
-		t.Fatalf("delayed boundary moved the release cut: %#v", attempt)
-	}
+	assert.True(t, attempt.startedAt.Equal(completionAt), "delayed boundary moved the release cut: %#v", attempt)
+	assert.True(t, attempt.deadlineAt.Equal(completionAt.Add(20*time.Second)), "delayed boundary moved the release cut: %#v", attempt)
 	factAt := completionAt.Add(250 * time.Millisecond)
 	fact := supervisorRunningFact{
 		generation: generation,
@@ -513,10 +500,9 @@ func TestSupervisorReducerRunningDelayedBoundarySnapshotPreservesReleaseInterval
 	})
 	assertSupervisorActions(t, actions, supervisorForceOwned)
 	intent := supervisorAttemptByGeneration(t, next, generation).intent
-	if intent.kind != supervisorIntentFuse || !intent.at.Equal(factAt) ||
-		intent.count != (supervisorObservedCount{present: true, value: 65}) {
-		t.Fatalf("release-interval fact was erased by boundary delivery: %#v", intent)
-	}
+	assert.Equal(t, supervisorIntentFuse, intent.kind, "release-interval fact was erased by boundary delivery: %#v", intent)
+	assert.True(t, intent.at.Equal(factAt), "release-interval fact was erased by boundary delivery: %#v", intent)
+	assert.Equal(t, (supervisorObservedCount{present: true, value: 65}), intent.count, "release-interval fact was erased by boundary delivery: %#v", intent)
 }
 
 func TestSupervisorReducerRunningObservationFailuresRetainIndependentDiagnostics(t *testing.T) {
@@ -542,10 +528,10 @@ func TestSupervisorReducerRunningObservationFailuresRetainIndependentDiagnostics
 		next, actions := fixture.reduceBundle(t, at, facts, supervisorExitRecheck{})
 		assertSupervisorActions(t, actions, supervisorObserveEmptiness)
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentRootExit || intent.exitCode != 17 ||
-			intent.diagnostics.wait != 101 || intent.diagnostics.running != 202 {
-			t.Fatalf("root-exit tie lost independent diagnostics: %#v", intent)
-		}
+		assert.Equal(t, supervisorIntentRootExit, intent.kind, "root-exit tie lost independent diagnostics: %#v", intent)
+		assert.EqualValues(t, 17, intent.exitCode, "root-exit tie lost independent diagnostics: %#v", intent)
+		assert.EqualValues(t, 101, intent.diagnostics.wait, "root-exit tie lost independent diagnostics: %#v", intent)
+		assert.EqualValues(t, 202, intent.diagnostics.running, "root-exit tie lost independent diagnostics: %#v", intent)
 	})
 
 	t.Run("automatic composes wait and running failures with wait canonical", func(t *testing.T) {
@@ -566,11 +552,10 @@ func TestSupervisorReducerRunningObservationFailuresRetainIndependentDiagnostics
 		next, actions := fixture.reduceBundle(t, at, facts, supervisorExitRecheck{})
 		assertSupervisorActions(t, actions, supervisorForceOwned)
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentObservationFailure ||
-			intent.observationSource != supervisorObservationWait ||
-			intent.diagnostics.wait != 101 || intent.diagnostics.running != 202 {
-			t.Fatalf("independent observation diagnostics = %#v", intent)
-		}
+		assert.Equal(t, supervisorIntentObservationFailure, intent.kind, "independent observation diagnostics = %#v", intent)
+		assert.Equal(t, supervisorObservationWait, intent.observationSource, "independent observation diagnostics = %#v", intent)
+		assert.EqualValues(t, 101, intent.diagnostics.wait, "independent observation diagnostics = %#v", intent)
+		assert.EqualValues(t, 202, intent.diagnostics.running, "independent observation diagnostics = %#v", intent)
 	})
 
 	t.Run("serial accepts wait failure", func(t *testing.T) {
@@ -583,9 +568,8 @@ func TestSupervisorReducerRunningObservationFailuresRetainIndependentDiagnostics
 		}
 		next, _ := fixture.reduceBundle(t, at, []supervisorRunningFact{fact}, supervisorExitRecheck{})
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.observationSource != supervisorObservationWait || intent.diagnostics.wait != 303 {
-			t.Fatalf("serial wait failure = %#v", intent)
-		}
+		assert.Equal(t, supervisorObservationWait, intent.observationSource, "serial wait failure = %#v", intent)
+		assert.EqualValues(t, 303, intent.diagnostics.wait, "serial wait failure = %#v", intent)
 	})
 
 	t.Run("serial rejects running failure", func(t *testing.T) {
@@ -639,10 +623,9 @@ func TestSupervisorReducerRunningCanonicalSameKindFactsAndLocalDrainBound(t *tes
 		}
 		next, actions := fixture.reduceBundle(t, at, facts, supervisorExitRecheck{})
 		intent := supervisorAttemptByGeneration(t, next, fixture.generation).intent
-		if intent.kind != supervisorIntentStop || !intent.stop.DrainBy.Equal(earlier) ||
-			!actions[0].drainBy.Equal(earlier) {
-			t.Fatalf("equal stop canonicalization = %#v actions=%#v", intent, actions)
-		}
+		assert.Equal(t, supervisorIntentStop, intent.kind, "equal stop canonicalization = %#v actions=%#v", intent, actions)
+		assert.True(t, intent.stop.DrainBy.Equal(earlier), "equal stop canonicalization = %#v actions=%#v", intent, actions)
+		assert.True(t, actions[0].drainBy.Equal(earlier), "equal stop canonicalization = %#v actions=%#v", intent, actions)
 	})
 
 	t.Run("duplicate root exits at equality", func(t *testing.T) {
@@ -701,12 +684,13 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 		})
 		assertSupervisorActions(t, actions, supervisorForceOwned)
 		attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-		if attempt.phase != supervisorEmergencyDraining || attempt.intent.kind != supervisorIntentRootExit ||
-			!attempt.intent.at.Equal(factAt) || !attempt.intent.drainBy.Equal(localDrainBy) ||
-			attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
-			!actions[0].at.Equal(emergencyAt) || !actions[0].drainBy.Equal(emergencyDrainBy) {
-			t.Fatalf("emergency running snapshot = %#v actions=%#v", attempt, actions)
-		}
+		assert.Equal(t, supervisorEmergencyDraining, attempt.phase, "emergency running snapshot = %#v actions=%#v", attempt, actions)
+		assert.Equal(t, supervisorIntentRootExit, attempt.intent.kind, "emergency running snapshot = %#v actions=%#v", attempt, actions)
+		assert.True(t, attempt.intent.at.Equal(factAt), "emergency running snapshot = %#v actions=%#v", attempt, actions)
+		assert.True(t, attempt.intent.drainBy.Equal(localDrainBy), "emergency running snapshot = %#v actions=%#v", attempt, actions)
+		assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "emergency running snapshot = %#v actions=%#v", attempt, actions)
+		assert.True(t, actions[0].at.Equal(emergencyAt), "emergency running snapshot = %#v actions=%#v", attempt, actions)
+		assert.True(t, actions[0].drainBy.Equal(emergencyDrainBy), "emergency running snapshot = %#v actions=%#v", attempt, actions)
 
 		lateFact := supervisorRunningFact{
 			generation: fixture.generation, action: fixture.sampleAction,
@@ -721,10 +705,8 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 				waitAction: fixture.waitAction, facts: []supervisorRunningFact{lateFact},
 			},
 		})
-		if len(lateActions) != 0 ||
-			!reflect.DeepEqual(supervisorAttemptByGeneration(t, sealed, fixture.generation).intent, attempt.intent) {
-			t.Fatalf("post-emergency notification escaped seal: state=%#v actions=%#v", sealed, lateActions)
-		}
+		assert.EqualValues(t, 0, len(lateActions), "post-emergency notification escaped seal: state=%#v actions=%#v", sealed, lateActions)
+		assert.Equal(t, attempt.intent, supervisorAttemptByGeneration(t, sealed, fixture.generation).intent, "post-emergency notification escaped seal: state=%#v actions=%#v", sealed, lateActions)
 	})
 
 	t.Run("empty snapshot latches private runtime emergency intent", func(t *testing.T) {
@@ -748,12 +730,12 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 			at: emergencyAt, drainBy: drainBy,
 			duration: emergencyAt.Sub(fixture.startedAt),
 		}
-		if attempt.phase != supervisorEmergencyDraining || !reflect.DeepEqual(attempt.intent, wantIntent) ||
-			attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
-			!reflect.DeepEqual(actions[0].intent, wantIntent) ||
-			!attempt.drain.effectiveDrainBy.Equal(drainBy) || !actions[0].drainBy.Equal(drainBy) {
-			t.Fatalf("runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
-		}
+		assert.Equal(t, supervisorEmergencyDraining, attempt.phase, "runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+		assert.Equal(t, wantIntent, attempt.intent, "runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+		assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+		assert.Equal(t, wantIntent, actions[0].intent, "runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+		assert.True(t, attempt.drain.effectiveDrainBy.Equal(drainBy), "runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
+		assert.True(t, actions[0].drainBy.Equal(drainBy), "runtime emergency fallback = %#v actions=%#v, want intent=%#v", attempt, actions, wantIntent)
 
 		lateFact := supervisorRunningFact{
 			generation: fixture.generation, action: fixture.sampleAction,
@@ -768,9 +750,8 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 				waitAction: fixture.waitAction, facts: []supervisorRunningFact{lateFact},
 			},
 		})
-		if len(lateActions) != 0 || !reflect.DeepEqual(sealed, next) {
-			t.Fatalf("valid late fact changed runtime-emergency intent: before=%#v after=%#v actions=%#v", next, sealed, lateActions)
-		}
+		assert.EqualValues(t, 0, len(lateActions), "valid late fact changed runtime-emergency intent: before=%#v after=%#v actions=%#v", next, sealed, lateActions)
+		assert.Equal(t, next, sealed, "valid late fact changed runtime-emergency intent: before=%#v after=%#v actions=%#v", next, sealed, lateActions)
 	})
 
 	for _, test := range []struct {
@@ -810,11 +791,10 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 			})
 			assertSupervisorActions(t, actions, supervisorForceOwned)
 			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-			if attempt.intent.kind != want || !attempt.intent.at.Equal(emergencyAt) ||
-				attempt.intent.kind == supervisorIntentRuntimeEmergency ||
-				!reflect.DeepEqual(actions[0].intent, attempt.intent) {
-				t.Fatalf("ordinary equality lost to runtime fallback: %#v actions=%#v", attempt, actions)
-			}
+			assert.Equal(t, want, attempt.intent.kind, "ordinary equality lost to runtime fallback: %#v actions=%#v", attempt, actions)
+			assert.True(t, attempt.intent.at.Equal(emergencyAt), "ordinary equality lost to runtime fallback: %#v actions=%#v", attempt, actions)
+			assert.NotEqual(t, supervisorIntentRuntimeEmergency, attempt.intent.kind, "ordinary equality lost to runtime fallback: %#v actions=%#v", attempt, actions)
+			assert.Equal(t, attempt.intent, actions[0].intent, "ordinary equality lost to runtime fallback: %#v actions=%#v", attempt, actions)
 		})
 	}
 
@@ -830,11 +810,9 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 		)
 		beforeAttempt := supervisorAttemptByGeneration(t, latched, fixture.generation)
 		before := beforeAttempt.intent
-		if beforeAttempt.pendingAction != (supervisorPendingAction{
+		assert.Equal(t, (supervisorPendingAction{
 			kind: intentActions[0].kind, token: intentActions[0].token,
-		}) {
-			t.Fatalf("latched intent did not retain first drain action: %#v actions=%#v", beforeAttempt, intentActions)
-		}
+		}), beforeAttempt.pendingAction, "latched intent did not retain first drain action: %#v actions=%#v", beforeAttempt, intentActions)
 		emergencyAt := intentAt.Add(time.Second)
 		drainBy := emergencyAt.Add(time.Second)
 		next, actions := reduceSupervisor(latched, supervisorEvent{
@@ -847,16 +825,14 @@ func TestSupervisorReducerRunningEmergencyConsumesSnapshotAndSealsOrdinaryIntent
 				},
 			}},
 		})
-		if len(actions) != 0 {
-			t.Fatalf("emergency dispatched competing force: %#v", actions)
-		}
+		assert.EqualValues(t, 0, len(actions), "emergency dispatched competing force: %#v", actions)
 		after := supervisorAttemptByGeneration(t, next, fixture.generation)
-		if after.phase != supervisorEmergencyDraining || !reflect.DeepEqual(after.intent, before) ||
-			after.pendingAction != beforeAttempt.pendingAction ||
-			!next.emergency.active || !next.emergency.at.Equal(emergencyAt) ||
-			!next.emergency.drainBy.Equal(drainBy) {
-			t.Fatalf("emergency rewrote accepted intent: before=%#v after=%#v", before, after)
-		}
+		assert.Equal(t, supervisorEmergencyDraining, after.phase, "emergency rewrote accepted intent: before=%#v after=%#v", before, after)
+		assert.Equal(t, before, after.intent, "emergency rewrote accepted intent: before=%#v after=%#v", before, after)
+		assert.Equal(t, beforeAttempt.pendingAction, after.pendingAction, "emergency rewrote accepted intent: before=%#v after=%#v", before, after)
+		assert.True(t, next.emergency.active, "emergency rewrote accepted intent: before=%#v after=%#v", before, after)
+		assert.True(t, next.emergency.at.Equal(emergencyAt), "emergency rewrote accepted intent: before=%#v after=%#v", before, after)
+		assert.True(t, next.emergency.drainBy.Equal(drainBy), "emergency rewrote accepted intent: before=%#v after=%#v", before, after)
 	})
 
 	t.Run("already latched intent cannot postdate emergency", func(t *testing.T) {

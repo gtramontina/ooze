@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *processRuntimeShell) snapshot() processRuntime {
@@ -27,10 +30,8 @@ func TestProcessRuntimeShellCompletesSealedConfirmationQueue(t *testing.T) {
 
 	result := shell.completeConfirmationQueue(grant.campaign)
 	snapshot := shell.snapshot()
-	if result.decision != confirmationQueueCompleted ||
-		!snapshot.campaigns[snapshot.campaignIndex(grant.campaign)].primaryGateOpen {
-		t.Fatalf("queue completion/state = %#v/%#v", result, snapshot)
-	}
+	assert.Equal(t, confirmationQueueCompleted, result.decision, "queue completion/state = %#v/%#v", result, snapshot)
+	assert.True(t, snapshot.campaigns[snapshot.campaignIndex(grant.campaign)].primaryGateOpen, "queue completion/state = %#v/%#v", result, snapshot)
 }
 
 func TestProcessRuntimeShellUsesBufferedOneShotGrantDelivery(t *testing.T) {
@@ -42,15 +43,14 @@ func TestProcessRuntimeShellUsesBufferedOneShotGrantDelivery(t *testing.T) {
 		attempt:  "a",
 		class:    sharedAdmission,
 	})
-	if cap(requested.delivery) != 1 || len(requested.delivery) != 1 {
-		t.Fatalf("delivery cap/len=%d/%d, want 1/1", cap(requested.delivery), len(requested.delivery))
-	}
+	assert.EqualValues(t, 1, cap(requested.delivery), "delivery cap/len=%d/%d, want 1/1", cap(requested.delivery), len(requested.delivery))
+	assert.EqualValues(t, 1, len(requested.delivery), "delivery cap/len=%d/%d, want 1/1", cap(requested.delivery), len(requested.delivery))
 	grant, open := <-requested.delivery
-	if !open || grant != requested.request {
-		t.Fatalf("grant/open=%#v/%t", grant, open)
-	}
-	if _, open = <-requested.delivery; open {
-		t.Fatal("one-shot delivery remained open after its grant")
+	assert.True(t, open, "grant/open=%#v/%t", grant, open)
+	assert.Equal(t, requested.request, grant, "grant/open=%#v/%t", grant, open)
+	{
+		_, open = <-requested.delivery
+		assert.False(t, open, "one-shot delivery remained open after its grant")
 	}
 }
 
@@ -62,34 +62,28 @@ func TestProcessRuntimeShellFatalClosureClosesWaiterAndAcceptsLateGrantReturn(t 
 	grant := <-granted.delivery
 
 	closed := shell.closeRuntime(runtimeFatalCause("fatal test"))
-	if shell.snapshot().lifecycle != runtimeFatalClosing {
-		t.Fatalf("closure=%#v", closed)
-	}
-	if _, open := <-waiting.delivery; open {
-		t.Fatal("fatal closure left a waiting delivery open")
+	assert.Equal(t, runtimeFatalClosing, shell.snapshot().lifecycle, "closure=%#v", closed)
+	{
+		_, open := <-waiting.delivery
+		assert.False(t, open, "fatal closure left a waiting delivery open")
 	}
 	returned := shell.acknowledgeGrantReturn(grant)
-	if returned.decision != admissionReturnedAfterClosure {
-		t.Fatalf("late grant return=%#v", returned)
-	}
+	assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "late grant return=%#v", returned)
 	requested := shell.requestAdmission(admissionRequest{campaign: campaign.token, attempt: "c", class: sharedAdmission})
-	if requested.decision != admissionRejectedClosed {
-		t.Fatalf("post-close request=%#v", requested)
-	}
-	if _, open := <-requested.delivery; open {
-		t.Fatal("rejected post-close request left a delivery open")
+	assert.Equal(t, admissionRejectedClosed, requested.decision, "post-close request=%#v", requested)
+	{
+		_, open := <-requested.delivery
+		assert.False(t, open, "rejected post-close request left a delivery open")
 	}
 }
 
 func TestProcessRuntimeShellBroadcastsEmergencyOnceToEveryCampaign(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	emergency := shell.runtimeEmergency()
-	if emergency != shell.runtimeEmergency() {
-		t.Fatal("runtime exposed more than one emergency broadcast")
-	}
+	assert.Equal(t, shell.runtimeEmergency(), emergency, "runtime exposed more than one emergency broadcast")
 	select {
 	case <-emergency:
-		t.Fatal("emergency broadcast closed while runtime was open")
+		require.FailNow(t, "emergency broadcast closed while runtime was open")
 	default:
 	}
 	shell.registerCampaign(campaignProvenance{lineage: 11}) // No waiter to close for this campaign.
@@ -102,13 +96,13 @@ func TestProcessRuntimeShellBroadcastsEmergencyOnceToEveryCampaign(t *testing.T)
 	select {
 	case <-emergency:
 	default:
-		t.Fatal("runtime emergency did not reach a campaign without a waiter")
+		require.FailNow(t, "runtime emergency did not reach a campaign without a waiter")
 	}
 	shell.closeRuntime(runtimeFatalCause("joined fatal cause"))
 	select {
 	case <-emergency:
 	default:
-		t.Fatal("joined fatal cause replaced the closed broadcast")
+		require.FailNow(t, "joined fatal cause replaced the closed broadcast")
 	}
 }
 
@@ -121,13 +115,10 @@ func TestProcessRuntimeShellFatalClosureDoesNotEmitUnboundBarrierDelivery(t *tes
 	startedA := startOwned(shell, <-requestA.delivery)
 	_ = startOwned(shell, <-requestB.delivery)
 	shell.observeAttempt(startedA.generation, automaticDeadlineTrip())
-	if shell.snapshot().unboundBarrierIndex(campaignA.token) < 0 {
-		t.Fatalf("setup has no unbound barrier: %#v", shell.snapshot())
-	}
+	assert.False(t, shell.snapshot().unboundBarrierIndex(campaignA.token) < 0, "setup has no unbound barrier: %#v", shell.snapshot())
 	closed := shell.closeRuntime(runtimeFatalCause("fatal before barrier binding"))
-	if len(closed.cancelledWaiting) != 0 || shell.snapshot().lifecycle != runtimeFatalClosing {
-		t.Fatalf("unbound barrier produced delivery action: %#v/%#v", closed, shell.snapshot())
-	}
+	assert.EqualValues(t, 0, len(closed.cancelledWaiting), "unbound barrier produced delivery action: %#v/%#v", closed, shell.snapshot())
+	assert.Equal(t, runtimeFatalClosing, shell.snapshot().lifecycle, "unbound barrier produced delivery action: %#v/%#v", closed, shell.snapshot())
 }
 
 func TestProcessRuntimeShellBindsBarrierToBufferedOneShot(t *testing.T) {
@@ -146,15 +137,16 @@ func TestProcessRuntimeShellBindsBarrierToBufferedOneShot(t *testing.T) {
 		attempt:  confirmationAttempt,
 		profile:  AutomaticProfile, deadline: 31 * time.Second,
 	})
-	if confirmation.decision != barrierBound || cap(confirmation.delivery) != 1 || len(confirmation.delivery) != 1 {
-		t.Fatalf("confirmation await=%#v cap/len=%d/%d", confirmation, cap(confirmation.delivery), len(confirmation.delivery))
-	}
+	assert.Equal(t, barrierBound, confirmation.decision, "confirmation await=%#v cap/len=%d/%d", confirmation, cap(confirmation.delivery), len(confirmation.delivery))
+	assert.EqualValues(t, 1, cap(confirmation.delivery), "confirmation await=%#v cap/len=%d/%d", confirmation, cap(confirmation.delivery), len(confirmation.delivery))
+	assert.EqualValues(t, 1, len(confirmation.delivery), "confirmation await=%#v cap/len=%d/%d", confirmation, cap(confirmation.delivery), len(confirmation.delivery))
 	grant, open := <-confirmation.delivery
-	if !open || grant != confirmation.request || grant.class != confirmationBarrierAdmission {
-		t.Fatalf("confirmation grant/open=%#v/%t", grant, open)
-	}
-	if _, open = <-confirmation.delivery; open {
-		t.Fatal("confirmation delivery remained open")
+	assert.True(t, open, "confirmation grant/open=%#v/%t", grant, open)
+	assert.Equal(t, confirmation.request, grant, "confirmation grant/open=%#v/%t", grant, open)
+	assert.Equal(t, confirmationBarrierAdmission, grant.class, "confirmation grant/open=%#v/%t", grant, open)
+	{
+		_, open = <-confirmation.delivery
+		assert.False(t, open, "confirmation delivery remained open")
 	}
 }
 
@@ -163,9 +155,7 @@ func TestProcessRuntimeShellExposesTerminalAndEmergencyAcknowledgements(t *testi
 		shell := newProcessRuntimeShell(1)
 		campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
 		result := shell.commitTerminal(campaign.token)
-		if result.decision != terminalCommitted {
-			t.Fatalf("terminal=%#v", result)
-		}
+		assert.Equal(t, terminalCommitted, result.decision, "terminal=%#v", result)
 	})
 
 	t.Run("emergency", func(t *testing.T) {
@@ -180,9 +170,7 @@ func TestProcessRuntimeShellExposesTerminalAndEmergencyAcknowledgements(t *testi
 				disposition: emergencyConfirmedDrained,
 			}},
 		})
-		if !reflect.DeepEqual(result.acknowledged, []attemptGeneration{started.generation}) {
-			t.Fatalf("emergency settlement=%#v", result)
-		}
+		assert.Equal(t, []attemptGeneration{started.generation}, result.acknowledged, "emergency settlement=%#v", result)
 	})
 }
 
@@ -215,16 +203,17 @@ func TestProcessRuntimeShellFatalCloseProgressesWhileNativeLaunchIsBlocked(t *te
 	close(allowLaunch)
 	result := <-started
 
-	if installed == 0 || installed != result.generation || shell.snapshot().lifecycle != runtimeFatalClosing ||
-		result.decision != startCommittedAccepted ||
-		!result.runtimeClosureInProgress {
-		t.Fatalf("cell/close/start=%d/%#v/%#v", installed, closed, result)
-	}
+	assert.NotEqual(t, 0, installed, "cell/close/start=%d/%#v/%#v", installed, closed, result)
+	assert.Equal(t, result.generation, installed, "cell/close/start=%d/%#v/%#v", installed, closed, result)
+	assert.Equal(t, runtimeFatalClosing, shell.snapshot().lifecycle, "cell/close/start=%d/%#v/%#v", installed, closed, result)
+	assert.Equal(t, startCommittedAccepted, result.decision, "cell/close/start=%d/%#v/%#v", installed, closed, result)
+	assert.True(t, result.runtimeClosureInProgress, "cell/close/start=%d/%#v/%#v", installed, closed, result)
 	want := []residualCustody{{
 		generation: result.generation, attempt: grant.attempt, stage: admissionOwned, transferred: false,
 	}}
-	if got := shell.snapshot().residualCustody(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("late-owned residual=%#v, want %#v", got, want)
+	{
+		got := shell.snapshot().residualCustody()
+		assert.Equal(t, want, got, "late-owned residual=%#v, want %#v", got, want)
 	}
 }
 
@@ -239,28 +228,19 @@ func TestStartInstallationKeepsLaunchDormantUntilInstalledStart(t *testing.T) {
 
 		return launchOwned{}
 	}
-	if launchCalls != 0 || cell.installedGeneration() != 0 {
-		t.Fatalf("construction launched or installed: calls/generation=%d/%d", launchCalls, cell.installedGeneration())
-	}
+	assert.EqualValues(t, 0, launchCalls, "construction launched or installed: calls/generation=%d/%d", launchCalls, cell.installedGeneration())
+	assert.EqualValues(t, 0, cell.installedGeneration(), "construction launched or installed: calls/generation=%d/%d", launchCalls, cell.installedGeneration())
 	installed := installation.install(7, shell)
-	if launchCalls != 0 || cell.installedGeneration() != 7 {
-		t.Fatalf("installation launched or lost generation: calls/cell/start=%d/%d/%#v",
-			launchCalls, cell.installedGeneration(), installed)
-	}
+	assert.EqualValues(t, 0, launchCalls, "installation launched or lost generation: calls/cell/start=%d/%d/%#v", launchCalls, cell.installedGeneration(), installed)
+	assert.EqualValues(t, 7, cell.installedGeneration(), "installation launched or lost generation: calls/cell/start=%d/%d/%#v", launchCalls, cell.installedGeneration(), installed)
 	assertInvariantViolation(t, func() { (installedStart{}).launch(dormant) })
 	nilInstalled := startInstallation{cell: &pendingStartCell{}}.install(8, newProcessRuntimeShell(1))
 	assertInvariantViolation(t, func() { nilInstalled.launch(nil) })
-	if launchCalls != 0 {
-		t.Fatalf("zero or nil launch reached native work: calls=%d", launchCalls)
-	}
+	assert.EqualValues(t, 0, launchCalls, "zero or nil launch reached native work: calls=%d", launchCalls)
 	observed := installed.launch(dormant)
-	if launchCalls != 1 {
-		t.Fatalf("narrowed launch calls/observation=%d/%#v", launchCalls, observed)
-	}
+	assert.EqualValues(t, 1, launchCalls, "narrowed launch calls/observation=%d/%#v", launchCalls, observed)
 	assertInvariantViolation(t, func() { installed.launch(dormant) })
-	if launchCalls != 1 {
-		t.Fatalf("reused installed start reached native work: calls=%d", launchCalls)
-	}
+	assert.EqualValues(t, 1, launchCalls, "reused installed start reached native work: calls=%d", launchCalls)
 }
 
 func TestStartInstallationRejectsCrossPairedGrantBeforeCellMutation(t *testing.T) {
@@ -280,32 +260,40 @@ func TestStartInstallationRejectsCrossPairedGrantBeforeCellMutation(t *testing.T
 		assertInvariantViolation(t, func() { shell.startCommitted(grant, installation) })
 		snapshot := shell.snapshot()
 		indexA, indexB := snapshot.admissionIndex(grantA), snapshot.admissionIndex(grantB)
-		if cellA.installedGeneration() != 0 || cellB.installedGeneration() != 0 ||
-			snapshot.lifecycle != runtimeFatalClosing || len(snapshot.residualCustody()) != 0 ||
-			indexA < 0 || indexB < 0 || snapshot.admissions[indexA].stage != admissionGranted ||
-			snapshot.admissions[indexB].stage != admissionGranted ||
-			snapshot.admissions[indexA].disposition != dispositionReturnedAfterClosure ||
-			snapshot.admissions[indexB].disposition != dispositionReturnedAfterClosure {
-			t.Fatalf("reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-		}
+		assert.EqualValues(t, 0, cellA.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.EqualValues(t, 0, cellB.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.EqualValues(t, 0, len(snapshot.residualCustody()), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.False(t, indexA < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.False(t, indexB < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.Equal(t, admissionGranted, snapshot.admissions[indexA].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.Equal(t, admissionGranted, snapshot.admissions[indexB].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexA].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+		assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexB].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
 		select {
 		case <-emergency:
 		default:
-			t.Fatalf("reverse=%t cross-pair did not broadcast fatal closure", reverse)
+			require.FailNow(t, "reverse=%t cross-pair did not broadcast fatal closure", reverse)
 		}
-		if returned := shell.acknowledgeGrantReturn(grantA); returned.decision != admissionReturnedAfterClosure {
-			t.Fatalf("reverse=%t grant A return=%#v", reverse, returned)
+		{
+			returned := shell.acknowledgeGrantReturn(grantA)
+			assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "reverse=%t grant A return=%#v", reverse, returned)
 		}
-		if returned := shell.acknowledgeGrantReturn(grantB); returned.decision != admissionReturnedAfterClosure {
-			t.Fatalf("reverse=%t grant B return=%#v", reverse, returned)
+		{
+			returned := shell.acknowledgeGrantReturn(grantB)
+			assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "reverse=%t grant B return=%#v", reverse, returned)
 		}
-		if snapshot = shell.snapshot(); snapshot.lifecycle != runtimeFatalClosing || len(snapshot.admissions) != 0 {
-			t.Fatalf("reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
+		{
+			snapshot = shell.snapshot()
+			assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
+			assert.EqualValues(t, 0, len(snapshot.admissions), "reverse=%t peer returns closed ahead of settlement: %#v", reverse, snapshot)
 		}
 		settled := shell.settleEmergency(emergencySweep{})
-		if snapshot = shell.snapshot(); snapshot.lifecycle != runtimeClosedDrained ||
-			len(settled.acknowledged) != 0 || len(settled.residual) != 0 {
-			t.Fatalf("reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
+		{
+			snapshot = shell.snapshot()
+			assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
+			assert.EqualValues(t, 0, len(settled.acknowledged), "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
+			assert.EqualValues(t, 0, len(settled.residual), "reverse=%t empty settlement did not finish closure: %#v/%#v", reverse, settled, snapshot)
 		}
 	}
 }
@@ -331,16 +319,15 @@ func TestInstalledStartNativeFailureBroadcastsBeforePanicking(t *testing.T) {
 			select {
 			case <-emergency:
 			default:
-				t.Fatal("native failure panicked before broadcasting emergency")
+				require.FailNow(t, "native failure panicked before broadcasting emergency")
 			}
 			want := []residualCustody{{
 				generation: prepared.result.generation, attempt: grant.attempt,
 				stage: admissionProspective, transferred: true,
 			}}
 			snapshot := shell.snapshot()
-			if snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
-				t.Fatalf("native failure custody=%#v, want %#v", snapshot, want)
-			}
+			assert.Equal(t, runtimeClosedUnconfirmed, snapshot.lifecycle, "native failure custody=%#v, want %#v", snapshot, want)
+			assert.Equal(t, want, snapshot.residualCustody(), "native failure custody=%#v, want %#v", snapshot, want)
 		})
 	}
 }
@@ -378,14 +365,15 @@ func TestInstalledStartFailuresRecordOneExactCausePerGeneration(t *testing.T) {
 		)),
 	}
 	snapshot := shell.snapshot()
-	if snapshot.lifecycle != runtimeFatalSettledClosing || !reflect.DeepEqual(snapshot.fatalCauses, want) {
-		t.Fatalf("launch invariant causes=%#v, want %#v", snapshot, want)
+	assert.Equal(t, runtimeFatalSettledClosing, snapshot.lifecycle, "launch invariant causes=%#v, want %#v", snapshot, want)
+	assert.Equal(t, want, snapshot.fatalCauses, "launch invariant causes=%#v, want %#v", snapshot, want)
+	{
+		returned := shell.acknowledgeGrantReturn(pendingGrant)
+		assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "pending peer return=%#v", returned)
 	}
-	if returned := shell.acknowledgeGrantReturn(pendingGrant); returned.decision != admissionReturnedAfterClosure {
-		t.Fatalf("pending peer return=%#v", returned)
-	}
-	if snapshot = shell.snapshot(); snapshot.lifecycle != runtimeClosedUnconfirmed {
-		t.Fatalf("pending return did not finalize invariant custody: %#v", snapshot)
+	{
+		snapshot = shell.snapshot()
+		assert.Equal(t, runtimeClosedUnconfirmed, snapshot.lifecycle, "pending return did not finalize invariant custody: %#v", snapshot)
 	}
 }
 
@@ -414,12 +402,12 @@ func TestInstalledStartZeroedCopyUsesAuthoritativeCellGeneration(t *testing.T) {
 		"launch invariant: start or launch is zero generation=%d", prepared.result.generation,
 	))}
 	snapshot := shell.snapshot()
-	if launchCalls != 0 || snapshot.lifecycle != runtimeFatalSettledClosing ||
-		!reflect.DeepEqual(snapshot.fatalCauses, want) {
-		t.Fatalf("zeroed copy calls/state=%d/%#v, want causes %#v", launchCalls, snapshot, want)
-	}
-	if returned := shell.acknowledgeGrantReturn(pendingGrant); returned.decision != admissionReturnedAfterClosure {
-		t.Fatalf("pending peer return=%#v", returned)
+	assert.EqualValues(t, 0, launchCalls, "zeroed copy calls/state=%d/%#v, want causes %#v", launchCalls, snapshot, want)
+	assert.Equal(t, runtimeFatalSettledClosing, snapshot.lifecycle, "zeroed copy calls/state=%d/%#v, want causes %#v", launchCalls, snapshot, want)
+	assert.Equal(t, want, snapshot.fatalCauses, "zeroed copy calls/state=%d/%#v, want causes %#v", launchCalls, snapshot, want)
+	{
+		returned := shell.acknowledgeGrantReturn(pendingGrant)
+		assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "pending peer return=%#v", returned)
 	}
 }
 
@@ -461,16 +449,18 @@ func TestInstalledStartRejectsConcurrentCrossPairWithoutConsumingCustody(t *test
 	}
 	close(begin)
 	wait.Wait()
-	if launchCalls != 0 || panics[0] == nil || panics[1] == nil {
-		t.Fatalf("cross-pair calls/panics=%d/%#v", launchCalls, panics)
-	}
+	assert.EqualValues(t, 0, launchCalls, "cross-pair calls/panics=%d/%#v", launchCalls, panics)
+	assert.NotNil(t, panics[0], "cross-pair calls/panics=%d/%#v", launchCalls, panics)
+	assert.NotNil(t, panics[1], "cross-pair calls/panics=%d/%#v", launchCalls, panics)
 	want := []residualCustody{
 		{generation: preparedA.result.generation, attempt: grantA.attempt, stage: admissionProspective, transferred: true},
 		{generation: preparedB.result.generation, attempt: grantB.attempt, stage: admissionProspective, transferred: true},
 	}
 	snapshot := shell.snapshot()
-	if got := snapshot.residualCustody(); snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(got, want) {
-		t.Fatalf("cross-pair state/residual=%#v/%#v, want %#v", snapshot, got, want)
+	{
+		got := snapshot.residualCustody()
+		assert.Equal(t, runtimeClosedUnconfirmed, snapshot.lifecycle, "cross-pair state/residual=%#v/%#v, want %#v", snapshot, got, want)
+		assert.Equal(t, want, got, "cross-pair state/residual=%#v/%#v, want %#v", snapshot, got, want)
 	}
 }
 
@@ -505,17 +495,15 @@ func TestInstalledStartCopiesLaunchExactlyOnceConcurrently(t *testing.T) {
 		}
 		close(begin)
 		wait.Wait()
-		if launchCalls != 1 || (panics[0] == nil) == (panics[1] == nil) {
-			t.Fatalf("sample %d calls/panics=%d/%#v", sample, launchCalls, panics)
-		}
+		assert.EqualValues(t, 1, launchCalls, "sample %d calls/panics=%d/%#v", sample, launchCalls, panics)
+		assert.NotEqual(t, (panics[1] == nil), (panics[0] == nil), "sample %d calls/panics=%d/%#v", sample, launchCalls, panics)
 		want := []residualCustody{{
 			generation: prepared.result.generation, attempt: grant.attempt,
 			stage: admissionProspective, transferred: true,
 		}}
 		snapshot := shell.snapshot()
-		if snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
-			t.Fatalf("sample %d copied-start state=%#v", sample, snapshot)
-		}
+		assert.Equal(t, runtimeClosedUnconfirmed, snapshot.lifecycle, "sample %d copied-start state=%#v", sample, snapshot)
+		assert.Equal(t, want, snapshot.residualCustody(), "sample %d copied-start state=%#v", sample, snapshot)
 	}
 }
 
@@ -526,17 +514,20 @@ func TestStartCommittedLockedBoundaryContainsNoExecutionCapability(t *testing.T)
 		callbacks map[string][]executableAlias
 	}
 	_ = nestedExecutable{next: nil, callbacks: nil}
-	if path, found := executionCapabilityPath(reflect.TypeFor[nestedExecutable](), nil); !found {
-		t.Fatalf("structural guard missed nested executable field at %s", path)
+	{
+		path, found := executionCapabilityPath(reflect.TypeFor[nestedExecutable](), nil)
+		assert.True(t, found, "structural guard missed nested executable field at %s", path)
 	}
 	method := reflect.TypeOf((*processRuntimeShell).startCommitted)
 	for parameter := range method.NumIn() {
-		if path, found := executionCapabilityPath(method.In(parameter), nil); found {
-			t.Fatalf("startCommitted input %d contains executable capability at %s", parameter, path)
+		{
+			path, found := executionCapabilityPath(method.In(parameter), nil)
+			assert.False(t, found, "startCommitted input %d contains executable capability at %s", parameter, path)
 		}
 	}
-	if path, found := executionCapabilityPath(reflect.TypeFor[startInstallation](), nil); found {
-		t.Fatalf("startInstallation contains executable capability at %s", path)
+	{
+		path, found := executionCapabilityPath(reflect.TypeFor[startInstallation](), nil)
+		assert.False(t, found, "startInstallation contains executable capability at %s", path)
 	}
 }
 
@@ -612,23 +603,21 @@ func TestProcessRuntimeShellSerializesGateClosureAgainstStartCommit(t *testing.T
 		wantGeneration := attemptGeneration(0)
 		if prepared.result.decision == startCommittedAccepted {
 			wantGeneration = prepared.result.generation
-		} else if prepared.result.decision != startCommittedRejectedGate &&
-			prepared.result.decision != startCommittedRejectedGrant {
-			t.Fatalf("sample %d: start decision=%v", sample, prepared.result.decision)
+		} else {
+			assert.False(t, prepared.result.decision != startCommittedRejectedGate &&
+				prepared.result.decision != startCommittedRejectedGrant, "sample %d: start decision=%v", sample, prepared.result.decision)
 		}
 		wantCalls := 0
 		if wantGeneration != 0 {
 			wantCalls = 1
 		}
-		if cell.installedGeneration() != wantGeneration || launchCalls != wantCalls {
-			t.Fatalf("sample %d: cell/calls=%d/%d, want %d/%d", sample,
-				cell.installedGeneration(), launchCalls, wantGeneration, wantCalls)
-		}
+		assert.Equal(t, wantGeneration, cell.installedGeneration(), "sample %d: cell/calls=%d/%d, want %d/%d", sample, cell.installedGeneration(), launchCalls, wantGeneration, wantCalls)
+		assert.Equal(t, wantCalls, launchCalls, "sample %d: cell/calls=%d/%d, want %d/%d", sample, cell.installedGeneration(), launchCalls, wantGeneration, wantCalls)
 		snapshot := shell.snapshot()
 		campaignAt := snapshot.campaignIndex(campaignA)
-		if campaignAt < 0 || snapshot.campaigns[campaignAt].primaryGateOpen || snapshot.unboundBarrierIndex(campaignA) < 0 {
-			t.Fatalf("sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
-		}
+		assert.False(t, campaignAt < 0, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
+		assert.False(t, snapshot.campaigns[campaignAt].primaryGateOpen, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
+		assert.False(t, snapshot.unboundBarrierIndex(campaignA) < 0, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
 	}
 }
 
@@ -661,11 +650,10 @@ func TestProcessRuntimeShellCopiedInstallationCannotInstallOrLaunchTwice(t *test
 	copied.grant = secondGrant
 	assertInvariantViolation(t, func() { secondShell.startCommitted(secondGrant, copied) })
 
-	if first.result.decision != startCommittedAccepted || launchCalls != 1 ||
-		secondShell.snapshot().lifecycle != runtimeFatalClosing ||
-		len(secondShell.snapshot().residualCustody()) != 0 {
-		t.Fatalf("first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
-	}
+	assert.Equal(t, startCommittedAccepted, first.result.decision, "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
+	assert.EqualValues(t, 1, launchCalls, "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
+	assert.Equal(t, runtimeFatalClosing, secondShell.snapshot().lifecycle, "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
+	assert.EqualValues(t, 0, len(secondShell.snapshot().residualCustody()), "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
 }
 
 func TestProcessRuntimeShellInvalidInstallationPublishesNoProspectiveCustody(t *testing.T) {
@@ -697,9 +685,8 @@ func TestProcessRuntimeShellInvalidInstallationPublishesNoProspectiveCustody(t *
 			installation.grant = grant
 			assertInvariantViolation(t, func() { shell.startCommitted(grant, installation) })
 			snapshot := shell.snapshot()
-			if snapshot.lifecycle != runtimeFatalClosing || len(snapshot.residualCustody()) != 0 {
-				t.Fatalf("invalid installation published prospective custody: %#v", snapshot)
-			}
+			assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "invalid installation published prospective custody: %#v", snapshot)
+			assert.EqualValues(t, 0, len(snapshot.residualCustody()), "invalid installation published prospective custody: %#v", snapshot)
 		})
 	}
 }
@@ -713,11 +700,10 @@ func TestProcessRuntimeShellConsumedGrantCannotLaunchTwice(t *testing.T) {
 	cell := pendingStartCell{}
 	launchCalls := 0
 	second := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
-	if first.decision != startCommittedAccepted || second.result.decision != startCommittedRejectedGrant ||
-		cell.installedGeneration() != 0 || launchCalls != 0 {
-		t.Fatalf("first/second/cell/calls=%#v/%#v/%d/%d", first, second.result,
-			cell.installedGeneration(), launchCalls)
-	}
+	assert.Equal(t, startCommittedAccepted, first.decision, "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
+	assert.Equal(t, startCommittedRejectedGrant, second.result.decision, "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
+	assert.EqualValues(t, 0, cell.installedGeneration(), "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
+	assert.EqualValues(t, 0, launchCalls, "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
 }
 
 func TestProcessRuntimeShellSerializesCancellationAgainstGrant(t *testing.T) {
@@ -753,16 +739,16 @@ func TestProcessRuntimeShellSerializesCancellationAgainstGrant(t *testing.T) {
 		//nolint:exhaustive // The default arm attributes every impossible decision.
 		switch waitingCancellation.decision {
 		case admissionCancelledWaiting:
-			if _, open := <-waiting.delivery; open {
-				t.Fatalf("sample %d: cancelled waiter received a grant", sample)
+			{
+				_, open := <-waiting.delivery
+				assert.False(t, open, "sample %d: cancelled waiter received a grant", sample)
 			}
 		case admissionCancelledGranted:
 			grant, open := <-waiting.delivery
-			if !open || grant != waiting.request {
-				t.Fatalf("sample %d: late grant=%#v/%t", sample, grant, open)
-			}
+			assert.True(t, open, "sample %d: late grant=%#v/%t", sample, grant, open)
+			assert.Equal(t, waiting.request, grant, "sample %d: late grant=%#v/%t", sample, grant, open)
 		default:
-			t.Fatalf("sample %d: cancellation=%#v", sample, waitingCancellation)
+			require.FailNow(t, "sample %d: cancellation=%#v", sample, waitingCancellation)
 		}
 	}
 }
@@ -789,9 +775,7 @@ func TestProcessRuntimeShellSerializesTerminalCommitAgainstFatalClose(t *testing
 		close(begin)
 		wait.Wait()
 
-		if terminal.decision != terminalCommitted && terminal.decision != terminalRejectedClosed {
-			t.Fatalf("sample %d: terminal=%#v", sample, terminal)
-		}
+		assert.False(t, terminal.decision != terminalCommitted && terminal.decision != terminalRejectedClosed, "sample %d: terminal=%#v", sample, terminal)
 	}
 }
 
@@ -823,23 +807,22 @@ func TestProcessRuntimeShellSerializesOwnedTerminalAgainstFatalClose(t *testing.
 		close(begin)
 		wait.Wait()
 
-		if terminalPanic != nil {
-			t.Fatalf("sample %d: owned terminal panicked: %v", sample, terminalPanic)
-		}
-		if result.generation != started.generation || result.confirmationProvisional ||
-			result.pressureTransitioned || len(result.deliveries) != 0 ||
-			len(result.cancelledWaiting) != 0 || len(result.compensatedGrants) != 0 {
-			t.Fatalf("sample %d: terminal receipt=%#v", sample, result)
-		}
+		assert.Nil(t, terminalPanic, "sample %d: owned terminal panicked: %v", sample, terminalPanic)
+		assert.Equal(t, started.generation, result.generation, "sample %d: terminal receipt=%#v", sample, result)
+		assert.False(t, result.confirmationProvisional, "sample %d: terminal receipt=%#v", sample, result)
+		assert.False(t, result.pressureTransitioned, "sample %d: terminal receipt=%#v", sample, result)
+		assert.EqualValues(t, 0, len(result.deliveries), "sample %d: terminal receipt=%#v", sample, result)
+		assert.EqualValues(t, 0, len(result.cancelledWaiting), "sample %d: terminal receipt=%#v", sample, result)
+		assert.EqualValues(t, 0, len(result.compensatedGrants), "sample %d: terminal receipt=%#v", sample, result)
 		snapshot := shell.snapshot()
 		index := snapshot.admissionIndexByGeneration(started.generation)
 		if result.settlementAcknowledged {
-			if result.runtimeClosureInProgress || index >= 0 {
-				t.Fatalf("sample %d: open terminal path=%#v/%#v", sample, result, snapshot)
-			}
-		} else if !result.runtimeClosureInProgress || index < 0 ||
-			snapshot.admissions[index].disposition != dispositionTerminalDeferred {
-			t.Fatalf("sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
+			assert.False(t, result.runtimeClosureInProgress, "sample %d: open terminal path=%#v/%#v", sample, result, snapshot)
+			assert.False(t, index >= 0, "sample %d: open terminal path=%#v/%#v", sample, result, snapshot)
+		} else {
+			assert.True(t, result.runtimeClosureInProgress, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
+			assert.False(t, index < 0, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
+			assert.Equal(t, dispositionTerminalDeferred, snapshot.admissions[index].disposition, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
 		}
 	}
 }
@@ -877,16 +860,13 @@ func TestProcessRuntimeShellSerializesFatalCloseAgainstStartCommit(t *testing.T)
 			want := []residualCustody{{
 				generation: prepared.result.generation, attempt: grant.attempt, stage: admissionProspective,
 			}}
-			if cell.installedGeneration() != prepared.result.generation || !reflect.DeepEqual(residual, want) {
-				t.Fatalf("sample %d accepted cell/residual=%d/%#v, want %#v", sample,
-					cell.installedGeneration(), residual, want)
-			}
+			assert.Equal(t, prepared.result.generation, cell.installedGeneration(), "sample %d accepted cell/residual=%d/%#v, want %#v", sample, cell.installedGeneration(), residual, want)
+			assert.Equal(t, want, residual, "sample %d accepted cell/residual=%d/%#v, want %#v", sample, cell.installedGeneration(), residual, want)
 		case startCommittedRejectedClosed:
-			if cell.installedGeneration() != 0 || len(residual) != 0 {
-				t.Fatalf("sample %d rejected cell/residual=%d/%#v", sample, cell.installedGeneration(), residual)
-			}
+			assert.EqualValues(t, 0, cell.installedGeneration(), "sample %d rejected cell/residual=%d/%#v", sample, cell.installedGeneration(), residual)
+			assert.EqualValues(t, 0, len(residual), "sample %d rejected cell/residual=%d/%#v", sample, cell.installedGeneration(), residual)
 		case startCommittedRejectedGrant, startCommittedRejectedGate:
-			t.Fatalf("sample %d start decision=%#v", sample, prepared.result)
+			require.FailNow(t, "sample %d start decision=%#v", sample, prepared.result)
 		}
 	}
 }
@@ -921,9 +901,7 @@ func TestProcessRuntimeShellSerializesFatalCloseAgainstGrantDelivery(t *testing.
 
 		if grant, open := <-waiting.delivery; open {
 			returned := shell.acknowledgeGrantReturn(grant)
-			if returned.decision != admissionReturnedAfterClosure {
-				t.Fatalf("sample %d late grant return=%#v", sample, returned)
-			}
+			assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "sample %d late grant return=%#v", sample, returned)
 		}
 	}
 }
@@ -962,10 +940,9 @@ func TestProcessRuntimeShellSerializesGrantReturnAgainstEmergencySettlement(t *t
 		want := []residualCustody{{
 			generation: started.generation, attempt: "owned", stage: admissionOwned, transferred: true,
 		}}
-		if returned.decision != admissionReturnedAfterClosure ||
-			snapshot.lifecycle != runtimeClosedUnconfirmed || !reflect.DeepEqual(snapshot.residualCustody(), want) {
-			t.Fatalf("sample %d return/final state=%#v/%#v", sample, returned, snapshot)
-		}
+		assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "sample %d return/final state=%#v/%#v", sample, returned, snapshot)
+		assert.Equal(t, runtimeClosedUnconfirmed, snapshot.lifecycle, "sample %d return/final state=%#v/%#v", sample, returned, snapshot)
+		assert.Equal(t, want, snapshot.residualCustody(), "sample %d return/final state=%#v/%#v", sample, returned, snapshot)
 	}
 }
 
@@ -986,18 +963,15 @@ func TestProcessRuntimeShellSerializesGrantReturnAgainstExactEmptySettlement(t *
 			<-prospective.delivery,
 			startInstallation{grant: prospective.request, cell: &pendingStartCell{}},
 		)
-		if prepared.result.decision != startCommittedAccepted {
-			t.Fatalf("sample %d prospective start=%#v", sample, prepared.result)
-		}
+		assert.Equal(t, startCommittedAccepted, prepared.result.decision, "sample %d prospective start=%#v", sample, prepared.result)
 		shell.closeRuntime(runtimeFatalCause("empty settlement race"))
 		noRelease := shell.observeAttempt(
 			prepared.result.generation,
 			launchNotReleased{reason: launchFailed},
 		)
-		if !noRelease.settlementAcknowledged || !noRelease.runtimeClosureInProgress ||
-			shell.snapshot().lifecycle != runtimeFatalClosing {
-			t.Fatalf("sample %d no-release state=%#v/%#v", sample, noRelease, shell.snapshot())
-		}
+		assert.True(t, noRelease.settlementAcknowledged, "sample %d no-release state=%#v/%#v", sample, noRelease, shell.snapshot())
+		assert.True(t, noRelease.runtimeClosureInProgress, "sample %d no-release state=%#v/%#v", sample, noRelease, shell.snapshot())
+		assert.Equal(t, runtimeFatalClosing, shell.snapshot().lifecycle, "sample %d no-release state=%#v/%#v", sample, noRelease, shell.snapshot())
 
 		begin := make(chan struct{})
 		var returned admissionResult
@@ -1017,16 +991,14 @@ func TestProcessRuntimeShellSerializesGrantReturnAgainstExactEmptySettlement(t *
 		close(begin)
 		wait.Wait()
 		snapshot := shell.snapshot()
-		if returnPanic != nil || settlementPanic != nil ||
-			returned.decision != admissionReturnedAfterClosure ||
-			len(settled.acknowledged) != 0 || len(settled.residual) != 0 ||
-			snapshot.lifecycle != runtimeClosedDrained || len(snapshot.admissions) != 0 ||
-			len(snapshot.residualCustody()) != 0 {
-			t.Fatalf(
-				"sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v",
-				sample, returned, settled, returnPanic, settlementPanic, snapshot,
-			)
-		}
+		assert.Nil(t, returnPanic, "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.Nil(t, settlementPanic, "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.Equal(t, admissionReturnedAfterClosure, returned.decision, "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.EqualValues(t, 0, len(settled.acknowledged), "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.EqualValues(t, 0, len(settled.residual), "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.EqualValues(t, 0, len(snapshot.admissions), "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
+		assert.EqualValues(t, 0, len(snapshot.residualCustody()), "sample %d return/settlement/panics/state=%#v/%#v/%#v/%#v/%#v", sample, returned, settled, returnPanic, settlementPanic, snapshot)
 	}
 }
 
@@ -1040,9 +1012,8 @@ func TestProcessRuntimeShellDoesNotExposeDeliveredGrantTwice(t *testing.T) {
 	})
 	result := shell.cancelAdmission(<-active.delivery)
 	grant := <-waiting.delivery
-	if len(result.deliveries) != 0 || grant != waiting.request {
-		t.Fatalf("shell result/channel duplicated or lost delivery: %#v/%#v", result, grant)
-	}
+	assert.EqualValues(t, 0, len(result.deliveries), "shell result/channel duplicated or lost delivery: %#v/%#v", result, grant)
+	assert.Equal(t, waiting.request, grant, "shell result/channel duplicated or lost delivery: %#v/%#v", result, grant)
 }
 
 func shellAtGateStartRace(

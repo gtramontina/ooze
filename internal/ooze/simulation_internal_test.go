@@ -12,6 +12,8 @@ import (
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type simulationFocusedChoiceSource func([]simulationEngineMove) int
@@ -35,36 +37,33 @@ func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *te
 	}
 
 	explored := Explore(definition, simulationChoiceBytes{0, 1, 2})
-	if explored.failure != nil {
-		t.Fatalf("exploration failure=%v", explored.failure)
+	assert.Nil(t, explored.failure, "exploration failure=%v", explored.failure)
+	{
+		got, want := explored.world.campaign.outcome, (campaignOutcome)(noMutantsOutcome{})
+		assert.Equal(t, want, got, "explored outcome=%#v, want %#v", got, want)
 	}
-	if got, want := explored.world.campaign.outcome, (campaignOutcome)(noMutantsOutcome{}); !reflect.DeepEqual(got, want) {
-		t.Fatalf("explored outcome=%#v, want %#v", got, want)
-	}
-	if got, want := simulationAuthorities(explored.trace), []simulationAuthority{
-		simulationRuntimeAuthority,
-		simulationCampaignAuthority,
-		simulationCampaignAuthority,
-		simulationCampaignAuthority,
-		simulationCampaignAuthority,
-		simulationRuntimeAuthority,
-		simulationCampaignAuthority,
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("trace authorities=%v, want %v", got, want)
+	{
+		got, want := simulationAuthorities(explored.trace), []simulationAuthority{
+			simulationRuntimeAuthority,
+			simulationCampaignAuthority,
+			simulationCampaignAuthority,
+			simulationCampaignAuthority,
+			simulationCampaignAuthority,
+			simulationRuntimeAuthority,
+			simulationCampaignAuthority,
+		}
+		assert.Equal(t, want, got, "trace authorities=%v, want %v", got, want)
 	}
 	for index, record := range explored.trace.records {
-		if got, want := record.sequence, uint64(index+1); got != want {
-			t.Fatalf("record %d sequence=%d, want %d", index, got, want)
+		{
+			got, want := record.sequence, uint64(index+1)
+			assert.Equal(t, want, got, "record %d sequence=%d, want %d", index, got, want)
 		}
 	}
 
 	replayed := ReplayLegal(explored.trace)
-	if replayed.failure != nil {
-		t.Fatalf("replay failure=%v", replayed.failure)
-	}
-	if !reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("replayed world diverged:\n got: %#v\nwant: %#v", replayed.world, explored.world)
-	}
+	assert.Nil(t, replayed.failure, "replay failure=%v", replayed.failure)
+	assert.Equal(t, explored.world, replayed.world, "replayed world diverged:\n got: %#v\nwant: %#v", replayed.world, explored.world)
 }
 
 func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testing.T) {
@@ -81,11 +80,10 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	}
 
 	explored := Explore(definition, simulationChoiceBytes{0, 2})
-	if explored.failure != nil {
-		t.Fatalf("exploration failure=%v", explored.failure)
-	}
-	if _, ok := explored.world.campaign.outcome.(abortedOutcome); !ok {
-		t.Fatalf("explored outcome=%#v, want aborted baseline", explored.world.campaign.outcome)
+	assert.Nil(t, explored.failure, "exploration failure=%v", explored.failure)
+	{
+		_, ok := explored.world.campaign.outcome.(abortedOutcome)
+		require.True(t, ok, "explored outcome=%#v, want aborted baseline", explored.world.campaign.outcome)
 	}
 	var supervisorKinds []supervisorEventKind
 	for _, record := range explored.trace.records {
@@ -98,20 +96,13 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 		supervisorDrainCompleted, supervisorDrainCompleted, supervisorOutputCompleted,
 		supervisorStopAdmissionSealed, supervisorReleaseCompleted, supervisorRuntimeCompleted,
 	}
-	if !reflect.DeepEqual(supervisorKinds, wantSupervisorKinds) {
-		t.Fatalf("supervisor lifecycle=%v, want %v", supervisorKinds, wantSupervisorKinds)
-	}
-	if len(explored.world.supervisor.attempts) != 0 || len(explored.world.runtime.campaigns) != 0 {
-		t.Fatalf("terminal world is not quiescent: %#v", explored.world)
-	}
+	assert.Equal(t, wantSupervisorKinds, supervisorKinds, "supervisor lifecycle=%v, want %v", supervisorKinds, wantSupervisorKinds)
+	assert.EqualValues(t, 0, len(explored.world.supervisor.attempts), "terminal world is not quiescent: %#v", explored.world)
+	assert.EqualValues(t, 0, len(explored.world.runtime.campaigns), "terminal world is not quiescent: %#v", explored.world)
 
 	replayed := ReplayLegal(explored.trace)
-	if replayed.failure != nil {
-		t.Fatalf("replay failure=%v", replayed.failure)
-	}
-	if !reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("replayed world diverged:\n got: %#v\nwant: %#v", replayed.world, explored.world)
-	}
+	assert.Nil(t, replayed.failure, "replay failure=%v", replayed.failure)
+	assert.Equal(t, explored.world, replayed.world, "replayed world diverged:\n got: %#v\nwant: %#v", replayed.world, explored.world)
 }
 
 func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testing.T) {
@@ -147,16 +138,15 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 					break
 				}
 			}
-			if launch.kind != test.kind || launch.completion == nil {
-				t.Fatalf("selected launch fact=%#v, want kind %v", launch, test.kind)
-			}
-			if got := launch.completion.at.Equal(launchBy); got != test.equalAt {
-				t.Fatalf("completion/boundary equality=%v, want %v", got, test.equalAt)
+			require.Equal(t, test.kind, launch.kind, "selected launch fact=%#v, want kind %v", launch, test.kind)
+			require.NotNil(t, launch.completion, "selected launch fact=%#v, want kind %v", launch, test.kind)
+			{
+				got := launch.completion.at.Equal(launchBy)
+				assert.Equal(t, test.equalAt, got, "completion/boundary equality=%v, want %v", got, test.equalAt)
 			}
 			replayed := ReplayLegal(explored.trace)
-			if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
-				t.Fatalf("boundary replay diverged: %#v", replayed)
-			}
+			assert.Nil(t, replayed.failure, "boundary replay diverged: %#v", replayed)
+			assert.Equal(t, explored.world, replayed.world, "boundary replay diverged: %#v", replayed)
 		})
 	}
 }
@@ -278,11 +268,10 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				},
 				capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 			}, choices)
-			if explored.failure != nil || !selected || !test.outcome(explored.world) ||
-				!test.observe(explored.trace) {
-				t.Fatalf("after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v",
-					selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
-			}
+			assert.Nil(t, explored.failure, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
+			assert.True(t, selected, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
+			assert.True(t, test.outcome(explored.world), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
+			assert.True(t, test.observe(explored.trace), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
 			if test.action == supervisorLaunchNative {
 				order := make(map[supervisorActionKind]int)
 				ordinal := 0
@@ -292,15 +281,14 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 						order[action.kind] = ordinal
 					}
 				}
-				if order[supervisorRevokeLaunchRelease] >= order[supervisorPublishLaunchUnconfirmed] ||
-					order[supervisorPublishLaunchUnconfirmed] >= order[supervisorAdoptOwned] ||
-					order[supervisorAdoptOwned] >= order[supervisorForceOwned] {
-					t.Fatalf("late closure/adoption action order=%v", order)
-				}
+				assert.False(t, order[supervisorRevokeLaunchRelease] >= order[supervisorPublishLaunchUnconfirmed], "late closure/adoption action order=%v", order)
+				assert.False(t, order[supervisorPublishLaunchUnconfirmed] >= order[supervisorAdoptOwned], "late closure/adoption action order=%v", order)
+				assert.False(t, order[supervisorAdoptOwned] >= order[supervisorForceOwned], "late closure/adoption action order=%v", order)
 			}
-			if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
-				!reflect.DeepEqual(replayed.world, explored.world) {
-				t.Fatalf("after-boundary replay=%#v", replayed)
+			{
+				replayed := ReplayLegal(explored.trace)
+				assert.Nil(t, replayed.failure, "after-boundary replay=%#v", replayed)
+				assert.Equal(t, explored.world, replayed.world, "after-boundary replay=%#v", replayed)
 			}
 		})
 	}
@@ -342,19 +330,15 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 			})
 			explored := Explore(definition, choices)
 			completed, ok := explored.world.campaign.outcome.(completedOutcome)
-			if explored.failure != nil || !ok || len(completed.mutants) != 1 ||
-				completed.mutants[0].kind != test.want {
-				t.Fatalf("completed outcome=%#v failure=%v, want %v; choices=%#v",
-					explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
-			}
-			if explored.world.campaign.commandCount() != 2 || len(explored.world.campaign.obligations) != 0 {
-				t.Fatalf("terminal commands/obligations=%d/%#v",
-					explored.world.campaign.commandCount(), explored.world.campaign.obligations)
-			}
+			require.Nil(t, explored.failure, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
+			assert.True(t, ok, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
+			require.Len(t, completed.mutants, 1, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
+			assert.Equal(t, test.want, completed.mutants[0].kind, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
+			assert.EqualValues(t, 2, explored.world.campaign.commandCount(), "terminal commands/obligations=%d/%#v", explored.world.campaign.commandCount(), explored.world.campaign.obligations)
+			assert.EqualValues(t, 0, len(explored.world.campaign.obligations), "terminal commands/obligations=%d/%#v", explored.world.campaign.commandCount(), explored.world.campaign.obligations)
 			replayed := ReplayLegal(explored.trace)
-			if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
-				t.Fatalf("outcome replay diverged: %#v", replayed)
-			}
+			assert.Nil(t, replayed.failure, "outcome replay diverged: %#v", replayed)
+			assert.Equal(t, explored.world, replayed.world, "outcome replay diverged: %#v", replayed)
 		})
 	}
 }
@@ -368,19 +352,17 @@ func TestSimulationExploresEveryCatalogueMemberInStableOrder(t *testing.T) {
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{0})
 	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	if explored.failure != nil || !ok {
-		t.Fatalf("catalogue exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	}
+	require.Nil(t, explored.failure, "catalogue exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	assert.True(t, ok, "catalogue exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
 	got := make([]mutantIdentity, len(completed.mutants))
 	for index, mutant := range completed.mutants {
 		got[index] = mutant.mutant
 	}
-	if want := []mutantIdentity{"mutant-a", "mutant-b"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("completed catalogue order=%v, want %v", got, want)
+	{
+		want := []mutantIdentity{"mutant-a", "mutant-b"}
+		assert.Equal(t, want, got, "completed catalogue order=%v, want %v", got, want)
 	}
-	if explored.world.campaign.commandCount() != 3 {
-		t.Fatalf("command count=%d, want baseline plus two primaries", explored.world.campaign.commandCount())
-	}
+	assert.EqualValues(t, 3, explored.world.campaign.commandCount(), "command count=%d, want baseline plus two primaries", explored.world.campaign.commandCount())
 }
 
 func TestSimulationExploresOneMutantWithSparePeerCapacity(t *testing.T) {
@@ -392,9 +374,9 @@ func TestSimulationExploresOneMutantWithSparePeerCapacity(t *testing.T) {
 		capacity: 4, catalogue: []mutantIdentity{"mutant-a"},
 	}, nil)
 	completed, ok := result.world.campaign.outcome.(completedOutcome)
-	if result.failure != nil || !ok || len(completed.mutants) != 1 {
-		t.Fatalf("spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
-	}
+	assert.Nil(t, result.failure, "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
+	assert.True(t, ok, "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
+	assert.EqualValues(t, 1, len(completed.mutants), "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
 }
 
 func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T) {
@@ -405,9 +387,7 @@ func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T)
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{0})
-	if explored.failure != nil {
-		t.Fatalf("overlap exploration failed: %v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "overlap exploration failed: %v", explored.failure)
 	found := false
 	for _, record := range explored.trace.records {
 		if record.authority != simulationRuntimeAuthority || len(record.runtimeState.admissions) != 2 {
@@ -418,16 +398,10 @@ func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T)
 			break
 		}
 	}
-	if !found {
-		t.Fatal("two emitted primary effects never reached overlapping start commitments")
-	}
+	assert.True(t, found, "two emitted primary effects never reached overlapping start commitments")
 	replayed := ReplayLegal(explored.trace)
-	if replayed.failure != nil {
-		t.Fatalf("overlap replay failed: %v", replayed.failure)
-	}
-	if !reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("overlap replay world diverged:\n got=%#v\nwant=%#v", replayed.world, explored.world)
-	}
+	assert.Nil(t, replayed.failure, "overlap replay failed: %v", replayed.failure)
+	assert.Equal(t, explored.world, replayed.world, "overlap replay world diverged:\n got=%#v\nwant=%#v", replayed.world, explored.world)
 }
 
 func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
@@ -467,12 +441,12 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
-	if explored.failure != nil || !delayed {
-		t.Fatalf("late-grant exploration failure=%v delayed=%v", explored.failure, delayed)
-	}
-	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
-		!reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("late-grant replay=%#v", replayed)
+	assert.Nil(t, explored.failure, "late-grant exploration failure=%v delayed=%v", explored.failure, delayed)
+	assert.True(t, delayed, "late-grant exploration failure=%v delayed=%v", explored.failure, delayed)
+	{
+		replayed := ReplayLegal(explored.trace)
+		assert.Nil(t, replayed.failure, "late-grant replay=%#v", replayed)
+		assert.Equal(t, explored.world, replayed.world, "late-grant replay=%#v", replayed)
 	}
 }
 
@@ -500,22 +474,20 @@ func TestSimulationFocusedRepeatedIntrinsicDeadlinesDoNotChangeAdmission(t *test
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
 	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	if explored.failure != nil || !ok || len(completed.mutants) != 2 {
-		t.Fatalf("repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	}
+	require.Nil(t, explored.failure, "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	assert.True(t, ok, "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	assert.EqualValues(t, 2, len(completed.mutants), "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
 	for _, mutant := range completed.mutants {
-		if mutant.kind != mutantTimedOut || mutant.primary.kind != campaignEvidenceDeadline ||
-			mutant.confirmation.kind != campaignAttemptEvidenceKind(0) {
-			t.Fatalf("repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
-		}
+		assert.Equal(t, mutantTimedOut, mutant.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
+		assert.Equal(t, campaignEvidenceDeadline, mutant.primary.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
+		assert.Equal(t, campaignAttemptEvidenceKind(0), mutant.confirmation.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
 	}
-	if explored.world.runtime.mode != fullAutomatic || completed.singleAdmissionFallback {
-		t.Fatalf("repeated-deadline admission mode/fallback=%v/%v",
-			explored.world.runtime.mode, completed.singleAdmissionFallback)
-	}
-	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
-		!reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("repeated-deadline replay=%#v", replayed)
+	assert.Equal(t, fullAutomatic, explored.world.runtime.mode, "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.mode, completed.singleAdmissionFallback)
+	assert.False(t, completed.singleAdmissionFallback, "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.mode, completed.singleAdmissionFallback)
+	{
+		replayed := ReplayLegal(explored.trace)
+		assert.Nil(t, replayed.failure, "repeated-deadline replay=%#v", replayed)
+		assert.Equal(t, explored.world, replayed.world, "repeated-deadline replay=%#v", replayed)
 	}
 }
 
@@ -556,20 +528,18 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
 	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	if explored.failure != nil || !ok || !timedOut || len(completed.mutants) != 2 {
-		t.Fatalf("confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	}
-	if completed.mutants[0].kind != mutantSurvived ||
-		completed.mutants[0].primary.kind != campaignEvidenceDeadline ||
-		completed.mutants[0].confirmation.kind != campaignEvidenceSettled ||
-		!completed.singleAdmissionFallback || explored.world.campaign.commandCount() != 4 {
-		t.Fatalf("confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
-	}
+	require.Nil(t, explored.failure, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	assert.True(t, ok, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	assert.True(t, timedOut, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	require.Len(t, completed.mutants, 2, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
+	assert.Equal(t, mutantSurvived, completed.mutants[0].kind, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
+	assert.Equal(t, campaignEvidenceDeadline, completed.mutants[0].primary.kind, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
+	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
+	assert.True(t, completed.singleAdmissionFallback, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
+	assert.EqualValues(t, 4, explored.world.campaign.commandCount(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
 	replayed := ReplayLegal(explored.trace)
-	if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("confirmation replay failure=%v world-equal=%v",
-			replayed.failure, reflect.DeepEqual(replayed.world, explored.world))
-	}
+	assert.Nil(t, replayed.failure, "confirmation replay failure=%v", replayed.failure)
+	assert.Equal(t, explored.world, replayed.world, "confirmation replay world diverged")
 }
 
 func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *testing.T) {
@@ -614,15 +584,14 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 		capacity: 3, catalogue: catalogue,
 	}, choices)
 	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	if explored.failure != nil || !ok || len(timedOut) != len(catalogue) || len(completed.mutants) != len(catalogue) {
-		t.Fatalf("multiple-provisional exploration=%#v timed=%v failure=%v",
-			explored.world.campaign.outcome, timedOut, explored.failure)
-	}
+	require.Nil(t, explored.failure, "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
+	assert.True(t, ok, "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
+	assert.Equal(t, len(catalogue), len(timedOut), "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
+	assert.Equal(t, len(catalogue), len(completed.mutants), "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
 	for index, mutant := range completed.mutants {
-		if mutant.mutant != catalogue[index] || mutant.primary.kind != campaignEvidenceDeadline ||
-			mutant.confirmation.kind != campaignEvidenceSettled {
-			t.Fatalf("multiple-provisional mutant[%d]=%#v", index, mutant)
-		}
+		assert.Equal(t, catalogue[index], mutant.mutant, "multiple-provisional mutant[%d]=%#v", index, mutant)
+		assert.Equal(t, campaignEvidenceDeadline, mutant.primary.kind, "multiple-provisional mutant[%d]=%#v", index, mutant)
+		assert.Equal(t, campaignEvidenceSettled, mutant.confirmation.kind, "multiple-provisional mutant[%d]=%#v", index, mutant)
 	}
 	var barriers, confirmations []mutantIdentity
 	for _, record := range explored.trace.records {
@@ -634,20 +603,17 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 				attemptAt := slices.IndexFunc(record.campaignState.attempts, func(attempt campaignAttempt) bool {
 					return attempt.identity == effect.attempt
 				})
-				if attemptAt < 0 {
-					t.Fatalf("confirmation launch attempt %q is absent", effect.attempt)
-				}
+				assert.False(t, attemptAt < 0, "confirmation launch attempt %q is absent", effect.attempt)
 				confirmations = append(confirmations, record.campaignState.attempts[attemptAt].mutant)
 			}
 		}
 	}
-	if !reflect.DeepEqual(barriers, catalogue[:1]) || !reflect.DeepEqual(confirmations, catalogue) {
-		t.Fatalf("confirmation barrier/FIFO order=%v/%v, want %v/%v",
-			barriers, confirmations, catalogue[:1], catalogue)
-	}
-	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
-		!reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("multiple-provisional replay=%#v", replayed)
+	assert.Equal(t, catalogue[:1], barriers, "confirmation barrier/FIFO order=%v/%v, want %v/%v", barriers, confirmations, catalogue[:1], catalogue)
+	assert.Equal(t, catalogue, confirmations, "confirmation barrier/FIFO order=%v/%v, want %v/%v", barriers, confirmations, catalogue[:1], catalogue)
+	{
+		replayed := ReplayLegal(explored.trace)
+		assert.Nil(t, replayed.failure, "multiple-provisional replay=%#v", replayed)
+		assert.Equal(t, explored.world, replayed.world, "multiple-provisional replay=%#v", replayed)
 	}
 }
 
@@ -685,9 +651,8 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
-	if explored.failure != nil || !selected {
-		t.Fatalf("release/stop exploration selected=%v failure=%v", selected, explored.failure)
-	}
+	assert.Nil(t, explored.failure, "release/stop exploration selected=%v failure=%v", selected, explored.failure)
+	assert.True(t, selected, "release/stop exploration selected=%v failure=%v", selected, explored.failure)
 	publicationAt, stopEffectAt, stopFactAt := -1, -1, -1
 	for index, record := range explored.trace.records {
 		for _, action := range record.supervisorActions {
@@ -709,13 +674,13 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 			stopFactAt = index
 		}
 	}
-	if publicationAt < 0 || stopEffectAt <= publicationAt || stopFactAt <= stopEffectAt {
-		t.Fatalf("release publication/stop effect/stop fact order=%d/%d/%d",
-			publicationAt, stopEffectAt, stopFactAt)
-	}
-	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
-		!reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("release/stop replay=%#v", replayed)
+	assert.False(t, publicationAt < 0, "release publication/stop effect/stop fact order=%d/%d/%d", publicationAt, stopEffectAt, stopFactAt)
+	assert.False(t, stopEffectAt <= publicationAt, "release publication/stop effect/stop fact order=%d/%d/%d", publicationAt, stopEffectAt, stopFactAt)
+	assert.False(t, stopFactAt <= stopEffectAt, "release publication/stop effect/stop fact order=%d/%d/%d", publicationAt, stopEffectAt, stopFactAt)
+	{
+		replayed := ReplayLegal(explored.trace)
+		assert.Nil(t, replayed.failure, "release/stop replay=%#v", replayed)
+		assert.Equal(t, explored.world, replayed.world, "release/stop replay=%#v", replayed)
 	}
 }
 
@@ -753,9 +718,8 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
-	if explored.failure != nil || !selected {
-		t.Fatalf("custody-order exploration selected=%v failure=%v", selected, explored.failure)
-	}
+	assert.Nil(t, explored.failure, "custody-order exploration selected=%v failure=%v", selected, explored.failure)
+	assert.True(t, selected, "custody-order exploration selected=%v failure=%v", selected, explored.failure)
 	var stages []admissionStage
 	for _, record := range explored.trace.records {
 		if record.authority != simulationRuntimeAuthority ||
@@ -770,12 +734,11 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 		}
 		break
 	}
-	if !reflect.DeepEqual(stages, []admissionStage{admissionProspective, admissionOwned}) {
-		t.Fatalf("unconfirmed prospective/owned custody order=%v", stages)
-	}
-	if replayed := ReplayLegal(explored.trace); replayed.failure != nil ||
-		!reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("custody-order replay=%#v", replayed)
+	assert.Equal(t, []admissionStage{admissionProspective, admissionOwned}, stages, "unconfirmed prospective/owned custody order=%v", stages)
+	{
+		replayed := ReplayLegal(explored.trace)
+		assert.Nil(t, replayed.failure, "custody-order replay=%#v", replayed)
+		assert.Equal(t, explored.world, replayed.world, "custody-order replay=%#v", replayed)
 	}
 }
 
@@ -813,13 +776,12 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 				last = record
 			}
 		}
-		t.Fatalf("drain-expiry exploration failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%T",
-			explored.failure, expired, last.campaignState.phase, last.campaignEvent.kind,
-			len(last.campaignState.obligations), last.campaignState.failure)
+		require.FailNow(t, "drain-expiry exploration failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%T", explored.failure, expired, last.campaignState.phase, last.campaignEvent.kind, len(last.campaignState.obligations), last.campaignState.failure)
 	}
-	if _, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault); !ok ||
-		explored.world.runtime.lifecycle != runtimeClosedUnconfirmed {
-		t.Fatalf("drain-expiry world=%#v", explored.world)
+	{
+		_, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault)
+		require.True(t, ok, "drain-expiry world=%#v", explored.world)
+		assert.Equal(t, runtimeClosedUnconfirmed, explored.world.runtime.lifecycle, "drain-expiry world=%#v", explored.world)
 	}
 	startAt, closedAt, forcedAbortAt := -1, -1, -1
 	for index, record := range explored.trace.records {
@@ -836,18 +798,14 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 		if record.runtimeOperation == simulationAuthorizeForcedAbort {
 			forcedAbortAt = index
 		}
-		if closedAt >= 0 && index > closedAt && record.runtimeOperation == simulationCommitTerminal {
-			t.Fatalf("normal terminal commitment followed fatal closure at record %d", index)
-		}
+		assert.False(t, closedAt >= 0 && index > closedAt && record.runtimeOperation == simulationCommitTerminal, "normal terminal commitment followed fatal closure at record %d", index)
 	}
-	if startAt < 0 || closedAt <= startAt || forcedAbortAt >= 0 {
-		t.Fatalf("start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
-	}
+	assert.False(t, startAt < 0, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
+	assert.False(t, closedAt <= startAt, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
+	assert.False(t, forcedAbortAt >= 0, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
 	replayed := ReplayLegal(explored.trace)
-	if replayed.failure != nil || !reflect.DeepEqual(replayed.world, explored.world) {
-		t.Fatalf("drain-expiry replay failure=%v world-equal=%v",
-			replayed.failure, reflect.DeepEqual(replayed.world, explored.world))
-	}
+	assert.Nil(t, replayed.failure, "drain-expiry replay failure=%v", replayed.failure)
+	assert.Equal(t, explored.world, replayed.world, "drain-expiry replay world diverged")
 
 	var repeatedEmergency simulationSupervisorEvent
 	var settledAt int
@@ -862,10 +820,8 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 			settledAt = index + 1
 		}
 	}
-	if repeatedEmergency.kind == 0 || settledAt == 0 {
-		t.Fatalf("fatal trace lacks emergency start/settlement: start=%v settlement=%d",
-			repeatedEmergency.kind, settledAt)
-	}
+	assert.NotEqual(t, 0, repeatedEmergency.kind, "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.kind, settledAt)
+	assert.NotEqual(t, 0, settledAt, "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.kind, settledAt)
 
 	malformed := simulationMalformedFact{
 		authority:  simulationSupervisorAuthority,
@@ -873,14 +829,12 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	}
 	firstViolation := ReplayViolation(explored.trace, malformed)
 	secondViolation := ReplayViolation(explored.trace, malformed)
-	if firstViolation.failure != nil ||
-		firstViolation.invariant.operation != supervisorReducerOperation ||
-		firstViolation.invariant.reason != "emergency epoch is invalid, duplicated, or conflicting" ||
-		!reflect.DeepEqual(firstViolation, secondViolation) ||
-		!reflect.DeepEqual(firstViolation.world.campaign.outcome, explored.world.campaign.outcome) ||
-		!reflect.DeepEqual(firstViolation.world.campaign.failure, explored.world.campaign.failure) {
-		t.Fatalf("repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
-	}
+	assert.Nil(t, firstViolation.failure, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, supervisorReducerOperation, firstViolation.invariant.operation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.EqualValues(t, "emergency epoch is invalid, duplicated, or conflicting", firstViolation.invariant.reason, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, secondViolation, firstViolation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, explored.world.campaign.outcome, firstViolation.world.campaign.outcome, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, explored.world.campaign.failure, firstViolation.world.campaign.failure, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
 }
 
 func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
@@ -904,9 +858,8 @@ func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	}
 	first := explorePreferred("mutant-a")
 	second := explorePreferred("mutant-b")
-	if first.failure != nil || second.failure != nil {
-		t.Fatalf("choice exploration failures=%v/%v", first.failure, second.failure)
-	}
+	assert.Nil(t, first.failure, "choice exploration failures=%v/%v", first.failure, second.failure)
+	assert.Nil(t, second.failure, "choice exploration failures=%v/%v", first.failure, second.failure)
 	terminalOrder := func(trace simulationTrace) []attemptIdentity {
 		var attempts []attemptIdentity
 		for _, record := range trace.records {
@@ -923,13 +876,11 @@ func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	}
 	firstOrder := terminalOrder(first.trace)
 	secondOrder := terminalOrder(second.trace)
-	if reflect.DeepEqual(firstOrder, secondOrder) {
-		t.Fatalf("distinct choice streams selected the same primary order: %v; first=%#v second=%#v",
-			firstOrder, first.trace.choices, second.trace.choices)
-	}
+	assert.NotEqual(t, secondOrder, firstOrder, "distinct choice streams selected the same primary order: %v; first=%#v second=%#v", firstOrder, first.trace.choices, second.trace.choices)
 	for _, explored := range []SimulationResult{first, second} {
-		if replayed := ReplayLegal(explored.trace); replayed.failure != nil {
-			t.Fatalf("choice-selected trace did not replay: %v", replayed.failure)
+		{
+			replayed := ReplayLegal(explored.trace)
+			assert.Nil(t, replayed.failure, "choice-selected trace did not replay: %v", replayed.failure)
 		}
 	}
 }
@@ -942,9 +893,7 @@ func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{0})
-	if explored.failure != nil {
-		t.Fatalf("resource exploration failed: %v", explored.failure)
-	}
+	require.Nil(t, explored.failure, "resource exploration failed: %v", explored.failure)
 	trace := explored.trace
 	trace.records = slices.Clone(trace.records)
 	for index, record := range trace.records {
@@ -963,9 +912,8 @@ func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 	}
 
 	replayed := ReplayLegal(trace)
-	if replayed.failure == nil || !strings.Contains(replayed.failure.Error(), "external campaign fact is not enabled") {
-		t.Fatalf("wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
-	}
+	require.NotNil(t, replayed.failure, "wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
+	assert.True(t, strings.Contains(replayed.failure.Error(), "external campaign fact is not enabled"), "wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
 }
 
 func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
@@ -989,24 +937,17 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 
 	first := ReplayViolation(prefix, malformed)
 	second := ReplayViolation(prefix, malformed)
-	if first.failure != nil || second.failure != nil {
-		t.Fatalf("violation replay failures=%v/%v", first.failure, second.failure)
-	}
-	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("violation replay is nondeterministic:\nfirst=%#v\nsecond=%#v", first, second)
-	}
-	if first.invariant.operation != "campaign establish snapshot" ||
-		first.invariant.reason != "snapshot observation is invalid" {
-		t.Fatalf("retained invariant=%#v", first.invariant)
-	}
-	if first.key.authority != simulationCampaignAuthority ||
-		first.key.operation != first.invariant.operation || first.key.reason != first.invariant.reason {
-		t.Fatalf("failure key=%#v, invariant=%#v", first.key, first.invariant)
-	}
-	if first.world.runtime.lifecycle != runtimeClosedDrained || first.world.runtime.fatalEpoch == 0 ||
-		len(first.world.runtime.fatalCauses) != 1 {
-		t.Fatalf("runtime cleanup=%#v", first.world.runtime)
-	}
+	assert.Nil(t, first.failure, "violation replay failures=%v/%v", first.failure, second.failure)
+	assert.Nil(t, second.failure, "violation replay failures=%v/%v", first.failure, second.failure)
+	assert.Equal(t, second, first, "violation replay is nondeterministic:\nfirst=%#v\nsecond=%#v", first, second)
+	assert.EqualValues(t, "campaign establish snapshot", first.invariant.operation, "retained invariant=%#v", first.invariant)
+	assert.EqualValues(t, "snapshot observation is invalid", first.invariant.reason, "retained invariant=%#v", first.invariant)
+	assert.Equal(t, simulationCampaignAuthority, first.key.authority, "failure key=%#v, invariant=%#v", first.key, first.invariant)
+	assert.Equal(t, first.invariant.operation, first.key.operation, "failure key=%#v, invariant=%#v", first.key, first.invariant)
+	assert.Equal(t, first.invariant.reason, first.key.reason, "failure key=%#v, invariant=%#v", first.key, first.invariant)
+	assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "runtime cleanup=%#v", first.world.runtime)
+	assert.NotEqual(t, 0, first.world.runtime.fatalEpoch, "runtime cleanup=%#v", first.world.runtime)
+	assert.EqualValues(t, 1, len(first.world.runtime.fatalCauses), "runtime cleanup=%#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t *testing.T) {
@@ -1045,18 +986,15 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 
 	first := ReplayViolation(prefix, malformed)
 	second := ReplayViolation(prefix, malformed)
-	if first.failure != nil || !reflect.DeepEqual(first, second) {
-		t.Fatalf("supervisor violation replay diverged: first=%#v second=%#v", first, second)
-	}
-	if first.key.authority != simulationSupervisorAuthority ||
-		first.invariant.operation != supervisorReducerOperation {
-		t.Fatalf("supervisor invariant/key=%#v/%#v", first.invariant, first.key)
-	}
+	assert.Nil(t, first.failure, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, second, first, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, simulationSupervisorAuthority, first.key.authority, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.Equal(t, supervisorReducerOperation, first.invariant.operation, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	residual := first.world.runtime.residualCustody()
-	if first.world.runtime.lifecycle != runtimeClosedUnconfirmed ||
-		len(residual) != 1 || residual[0].generation != registered.generation || !residual[0].transferred {
-		t.Fatalf("supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
-	}
+	assert.Equal(t, runtimeClosedUnconfirmed, first.world.runtime.lifecycle, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	require.Len(t, residual, 1, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.Equal(t, registered.generation, residual[0].generation, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.True(t, residual[0].transferred, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T) {
@@ -1082,9 +1020,7 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
-	if explored.failure != nil {
-		t.Fatalf("supervisor corruption exploration failure=%v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "supervisor corruption exploration failure=%v", explored.failure)
 	registeredAt, boundaryAt := -1, -1
 	var registered simulationRecord
 	for index, record := range explored.trace.records {
@@ -1100,9 +1036,8 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 			break
 		}
 	}
-	if registeredAt < 0 || boundaryAt < 0 {
-		t.Fatalf("supervisor corruption cuts registration/boundary=%d/%d", registeredAt, boundaryAt)
-	}
+	assert.False(t, registeredAt < 0, "supervisor corruption cuts registration/boundary=%d/%d", registeredAt, boundaryAt)
+	assert.False(t, boundaryAt < 0, "supervisor corruption cuts registration/boundary=%d/%d", registeredAt, boundaryAt)
 	launchAction := registered.supervisorActions[0].token
 	registrationPrefix := simulationTrace{
 		definition: explored.trace.definition,
@@ -1178,12 +1113,10 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 			}
 			first := ReplayViolation(test.prefix, malformed)
 			second := ReplayViolation(test.prefix, malformed)
-			if first.failure != nil || !reflect.DeepEqual(first, second) {
-				t.Fatalf("supervisor corruption replay diverged: first=%#v second=%#v", first, second)
-			}
-			if first.invariant.operation != supervisorReducerOperation || first.invariant.reason != test.reason {
-				t.Fatalf("supervisor corruption invariant=%#v", first.invariant)
-			}
+			assert.Nil(t, first.failure, "supervisor corruption replay diverged: first=%#v second=%#v", first, second)
+			assert.Equal(t, second, first, "supervisor corruption replay diverged: first=%#v second=%#v", first, second)
+			assert.Equal(t, supervisorReducerOperation, first.invariant.operation, "supervisor corruption invariant=%#v", first.invariant)
+			assert.Equal(t, test.reason, first.invariant.reason, "supervisor corruption invariant=%#v", first.invariant)
 		})
 	}
 }
@@ -1206,16 +1139,13 @@ func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCusto
 
 	first := ReplayViolation(prefix, malformed)
 	second := ReplayViolation(prefix, malformed)
-	if first.failure != nil || !reflect.DeepEqual(first, second) {
-		t.Fatalf("runtime violation replay diverged: first=%#v second=%#v", first, second)
-	}
-	if first.key.authority != simulationRuntimeAuthority ||
-		first.invariant.operation != "request admission" || first.invariant.reason != "invalid request" {
-		t.Fatalf("runtime invariant/key=%#v/%#v", first.invariant, first.key)
-	}
-	if first.world.runtime.lifecycle != runtimeClosedDrained || len(first.world.runtime.admissions) != 0 {
-		t.Fatalf("runtime violation cleanup retained custody: %#v", first.world.runtime)
-	}
+	assert.Nil(t, first.failure, "runtime violation replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, second, first, "runtime violation replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "request admission", first.invariant.operation, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "invalid request", first.invariant.reason, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "runtime violation cleanup retained custody: %#v", first.world.runtime)
+	assert.EqualValues(t, 0, len(first.world.runtime.admissions), "runtime violation cleanup retained custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *testing.T) {
@@ -1236,17 +1166,13 @@ func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *tes
 
 	first := ReplayViolation(prefix, malformed)
 	second := ReplayViolation(prefix, malformed)
-	if first.failure != nil || !reflect.DeepEqual(first, second) {
-		t.Fatalf("stale return replay diverged: first=%#v second=%#v", first, second)
-	}
-	if first.key.authority != simulationRuntimeAuthority ||
-		first.invariant.operation != "acknowledge grant return" ||
-		first.invariant.reason != "grant return authority is stale or wrong" {
-		t.Fatalf("stale return invariant/key=%#v/%#v", first.invariant, first.key)
-	}
-	if first.world.runtime.lifecycle != runtimeClosedDrained || len(first.world.runtime.admissions) != 0 {
-		t.Fatalf("stale return cleanup=%#v", first.world.runtime)
-	}
+	assert.Nil(t, first.failure, "stale return replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, second, first, "stale return replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "acknowledge grant return", first.invariant.operation, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "grant return authority is stale or wrong", first.invariant.reason, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "stale return cleanup=%#v", first.world.runtime)
+	assert.EqualValues(t, 0, len(first.world.runtime.admissions), "stale return cleanup=%#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFamilies(t *testing.T) {
@@ -1291,17 +1217,13 @@ func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFam
 		t.Run(test.name, func(t *testing.T) {
 			first := ReplayViolation(prefix, test.malformed)
 			second := ReplayViolation(prefix, test.malformed)
-			if first.failure != nil || !reflect.DeepEqual(first, second) {
-				t.Fatalf("runtime violation replay diverged: first=%#v second=%#v", first, second)
-			}
-			if first.key.authority != simulationRuntimeAuthority ||
-				first.invariant.operation != test.operation || first.invariant.reason != test.reason {
-				t.Fatalf("runtime invariant/key=%#v/%#v", first.invariant, first.key)
-			}
-			if first.world.runtime.lifecycle != runtimeClosedDrained ||
-				len(first.world.runtime.admissions) != 0 {
-				t.Fatalf("runtime violation cleanup=%#v", first.world.runtime)
-			}
+			assert.Nil(t, first.failure, "runtime violation replay diverged: first=%#v second=%#v", first, second)
+			assert.Equal(t, second, first, "runtime violation replay diverged: first=%#v second=%#v", first, second)
+			assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+			assert.Equal(t, test.operation, first.invariant.operation, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+			assert.Equal(t, test.reason, first.invariant.reason, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+			assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "runtime violation cleanup=%#v", first.world.runtime)
+			assert.EqualValues(t, 0, len(first.world.runtime.admissions), "runtime violation cleanup=%#v", first.world.runtime)
 		})
 	}
 }
@@ -1329,26 +1251,16 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	key := ReplayViolation(counterexample, malformed).key
 
 	shrunk := Shrink(counterexample, key)
-	if len(shrunk.records) >= len(counterexample.records) {
-		t.Fatalf("record count was not reduced: got=%d input=%d", len(shrunk.records), len(counterexample.records))
-	}
-	if len(shrunk.definition.catalogue) != 0 {
-		t.Fatalf("shrunk catalogue=%v, want no unrelated members", shrunk.definition.catalogue)
-	}
-	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 {
-		t.Fatalf(
-			"shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1",
-			shrunk.definition.capacity, shrunk.definition.campaign.peers,
-		)
-	}
-	if shrunk.malformed == nil {
-		t.Fatal("shrink removed the one intended corruption")
-	}
+	assert.False(t, len(shrunk.records) >= len(counterexample.records), "record count was not reduced: got=%d input=%d", len(shrunk.records), len(counterexample.records))
+	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "shrunk catalogue=%v, want no unrelated members", shrunk.definition.catalogue)
+	assert.EqualValues(t, 1, shrunk.definition.capacity, "shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
+	require.NotNil(t, shrunk.malformed, "shrink removed the one intended corruption")
 	first := ReplayViolation(shrunk, *shrunk.malformed)
 	second := ReplayViolation(shrunk, *shrunk.malformed)
-	if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
-		t.Fatalf("shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
-	}
+	assert.Nil(t, first.failure, "shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
+	assert.Equal(t, key, first.key, "shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
+	assert.Equal(t, second, first, "shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", key, first, second)
 }
 
 func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *testing.T) {
@@ -1359,32 +1271,25 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 		},
 		capacity: 3, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, nil)
-	if explored.failure != nil {
-		t.Fatalf("positive shrink exploration failure=%v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "positive shrink exploration failure=%v", explored.failure)
 	counterexample := simulationCloneTrace(explored.trace)
 	counterexample.records[0].runtimeState.capacity++
 	replayed := ReplayLegal(counterexample)
-	if replayed.failure == nil || reflect.DeepEqual(replayed.key, FailureKey{}) {
-		t.Fatalf("positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
-	}
+	assert.NotNil(t, replayed.failure, "positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
+	assert.NotEqual(t, FailureKey{}, replayed.key, "positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
 
 	shrunk := Shrink(counterexample, replayed.key)
-	if len(shrunk.records) >= len(counterexample.records) {
-		t.Fatalf("positive record count was not reduced: got=%d input=%d",
-			len(shrunk.records), len(counterexample.records))
-	}
-	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 ||
-		len(shrunk.definition.catalogue) != 0 ||
-		shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 {
-		t.Fatalf("positive shrunk definition=%#v", shrunk.definition)
-	}
+	assert.False(t, len(shrunk.records) >= len(counterexample.records), "positive record count was not reduced: got=%d input=%d", len(shrunk.records), len(counterexample.records))
+	assert.EqualValues(t, 1, shrunk.definition.capacity, "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.identity, "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.lineage, "positive shrunk definition=%#v", shrunk.definition)
 	first := ReplayLegal(shrunk)
 	second := ReplayLegal(shrunk)
-	if first.failure == nil || !reflect.DeepEqual(first.key, replayed.key) || !reflect.DeepEqual(first, second) {
-		t.Fatalf("positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v",
-			replayed.key, first, second)
-	}
+	assert.NotNil(t, first.failure, "positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", replayed.key, first, second)
+	assert.Equal(t, replayed.key, first.key, "positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", replayed.key, first, second)
+	assert.Equal(t, second, first, "positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", replayed.key, first, second)
 }
 
 func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
@@ -1410,9 +1315,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
-	if explored.failure != nil {
-		t.Fatalf("positive boundary exploration failure=%v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "positive boundary exploration failure=%v", explored.failure)
 	counterexample := simulationCloneTrace(explored.trace)
 	cut := -1
 	for index, record := range counterexample.records {
@@ -1422,26 +1325,24 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 			break
 		}
 	}
-	if cut < 0 {
-		t.Fatal("positive boundary trace has no equality cut")
-	}
+	assert.False(t, cut < 0, "positive boundary trace has no equality cut")
 	counterexample.records = slices.Clone(counterexample.records[:cut+1])
 	counterexample.records[cut].supervisorState.nextAction++
 	replayed := ReplayLegal(counterexample)
-	if replayed.failure == nil || replayed.key.kind != simulationReplayFailureKind {
-		t.Fatalf("positive boundary replay=%#v", replayed)
-	}
+	assert.NotNil(t, replayed.failure, "positive boundary replay=%#v", replayed)
+	assert.Equal(t, simulationReplayFailureKind, replayed.key.kind, "positive boundary replay=%#v", replayed)
 	originalMeasure := simulationTraceShrinkMeasure(counterexample)
 
 	shrunk := Shrink(counterexample, replayed.key)
-	if measure := simulationTraceShrinkMeasure(shrunk); !simulationShrinkMeasureLess(measure, originalMeasure) {
-		t.Fatalf("positive boundary measure=%v, want less than %v", measure, originalMeasure)
+	{
+		measure := simulationTraceShrinkMeasure(shrunk)
+		assert.True(t, simulationShrinkMeasureLess(measure, originalMeasure), "positive boundary measure=%v, want less than %v", measure, originalMeasure)
 	}
 	first := ReplayLegal(shrunk)
 	second := ReplayLegal(shrunk)
-	if first.failure == nil || !reflect.DeepEqual(first.key, replayed.key) || !reflect.DeepEqual(first, second) {
-		t.Fatalf("positive boundary shrunk replay diverged: first=%#v second=%#v", first, second)
-	}
+	assert.NotNil(t, first.failure, "positive boundary shrunk replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, replayed.key, first.key, "positive boundary shrunk replay diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, second, first, "positive boundary shrunk replay diverged: first=%#v second=%#v", first, second)
 }
 
 func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
@@ -1468,30 +1369,22 @@ func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
 	far.records[0].supervisorEvent.running = &farRunning
 	far.records[0].supervisorEvent.running.facts[0].at = simulationTraceInstant(time.Unix(10, 9))
 	far.choices[0].selected = 0
-	if !simulationShrinkMeasureLess(simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far)) {
-		t.Fatalf("near/far shrink measures=%v/%v", simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far))
-	}
+	assert.True(t, simulationShrinkMeasureLess(simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far)), "near/far shrink measures=%v/%v", simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far))
 
 	simple := simulationCloneTrace(near)
 	simpleRunning := *near.records[0].supervisorEvent.running
 	simple.records[0].supervisorEvent.running = &simpleRunning
 	simple.records[0].supervisorEvent.running.facts = nil
-	if !simulationShrinkMeasureLess(simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near)) {
-		t.Fatalf("simple/rich payload measures=%v/%v",
-			simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near))
-	}
+	assert.True(t, simulationShrinkMeasureLess(simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near)), "simple/rich payload measures=%v/%v", simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near))
 
 	uncanonical := simulationTrace{definition: simulationDefinition{
 		campaign: campaignDefinition{identity: "a", lineage: 1, peers: 1}, capacity: 1,
 	}}
 	canonical := simulationCloneTrace(uncanonical)
 	canonical.definition.campaign.identity = "campaign-1"
-	if !simulationShrinkMeasureLess(
+	assert.True(t, simulationShrinkMeasureLess(
 		simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical),
-	) {
-		t.Fatalf("canonical/short identity measures=%v/%v",
-			simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical))
-	}
+	), "canonical/short identity measures=%v/%v", simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical))
 }
 
 func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *testing.T) {
@@ -1506,13 +1399,9 @@ func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *
 	secondKey := simulationReplayDivergenceFailure(
 		simulationTrace{}, simulationRuntimeStateDivergence, "another diagnostic: %d", 3,
 	).key
-	if !reflect.DeepEqual(firstKey, secondKey) {
-		t.Fatalf("typed replay keys depend on diagnostics: %#v/%#v", firstKey, secondKey)
-	}
+	assert.Equal(t, secondKey, firstKey, "typed replay keys depend on diagnostics: %#v/%#v", firstKey, secondKey)
 	retained := simulationRetainRecordedFailure(candidate, failing, firstKey.divergence)
-	if retained.runtimeState.capacity != 3 {
-		t.Fatalf("typed replay divergence retained state=%#v", retained.runtimeState)
-	}
+	assert.EqualValues(t, 3, retained.runtimeState.capacity, "typed replay divergence retained state=%#v", retained.runtimeState)
 }
 
 func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testing.T) {
@@ -1523,9 +1412,7 @@ func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testin
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, nil)
-	if explored.failure != nil {
-		t.Fatalf("causal shrink exploration failure=%v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "causal shrink exploration failure=%v", explored.failure)
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
 		campaign: simulationTraceCampaignEvent(campaignEvent{
@@ -1537,20 +1424,13 @@ func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testin
 	key := ReplayViolation(counterexample, malformed).key
 
 	shrunk := Shrink(counterexample, key)
-	if len(shrunk.definition.catalogue) != 0 {
-		t.Fatalf("causal shrink catalogue=%v, want no unrelated mutants", shrunk.definition.catalogue)
-	}
-	if len(shrunk.records) >= len(counterexample.records) {
-		t.Fatalf("causal shrink records=%d, want fewer than %d", len(shrunk.records), len(counterexample.records))
-	}
-	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 {
-		t.Fatalf("causal shrink capacity/peers=%d/%d, want 1/1",
-			shrunk.definition.capacity, shrunk.definition.campaign.peers)
-	}
+	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "causal shrink catalogue=%v, want no unrelated mutants", shrunk.definition.catalogue)
+	assert.False(t, len(shrunk.records) >= len(counterexample.records), "causal shrink records=%d, want fewer than %d", len(shrunk.records), len(counterexample.records))
+	assert.EqualValues(t, 1, shrunk.definition.capacity, "causal shrink capacity/peers=%d/%d, want 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "causal shrink capacity/peers=%d/%d, want 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
 	replayed := ReplayViolation(shrunk, *shrunk.malformed)
-	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {
-		t.Fatalf("causal shrink replay=%#v, want key %#v", replayed, key)
-	}
+	assert.Nil(t, replayed.failure, "causal shrink replay=%#v, want key %#v", replayed, key)
+	assert.Equal(t, key, replayed.key, "causal shrink replay=%#v, want key %#v", replayed, key)
 }
 
 func TestSimulationReplayLegalityKeyIsIndependentOfDiagnostic(t *testing.T) {
@@ -1561,15 +1441,12 @@ func TestSimulationReplayLegalityKeyIsIndependentOfDiagnostic(t *testing.T) {
 	second := simulationReplayFailure(
 		trace, simulationReplayEnablednessFailure, "rewritten enabledness diagnostic for record %d", 0,
 	).key
-	if !reflect.DeepEqual(first, second) || first.operation != "" {
-		t.Fatalf("replay legality key depends on diagnostics: %#v/%#v", first, second)
-	}
+	assert.Equal(t, second, first, "replay legality key depends on diagnostics: %#v/%#v", first, second)
+	assert.EqualValues(t, "", first.operation, "replay legality key depends on diagnostics: %#v/%#v", first, second)
 	different := simulationReplayFailure(
 		trace, simulationReplayCausalityFailure, "rewritten causal diagnostic for record %d", 0,
 	).key
-	if reflect.DeepEqual(first, different) {
-		t.Fatalf("distinct replay legality categories share key %#v", first)
-	}
+	assert.NotEqual(t, different, first, "distinct replay legality categories share key %#v", first)
 }
 
 func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
@@ -1595,9 +1472,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
-	if explored.failure != nil {
-		t.Fatalf("boundary shrink exploration failure=%v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "boundary shrink exploration failure=%v", explored.failure)
 	prefixLength := 0
 	for index, record := range explored.trace.records {
 		if record.authority != simulationSupervisorAuthority ||
@@ -1607,9 +1482,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 		prefixLength = index + 1
 		break
 	}
-	if prefixLength == 0 {
-		t.Fatal("boundary shrink trace has no launch completion")
-	}
+	assert.NotEqual(t, 0, prefixLength, "boundary shrink trace has no launch completion")
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
 		campaign: simulationTraceCampaignEvent(campaignEvent{
@@ -1623,17 +1496,16 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	originalMeasure := simulationTraceShrinkMeasure(counterexample)
 
 	shrunk := Shrink(counterexample, key)
-	if measure := simulationTraceShrinkMeasure(shrunk); !simulationShrinkMeasureLess(measure, originalMeasure) {
-		t.Fatalf("boundary measure=%v, want less than %v", measure, originalMeasure)
+	{
+		measure := simulationTraceShrinkMeasure(shrunk)
+		assert.True(t, simulationShrinkMeasureLess(measure, originalMeasure), "boundary measure=%v, want less than %v", measure, originalMeasure)
 	}
-	if shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 ||
-		len(shrunk.definition.catalogue) != 0 {
-		t.Fatalf("canonical shrink definition=%#v", shrunk.definition)
-	}
+	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.identity, "canonical shrink definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.lineage, "canonical shrink definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "canonical shrink definition=%#v", shrunk.definition)
 	replayed := ReplayViolation(shrunk, *shrunk.malformed)
-	if replayed.failure != nil || !reflect.DeepEqual(replayed.key, key) {
-		t.Fatalf("boundary shrink replay=%#v, want key %#v", replayed, key)
-	}
+	assert.Nil(t, replayed.failure, "boundary shrink replay=%#v, want key %#v", replayed, key)
+	assert.Equal(t, key, replayed.key, "boundary shrink replay=%#v, want key %#v", replayed, key)
 }
 
 func TestSimulationLivenessFailureKeyIgnoresRawOwnerIdentities(t *testing.T) {
@@ -1646,12 +1518,11 @@ func TestSimulationLivenessFailureKeyIgnoresRawOwnerIdentities(t *testing.T) {
 		{source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 5}},
 	}}, simulationLivenessNoMove)
 
-	if first.failure == nil || second.failure == nil || !reflect.DeepEqual(first.key, second.key) {
-		t.Fatalf("liveness failures/keys diverged: first=%#v second=%#v", first, second)
-	}
-	if first.key.kind != simulationLivenessFailureKind || first.key.liveness != simulationLivenessNoMove {
-		t.Fatalf("liveness failure key=%#v", first.key)
-	}
+	assert.NotNil(t, first.failure, "liveness failures/keys diverged: first=%#v second=%#v", first, second)
+	assert.NotNil(t, second.failure, "liveness failures/keys diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, second.key, first.key, "liveness failures/keys diverged: first=%#v second=%#v", first, second)
+	assert.Equal(t, simulationLivenessFailureKind, first.key.kind, "liveness failure key=%#v", first.key)
+	assert.Equal(t, simulationLivenessNoMove, first.key.liveness, "liveness failure key=%#v", first.key)
 }
 
 func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T) {
@@ -1687,14 +1558,12 @@ func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T
 	}
 
 	shrunk := simulationShrinkLivenessWith(trace, key, evaluate)
-	if shrunk.definition.capacity != 1 || shrunk.definition.campaign.peers != 1 ||
-		len(shrunk.definition.catalogue) != 0 ||
-		shrunk.definition.campaign.identity != "campaign-1" || shrunk.definition.campaign.lineage != 1 {
-		t.Fatalf("liveness shrunk definition=%#v", shrunk.definition)
-	}
-	if len(shrunk.choices) != 0 {
-		t.Fatalf("liveness shrunk choices=%#v", shrunk.choices)
-	}
+	assert.EqualValues(t, 1, shrunk.definition.capacity, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.identity, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.lineage, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 0, len(shrunk.choices), "liveness shrunk choices=%#v", shrunk.choices)
 }
 
 func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
@@ -1721,15 +1590,14 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 
 	trace, projection := recorder.quiescent(runner, shell, driver)
-	if got, want := simulationAuthorities(trace), []simulationAuthority{
-		simulationRuntimeAuthority, simulationCampaignAuthority, simulationSupervisorAuthority,
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("production authority order=%v, want %v", got, want)
+	{
+		got, want := simulationAuthorities(trace), []simulationAuthority{
+			simulationRuntimeAuthority, simulationCampaignAuthority, simulationSupervisorAuthority,
+		}
+		assert.Equal(t, want, got, "production authority order=%v, want %v", got, want)
 	}
 	for index, record := range trace.records {
-		if record.sequence != uint64(index+1) {
-			t.Fatalf("production sequence at %d=%d", index, record.sequence)
-		}
+		assert.Equal(t, uint64(index+1), record.sequence, "production sequence at %d=%d", index, record.sequence)
 	}
 
 	wantRuntime := newProcessRuntime(1)
@@ -1742,13 +1610,9 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		campaign: wantCampaign, runtime: wantRuntime,
 		supervisor: simulationProjectSupervisorState(wantSupervisor),
 	}
-	if !reflect.DeepEqual(projection, wantProjection) {
-		t.Fatalf("production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
-	}
-	if !reflect.DeepEqual(trace.records[1].campaignEffects, wantEffects) ||
-		!reflect.DeepEqual(trace.records[2].supervisorActions, simulationTraceSupervisorActions(wantActions)) {
-		t.Fatalf("recorded ordered outputs diverged: %#v", trace.records)
-	}
+	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
+	assert.Equal(t, wantEffects, trace.records[1].campaignEffects, "recorded ordered outputs diverged: %#v", trace.records)
+	assert.Equal(t, simulationTraceSupervisorActions(wantActions), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
 }
 
 func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
@@ -1759,9 +1623,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, nil)
-	if explored.failure != nil {
-		t.Fatalf("commutation exploration failure=%v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "commutation exploration failure=%v", explored.failure)
 	trace := simulationCloneTrace(explored.trace)
 	trace.barriers = []simulationQuiescentBarrier{{
 		afterSequence: trace.records[len(trace.records)-1].sequence,
@@ -1778,11 +1640,11 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 			causal++
 		}
 	}
-	if independent == 0 || causal == 0 {
-		t.Fatalf("commutation trace pairs independent/causal=%d/%d", independent, causal)
-	}
-	if replayed := ReplayLegal(trace); replayed.failure != nil {
-		t.Fatalf("quiescent commutation replay failure=%v", replayed.failure)
+	assert.NotEqual(t, 0, independent, "commutation trace pairs independent/causal=%d/%d", independent, causal)
+	assert.NotEqual(t, 0, causal, "commutation trace pairs independent/causal=%d/%d", independent, causal)
+	{
+		replayed := ReplayLegal(trace)
+		assert.Nil(t, replayed.failure, "quiescent commutation replay failure=%v", replayed.failure)
 	}
 }
 
@@ -1804,9 +1666,10 @@ func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) 
 	recorder.mutex.Lock()
 	cancelSequence := recorder.records[len(recorder.records)-1].sequence
 	recorder.mutex.Unlock()
-	if source := recorder.campaignSource(event); source.kind != simulationOwnerDeliverySource ||
-		source.identity != cancelSequence {
-		t.Fatalf("queued grant source=%#v, want cancellation cut %d", source, cancelSequence)
+	{
+		source := recorder.campaignSource(event)
+		assert.Equal(t, simulationOwnerDeliverySource, source.kind, "queued grant source=%#v, want cancellation cut %d", source, cancelSequence)
+		assert.Equal(t, cancelSequence, source.identity, "queued grant source=%#v, want cancellation cut %d", source, cancelSequence)
 	}
 }
 
@@ -1832,7 +1695,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	<-started
 	select {
 	case <-completed:
-		t.Fatal("quiescence returned with a supervisor action still in flight")
+		require.FailNow(t, "quiescence returned with a supervisor action still in flight")
 	case <-time.After(20 * time.Millisecond):
 	}
 
@@ -1840,7 +1703,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	select {
 	case <-completed:
 	case <-time.After(time.Second):
-		t.Fatal("quiescence did not resume after the matching action cut")
+		require.FailNow(t, "quiescence did not resume after the matching action cut")
 	}
 }
 
@@ -1873,22 +1736,17 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
 
 	trace, production := recorder.quiescent(runner, shell, driver)
-	if len(trace.barriers) != 7 {
-		t.Fatalf("retained prefix barriers=%d, want 7", len(trace.barriers))
-	}
+	assert.EqualValues(t, 7, len(trace.barriers), "retained prefix barriers=%d, want 7", len(trace.barriers))
 	replayed := ReplayLegal(trace)
-	if replayed.failure != nil {
-		t.Fatalf("recorded production trace did not replay: %v", replayed.failure)
-	}
-	if !reflect.DeepEqual(replayed.world, production) {
-		t.Fatalf("recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
-	}
+	require.Nil(t, replayed.failure, "recorded production trace did not replay: %v", replayed.failure)
+	assert.Equal(t, production, replayed.world, "recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 	corrupted := trace
 	corrupted.barriers = slices.Clone(trace.barriers)
 	corrupted.barriers[0].runtime.capacity++
-	if failure := ReplayLegal(corrupted).failure; failure == nil ||
-		!strings.Contains(failure.Error(), "quiescent world diverged") {
-		t.Fatalf("corrupted barrier replay failure=%v", failure)
+	{
+		failure := ReplayLegal(corrupted).failure
+		require.NotNil(t, failure, "corrupted barrier replay failure=%v", failure)
+		assert.True(t, strings.Contains(failure.Error(), "quiescent world diverged"), "corrupted barrier replay failure=%v", failure)
 	}
 }
 
@@ -1967,7 +1825,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 					},
 				}
 			default:
-				t.Fatalf("unexpected scripted native action: %#v", action)
+				require.FailNow(t, "unexpected scripted native action: %#v", action)
 
 				return nil
 			}
@@ -1986,32 +1844,30 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 		identity: "campaign-recorded-managed", lineage: 521, command: []string{"test"},
 		profile: SerialProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
-	if completed, ok := result.outcome.(completedOutcome); !ok || len(completed.mutants) != 1 {
-		t.Fatalf("managed outcome=%#v, want one completed mutant", result.outcome)
+	{
+		completed, ok := result.outcome.(completedOutcome)
+		require.True(t, ok, "managed outcome=%#v, want one completed mutant", result.outcome)
+		assert.EqualValues(t, 1, len(completed.mutants), "managed outcome=%#v, want one completed mutant", result.outcome)
 	}
 
 	trace, production := recorder.quiescent(runner, shell, driver)
-	if len(trace.barriers) != 1 || trace.barriers[0].afterSequence != uint64(len(trace.records)) {
-		t.Fatalf("quiescent barriers=%#v, want one final accepted-prefix cut", trace.barriers)
-	}
-	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
-		t.Fatalf("managed trace retained a production capability at %s", path)
+	require.Len(t, trace.barriers, 1, "quiescent barriers=%#v, want one final accepted-prefix cut", trace.barriers)
+	assert.Equal(t, uint64(len(trace.records)), trace.barriers[0].afterSequence, "quiescent barriers=%#v, want one final accepted-prefix cut", trace.barriers)
+	{
+		path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace")
+		assert.EqualValues(t, "", path, "managed trace retained a production capability at %s", path)
 	}
 	for index, record := range trace.records {
-		if record.source.kind == 0 || record.source.identity == 0 {
-			t.Fatalf("managed production record %d has no causal source: %#v", index, record)
-		}
-		if want := simulationExpectedProductionSourceKind(record); record.source.kind != want {
-			t.Fatalf("managed production record %d source kind=%v, want %v", index, record.source.kind, want)
+		assert.NotEqual(t, 0, record.source.kind, "managed production record %d has no causal source: %#v", index, record)
+		assert.NotEqual(t, 0, record.source.identity, "managed production record %d has no causal source: %#v", index, record)
+		{
+			want := simulationExpectedProductionSourceKind(record)
+			assert.Equal(t, want, record.source.kind, "managed production record %d source kind=%v, want %v", index, record.source.kind, want)
 		}
 	}
 	replayed := ReplayLegal(trace)
-	if replayed.failure != nil {
-		t.Fatalf("non-empty production trace did not replay: %v", replayed.failure)
-	}
-	if !reflect.DeepEqual(replayed.world, production) {
-		t.Fatalf("non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
-	}
+	assert.Nil(t, replayed.failure, "non-empty production trace did not replay: %v", replayed.failure)
+	assert.Equal(t, production, replayed.world, "non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 }
 
 func simulationExpectedProductionSourceKind(record simulationRecord) simulationCausalSourceKind {
@@ -2068,9 +1924,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 	trace, _ := recorder.quiescent(runner, shell, driver)
 	mutants[0] = "caller-rewrite"
 	got := trace.records[len(trace.records)-1].campaignEvent.production().payload.(catalogueDiscoveredEvent).mutants
-	if !reflect.DeepEqual(got, []mutantIdentity{"mutant-a", "mutant-b"}) {
-		t.Fatalf("recorded catalogue changed with caller input: %v", got)
-	}
+	assert.Equal(t, []mutantIdentity{"mutant-a", "mutant-b"}, got, "recorded catalogue changed with caller input: %v", got)
 }
 
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
@@ -2081,9 +1935,7 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
 		profile: AutomaticProfile,
 	})
-	if await.decision != admissionAccepted {
-		t.Fatalf("admission decision=%v", await.decision)
-	}
+	assert.Equal(t, admissionAccepted, await.decision, "admission decision=%v", await.decision)
 	campaign, _ := beginCampaign(campaignDefinition{
 		identity: "campaign-projection", lineage: 71, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -2092,20 +1944,18 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 	driver := &supervisorDriver{recorder: recorder}
 
 	trace, projection := recorder.quiescent(runner, shell, driver)
-	if shell.core.admissions[0].grant.delivery == nil {
-		t.Fatal("fixture did not retain the shell-only delivery capability")
-	}
-	if projection.runtime.admissions[0].grant.delivery != nil {
-		t.Fatal("quiescent projection leaked a delivery channel")
-	}
-	if path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace"); path != "" {
-		t.Fatalf("runtime trace leaked a delivery capability at %s", path)
+	assert.NotNil(t, shell.core.admissions[0].grant.delivery, "fixture did not retain the shell-only delivery capability")
+	assert.Nil(t, projection.runtime.admissions[0].grant.delivery, "quiescent projection leaked a delivery channel")
+	{
+		path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace")
+		assert.EqualValues(t, "", path, "runtime trace leaked a delivery capability at %s", path)
 	}
 }
 
 func TestSimulationTraceContainsOnlyCapabilityFreeDTOs(t *testing.T) {
-	if path, found := executionCapabilityPath(reflect.TypeFor[simulationTrace](), nil); found {
-		t.Fatalf("simulation trace contains executable capability at %s", path)
+	{
+		path, found := executionCapabilityPath(reflect.TypeFor[simulationTrace](), nil)
+		assert.False(t, found, "simulation trace contains executable capability at %s", path)
 	}
 }
 
@@ -2119,9 +1969,8 @@ func TestSimulationCausalTerminalConsumesRecordedResolvedDeadline(t *testing.T) 
 	derived.resolvedMutationDeadline.duration = 99 * time.Second
 
 	merged, ok := simulationCausalCampaignPayload(recorded, derived).(attemptTerminalEvent)
-	if !ok || merged.resolvedMutationDeadline != recorded.resolvedMutationDeadline {
-		t.Fatalf("merged terminal=%#v, want recorded deadline %#v", merged, recorded.resolvedMutationDeadline)
-	}
+	require.True(t, ok, "merged terminal=%#v, want recorded deadline %#v", merged, recorded.resolvedMutationDeadline)
+	assert.Equal(t, recorded.resolvedMutationDeadline, merged.resolvedMutationDeadline, "merged terminal=%#v, want recorded deadline %#v", merged, recorded.resolvedMutationDeadline)
 }
 
 func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
@@ -2143,9 +1992,7 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 		{authority: simulationSupervisorAuthority, action: actions[1]},
 		{authority: simulationSupervisorAuthority, action: actions[0]},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("enabled moves=%#v, want %#v", got, want)
-	}
+	assert.Equal(t, want, got, "enabled moves=%#v, want %#v", got, want)
 }
 
 func TestSimulationChoiceRecordsMarkCanonicalRecovery(t *testing.T) {
@@ -2156,26 +2003,19 @@ func TestSimulationChoiceRecordsMarkCanonicalRecovery(t *testing.T) {
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{2})
-	if explored.failure != nil {
-		t.Fatalf("recovery exploration failed: %v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "recovery exploration failed: %v", explored.failure)
 	seenExploration, seenRecovery := false, false
 	for _, choice := range explored.trace.choices {
 		if !choice.recovery {
-			if seenRecovery {
-				t.Fatalf("exploration resumed after recovery: %#v", explored.trace.choices)
-			}
+			assert.False(t, seenRecovery, "exploration resumed after recovery: %#v", explored.trace.choices)
 			seenExploration = true
 			continue
 		}
 		seenRecovery = true
-		if choice.selected != 0 {
-			t.Fatalf("non-canonical recovery choice=%#v", choice)
-		}
+		assert.EqualValues(t, 0, choice.selected, "non-canonical recovery choice=%#v", choice)
 	}
-	if !seenExploration || !seenRecovery {
-		t.Fatalf("choice records=%#v, want exploration followed by recovery", explored.trace.choices)
-	}
+	assert.True(t, seenExploration, "choice records=%#v, want exploration followed by recovery", explored.trace.choices)
+	assert.True(t, seenRecovery, "choice records=%#v, want exploration followed by recovery", explored.trace.choices)
 }
 
 func TestSimulationEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
@@ -2186,13 +2026,10 @@ func TestSimulationEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 		},
 		capacity: 1,
 	}, simulationChoiceBytes{})
-	if explored.failure != nil {
-		t.Fatalf("empty exploration failed: %v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "empty exploration failed: %v", explored.failure)
 	for index, record := range explored.trace.records {
-		if record.source.kind == 0 || record.source.identity == 0 {
-			t.Fatalf("record %d has no reducer-emitted causal source: %#v", index, record.source)
-		}
+		assert.NotEqual(t, 0, record.source.kind, "record %d has no reducer-emitted causal source: %#v", index, record.source)
+		assert.NotEqual(t, 0, record.source.identity, "record %d has no reducer-emitted causal source: %#v", index, record.source)
 	}
 }
 
@@ -2204,13 +2041,10 @@ func TestSimulationNonEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{})
-	if explored.failure != nil {
-		t.Fatalf("non-empty exploration failed: %v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "non-empty exploration failed: %v", explored.failure)
 	for index, record := range explored.trace.records {
-		if record.source.kind == 0 || record.source.identity == 0 {
-			t.Fatalf("record %d has no reducer-emitted causal source: %#v", index, record.source)
-		}
+		assert.NotEqual(t, 0, record.source.kind, "record %d has no reducer-emitted causal source: %#v", index, record.source)
+		assert.NotEqual(t, 0, record.source.identity, "record %d has no reducer-emitted causal source: %#v", index, record.source)
 	}
 }
 
@@ -2230,12 +2064,8 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 
 	trace, projection := recorder.quiescent(runner, shell, driver)
 	projected := fmt.Sprintf("%#v %#v", trace, projection)
-	if strings.Contains(projected, "/private/repository") {
-		t.Fatalf("simulation projection leaked a filesystem path: %s", projected)
-	}
-	if projection.campaign.snapshot != "snapshot:campaign-paths" {
-		t.Fatalf("logical snapshot identity=%q", projection.campaign.snapshot)
-	}
+	assert.False(t, strings.Contains(projected, "/private/repository"), "simulation projection leaked a filesystem path: %s", projected)
+	assert.EqualValues(t, "snapshot:campaign-paths", projection.campaign.snapshot, "logical snapshot identity=%q", projection.campaign.snapshot)
 }
 
 func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
@@ -2252,11 +2082,15 @@ func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 	recorder.mutex.Lock()
 	record := recorder.records[0]
 	recorder.mutex.Unlock()
-	if got := record.supervisorEvent.at.production(); !got.Equal(registeredAt) || got.Location() != time.UTC {
-		t.Fatalf("canonical instant changed: got=%s want=%s", got, registeredAt)
+	{
+		got := record.supervisorEvent.at.production()
+		assert.True(t, got.Equal(registeredAt), "canonical instant changed: got=%s want=%s", got, registeredAt)
+		assert.Equal(t, time.UTC, got.Location(), "canonical instant changed: got=%s want=%s", got, registeredAt)
 	}
-	if got := record.supervisorState.attempts[0].registeredAt.production(); !got.Equal(registeredAt) || got.Location() != time.UTC {
-		t.Fatalf("canonical state instant changed: got=%s want=%s", got, registeredAt)
+	{
+		got := record.supervisorState.attempts[0].registeredAt.production()
+		assert.True(t, got.Equal(registeredAt), "canonical state instant changed: got=%s want=%s", got, registeredAt)
+		assert.Equal(t, time.UTC, got.Location(), "canonical state instant changed: got=%s want=%s", got, registeredAt)
 	}
 }
 
@@ -2268,11 +2102,10 @@ func TestSimulationTraceCarriesNoProductionCapabilities(t *testing.T) {
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{0})
-	if explored.failure != nil {
-		t.Fatalf("exploration failed: %v", explored.failure)
-	}
-	if path := simulationForbiddenValuePath(reflect.ValueOf(explored.trace), "trace"); path != "" {
-		t.Fatalf("canonical trace retains a production capability at %s", path)
+	assert.Nil(t, explored.failure, "exploration failed: %v", explored.failure)
+	{
+		path := simulationForbiddenValuePath(reflect.ValueOf(explored.trace), "trace")
+		assert.EqualValues(t, "", path, "canonical trace retains a production capability at %s", path)
 	}
 }
 
@@ -2313,23 +2146,19 @@ func simulationForbiddenValuePath(value reflect.Value, path string) string {
 
 func TestSimulationFuzzInputDrivesSustainedLegalChoices(t *testing.T) {
 	definition, choices := simulationFuzzInput([]byte{2, 2, 4, 5, 6, 7})
-	if definition.capacity != 3 || definition.campaign.peers != 3 || len(definition.catalogue) != 3 ||
-		len(choices) != 4 {
-		t.Fatalf("fuzz definition/choices=%#v/%v", definition, choices)
-	}
+	assert.EqualValues(t, 3, definition.capacity, "fuzz definition/choices=%#v/%v", definition, choices)
+	assert.EqualValues(t, 3, definition.campaign.peers, "fuzz definition/choices=%#v/%v", definition, choices)
+	assert.EqualValues(t, 3, len(definition.catalogue), "fuzz definition/choices=%#v/%v", definition, choices)
+	assert.EqualValues(t, 4, len(choices), "fuzz definition/choices=%#v/%v", definition, choices)
 	explored := Explore(definition, choices)
-	if explored.failure != nil {
-		t.Fatalf("sustained fuzz exploration failed: %v", explored.failure)
-	}
+	assert.Nil(t, explored.failure, "sustained fuzz exploration failed: %v", explored.failure)
 	nonRecovery := 0
 	for _, choice := range explored.trace.choices {
 		if !choice.recovery {
 			nonRecovery++
 		}
 	}
-	if nonRecovery < len(choices) {
-		t.Fatalf("exploration consumed %d choices, want at least %d: %#v", nonRecovery, len(choices), explored.trace.choices)
-	}
+	assert.False(t, nonRecovery < len(choices), "exploration consumed %d choices, want at least %d: %#v", nonRecovery, len(choices), explored.trace.choices)
 }
 
 func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
@@ -2345,10 +2174,9 @@ func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
 	}
 	engine := simulationEngine{pending: []simulationEngineMove{first, second}}
 
-	if !engine.consume(second) || len(engine.pending) != 1 ||
-		!reflect.DeepEqual(engine.pending[0].supervisorDelivery, first.supervisorDelivery) {
-		t.Fatalf("pending delivery after consuming second=%#v, want first", engine.pending)
-	}
+	assert.True(t, engine.consume(second), "pending delivery after consuming second=%#v, want first", engine.pending)
+	require.Len(t, engine.pending, 1, "pending delivery after consuming second=%#v, want first", engine.pending)
+	assert.Equal(t, first.supervisorDelivery, engine.pending[0].supervisorDelivery, "pending delivery after consuming second=%#v, want first", engine.pending)
 }
 
 func TestSimulationSelectsOneTypedActionFromACompoundOwnerCut(t *testing.T) {
@@ -2357,8 +2185,9 @@ func TestSimulationSelectsOneTypedActionFromACompoundOwnerCut(t *testing.T) {
 		want,
 		{kind: supervisorSettleEmergency, token: 11},
 	}
-	if got := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal); !reflect.DeepEqual(got, want) {
-		t.Fatalf("selected action=%#v, want %#v", got, want)
+	{
+		got := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)
+		assert.Equal(t, want, got, "selected action=%#v, want %#v", got, want)
 	}
 }
 
@@ -2376,9 +2205,8 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 	}}
 
 	moves := engine.enabledMoves()
-	if len(moves) != 1 || !reflect.DeepEqual(moves[0].delivery, launch) {
-		t.Fatalf("enabled moves=%#v, want only the causal launch delivery", moves)
-	}
+	require.Len(t, moves, 1, "enabled moves=%#v, want only the causal launch delivery", moves)
+	assert.Equal(t, launch, moves[0].delivery, "enabled moves=%#v, want only the causal launch delivery", moves)
 }
 
 func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T) {
@@ -2396,8 +2224,9 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 		}},
 	}
 
-	if moves := engine.enabledMoves(); len(moves) != 0 {
-		t.Fatalf("enabled stale residual transfer=%#v", moves)
+	{
+		moves := engine.enabledMoves()
+		assert.EqualValues(t, 0, len(moves), "enabled stale residual transfer=%#v", moves)
 	}
 }
 
@@ -2422,9 +2251,8 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 	}
 
 	moves := engine.enabledMoves()
-	if len(moves) != 1 || moves[0].action.token != 10 {
-		t.Fatalf("enabled runtime custody actions=%#v, want token 10 only", moves)
-	}
+	require.Len(t, moves, 1, "enabled runtime custody actions=%#v, want token 10 only", moves)
+	assert.EqualValues(t, 10, moves[0].action.token, "enabled runtime custody actions=%#v, want token 10 only", moves)
 }
 
 func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing.T) {
@@ -2440,9 +2268,8 @@ func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing
 	}}
 
 	engine.retireCampaignTerminals()
-	if len(engine.pending) != 1 || engine.pending[0].effect.id != 12 {
-		t.Fatalf("pending work after emergency terminal retirement=%#v", engine.pending)
-	}
+	require.Len(t, engine.pending, 1, "pending work after emergency terminal retirement=%#v", engine.pending)
+	assert.EqualValues(t, 12, engine.pending[0].effect.id, "pending work after emergency terminal retirement=%#v", engine.pending)
 }
 
 func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {
@@ -2465,9 +2292,8 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 	}
 
 	moves := engine.enabledMoves()
-	if len(moves) != 1 || moves[0].source.identity != 19 {
-		t.Fatalf("enabled runtime custody moves=%#v, want completion cut 19 only", moves)
-	}
+	require.Len(t, moves, 1, "enabled runtime custody moves=%#v, want completion cut 19 only", moves)
+	assert.EqualValues(t, 19, moves[0].source.identity, "enabled runtime custody moves=%#v, want completion cut 19 only", moves)
 }
 
 func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
@@ -2476,8 +2302,9 @@ func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
 		action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 12},
 	}}}
 
-	if moves := engine.enabledMoves(); len(moves) != 0 {
-		t.Fatalf("enabled unrequested emergency settlement=%#v", moves)
+	{
+		moves := engine.enabledMoves()
+		assert.EqualValues(t, 0, len(moves), "enabled unrequested emergency settlement=%#v", moves)
 	}
 }
 
@@ -2498,9 +2325,8 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 	}
 
 	moves := engine.enabledMoves()
-	if len(moves) != 1 || !reflect.DeepEqual(moves[0].delivery, launch) {
-		t.Fatalf("enabled emergency settlement moves=%#v, want published campaign ingress", moves)
-	}
+	require.Len(t, moves, 1, "enabled emergency settlement moves=%#v, want published campaign ingress", moves)
+	assert.Equal(t, launch, moves[0].delivery, "enabled emergency settlement moves=%#v, want published campaign ingress", moves)
 }
 
 func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
@@ -2524,9 +2350,8 @@ func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
 	}
 
 	moves := engine.enabledMoves()
-	if len(moves) != 1 || !reflect.DeepEqual(moves[0].delivery, start) {
-		t.Fatalf("enabled emergency cut moves=%#v, want committed start delivery only", moves)
-	}
+	require.Len(t, moves, 1, "enabled emergency cut moves=%#v, want committed start delivery only", moves)
+	assert.Equal(t, start, moves[0].delivery, "enabled emergency cut moves=%#v, want committed start delivery only", moves)
 }
 
 func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
@@ -2554,13 +2379,9 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 	}
 	for _, engine := range tests {
 		moves := engine.enabledMoves()
-		if len(moves) == 0 {
-			t.Fatal("attempt ownership made no progress")
-		}
+		assert.NotEqual(t, 0, len(moves), "attempt ownership made no progress")
 		for _, move := range moves {
-			if move.effect.kind == campaignEffectStopAttempt {
-				t.Fatalf("enabled stop before supervisor ownership: %#v", moves)
-			}
+			assert.NotEqual(t, campaignEffectStopAttempt, move.effect.kind, "enabled stop before supervisor ownership: %#v", moves)
 		}
 	}
 	completed := simulationEngine{
@@ -2568,14 +2389,12 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		pending:  []simulationEngineMove{stop},
 	}
 	moves := completed.enabledMoves()
-	if len(moves) != 1 || moves[0].effect.kind != campaignEffectStopAttempt {
-		t.Fatalf("completed generation retained disabled stop: %#v", moves)
-	}
-	if !completed.consume(moves[0]) {
-		t.Fatal("completed generation stop was not pending")
-	}
-	if err := completed.apply(moves[0]); err != nil {
-		t.Fatalf("completed generation stop=%v, want no-op", err)
+	require.EqualValues(t, 1, len(moves), "completed generation retained disabled stop: %#v", moves)
+	assert.Equal(t, campaignEffectStopAttempt, moves[0].effect.kind, "completed generation retained disabled stop: %#v", moves)
+	assert.True(t, completed.consume(moves[0]), "completed generation stop was not pending")
+	{
+		err := completed.apply(moves[0])
+		assert.NoError(t, err, "completed generation stop=%v, want no-op", err)
 	}
 }
 
@@ -2592,9 +2411,8 @@ func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {
 	}}
 
 	moves := engine.enabledMoves()
-	if len(moves) != 1 || moves[0].action.token != 26 {
-		t.Fatalf("enabled same-generation actions=%#v, want token 26 only", moves)
-	}
+	require.Len(t, moves, 1, "enabled same-generation actions=%#v, want token 26 only", moves)
+	assert.EqualValues(t, 26, moves[0].action.token, "enabled same-generation actions=%#v, want token 26 only", moves)
 }
 
 func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceBytes) {
@@ -2629,17 +2447,10 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Fuzz(func(t *testing.T, source []byte) {
 		definition, choices := simulationFuzzInput(source)
 		explored := Explore(definition, choices)
-		if explored.failure != nil {
-			t.Fatalf("legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure,
-				simulationTraceRuntimeState(explored.world.runtime), simulationRecordedActionSummary(explored.trace))
-		}
+		assert.Nil(t, explored.failure, "legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure, simulationTraceRuntimeState(explored.world.runtime), simulationRecordedActionSummary(explored.trace))
 		replayed := ReplayLegal(explored.trace)
-		if replayed.failure != nil {
-			t.Fatalf("legal replay failed: %v", replayed.failure)
-		}
-		if !reflect.DeepEqual(explored.world, replayed.world) {
-			t.Fatalf("legal replay world diverged:\nexplored=%#v\nreplayed=%#v", explored.world, replayed.world)
-		}
+		assert.Nil(t, replayed.failure, "legal replay failed: %v", replayed.failure)
+		assert.Equal(t, replayed.world, explored.world, "legal replay world diverged:\nexplored=%#v\nreplayed=%#v", explored.world, replayed.world)
 		prefix := simulationTrace{
 			definition: explored.trace.definition,
 			records:    append([]simulationRecord(nil), explored.trace.records[:2]...),
@@ -2667,9 +2478,8 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 		}
 		first := ReplayViolation(prefix, malformed)
 		second := ReplayViolation(prefix, malformed)
-		if first.failure != nil || !reflect.DeepEqual(first, second) {
-			t.Fatalf("violation replay diverged: first=%#v second=%#v", first, second)
-		}
+		assert.Nil(t, first.failure, "violation replay diverged: first=%#v second=%#v", first, second)
+		assert.Equal(t, second, first, "violation replay diverged: first=%#v second=%#v", first, second)
 	})
 }
 

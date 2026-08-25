@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManagedReportProjectsCompletedCatalogueInStableOrder(t *testing.T) {
@@ -31,9 +33,7 @@ func TestManagedReportProjectsCompletedCatalogueInStableOrder(t *testing.T) {
 
 	report := projectManagedReport(result, managedReportConfiguration{minimumThreshold: 0.5})
 
-	if report.disposition != managedReportPass {
-		t.Fatalf("disposition = %v, want pass at an equal float32 threshold", report.disposition)
-	}
+	assert.Equal(t, managedReportPass, report.disposition, "disposition = %v, want pass at an equal float32 threshold", report.disposition)
 	wantFragments := []string{
 		"Mutant survived: survivor.go → Integer Increment",
 		"--- survivor.go (original)",
@@ -49,17 +49,11 @@ func TestManagedReportProjectsCompletedCatalogueInStableOrder(t *testing.T) {
 	last := -1
 	for _, fragment := range wantFragments {
 		at := strings.Index(report.text, fragment)
-		if at < 0 {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
-		if at < last {
-			t.Fatalf("report fragment %q is out of order:\n%s", fragment, report.text)
-		}
+		assert.False(t, at < 0, "report missing %q:\n%s", fragment, report.text)
+		assert.False(t, at < last, "report fragment %q is out of order:\n%s", fragment, report.text)
 		last = at
 	}
-	if strings.Contains(report.text, "Mutant killed: killed.go") {
-		t.Fatalf("ordinary killed mutant was rendered:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "Mutant killed: killed.go"), "ordinary killed mutant was rendered:\n%s", report.text)
 }
 
 func TestManagedReportExplainsTripsConfirmationAndAutomaticFallback(t *testing.T) {
@@ -103,18 +97,15 @@ func TestManagedReportExplainsTripsConfirmationAndAutomaticFallback(t *testing.T
 		"primary timed out at 20s with peer overlap; exclusive confirmation failed in 2s",
 		"Ooze fell back to single-admission automatic after validated capacity pressure.",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
 
 	serial := projectManagedReport(ManagedReleaseResult{
 		Outcome:   ManagedCompleted,
 		Mutations: []ManagedMutationResult{mutation("killed.go", ManagedKilled)},
 	}, managedReportConfiguration{minimumThreshold: 1, serial: true})
-	if strings.Contains(serial.text, "runaway:") || !strings.Contains(serial.text, "└ timed out:") {
-		t.Fatalf("serial summary fabricated runaway evidence:\n%s", serial.text)
-	}
+	assert.False(t, strings.Contains(serial.text, "runaway:"), "serial summary fabricated runaway evidence:\n%s", serial.text)
+	assert.True(t, strings.Contains(serial.text, "└ timed out:"), "serial summary fabricated runaway evidence:\n%s", serial.text)
 }
 
 func TestManagedReportFailsNoMutantsWithoutPublishingScore(t *testing.T) {
@@ -123,9 +114,7 @@ func TestManagedReportFailsNoMutantsWithoutPublishingScore(t *testing.T) {
 		managedReportConfiguration{minimumThreshold: 1},
 	)
 
-	if report.disposition != managedReportError {
-		t.Fatalf("disposition = %v, want testing error", report.disposition)
-	}
+	require.Equal(t, managedReportError, report.disposition, "disposition = %v, want testing error", report.disposition)
 	for _, fragment := range []string{
 		"No mutants were discovered. Nothing to score.",
 		"WithRepositoryRoot",
@@ -133,13 +122,9 @@ func TestManagedReportFailsNoMutantsWithoutPublishingScore(t *testing.T) {
 		"WithViruses",
 		"build constraints",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, "Score:") {
-		t.Fatalf("NoMutants published a score:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "Score:"), "NoMutants published a score:\n%s", report.text)
 }
 
 func TestManagedReportPrintsFullFailedBaselineOutputWithoutScore(t *testing.T) {
@@ -155,9 +140,7 @@ func TestManagedReportPrintsFullFailedBaselineOutputWithoutScore(t *testing.T) {
 		Baseline: &baseline,
 	}, managedReportConfiguration{minimumThreshold: 0.5})
 
-	if report.disposition != managedReportError {
-		t.Fatalf("disposition = %v, want testing error", report.disposition)
-	}
+	require.Equal(t, managedReportError, report.disposition, "disposition = %v, want testing error", report.disposition)
 	for _, fragment := range []string{
 		"Campaign aborted. No mutation score.",
 		"Cause: the unmutated baseline failed.",
@@ -165,13 +148,9 @@ func TestManagedReportPrintsFullFailedBaselineOutputWithoutScore(t *testing.T) {
 		"--- FAIL: TestThing (0.02s)",
 		"thing_test.go:41: want 3, got 4",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, "Score:") {
-		t.Fatalf("abort published a score:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "Score:"), "abort published a score:\n%s", report.text)
 }
 
 func TestManagedReportDistinguishesBaselineInfrastructureAndSanitizesDiagnostics(t *testing.T) {
@@ -202,13 +181,9 @@ func TestManagedReportDistinguishesBaselineInfrastructureAndSanitizesDiagnostics
 		"output: failure recorded", "release: failure recorded",
 		"captured baseline output",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, private) {
-		t.Fatalf("report leaked a private diagnostic payload:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, private), "report leaked a private diagnostic payload:\n%s", report.text)
 }
 
 func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *testing.T) {
@@ -246,13 +221,10 @@ func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *tes
 		"Artifact residue — remove manually:",
 		"/tmp/ooze-residue",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, "Score:") || strings.Contains(report.text, "partial mutant output") {
-		t.Fatalf("abort published a score or rendered retained mutant output:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "Score:"), "abort published a score or rendered retained mutant output:\n%s", report.text)
+	assert.False(t, strings.Contains(report.text, "partial mutant output"), "abort published a score or rendered retained mutant output:\n%s", report.text)
 }
 
 func TestManagedReportRetainsConfirmationFailureWhenCampaignAborts(t *testing.T) {
@@ -280,13 +252,9 @@ func TestManagedReportRetainsConfirmationFailureWhenCampaignAborts(t *testing.T)
 		"confirmation output: failure recorded",
 		"bound fired: none",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, "exclusive confirmation failed") {
-		t.Fatalf("confirmation infrastructure was mislabeled as a command failure:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "exclusive confirmation failed"), "confirmation infrastructure was mislabeled as a command failure:\n%s", report.text)
 }
 
 func TestManagedReportUsesAuthoritativeConfirmationPeakAndReportsAbortFallback(t *testing.T) {
@@ -306,18 +274,14 @@ func TestManagedReportUsesAuthoritativeConfirmationPeakAndReportsAbortFallback(t
 	completed := projectManagedReport(ManagedReleaseResult{
 		Outcome: ManagedCompleted, Mutations: []ManagedMutationResult{confirmed},
 	}, managedReportConfiguration{})
-	if !strings.Contains(completed.text, "observed running peak: 11") ||
-		strings.Contains(completed.text, "observed running peak: 7") {
-		t.Fatalf("report did not use authoritative confirmation peak:\n%s", completed.text)
-	}
+	assert.True(t, strings.Contains(completed.text, "observed running peak: 11"), "report did not use authoritative confirmation peak:\n%s", completed.text)
+	assert.False(t, strings.Contains(completed.text, "observed running peak: 7"), "report did not use authoritative confirmation peak:\n%s", completed.text)
 
 	aborted := projectManagedReport(ManagedReleaseResult{
 		Outcome: ManagedAborted, Cause: ManagedAbortPrimaryInfrastructure, Total: 1,
 		SingleAdmissionFallback: true,
 	}, managedReportConfiguration{})
-	if !strings.Contains(aborted.text, "Ooze fell back to single-admission automatic") {
-		t.Fatalf("aborted report hid the process fallback:\n%s", aborted.text)
-	}
+	assert.True(t, strings.Contains(aborted.text, "Ooze fell back to single-admission automatic"), "aborted report hid the process fallback:\n%s", aborted.text)
 }
 
 func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
@@ -337,14 +301,12 @@ func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
 		},
 	}, managedReportConfiguration{})
 
-	if report.disposition != managedReportPanic || report.panicValue != "ooze: cleanup unconfirmed" {
-		t.Fatalf("fatal disposition = %#v, want exactly one cleanup panic", report)
-	}
+	assert.Equal(t, managedReportPanic, report.disposition, "fatal disposition = %#v, want exactly one cleanup panic", report)
+	assert.EqualValues(t, "ooze: cleanup unconfirmed", report.panicValue, "fatal disposition = %#v, want exactly one cleanup panic", report)
 	first := strings.Index(report.text, "prospective attempt campaign-1:2")
 	second := strings.Index(report.text, "owned attempt campaign-1:3 (custody transferred)")
-	if first < 0 || second <= first {
-		t.Fatalf("residual custody is absent or reordered:\n%s", report.text)
-	}
+	assert.False(t, first < 0, "residual custody is absent or reordered:\n%s", report.text)
+	assert.False(t, second <= first, "residual custody is absent or reordered:\n%s", report.text)
 	for _, fragment := range []string{
 		"Containment fault. Ooze cannot prove every test process has exited.",
 		"The process runtime is closed for the remainder of this process.",
@@ -354,19 +316,15 @@ func TestManagedReportConsolidatesCleanupResidualsBeforeOnePanic(t *testing.T) {
 		"termination: failure recorded",
 		"drain census: failure recorded",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, "Score:") || strings.Contains(report.text, "panic:") ||
-		strings.Contains(report.text, "private output") || strings.Contains(report.text, "generation") {
-		t.Fatalf("fatal report embedded a score or second panic presentation:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "Score:"), "fatal report embedded a score or second panic presentation:\n%s", report.text)
+	assert.False(t, strings.Contains(report.text, "panic:"), "fatal report embedded a score or second panic presentation:\n%s", report.text)
+	assert.False(t, strings.Contains(report.text, "private output"), "fatal report embedded a score or second panic presentation:\n%s", report.text)
+	assert.False(t, strings.Contains(report.text, "generation"), "fatal report embedded a score or second panic presentation:\n%s", report.text)
 	for _, line := range strings.Split(report.text, "\n") {
-		if !strings.HasPrefix(line, "┃") && !strings.HasPrefix(line, "┏") &&
-			!strings.HasPrefix(line, "┗") {
-			t.Fatalf("fatal report line escaped its box: %q\n%s", line, report.text)
-		}
+		assert.False(t, !strings.HasPrefix(line, "┃") && !strings.HasPrefix(line, "┏") &&
+			!strings.HasPrefix(line, "┗"), "fatal report line escaped its box: %q\n%s", line, report.text)
 	}
 }
 
@@ -385,9 +343,8 @@ func TestManagedReportLetsInvariantViolationDominateBeforeOnePanic(t *testing.T)
 		}},
 	}, managedReportConfiguration{})
 
-	if report.disposition != managedReportPanic || report.panicValue != "ooze: invariant violation" {
-		t.Fatalf("fatal disposition = %#v, want exactly one invariant panic", report)
-	}
+	assert.Equal(t, managedReportPanic, report.disposition, "fatal disposition = %#v, want exactly one invariant panic", report)
+	assert.EqualValues(t, "ooze: invariant violation", report.panicValue, "fatal disposition = %#v, want exactly one invariant panic", report)
 	for _, fragment := range []string{
 		"Internal invariant violated. This campaign has no score.",
 		"Operation: campaign advance",
@@ -401,11 +358,8 @@ func TestManagedReportLetsInvariantViolationDominateBeforeOnePanic(t *testing.T)
 		"1 unresolved execution-domain obligation joined this fatal epoch.",
 		"owned attempt campaign-1:3",
 	} {
-		if !strings.Contains(report.text, fragment) {
-			t.Fatalf("report missing %q:\n%s", fragment, report.text)
-		}
+		assert.True(t, strings.Contains(report.text, fragment), "report missing %q:\n%s", fragment, report.text)
 	}
-	if strings.Contains(report.text, "Containment fault") || strings.Contains(report.text, "Score:") {
-		t.Fatalf("invariant did not dominate fatal presentation:\n%s", report.text)
-	}
+	assert.False(t, strings.Contains(report.text, "Containment fault"), "invariant did not dominate fatal presentation:\n%s", report.text)
+	assert.False(t, strings.Contains(report.text, "Score:"), "invariant did not dominate fatal presentation:\n%s", report.text)
 }

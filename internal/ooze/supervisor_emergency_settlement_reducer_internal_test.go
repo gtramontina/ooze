@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -29,9 +32,7 @@ type emergencySettlementLedger struct {
 func TestSupervisorReducerEmergencySettlementBatchesMixedLedgerAfterLastReceipt(t *testing.T) {
 	ledger := newEmergencySettlementLedger(t, "transfer")
 	active, emergencyEvent := beginEmergencySettlement(t, ledger.state, false)
-	if active.emergency.pendingAction != (supervisorPendingAction{}) {
-		t.Fatalf("not-ready emergency installed settlement action: %#v", active.emergency)
-	}
+	assert.Equal(t, (supervisorPendingAction{}), active.emergency.pendingAction, "not-ready emergency installed settlement action: %#v", active.emergency)
 
 	input := cloneSupervisorState(active)
 	completion := supervisorRuntimeCompletion{
@@ -69,27 +70,18 @@ func TestSupervisorReducerEmergencySettlementBatchesMixedLedgerAfterLastReceipt(
 	)]
 	target.phase = supervisorAwaitingEmergencySettlement
 	target.pendingAction = supervisorPendingAction{}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("last local receipt actions = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, wantState) {
-		t.Fatalf("last local receipt state = %#v, want %#v", next, wantState)
-	}
-	if !reflect.DeepEqual(active, input) {
-		t.Fatalf("last local receipt mutated input: before=%#v after=%#v", input, active)
-	}
+	assert.Equal(t, wantActions, actions, "last local receipt actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "last local receipt state = %#v, want %#v", next, wantState)
+	assert.Equal(t, input, active, "last local receipt mutated input: before=%#v after=%#v", input, active)
 	assertEmergencySettlementSentinel(t, next)
-	if emergencyEvent.generation != 0 {
-		t.Fatalf("emergency setup manufactured generation: %#v", emergencyEvent)
-	}
+	assert.EqualValues(t, 0, emergencyEvent.generation, "emergency setup manufactured generation: %#v", emergencyEvent)
 }
 
 func TestSupervisorReducerEmergencySettlementTriggersAtEveryReadyTransition(t *testing.T) {
 	t.Run("all ready then emergency starts", func(t *testing.T) {
 		ledger := newEmergencySettlementLedger(t, "")
-		if ledger.state.emergency.active || ledger.state.emergency.pendingAction != (supervisorPendingAction{}) {
-			t.Fatalf("inactive ready inventory settled early: %#v", ledger.state.emergency)
-		}
+		assert.False(t, ledger.state.emergency.active, "inactive ready inventory settled early: %#v", ledger.state.emergency)
+		assert.Equal(t, (supervisorPendingAction{}), ledger.state.emergency.pendingAction, "inactive ready inventory settled early: %#v", ledger.state.emergency)
 		beginEmergencySettlement(t, ledger.state, true)
 	})
 
@@ -115,9 +107,7 @@ func TestSupervisorReducerEmergencySettlementTriggersAtEveryReadyTransition(t *t
 			runtime: &completion,
 		})
 		assertEmergencySettlementTail(t, input, next, actions)
-		if next.attemptIndex(emergencyDeferredGeneration) >= 0 {
-			t.Fatalf("acknowledged attempt remained in settlement inventory: %#v", next.attempts)
-		}
+		assert.False(t, next.attemptIndex(emergencyDeferredGeneration) >= 0, "acknowledged attempt remained in settlement inventory: %#v", next.attempts)
 	})
 
 	t.Run("late release completes", func(t *testing.T) {
@@ -195,12 +185,9 @@ func assertLateTransferSettlement(
 	target := &want.attempts[runtimeReceiptAttemptIndex(t, want, generation)]
 	target.phase = supervisorAwaitingEmergencySettlement
 	target.pendingAction = supervisorPendingAction{}
-	if !reflect.DeepEqual(actions, wantActions) || !reflect.DeepEqual(next, want) {
-		t.Fatalf("late transfer settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
-	}
-	if !reflect.DeepEqual(active, input) {
-		t.Fatalf("late transfer settlement mutated input: before=%#v after=%#v", input, active)
-	}
+	assert.Equal(t, wantActions, actions, "late transfer settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
+	assert.Equal(t, want, next, "late transfer settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
+	assert.Equal(t, input, active, "late transfer settlement mutated input: before=%#v after=%#v", input, active)
 }
 
 func TestSupervisorReducerEmergencySettlementCompletionDeliversDeferredTerminalsOnce(t *testing.T) {
@@ -227,21 +214,11 @@ func TestSupervisorReducerEmergencySettlementCompletionDeliversDeferredTerminals
 	wantState.attempts = []supervisorAttemptState{
 		input.attempts[runtimeReceiptAttemptIndex(t, input, emergencySentinelGeneration)],
 	}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("emergency completion delivery = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, wantState) {
-		t.Fatalf("emergency completion state = %#v, want %#v", next, wantState)
-	}
-	if !reflect.DeepEqual(pending, input) {
-		t.Fatalf("emergency completion mutated input: before=%#v after=%#v", input, pending)
-	}
-	if !reflect.DeepEqual(completion.acknowledged, emergencySettlementGenerations(input)) {
-		t.Fatalf("completion acknowledgement order = %#v", completion.acknowledged)
-	}
-	if !reflect.DeepEqual(completion.residuals, emergencySettlementResidualResolutions(input)) {
-		t.Fatalf("completion residual order = %#v", completion.residuals)
-	}
+	assert.Equal(t, wantActions, actions, "emergency completion delivery = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "emergency completion state = %#v, want %#v", next, wantState)
+	assert.Equal(t, input, pending, "emergency completion mutated input: before=%#v after=%#v", input, pending)
+	assert.Equal(t, emergencySettlementGenerations(input), completion.acknowledged, "completion acknowledgement order = %#v", completion.acknowledged)
+	assert.Equal(t, emergencySettlementResidualResolutions(input), completion.residuals, "completion residual order = %#v", completion.residuals)
 	assertEmergencySettlementSentinel(t, next)
 	assertEmergencySettlementInvariantByteStable(t, next, event)
 }
@@ -266,9 +243,7 @@ func TestSupervisorReducerEmergencySettlementCanonicalGenerationOrder(t *testing
 		supervisorAttemptByGeneration(t, state, lowGeneration),
 		supervisorAttemptByGeneration(t, state, highGeneration),
 	}
-	if !reflect.DeepEqual(state, wantReady) {
-		t.Fatalf("reverse registration ledger = %#v, want canonical %#v", state, wantReady)
-	}
+	assert.Equal(t, wantReady, state, "reverse registration ledger = %#v, want canonical %#v", state, wantReady)
 
 	emergencyAt := emergencySettlementCut(state)
 	emergencyEvent := supervisorEvent{
@@ -301,13 +276,9 @@ func TestSupervisorReducerEmergencySettlementCanonicalGenerationOrder(t *testing
 		kind: supervisorSettleEmergency, token: wantPending.nextAction,
 		resolutions: wantResolutions,
 	}}
-	if !reflect.DeepEqual(pending, wantPending) || !reflect.DeepEqual(actions, wantSettlementActions) {
-		t.Fatalf("canonical settlement = %#v actions=%#v, want %#v/%#v",
-			pending, actions, wantPending, wantSettlementActions)
-	}
-	if !reflect.DeepEqual(state, emergencyInput) {
-		t.Fatalf("canonical emergency mutated input: before=%#v after=%#v", emergencyInput, state)
-	}
+	assert.Equal(t, wantPending, pending, "canonical settlement = %#v actions=%#v, want %#v/%#v", pending, actions, wantPending, wantSettlementActions)
+	assert.Equal(t, wantSettlementActions, actions, "canonical settlement = %#v actions=%#v, want %#v/%#v", pending, actions, wantPending, wantSettlementActions)
+	assert.Equal(t, emergencyInput, state, "canonical emergency mutated input: before=%#v after=%#v", emergencyInput, state)
 
 	completion := supervisorEmergencySettlementCompletion{
 		action:       pending.emergency.pendingAction,
@@ -331,13 +302,9 @@ func TestSupervisorReducerEmergencySettlementCanonicalGenerationOrder(t *testing
 			{generation: highGeneration, attempt: "emergency-late", kind: supervisorResidualOwned},
 		},
 	}}
-	if !reflect.DeepEqual(completed, wantCompleted) || !reflect.DeepEqual(delivery, wantDelivery) {
-		t.Fatalf("canonical completion = %#v delivery=%#v, want %#v/%#v",
-			completed, delivery, wantCompleted, wantDelivery)
-	}
-	if !reflect.DeepEqual(pending, completionInput) {
-		t.Fatalf("canonical completion mutated input: before=%#v after=%#v", completionInput, pending)
-	}
+	assert.Equal(t, wantCompleted, completed, "canonical completion = %#v delivery=%#v, want %#v/%#v", completed, delivery, wantCompleted, wantDelivery)
+	assert.Equal(t, wantDelivery, delivery, "canonical completion = %#v delivery=%#v, want %#v/%#v", completed, delivery, wantCompleted, wantDelivery)
+	assert.Equal(t, completionInput, pending, "canonical completion mutated input: before=%#v after=%#v", completionInput, pending)
 }
 
 func TestSupervisorReducerEmergencySettlementEmptyCompletionOccursOnce(t *testing.T) {
@@ -351,13 +318,11 @@ func TestSupervisorReducerEmergencySettlementEmptyCompletionOccursOnce(t *testin
 	wantActions := []supervisorAction{{
 		kind: supervisorDeliverEmergencySettlement, token: want.nextAction,
 	}}
-	if !reflect.DeepEqual(actions, wantActions) || !reflect.DeepEqual(next, want) ||
-		len(completion.acknowledged) != 0 || len(completion.residuals) != 0 {
-		t.Fatalf("empty emergency completion = %#v actions=%#v, want %#v", next, actions, want)
-	}
-	if !reflect.DeepEqual(pending, input) {
-		t.Fatalf("empty emergency completion mutated input: before=%#v after=%#v", input, pending)
-	}
+	assert.Equal(t, wantActions, actions, "empty emergency completion = %#v actions=%#v, want %#v", next, actions, want)
+	assert.Equal(t, want, next, "empty emergency completion = %#v actions=%#v, want %#v", next, actions, want)
+	assert.EqualValues(t, 0, len(completion.acknowledged), "empty emergency completion = %#v actions=%#v, want %#v", next, actions, want)
+	assert.EqualValues(t, 0, len(completion.residuals), "empty emergency completion = %#v actions=%#v, want %#v", next, actions, want)
+	assert.Equal(t, input, pending, "empty emergency completion mutated input: before=%#v after=%#v", input, pending)
 	assertEmergencySettlementInvariantByteStable(t, next, event)
 }
 
@@ -407,15 +372,9 @@ func TestSupervisorReducerEmergencySettlementStartsAfterLateProvenNoRelease(t *t
 		},
 		{kind: supervisorSettleEmergency, token: wantToken + 1},
 	}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("late no-release settlement actions = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, wantState) {
-		t.Fatalf("late no-release settlement state = %#v, want %#v", next, wantState)
-	}
-	if !reflect.DeepEqual(active, input) {
-		t.Fatalf("late no-release settlement mutated input: before=%#v after=%#v", input, active)
-	}
+	assert.Equal(t, wantActions, actions, "late no-release settlement actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "late no-release settlement state = %#v, want %#v", next, wantState)
+	assert.Equal(t, input, active, "late no-release settlement mutated input: before=%#v after=%#v", input, active)
 }
 
 func TestSupervisorReducerEmergencySettlementStartsAfterMixedLateProvenNoRelease(t *testing.T) {
@@ -433,9 +392,7 @@ func TestSupervisorReducerEmergencySettlementStartsAfterMixedLateProvenNoRelease
 		t, boundaryActions, supervisorRevokeLaunchRelease, supervisorPublishLaunchUnconfirmed,
 	)
 	active, _ := beginEmergencySettlement(t, state, false)
-	if active.emergency.pendingAction != (supervisorPendingAction{}) {
-		t.Fatalf("unresolved mixed prospective settled early: %#v", active.emergency)
-	}
+	assert.Equal(t, (supervisorPendingAction{}), active.emergency.pendingAction, "unresolved mixed prospective settled early: %#v", active.emergency)
 	completion := supervisorLaunchCompletion{
 		generation: emergencyMixedLateNoReleaseGeneration,
 		action:     launch.token,
@@ -474,12 +431,9 @@ func TestSupervisorReducerEmergencySettlementStartsAfterMixedLateProvenNoRelease
 	)]
 	target.phase = supervisorLaunchClosedNotReleased
 	target.lastEventAt = completion.at
-	if !reflect.DeepEqual(actions, wantActions) || !reflect.DeepEqual(next, want) {
-		t.Fatalf("mixed late no-release settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
-	}
-	if !reflect.DeepEqual(active, input) {
-		t.Fatalf("mixed late no-release mutated input: before=%#v after=%#v", input, active)
-	}
+	assert.Equal(t, wantActions, actions, "mixed late no-release settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
+	assert.Equal(t, want, next, "mixed late no-release settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
+	assert.Equal(t, input, active, "mixed late no-release mutated input: before=%#v after=%#v", input, active)
 }
 
 func TestSupervisorReducerEmergencySettlementPayloadRejectsOtherEventByteStable(t *testing.T) {
@@ -809,8 +763,8 @@ func completeEmergencyRuntimeReceipt(
 	})
 	if pending.kind == supervisorTransferResidualCustody && callerOwned {
 		assertSupervisorActions(t, actions, supervisorDeliverTerminal)
-	} else if len(actions) != 0 {
-		t.Fatalf("deferred runtime receipt emitted action: %#v", actions)
+	} else {
+		assert.EqualValues(t, 0, len(actions), "deferred runtime receipt emitted action: %#v", actions)
 	}
 
 	return state
@@ -832,9 +786,7 @@ func completeEmergencyLateRelease(
 	state, actions := reduceSupervisorMustAccept(t, state, supervisorEvent{
 		kind: supervisorReleaseCompleted, generation: generation, at: at, release: &completion,
 	})
-	if len(actions) != 0 {
-		t.Fatalf("late release emitted ordinary terminal action: %#v", actions)
-	}
+	assert.EqualValues(t, 0, len(actions), "late release emitted ordinary terminal action: %#v", actions)
 
 	return state
 }
@@ -868,18 +820,12 @@ func beginEmergencySettlement(
 			kind: supervisorSettleEmergency, token: want.nextAction,
 			resolutions: emergencySettlementResolutions(input),
 		}}
-		if !reflect.DeepEqual(actions, wantActions) {
-			t.Fatalf("emergency settlement actions = %#v, want %#v", actions, wantActions)
-		}
-	} else if len(actions) != 0 {
-		t.Fatalf("not-ready emergency emitted settlement: %#v", actions)
+		assert.Equal(t, wantActions, actions, "emergency settlement actions = %#v, want %#v", actions, wantActions)
+	} else {
+		assert.EqualValues(t, 0, len(actions), "not-ready emergency emitted settlement: %#v", actions)
 	}
-	if !reflect.DeepEqual(next, want) {
-		t.Fatalf("emergency start state = %#v, want %#v", next, want)
-	}
-	if !reflect.DeepEqual(state, input) {
-		t.Fatalf("emergency start mutated input: before=%#v after=%#v", input, state)
-	}
+	assert.Equal(t, want, next, "emergency start state = %#v, want %#v", next, want)
+	assert.Equal(t, input, state, "emergency start mutated input: before=%#v after=%#v", input, state)
 
 	return next, event
 }
@@ -994,22 +940,19 @@ func assertEmergencySettlementTail(
 	actions []supervisorAction,
 ) {
 	t.Helper()
-	if len(actions) == 0 || actions[len(actions)-1].kind != supervisorSettleEmergency {
-		t.Fatalf("ready transition omitted emergency settlement tail: %#v", actions)
-	}
+	require.NotEqual(t, 0, len(actions), "ready transition omitted emergency settlement tail: %#v", actions)
+	assert.Equal(t, supervisorSettleEmergency, actions[len(actions)-1].kind, "ready transition omitted emergency settlement tail: %#v", actions)
 	settle := actions[len(actions)-1]
-	if settle.generation != 0 || !settle.at.IsZero() || !settle.drainBy.IsZero() ||
-		!reflect.DeepEqual(settle.resolutions, emergencySettlementResolutions(next)) ||
-		next.emergency.pendingAction != (supervisorPendingAction{
-			kind: supervisorSettleEmergency, token: settle.token,
-		}) {
-		t.Fatalf("emergency settlement tail = %#v state=%#v", settle, next)
-	}
-	if !reflect.DeepEqual(input.emergency, supervisorEmergencyEpoch{
+	assert.EqualValues(t, 0, settle.generation, "emergency settlement tail = %#v state=%#v", settle, next)
+	assert.True(t, settle.at.IsZero(), "emergency settlement tail = %#v state=%#v", settle, next)
+	assert.True(t, settle.drainBy.IsZero(), "emergency settlement tail = %#v state=%#v", settle, next)
+	assert.Equal(t, emergencySettlementResolutions(next), settle.resolutions, "emergency settlement tail = %#v state=%#v", settle, next)
+	assert.Equal(t, (supervisorPendingAction{
+		kind: supervisorSettleEmergency, token: settle.token,
+	}), next.emergency.pendingAction, "emergency settlement tail = %#v state=%#v", settle, next)
+	assert.Equal(t, supervisorEmergencyEpoch{
 		active: true, at: input.emergency.at, drainBy: input.emergency.drainBy,
-	}) {
-		t.Fatalf("trigger input lacked active emergency: %#v", input.emergency)
-	}
+	}, input.emergency, "trigger input lacked active emergency: %#v", input.emergency)
 }
 
 type emergencySettlementMalformedSpec struct {
@@ -1110,20 +1053,14 @@ func assertEmergencySettlementInvariantByteStable(
 	assertSupervisorInvariant(t, func() {
 		_, actions = reduceSupervisor(state, event)
 	})
-	if len(actions) != 0 {
-		t.Fatalf("rejected emergency settlement event emitted action: %#v", actions)
-	}
-	if !reflect.DeepEqual(state, before) {
-		t.Fatalf("rejected emergency settlement event mutated input: before=%#v after=%#v", before, state)
-	}
+	assert.EqualValues(t, 0, len(actions), "rejected emergency settlement event emitted action: %#v", actions)
+	assert.Equal(t, before, state, "rejected emergency settlement event mutated input: before=%#v after=%#v", before, state)
 }
 
 func assertEmergencySettlementSentinel(t *testing.T, state supervisorState) {
 	t.Helper()
 	sentinel := supervisorAttemptByGeneration(t, state, emergencySentinelGeneration)
-	if sentinel.phase != supervisorLaunchClosedNotReleased {
-		t.Fatalf("emergency settlement rewrote closed sentinel: %#v", sentinel)
-	}
+	assert.Equal(t, supervisorLaunchClosedNotReleased, sentinel.phase, "emergency settlement rewrote closed sentinel: %#v", sentinel)
 }
 
 func emergencySettlementEventName(kind supervisorEventKind) string {

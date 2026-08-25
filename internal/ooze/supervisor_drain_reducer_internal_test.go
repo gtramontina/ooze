@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSupervisorReducerDrainForcedIntentsForceThenObserveUnderOneBound(t *testing.T) {
@@ -15,49 +18,39 @@ func TestSupervisorReducerDrainForcedIntentsForceThenObserveUnderOneBound(t *tes
 	} {
 		t.Run(runningIntentName(kind), func(t *testing.T) {
 			fixture := newForcedDrainReducerFixture(t, kind)
-			if fixture.first.kind != supervisorForceOwned {
-				t.Fatalf("first drain action = %#v", fixture.first)
-			}
+			assert.Equal(t, supervisorForceOwned, fixture.first.kind, "first drain action = %#v", fixture.first)
 			attempt := supervisorAttemptByGeneration(t, fixture.state, fixture.generation)
-			if !attempt.drain.effectiveDrainBy.Equal(fixture.drainBy) || !attempt.drain.forced ||
-				attempt.pendingAction != (supervisorPendingAction{kind: fixture.first.kind, token: fixture.first.token}) {
-				t.Fatalf("forced drain start = %#v action=%#v", attempt, fixture.first)
-			}
+			assert.True(t, attempt.drain.effectiveDrainBy.Equal(fixture.drainBy), "forced drain start = %#v action=%#v", attempt, fixture.first)
+			assert.True(t, attempt.drain.forced, "forced drain start = %#v action=%#v", attempt, fixture.first)
+			assert.Equal(t, (supervisorPendingAction{kind: fixture.first.kind, token: fixture.first.token}), attempt.pendingAction, "forced drain start = %#v action=%#v", attempt, fixture.first)
 
 			at := fixture.first.at.Add(time.Nanosecond)
 			next, actions := fixture.complete(t, fixture.state, fixture.first, supervisorDrainForceCompleted, at, 0)
 			assertSupervisorActions(t, actions, supervisorObserveEmptiness)
-			if actions[0].token <= fixture.first.token || !actions[0].drainBy.Equal(fixture.drainBy) {
-				t.Fatalf("force completion reset drain bound or token: first=%#v next=%#v", fixture.first, actions[0])
-			}
+			assert.False(t, actions[0].token <= fixture.first.token, "force completion reset drain bound or token: first=%#v next=%#v", fixture.first, actions[0])
+			assert.True(t, actions[0].drainBy.Equal(fixture.drainBy), "force completion reset drain bound or token: first=%#v next=%#v", fixture.first, actions[0])
 			attempt = supervisorAttemptByGeneration(t, next, fixture.generation)
-			if attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
-				!attempt.drain.effectiveDrainBy.Equal(fixture.drainBy) {
-				t.Fatalf("post-force observation = %#v actions=%#v", attempt, actions)
-			}
+			assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "post-force observation = %#v actions=%#v", attempt, actions)
+			assert.True(t, attempt.drain.effectiveDrainBy.Equal(fixture.drainBy), "post-force observation = %#v actions=%#v", attempt, actions)
 		})
 	}
 }
 
 func TestSupervisorReducerDrainRootExitObservesAndTimelyEmptyCapturesWithoutForce(t *testing.T) {
 	fixture := newRootExitDrainReducerFixture(t)
-	if fixture.first.kind != supervisorObserveEmptiness {
-		t.Fatalf("root exit first drain action = %#v", fixture.first)
-	}
+	assert.Equal(t, supervisorObserveEmptiness, fixture.first.kind, "root exit first drain action = %#v", fixture.first)
 	before := supervisorAttemptByGeneration(t, fixture.state, fixture.generation)
-	if before.drain.forced {
-		t.Fatalf("root exit forced before authoritative observation: %#v", before)
-	}
+	assert.False(t, before.drain.forced, "root exit forced before authoritative observation: %#v", before)
 
 	at := fixture.first.at.Add(time.Nanosecond)
 	next, actions := fixture.complete(t, fixture.state, fixture.first, supervisorDrainObservedEmpty, at, 0)
 	assertSupervisorActions(t, actions, supervisorCaptureOutput)
 	after := supervisorAttemptByGeneration(t, next, fixture.generation)
-	if after.phase != supervisorCapturingOutput || after.drain.decision != supervisorDrainProvenEmpty ||
-		after.drain.forced || !actions[0].drainBy.Equal(fixture.drainBy) ||
-		after.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
-		t.Fatalf("timely empty root-exit drain = %#v actions=%#v", after, actions)
-	}
+	assert.Equal(t, supervisorCapturingOutput, after.phase, "timely empty root-exit drain = %#v actions=%#v", after, actions)
+	assert.Equal(t, supervisorDrainProvenEmpty, after.drain.decision, "timely empty root-exit drain = %#v actions=%#v", after, actions)
+	assert.False(t, after.drain.forced, "timely empty root-exit drain = %#v actions=%#v", after, actions)
+	assert.True(t, actions[0].drainBy.Equal(fixture.drainBy), "timely empty root-exit drain = %#v actions=%#v", after, actions)
+	assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), after.pendingAction, "timely empty root-exit drain = %#v actions=%#v", after, actions)
 }
 
 func TestSupervisorReducerDrainResidualAndObservationFailureForceOrReobserveCausally(t *testing.T) {
@@ -76,10 +69,9 @@ func TestSupervisorReducerDrainResidualAndObservationFailureForceOrReobserveCaus
 			)
 			assertSupervisorActions(t, actions, supervisorForceOwned)
 			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-			if !attempt.drain.forced || !actions[0].drainBy.Equal(fixture.drainBy) ||
-				attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
-				t.Fatalf("natural residual/fault escaped force: %#v actions=%#v", attempt, actions)
-			}
+			assert.True(t, attempt.drain.forced, "natural residual/fault escaped force: %#v actions=%#v", attempt, actions)
+			assert.True(t, actions[0].drainBy.Equal(fixture.drainBy), "natural residual/fault escaped force: %#v actions=%#v", attempt, actions)
+			assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "natural residual/fault escaped force: %#v actions=%#v", attempt, actions)
 		})
 
 		t.Run("post-force "+completion.name+" reobserves before same bound", func(t *testing.T) {
@@ -94,10 +86,8 @@ func TestSupervisorReducerDrainResidualAndObservationFailureForceOrReobserveCaus
 			)
 			assertSupervisorActions(t, actions, supervisorObserveEmptiness)
 			attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-			if !actions[0].drainBy.Equal(fixture.drainBy) ||
-				attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
-				t.Fatalf("post-force observation changed epoch: %#v actions=%#v", attempt, actions)
-			}
+			assert.True(t, actions[0].drainBy.Equal(fixture.drainBy), "post-force observation changed epoch: %#v actions=%#v", attempt, actions)
+			assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "post-force observation changed epoch: %#v actions=%#v", attempt, actions)
 		})
 	}
 }
@@ -117,9 +107,7 @@ func TestSupervisorReducerDrainEqualityNeverManufacturesEmptiness(t *testing.T) 
 			t, fixture.state, fixture.first, supervisorDrainObservedEmpty, fixture.drainBy, 0,
 		)
 		assertUnconfirmedCapture(t, next, actions, fixture.generation, fixture.drainBy)
-		if supervisorAttemptByGeneration(t, next, fixture.generation).drain.decision == supervisorDrainProvenEmpty {
-			t.Fatalf("equality manufactured timely emptiness: %#v", next)
-		}
+		assert.NotEqual(t, supervisorDrainProvenEmpty, supervisorAttemptByGeneration(t, next, fixture.generation).drain.decision, "equality manufactured timely emptiness: %#v", next)
 	})
 
 	t.Run("post-force residual at equality", func(t *testing.T) {
@@ -148,10 +136,8 @@ func TestSupervisorReducerDrainControlDiagnosticNeedsTimelyEmptyProof(t *testing
 		)
 		assertSupervisorActions(t, actions, supervisorCaptureOutput)
 		attempt := supervisorAttemptByGeneration(t, next, fixture.generation)
-		if attempt.drain.decision != supervisorDrainProvenEmpty ||
-			attempt.drain.controlDiagnostic != control {
-			t.Fatalf("control diagnostic displaced timely empty proof: %#v", attempt)
-		}
+		assert.Equal(t, supervisorDrainProvenEmpty, attempt.drain.decision, "control diagnostic displaced timely empty proof: %#v", attempt)
+		assert.Equal(t, control, attempt.drain.controlDiagnostic, "control diagnostic displaced timely empty proof: %#v", attempt)
 	})
 
 	t.Run("control fault without timely empty stays unconfirmed", func(t *testing.T) {
@@ -160,9 +146,7 @@ func TestSupervisorReducerDrainControlDiagnosticNeedsTimelyEmptyProof(t *testing
 			t, fixture.state, fixture.first, supervisorDrainForceCompleted, fixture.drainBy, control,
 		)
 		assertUnconfirmedCapture(t, next, actions, fixture.generation, fixture.drainBy)
-		if supervisorAttemptByGeneration(t, next, fixture.generation).drain.controlDiagnostic != control {
-			t.Fatalf("unconfirmed drain lost control diagnostic: %#v", next)
-		}
+		assert.Equal(t, control, supervisorAttemptByGeneration(t, next, fixture.generation).drain.controlDiagnostic, "unconfirmed drain lost control diagnostic: %#v", next)
 	})
 }
 
@@ -186,13 +170,10 @@ func TestSupervisorReducerDrainEmergencyClampPersistsAcrossInflightAction(t *tes
 					},
 				}},
 			})
-			if len(actions) != 0 {
-				t.Fatalf("emergency issued competing action: %#v", actions)
-			}
+			assert.EqualValues(t, 0, len(actions), "emergency issued competing action: %#v", actions)
 			attempt := supervisorAttemptByGeneration(t, clamped, fixture.generation)
-			if attempt.pendingAction != originalPending || !attempt.drain.effectiveDrainBy.Equal(clamp) {
-				t.Fatalf("in-flight emergency clamp = %#v", attempt)
-			}
+			assert.Equal(t, originalPending, attempt.pendingAction, "in-flight emergency clamp = %#v", attempt)
+			assert.True(t, attempt.drain.effectiveDrainBy.Equal(clamp), "in-flight emergency clamp = %#v", attempt)
 
 			completionKind := supervisorDrainForceCompleted
 			if fixture.first.kind == supervisorObserveEmptiness {
@@ -202,9 +183,7 @@ func TestSupervisorReducerDrainEmergencyClampPersistsAcrossInflightAction(t *tes
 				t, clamped, fixture.first, completionKind, emergencyAt.Add(time.Nanosecond), 0,
 			)
 			for _, action := range nextActions {
-				if !action.drainBy.Equal(clamp) {
-					t.Fatalf("post-clamp action lengthened bound: %#v", nextActions)
-				}
+				assert.True(t, action.drainBy.Equal(clamp), "post-clamp action lengthened bound: %#v", nextActions)
 			}
 		})
 	}
@@ -223,11 +202,10 @@ func TestSupervisorReducerDrainEmergencyClampPersistsAcrossInflightAction(t *tes
 				},
 			}},
 		})
-		if len(actions) != 0 {
-			t.Fatalf("later emergency issued competing action: %#v", actions)
-		}
-		if got := supervisorAttemptByGeneration(t, clamped, fixture.generation).drain.effectiveDrainBy; !got.Equal(fixture.drainBy) {
-			t.Fatalf("emergency lengthened local bound to %v", got)
+		assert.EqualValues(t, 0, len(actions), "later emergency issued competing action: %#v", actions)
+		{
+			got := supervisorAttemptByGeneration(t, clamped, fixture.generation).drain.effectiveDrainBy
+			assert.True(t, got.Equal(fixture.drainBy), "emergency lengthened local bound to %v", got)
 		}
 	})
 }
@@ -270,28 +248,24 @@ func TestSupervisorReducerDrainEmergencyDuringCapturePreservesDecisionAndPending
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 				emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 			})
-			if len(actions) != 0 {
-				t.Fatalf("capture-time emergency emitted competing action: %#v", actions)
-			}
+			assert.EqualValues(t, 0, len(actions), "capture-time emergency emitted competing action: %#v", actions)
 			after := supervisorAttemptByGeneration(t, next, fixture.generation)
 			wantBound := fixture.drainBy
 			if emergencyDrainBy.Before(wantBound) {
 				wantBound = emergencyDrainBy
 			}
-			if after.phase != supervisorCapturingOutput || after.pendingAction != before.pendingAction ||
-				after.pendingAction != (supervisorPendingAction{kind: supervisorCaptureOutput, token: capture.token}) ||
-				after.drain.decision != before.drain.decision ||
-				after.drain.controlDiagnostic != before.drain.controlDiagnostic ||
-				after.drain.observationDiagnostic != before.drain.observationDiagnostic ||
-				!after.drain.effectiveDrainBy.Equal(wantBound) ||
-				!next.emergency.active || !next.emergency.at.Equal(emergencyAt) ||
-				!next.emergency.drainBy.Equal(emergencyDrainBy) {
-				t.Fatalf("capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
-			}
-			if before.drain.decision == supervisorDrainProvenEmpty &&
-				after.drain.decision != supervisorDrainProvenEmpty {
-				t.Fatalf("emergency invalidated a timely emptiness proof: before=%#v after=%#v", before, after)
-			}
+			assert.Equal(t, supervisorCapturingOutput, after.phase, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.pendingAction, after.pendingAction, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, (supervisorPendingAction{kind: supervisorCaptureOutput, token: capture.token}), after.pendingAction, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.drain.decision, after.drain.decision, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.drain.controlDiagnostic, after.drain.controlDiagnostic, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.drain.observationDiagnostic, after.drain.observationDiagnostic, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.True(t, after.drain.effectiveDrainBy.Equal(wantBound), "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.True(t, next.emergency.active, "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.True(t, next.emergency.at.Equal(emergencyAt), "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.True(t, next.emergency.drainBy.Equal(emergencyDrainBy), "capture-time emergency changed decision or custody: before=%#v after=%#v", before, after)
+			assert.False(t, before.drain.decision == supervisorDrainProvenEmpty &&
+				after.drain.decision != supervisorDrainProvenEmpty, "emergency invalidated a timely emptiness proof: before=%#v after=%#v", before, after)
 		})
 	}
 }
@@ -365,10 +339,8 @@ func TestSupervisorReducerLateLaunchCustodyResolvesOneAuthoritativeDrainBound(t 
 		})
 		assertSupervisorActions(t, actions, supervisorAdoptOwned, supervisorForceOwned)
 		attempt := supervisorAttemptByGeneration(t, next, 81)
-		if !attempt.drain.effectiveDrainBy.Equal(localDrainBy) ||
-			!actions[1].drainBy.Equal(localDrainBy) {
-			t.Fatalf("late local adoption lacks drain epoch: %#v actions=%#v", attempt, actions)
-		}
+		assert.True(t, attempt.drain.effectiveDrainBy.Equal(localDrainBy), "late local adoption lacks drain epoch: %#v actions=%#v", attempt, actions)
+		assert.True(t, actions[1].drainBy.Equal(localDrainBy), "late local adoption lacks drain epoch: %#v actions=%#v", attempt, actions)
 
 		assertSupervisorInvariant(t, func() {
 			reduceSupervisor(unconfirmed, supervisorEvent{
@@ -392,9 +364,7 @@ func TestSupervisorReducerLateLaunchCustodyResolvesOneAuthoritativeDrainBound(t 
 			completion: &completion,
 		})
 		assertSupervisorActions(t, actions, supervisorCloseProspective)
-		if !supervisorAttemptByGeneration(t, next, 82).drain.effectiveDrainBy.IsZero() {
-			t.Fatalf("not-released completion invented a drain bound: %#v", next)
-		}
+		assert.True(t, supervisorAttemptByGeneration(t, next, 82).drain.effectiveDrainBy.IsZero(), "not-released completion invented a drain bound: %#v", next)
 		assertSupervisorInvariant(t, func() {
 			reduceSupervisor(unconfirmed, supervisorEvent{
 				kind: supervisorLaunchCompleted, generation: 82, at: completion.at,
@@ -421,10 +391,8 @@ func TestSupervisorReducerLateLaunchCustodyResolvesOneAuthoritativeDrainBound(t 
 		})
 		assertSupervisorActions(t, actions, supervisorAdoptOwned, supervisorForceOwned)
 		attempt := supervisorAttemptByGeneration(t, next, 83)
-		if !attempt.drain.effectiveDrainBy.Equal(emergencyDrainBy) ||
-			!actions[1].drainBy.Equal(emergencyDrainBy) {
-			t.Fatalf("late emergency adoption changed bound: %#v actions=%#v", attempt, actions)
-		}
+		assert.True(t, attempt.drain.effectiveDrainBy.Equal(emergencyDrainBy), "late emergency adoption changed bound: %#v actions=%#v", attempt, actions)
+		assert.True(t, actions[1].drainBy.Equal(emergencyDrainBy), "late emergency adoption changed bound: %#v actions=%#v", attempt, actions)
 	})
 }
 
@@ -462,8 +430,9 @@ func TestSupervisorReducerLaunchEvidenceUsesImmutableRegistrationAndPhysicalComp
 				commandDeadline: 20 * time.Second,
 			})
 			launch := actions[0]
-			if got := supervisorAttemptByGeneration(t, state, 91).registeredAt; !got.Equal(registeredAt) {
-				t.Fatalf("registration At = %v, want %v", got, registeredAt)
+			{
+				got := supervisorAttemptByGeneration(t, state, 91).registeredAt
+				assert.True(t, got.Equal(registeredAt), "registration At = %v, want %v", got, registeredAt)
 			}
 			if test.completion != nil {
 				test.completion.action = launch.token
@@ -478,12 +447,12 @@ func TestSupervisorReducerLaunchEvidenceUsesImmutableRegistrationAndPhysicalComp
 					break
 				}
 			}
-			if action.kind == 0 || !action.at.Equal(test.wantAt) ||
-				action.launchDuration != test.wantAt.Sub(registeredAt) {
-				t.Fatalf("launch timing evidence = %#v, want At=%v duration=%v", action, test.wantAt, test.wantAt.Sub(registeredAt))
-			}
-			if got := supervisorAttemptByGeneration(t, next, 91).registeredAt; !got.Equal(registeredAt) {
-				t.Fatalf("launch transition rewrote registration At to %v", got)
+			assert.NotEqual(t, 0, action.kind, "launch timing evidence = %#v, want At=%v duration=%v", action, test.wantAt, test.wantAt.Sub(registeredAt))
+			assert.True(t, action.at.Equal(test.wantAt), "launch timing evidence = %#v, want At=%v duration=%v", action, test.wantAt, test.wantAt.Sub(registeredAt))
+			assert.Equal(t, test.wantAt.Sub(registeredAt), action.launchDuration, "launch timing evidence = %#v, want At=%v duration=%v", action, test.wantAt, test.wantAt.Sub(registeredAt))
+			{
+				got := supervisorAttemptByGeneration(t, next, 91).registeredAt
+				assert.True(t, got.Equal(registeredAt), "launch transition rewrote registration At to %v", got)
 			}
 		})
 	}
@@ -546,7 +515,7 @@ func newForcedDrainReducerFixture(t *testing.T, kind supervisorRunningIntentKind
 		fact.source = supervisorObservationRunning
 		fact.diagnostic = 601
 	default:
-		t.Fatalf("unsupported forced drain intent %d", kind)
+		require.FailNow(t, "unsupported forced drain intent %d", kind)
 	}
 	facts := []supervisorRunningFact{fact}
 	if kind == supervisorIntentDeadline {
@@ -612,13 +581,11 @@ func assertUnconfirmedCapture(
 	t.Helper()
 	assertSupervisorActions(t, actions, supervisorCaptureOutput)
 	attempt := supervisorAttemptByGeneration(t, state, generation)
-	if attempt.phase != supervisorCapturingOutput ||
-		attempt.drain.decision != supervisorDrainUnconfirmed ||
-		!attempt.drain.effectiveDrainBy.Equal(drainBy) ||
-		!actions[0].drainBy.Equal(drainBy) ||
-		attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) {
-		t.Fatalf("unconfirmed capture = %#v actions=%#v", attempt, actions)
-	}
+	assert.Equal(t, supervisorCapturingOutput, attempt.phase, "unconfirmed capture = %#v actions=%#v", attempt, actions)
+	assert.Equal(t, supervisorDrainUnconfirmed, attempt.drain.decision, "unconfirmed capture = %#v actions=%#v", attempt, actions)
+	assert.True(t, attempt.drain.effectiveDrainBy.Equal(drainBy), "unconfirmed capture = %#v actions=%#v", attempt, actions)
+	assert.True(t, actions[0].drainBy.Equal(drainBy), "unconfirmed capture = %#v actions=%#v", attempt, actions)
+	assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "unconfirmed capture = %#v actions=%#v", attempt, actions)
 }
 
 func runningIntentName(kind supervisorRunningIntentKind) string {

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSupervisorReducerOutputEvidenceCompletenessAndFinalityAreIndependent(t *testing.T) {
@@ -58,15 +60,12 @@ func TestSupervisorReducerOutputEvidenceCompletenessAndFinalityAreIndependent(t 
 				final:                 test.wantFinal,
 				diagnostic:            test.diagnostic,
 			}
-			if attempt.phase != supervisorSealingStopAdmission ||
-				!reflect.DeepEqual(attempt.output, wantEvidence) ||
-				attempt.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
-				!actions[0].drainBy.Equal(fixture.drainBy) {
-				t.Fatalf("output evidence/seal = %#v actions=%#v, want %#v", attempt, actions, wantEvidence)
-			}
-			if actions[0].kind == supervisorReleaseDomain || actions[0].kind == supervisorTransferResidualCustody {
-				t.Fatalf("output completion bypassed stop-admission seal: %#v", actions)
-			}
+			assert.Equal(t, supervisorSealingStopAdmission, attempt.phase, "output evidence/seal = %#v actions=%#v, want %#v", attempt, actions, wantEvidence)
+			assert.Equal(t, wantEvidence, attempt.output, "output evidence/seal = %#v actions=%#v, want %#v", attempt, actions, wantEvidence)
+			assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), attempt.pendingAction, "output evidence/seal = %#v actions=%#v, want %#v", attempt, actions, wantEvidence)
+			assert.True(t, actions[0].drainBy.Equal(fixture.drainBy), "output evidence/seal = %#v actions=%#v, want %#v", attempt, actions, wantEvidence)
+			assert.NotEqual(t, supervisorReleaseDomain, actions[0].kind, "output completion bypassed stop-admission seal: %#v", actions)
+			assert.NotEqual(t, supervisorTransferResidualCustody, actions[0].kind, "output completion bypassed stop-admission seal: %#v", actions)
 		})
 	}
 }
@@ -150,9 +149,7 @@ func TestSupervisorReducerStopSealBranchesOnlyAfterCorrelatedCompletion(t *testi
 			)
 			assertSupervisorActions(t, sealActions, supervisorSealStopAdmission)
 			before := supervisorAttemptByGeneration(t, withOutput, fixture.generation)
-			if before.pendingAction.kind != supervisorSealStopAdmission {
-				t.Fatalf("output did not stop at seal: %#v", before)
-			}
+			assert.Equal(t, supervisorSealStopAdmission, before.pendingAction.kind, "output did not stop at seal: %#v", before)
 
 			at := sealActions[0].at.Add(time.Nanosecond)
 			next, actions := completeReducerStopSeal(
@@ -160,11 +157,10 @@ func TestSupervisorReducerStopSealBranchesOnlyAfterCorrelatedCompletion(t *testi
 			)
 			assertSupervisorActions(t, actions, test.wantAction)
 			after := supervisorAttemptByGeneration(t, next, fixture.generation)
-			if after.phase != test.wantPhase || !reflect.DeepEqual(after.output, before.output) ||
-				after.pendingAction != (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}) ||
-				!actions[0].drainBy.Equal(fixture.drainBy) {
-				t.Fatalf("seal branch = %#v actions=%#v", after, actions)
-			}
+			assert.Equal(t, test.wantPhase, after.phase, "seal branch = %#v actions=%#v", after, actions)
+			assert.Equal(t, before.output, after.output, "seal branch = %#v actions=%#v", after, actions)
+			assert.Equal(t, (supervisorPendingAction{kind: actions[0].kind, token: actions[0].token}), after.pendingAction, "seal branch = %#v actions=%#v", after, actions)
+			assert.True(t, actions[0].drainBy.Equal(fixture.drainBy), "seal branch = %#v actions=%#v", after, actions)
 		})
 	}
 }
@@ -211,8 +207,9 @@ func TestSupervisorReducerStopSealRequiresExactCorrelationAndCannotRewriteOutput
 		kind: supervisorStopAdmissionSealed, generation: fixture.generation,
 		at: valid.at, seal: &valid,
 	})
-	if got := supervisorAttemptByGeneration(t, next, fixture.generation).output; !reflect.DeepEqual(got, before) {
-		t.Fatalf("seal rewrote immutable output evidence: before=%#v after=%#v", before, got)
+	{
+		got := supervisorAttemptByGeneration(t, next, fixture.generation).output
+		assert.Equal(t, before, got, "seal rewrote immutable output evidence: before=%#v after=%#v", before, got)
 	}
 	assertSupervisorInvariant(t, func() {
 		reduceSupervisor(next, supervisorEvent{
@@ -336,23 +333,21 @@ func TestSupervisorReducerOutputPipelineEmergencyCompositionPreservesInflightSta
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 				emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 			})
-			if len(actions) != 0 {
-				t.Fatalf("pipeline emergency emitted competing action: %#v", actions)
-			}
+			assert.EqualValues(t, 0, len(actions), "pipeline emergency emitted competing action: %#v", actions)
 			after := supervisorAttemptByGeneration(t, next, fixture.generation)
 			wantBound := before.drain.effectiveDrainBy
 			if emergencyDrainBy.Before(wantBound) {
 				wantBound = emergencyDrainBy
 			}
-			if after.phase != before.phase || after.pendingAction != before.pendingAction ||
-				after.pendingAction != (supervisorPendingAction{kind: pending.kind, token: pending.token}) ||
-				!reflect.DeepEqual(after.output, before.output) ||
-				after.drain.decision != before.drain.decision ||
-				!after.drain.effectiveDrainBy.Equal(wantBound) ||
-				!next.emergency.active || !next.emergency.at.Equal(emergencyAt) ||
-				!next.emergency.drainBy.Equal(emergencyDrainBy) {
-				t.Fatalf("pipeline emergency changed custody: before=%#v after=%#v", before, after)
-			}
+			assert.Equal(t, before.phase, after.phase, "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.pendingAction, after.pendingAction, "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, (supervisorPendingAction{kind: pending.kind, token: pending.token}), after.pendingAction, "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.output, after.output, "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.Equal(t, before.drain.decision, after.drain.decision, "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.True(t, after.drain.effectiveDrainBy.Equal(wantBound), "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.True(t, next.emergency.active, "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.True(t, next.emergency.at.Equal(emergencyAt), "pipeline emergency changed custody: before=%#v after=%#v", before, after)
+			assert.True(t, next.emergency.drainBy.Equal(emergencyDrainBy), "pipeline emergency changed custody: before=%#v after=%#v", before, after)
 		})
 	}
 }
@@ -366,19 +361,14 @@ func TestSupervisorReducerOutputPipelinePropagatesEmergencyClampAfterCompletion(
 			kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: clamp,
 			emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 		})
-		if len(actions) != 0 {
-			t.Fatalf("capture clamp emitted competing action: %#v", actions)
-		}
+		assert.EqualValues(t, 0, len(actions), "capture clamp emitted competing action: %#v", actions)
 		next, seal := completeReducerOutput(
 			t, clamped, fixture.generation, capture, emergencyAt.Add(time.Nanosecond),
 			71, 5, 5, 0,
 		)
 		assertSupervisorActions(t, seal, supervisorSealStopAdmission)
-		if !seal[0].drainBy.Equal(clamp) ||
-			supervisorAttemptByGeneration(t, next, fixture.generation).pendingAction !=
-				(supervisorPendingAction{kind: seal[0].kind, token: seal[0].token}) {
-			t.Fatalf("post-clamp output completion lost bound: %#v", seal)
-		}
+		assert.True(t, seal[0].drainBy.Equal(clamp), "post-clamp output completion lost bound: %#v", seal)
+		assert.Equal(t, (supervisorPendingAction{kind: seal[0].kind, token: seal[0].token}), supervisorAttemptByGeneration(t, next, fixture.generation).pendingAction, "post-clamp output completion lost bound: %#v", seal)
 	})
 
 	for _, test := range []struct {
@@ -401,9 +391,7 @@ func TestSupervisorReducerOutputPipelinePropagatesEmergencyClampAfterCompletion(
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 				emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 			})
-			if len(actions) != 0 {
-				t.Fatalf("seal clamp emitted competing action: %#v", actions)
-			}
+			assert.EqualValues(t, 0, len(actions), "seal clamp emitted competing action: %#v", actions)
 			wantBound := fixture.drainBy
 			if emergencyDrainBy.Before(wantBound) {
 				wantBound = emergencyDrainBy
@@ -412,9 +400,7 @@ func TestSupervisorReducerOutputPipelinePropagatesEmergencyClampAfterCompletion(
 				t, clamped, fixture.generation, seal[0], emergencyAt.Add(time.Nanosecond),
 			)
 			assertSupervisorActions(t, branch, test.want)
-			if !branch[0].drainBy.Equal(wantBound) {
-				t.Fatalf("post-clamp seal completion lost effective bound: %#v", branch)
-			}
+			assert.True(t, branch[0].drainBy.Equal(wantBound), "post-clamp seal completion lost effective bound: %#v", branch)
 		})
 	}
 }

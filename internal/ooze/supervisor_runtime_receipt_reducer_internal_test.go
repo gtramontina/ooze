@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type runtimeReceiptReducerFixture struct {
@@ -89,12 +92,8 @@ func TestSupervisorReducerRuntimeReceiptRejectsMalformedSettlingEmergencyByteSta
 	assertSupervisorInvariant(t, func() {
 		_, actions = reduceSupervisor(fixture.state, event)
 	})
-	if len(actions) != 0 {
-		t.Fatalf("malformed settling emergency emitted action: %#v", actions)
-	}
-	if !reflect.DeepEqual(fixture.state, before) {
-		t.Fatalf("malformed settling emergency mutated input: before=%#v after=%#v", before, fixture.state)
-	}
+	assert.EqualValues(t, 0, len(actions), "malformed settling emergency emitted action: %#v", actions)
+	assert.Equal(t, before, fixture.state, "malformed settling emergency mutated input: before=%#v after=%#v", before, fixture.state)
 }
 
 func assertRuntimeReceiptTransition(t *testing.T, test runtimeReceiptPositiveSpec) {
@@ -117,9 +116,7 @@ func assertRuntimeReceiptTransition(t *testing.T, test runtimeReceiptPositiveSpe
 			assertEmergencyAfterDeferredRuntimeReceipt(t, fixture, next)
 		}
 	}
-	if !reflect.DeepEqual(fixture.state, input) {
-		t.Fatalf("runtime receipt mutated input: before=%#v after=%#v", input, fixture.state)
-	}
+	assert.Equal(t, input, fixture.state, "runtime receipt mutated input: before=%#v after=%#v", input, fixture.state)
 }
 
 func assertDeliveredRuntimeReceipt(
@@ -149,12 +146,8 @@ func assertDeliveredRuntimeReceipt(
 			kind: settle.kind, token: settle.token,
 		}
 	}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("runtime delivery actions = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, wantState) {
-		t.Fatalf("runtime delivery state = %#v, want %#v", next, wantState)
-	}
+	assert.Equal(t, wantActions, actions, "runtime delivery actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "runtime delivery state = %#v, want %#v", next, wantState)
 	assertRuntimeReceiptSentinelPreserved(t, input, next, fixture.sentinelGeneration)
 }
 
@@ -186,15 +179,9 @@ func assertDeferredRuntimeReceipt(
 			kind: settle.kind, token: settle.token,
 		}
 	}
-	if !reflect.DeepEqual(actions, wantActions) {
-		t.Fatalf("closure-pending receipt actions = %#v, want %#v", actions, wantActions)
-	}
-	if !reflect.DeepEqual(next, wantState) {
-		t.Fatalf("closure-pending state = %#v, want %#v", next, wantState)
-	}
-	if wantAttempt.terminal != fixture.terminal {
-		t.Fatalf("closure-pending terminal = %#v, want %#v", wantAttempt.terminal, fixture.terminal)
-	}
+	assert.Equal(t, wantActions, actions, "closure-pending receipt actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "closure-pending state = %#v, want %#v", next, wantState)
+	assert.Equal(t, fixture.terminal, wantAttempt.terminal, "closure-pending terminal = %#v, want %#v", wantAttempt.terminal, fixture.terminal)
 	assertRuntimeReceiptSentinelPreserved(t, input, next, fixture.sentinelGeneration)
 }
 
@@ -229,21 +216,14 @@ func assertEmergencyAfterDeferredRuntimeReceipt(
 	want.emergency.pendingAction = supervisorPendingAction{
 		kind: settle.kind, token: settle.token,
 	}
-	if !reflect.DeepEqual(actions, []supervisorAction{settle}) {
-		t.Fatalf("post-receipt emergency actions = %#v, want %#v", actions, []supervisorAction{settle})
-	}
-	if !reflect.DeepEqual(next, want) {
-		t.Fatalf("post-receipt emergency state = %#v, want %#v", next, want)
-	}
+	assert.Equal(t, []supervisorAction{settle}, actions, "post-receipt emergency actions = %#v, want %#v", actions, []supervisorAction{settle})
+	assert.Equal(t, want, next, "post-receipt emergency state = %#v, want %#v", next, want)
 	after := next.attempts[targetIndex]
-	if after.phase != supervisorAwaitingEmergencySettlement ||
-		after.pendingAction != (supervisorPendingAction{}) || after.terminal != fixture.terminal {
-		t.Fatalf("post-receipt emergency target = %#v", after)
-	}
+	assert.Equal(t, supervisorAwaitingEmergencySettlement, after.phase, "post-receipt emergency target = %#v", after)
+	assert.Equal(t, (supervisorPendingAction{}), after.pendingAction, "post-receipt emergency target = %#v", after)
+	assert.Equal(t, fixture.terminal, after.terminal, "post-receipt emergency target = %#v", after)
 	assertRuntimeReceiptSentinelPreserved(t, input, next, fixture.sentinelGeneration)
-	if !reflect.DeepEqual(deferred, input) {
-		t.Fatalf("post-receipt emergency mutated input: before=%#v after=%#v", input, deferred)
-	}
+	assert.Equal(t, input, deferred, "post-receipt emergency mutated input: before=%#v after=%#v", input, deferred)
 }
 
 func newRuntimeReceiptReducerFixture(
@@ -267,12 +247,11 @@ func newRuntimeReceiptReducerFixture(
 	})
 	assertSupervisorActions(t, actions, supervisorSettleRuntime)
 	attempt := supervisorAttemptByGeneration(t, settling, release.generation)
-	if attempt.phase != supervisorSettlingRuntime || attempt.terminal.kind == 0 ||
-		attempt.pendingAction != (supervisorPendingAction{
-			kind: supervisorSettleRuntime, token: actions[0].token,
-		}) {
-		t.Fatalf("runtime receipt fixture = %#v actions=%#v", attempt, actions)
-	}
+	assert.Equal(t, supervisorSettlingRuntime, attempt.phase, "runtime receipt fixture = %#v actions=%#v", attempt, actions)
+	assert.NotEqual(t, 0, attempt.terminal.kind, "runtime receipt fixture = %#v actions=%#v", attempt, actions)
+	assert.Equal(t, (supervisorPendingAction{
+		kind: supervisorSettleRuntime, token: actions[0].token,
+	}), attempt.pendingAction, "runtime receipt fixture = %#v actions=%#v", attempt, actions)
 
 	settling, sentinelGeneration := appendRuntimeReceiptSentinel(t, settling, attempt.lastEventAt)
 
@@ -317,15 +296,9 @@ func appendRuntimeReceiptSentinel(
 	sentinelIndex := runtimeReceiptAttemptIndex(t, wantState, generation)
 	wantState.attempts[sentinelIndex].lastEventAt = completionAt
 	wantState.attempts[sentinelIndex].phase = supervisorLaunchClosedNotReleased
-	if !reflect.DeepEqual(actions, []supervisorAction{wantAction}) {
-		t.Fatalf("sentinel close actions = %#v, want %#v", actions, []supervisorAction{wantAction})
-	}
-	if !reflect.DeepEqual(closed, wantState) {
-		t.Fatalf("sentinel close state = %#v, want %#v", closed, wantState)
-	}
-	if !reflect.DeepEqual(registered, input) {
-		t.Fatalf("sentinel close mutated input: before=%#v after=%#v", input, registered)
-	}
+	assert.Equal(t, []supervisorAction{wantAction}, actions, "sentinel close actions = %#v, want %#v", actions, []supervisorAction{wantAction})
+	assert.Equal(t, wantState, closed, "sentinel close state = %#v, want %#v", closed, wantState)
+	assert.Equal(t, input, registered, "sentinel close mutated input: before=%#v after=%#v", input, registered)
 
 	return closed, generation
 }
@@ -343,21 +316,15 @@ func interposeRuntimeReceiptEmergency(
 		kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyDrainBy,
 		emergencySnapshots: []supervisorEmergencySnapshot{{generation: fixture.generation}},
 	})
-	if len(actions) != 0 {
-		t.Fatalf("runtime-receipt emergency emitted action: %#v", actions)
-	}
+	assert.EqualValues(t, 0, len(actions), "runtime-receipt emergency emitted action: %#v", actions)
 	want := cloneSupervisorState(input)
 	want.emergency = supervisorEmergencyEpoch{
 		active: true, at: emergencyAt, drainBy: emergencyDrainBy,
 	}
 	targetIndex := runtimeReceiptAttemptIndex(t, want, fixture.generation)
 	want.attempts[targetIndex].lastEventAt = emergencyAt
-	if !reflect.DeepEqual(next, want) {
-		t.Fatalf("runtime-receipt emergency state = %#v, want %#v", next, want)
-	}
-	if !reflect.DeepEqual(fixture.state, input) {
-		t.Fatalf("runtime-receipt emergency mutated input: before=%#v after=%#v", input, fixture.state)
-	}
+	assert.Equal(t, want, next, "runtime-receipt emergency state = %#v, want %#v", next, want)
+	assert.Equal(t, input, fixture.state, "runtime-receipt emergency mutated input: before=%#v after=%#v", input, fixture.state)
 
 	return next
 }
@@ -373,7 +340,7 @@ func runtimeReceiptAttemptIndex(
 			return index
 		}
 	}
-	t.Fatalf("runtime receipt generation %d absent from %#v", generation, state)
+	require.FailNow(t, "runtime receipt generation %d absent from %#v", generation, state)
 
 	return -1
 }
@@ -400,9 +367,7 @@ func assertRuntimeReceiptSentinelPreserved(
 	t.Helper()
 	want := before.attempts[runtimeReceiptAttemptIndex(t, before, generation)]
 	got := after.attempts[runtimeReceiptAttemptIndex(t, after, generation)]
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("runtime receipt rewrote sentinel: got=%#v want=%#v", got, want)
-	}
+	assert.Equal(t, want, got, "runtime receipt rewrote sentinel: got=%#v want=%#v", got, want)
 }
 
 func runtimeReceiptCompletion(
@@ -537,9 +502,7 @@ func assertMalformedRuntimeReceiptRejected(
 	assertSupervisorInvariant(t, func() {
 		reduceSupervisor(fixture.state, event)
 	})
-	if !reflect.DeepEqual(fixture.state, before) {
-		t.Fatalf("rejected runtime receipt mutated input: before=%#v after=%#v", before, fixture.state)
-	}
+	assert.Equal(t, before, fixture.state, "rejected runtime receipt mutated input: before=%#v after=%#v", before, fixture.state)
 }
 
 func TestSupervisorReducerRuntimeReceiptRejectsUnrelatedEventPayload(t *testing.T) {
@@ -558,9 +521,7 @@ func TestSupervisorReducerRuntimeReceiptRejectsUnrelatedEventPayload(t *testing.
 			assertSupervisorInvariant(t, func() {
 				reduceSupervisor(fixture.state, event)
 			})
-			if !reflect.DeepEqual(fixture.state, before) {
-				t.Fatalf("unrelated payload mutated input: before=%#v after=%#v", before, fixture.state)
-			}
+			assert.Equal(t, before, fixture.state, "unrelated payload mutated input: before=%#v after=%#v", before, fixture.state)
 		})
 	}
 }
@@ -640,9 +601,7 @@ func TestSupervisorReducerRuntimeReceiptRejectsDuplicateAndContradictoryReceipt(
 			runtime: &completion,
 		}
 		deferred, actions := reduceSupervisorMustAccept(t, fixture.state, event)
-		if len(actions) != 0 {
-			t.Fatalf("deferred receipt actions = %#v", actions)
-		}
+		assert.EqualValues(t, 0, len(actions), "deferred receipt actions = %#v", actions)
 		assertRuntimeReceiptInvariantByteStable(t, deferred, event)
 		contradictory := completion
 		contradictory.kind = supervisorRuntimeAcknowledged
@@ -662,9 +621,7 @@ func assertRuntimeReceiptInvariantByteStable(
 	assertSupervisorInvariant(t, func() {
 		reduceSupervisor(state, event)
 	})
-	if !reflect.DeepEqual(state, before) {
-		t.Fatalf("duplicate runtime receipt mutated input: before=%#v after=%#v", before, state)
-	}
+	assert.Equal(t, before, state, "duplicate runtime receipt mutated input: before=%#v after=%#v", before, state)
 }
 
 func TestSupervisorReducerRuntimeReceiptDataRemainsCapabilityFree(t *testing.T) {

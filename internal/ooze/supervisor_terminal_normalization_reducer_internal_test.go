@@ -1,9 +1,11 @@
 package ooze
 
 import (
-	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type terminalNormalizationSpec struct {
@@ -76,15 +78,9 @@ func TestSupervisorReducerTerminalNormalization(t *testing.T) {
 			wantAttempt.phase = supervisorSettlingRuntime
 			wantAttempt.releaseDiagnostic = spec.releaseDiagnostic
 			wantAttempt.terminal = want
-			if !reflect.DeepEqual(actions, []supervisorAction{wantAction}) {
-				t.Fatalf("normalized action = %#v, want %#v", actions, []supervisorAction{wantAction})
-			}
-			if !reflect.DeepEqual(next, wantState) {
-				t.Fatalf("normalized state = %#v, want %#v", next, wantState)
-			}
-			if !reflect.DeepEqual(releasing, input) {
-				t.Fatalf("terminal normalization mutated input: before=%#v after=%#v", input, releasing)
-			}
+			assert.Equal(t, []supervisorAction{wantAction}, actions, "normalized action = %#v, want %#v", actions, []supervisorAction{wantAction})
+			assert.Equal(t, wantState, next, "normalized state = %#v, want %#v", next, wantState)
+			assert.Equal(t, input, releasing, "terminal normalization mutated input: before=%#v after=%#v", input, releasing)
 		})
 	}
 }
@@ -151,14 +147,12 @@ func TestSupervisorReducerDrainCensusNormalizationPrecedence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			evidence := normalizeTerminalEvidence(test.attempt)
-			if evidence.kind != test.want ||
-				evidence.diagnostics.wait != test.attempt.drain.waitDiagnostic ||
-				evidence.diagnostics.drain != test.attempt.drain.observationDiagnostic ||
-				evidence.diagnostics.control != test.attempt.drain.controlDiagnostic ||
-				evidence.output.diagnostic != test.attempt.output.diagnostic ||
-				evidence.diagnostics.release != test.attempt.releaseDiagnostic {
-				t.Fatalf("normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
-			}
+			assert.Equal(t, test.want, evidence.kind, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
+			assert.Equal(t, test.attempt.drain.waitDiagnostic, evidence.diagnostics.wait, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
+			assert.Equal(t, test.attempt.drain.observationDiagnostic, evidence.diagnostics.drain, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
+			assert.Equal(t, test.attempt.drain.controlDiagnostic, evidence.diagnostics.control, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
+			assert.Equal(t, test.attempt.output.diagnostic, evidence.output.diagnostic, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
+			assert.Equal(t, test.attempt.releaseDiagnostic, evidence.diagnostics.release, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
 		})
 	}
 
@@ -171,11 +165,12 @@ func TestSupervisorReducerDrainCensusNormalizationPrecedence(t *testing.T) {
 		releaseDiagnostic: 404,
 	}
 	evidence := normalizeDrainUnconfirmedTerminalEvidence(attempt)
-	if evidence.kind != supervisorTerminalDrainUnconfirmed || evidence.diagnostics.wait != 101 ||
-		evidence.diagnostics.drain != 303 || evidence.diagnostics.control != 606 ||
-		evidence.output.diagnostic != 505 || evidence.diagnostics.release != 404 {
-		t.Fatalf("unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
-	}
+	assert.Equal(t, supervisorTerminalDrainUnconfirmed, evidence.kind, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
+	assert.EqualValues(t, 101, evidence.diagnostics.wait, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
+	assert.EqualValues(t, 303, evidence.diagnostics.drain, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
+	assert.EqualValues(t, 606, evidence.diagnostics.control, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
+	assert.EqualValues(t, 505, evidence.output.diagnostic, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
+	assert.EqualValues(t, 404, evidence.diagnostics.release, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
 }
 
 func terminalNormalizationSpecs() []terminalNormalizationSpec {
@@ -288,9 +283,7 @@ func buildTerminalNormalizationRelease(
 		assertSupervisorActions(t, []supervisorAction{first}, supervisorObserveEmptiness)
 	}
 	emptyAt := observe.at.Add(time.Nanosecond)
-	if !emptyAt.Before(observe.drainBy) {
-		t.Fatalf("normalization fixture cannot prove emptiness before bound: action=%#v", observe)
-	}
+	assert.True(t, emptyAt.Before(observe.drainBy), "normalization fixture cannot prove emptiness before bound: action=%#v", observe)
 	state, actions := drain.complete(
 		t, state, observe, supervisorDrainObservedEmpty, emptyAt, 0,
 	)
@@ -333,7 +326,7 @@ func selectTerminalNormalizationIntent(
 	case supervisorIntentObservationFailure:
 		return selectNormalizationObservationFailure(t, running, spec)
 	default:
-		t.Fatalf("unsupported terminal normalization intent %d", spec.intent)
+		require.FailNow(t, "unsupported terminal normalization intent %d", spec.intent)
 
 		return supervisorState{}, supervisorAction{}
 	}
@@ -396,9 +389,7 @@ func selectNormalizationDeadline(
 			live: uint64(wantCount.value),
 		}
 		state, actions := running.reduceBundle(t, at, []supervisorRunningFact{fact}, supervisorExitRecheck{})
-		if len(actions) != 0 {
-			t.Fatalf("pre-deadline peak selected terminal intent: %#v", actions)
-		}
+		assert.EqualValues(t, 0, len(actions), "pre-deadline peak selected terminal intent: %#v", actions)
 		running.state = state
 	}
 	state, actions := running.reduceBundle(t, running.deadlineAt, nil, supervisorExitRecheck{
@@ -446,19 +437,13 @@ func clampNormalizationStopWithEmergency(
 			},
 		}},
 	})
-	if len(actions) != 0 {
-		t.Fatalf("emergency clamp emitted competing action: %#v", actions)
-	}
+	assert.EqualValues(t, 0, len(actions), "emergency clamp emitted competing action: %#v", actions)
 	after := supervisorAttemptByGeneration(t, next, running.generation)
-	if after.phase != supervisorEmergencyDraining ||
-		!reflect.DeepEqual(after.intent, before.intent) ||
-		after.pendingAction != before.pendingAction ||
-		!after.drain.effectiveDrainBy.Equal(emergencyDrainBy) {
-		t.Fatalf("stop emergency clamp = %#v, want original intent/pending and bound %v", after, emergencyDrainBy)
-	}
-	if !reflect.DeepEqual(state, input) {
-		t.Fatalf("stop emergency clamp mutated input: before=%#v after=%#v", input, state)
-	}
+	assert.Equal(t, supervisorEmergencyDraining, after.phase, "stop emergency clamp = %#v, want original intent/pending and bound %v", after, emergencyDrainBy)
+	assert.Equal(t, before.intent, after.intent, "stop emergency clamp = %#v, want original intent/pending and bound %v", after, emergencyDrainBy)
+	assert.Equal(t, before.pendingAction, after.pendingAction, "stop emergency clamp = %#v, want original intent/pending and bound %v", after, emergencyDrainBy)
+	assert.True(t, after.drain.effectiveDrainBy.Equal(emergencyDrainBy), "stop emergency clamp = %#v, want original intent/pending and bound %v", after, emergencyDrainBy)
+	assert.Equal(t, input, state, "stop emergency clamp mutated input: before=%#v after=%#v", input, state)
 
 	return next
 }
@@ -656,9 +641,7 @@ func assertMalformedTerminalNormalizationRejected(
 			at: completionAt, release: &completion,
 		})
 	})
-	if !reflect.DeepEqual(state, before) {
-		t.Fatalf("malformed normalization mutated input: before=%#v after=%#v", before, state)
-	}
+	assert.Equal(t, before, state, "malformed normalization mutated input: before=%#v after=%#v", before, state)
 }
 
 func mutateMalformedTerminalCount(
@@ -719,7 +702,7 @@ func terminalNormalizationSpecNamed(t *testing.T, name string) terminalNormaliza
 			return spec
 		}
 	}
-	t.Fatalf("terminal normalization spec %q not found", name)
+	require.FailNow(t, "terminal normalization spec %q not found", name)
 
 	return terminalNormalizationSpec{}
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManagedCampaignEmptyCatalogueRunsNoCommands(t *testing.T) {
@@ -26,12 +28,13 @@ func TestManagedCampaignEmptyCatalogueRunsNoCommands(t *testing.T) {
 		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{},
 	})
 
-	if _, ok := result.outcome.(noMutantsOutcome); !ok {
-		t.Fatalf("outcome = %#v, want NoMutants", result.outcome)
+	{
+		_, ok := result.outcome.(noMutantsOutcome)
+		require.True(t, ok, "outcome = %#v, want NoMutants", result.outcome)
 	}
-	if attempts.launches != 0 || repository.materializations != 1 || !repository.snapshot.removed {
-		t.Fatalf("launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
-	}
+	assert.EqualValues(t, 0, attempts.launches, "launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
+	assert.EqualValues(t, 1, repository.materializations, "launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
+	assert.True(t, repository.snapshot.removed, "launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
 }
 
 func TestManagedCampaignLazilyOverlapsAutomaticPrimariesUpToCapacity(t *testing.T) {
@@ -65,18 +68,17 @@ func TestManagedCampaignLazilyOverlapsAutomaticPrimariesUpToCapacity(t *testing.
 		case <-started:
 		case <-time.After(time.Second):
 			close(release)
-			t.Fatal("automatic primaries did not overlap before settlement")
+			require.FailNow(t, "automatic primaries did not overlap before settlement")
 		}
 	}
 	close(release)
 	select {
 	case result := <-completed:
 		outcome, ok := result.outcome.(completedOutcome)
-		if !ok || len(outcome.mutants) != 2 {
-			t.Fatalf("outcome = %#v", result.outcome)
-		}
+		require.True(t, ok, "outcome = %#v", result.outcome)
+		assert.EqualValues(t, 2, len(outcome.mutants), "outcome = %#v", result.outcome)
 	case <-time.After(time.Second):
-		t.Fatal("overlapped campaign did not complete")
+		require.FailNow(t, "overlapped campaign did not complete")
 	}
 }
 
@@ -107,23 +109,23 @@ func TestManagedCampaignSerialPrimariesAreExclusiveWithDetectedCapacityProfile(t
 	}()
 
 	first := <-started
-	if !slices.Contains(first.Env, "GOMAXPROCS=3") {
-		t.Fatalf("serial environment = %#v", first.Env)
-	}
+	assert.True(t, slices.Contains(first.Env, "GOMAXPROCS=3"), "serial environment = %#v", first.Env)
 	select {
 	case second := <-started:
 		close(release)
-		t.Fatalf("serial primary overlapped: %#v", second)
+		require.FailNow(t, "serial primary overlapped: %#v", second)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
 	select {
 	case result := <-completed:
-		if outcome, ok := result.outcome.(completedOutcome); !ok || len(outcome.mutants) != 2 {
-			t.Fatalf("outcome = %#v", result.outcome)
+		{
+			outcome, ok := result.outcome.(completedOutcome)
+			require.True(t, ok, "outcome = %#v", result.outcome)
+			assert.EqualValues(t, 2, len(outcome.mutants), "outcome = %#v", result.outcome)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("serial campaign did not complete")
+		require.FailNow(t, "serial campaign did not complete")
 	}
 }
 
@@ -146,16 +148,13 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 	})
 
 	completed, ok := result.outcome.(completedOutcome)
-	if !ok || len(completed.mutants) != 1 || completed.mutants[0].kind != mutantKilled {
-		t.Fatalf("outcome = %#v, want one killed mutant", result.outcome)
-	}
-	if attempts.launches != 2 || len(attempts.specs) != 2 {
-		t.Fatalf("launches/specs = %d/%#v", attempts.launches, attempts.specs)
-	}
+	require.True(t, ok, "outcome = %#v, want one killed mutant", result.outcome)
+	require.Len(t, completed.mutants, 1, "outcome = %#v, want one killed mutant", result.outcome)
+	assert.Equal(t, mutantKilled, completed.mutants[0].kind, "outcome = %#v, want one killed mutant", result.outcome)
+	assert.EqualValues(t, 2, attempts.launches, "launches/specs = %d/%#v", attempts.launches, attempts.specs)
+	assert.EqualValues(t, 2, len(attempts.specs), "launches/specs = %d/%#v", attempts.launches, attempts.specs)
 	for _, spec := range attempts.specs {
-		if !slices.Contains(spec.Env, "GOMAXPROCS=1") {
-			t.Fatalf("automatic spec environment = %#v", spec.Env)
-		}
+		assert.True(t, slices.Contains(spec.Env, "GOMAXPROCS=1"), "automatic spec environment = %#v", spec.Env)
 	}
 }
 
@@ -179,12 +178,11 @@ func TestManagedCampaignPropagatesAbsoluteTimeoutAndRetainsTimedOutResult(t *tes
 	})
 
 	completed, ok := result.outcome.(completedOutcome)
-	if !ok || len(completed.mutants) != 1 || completed.mutants[0].kind != mutantTimedOut {
-		t.Fatalf("outcome = %#v, want one timed-out mutant", result.outcome)
-	}
-	if len(attempts.specs) != 2 || attempts.specs[1].Deadline != 37*time.Millisecond {
-		t.Fatalf("attempt specs = %#v, want exact 37ms primary deadline", attempts.specs)
-	}
+	require.True(t, ok, "outcome = %#v, want one timed-out mutant", result.outcome)
+	require.Len(t, completed.mutants, 1, "outcome = %#v, want one timed-out mutant", result.outcome)
+	assert.Equal(t, mutantTimedOut, completed.mutants[0].kind, "outcome = %#v, want one timed-out mutant", result.outcome)
+	require.Len(t, attempts.specs, 2, "attempt specs = %#v, want exact 37ms primary deadline", attempts.specs)
+	assert.Equal(t, 37*time.Millisecond, attempts.specs[1].Deadline, "attempt specs = %#v, want exact 37ms primary deadline", attempts.specs)
 }
 
 func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *testing.T) {
@@ -214,14 +212,14 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	})
 
 	completed, ok := result.outcome.(completedOutcome)
-	if !ok || len(completed.mutants) != 2 || completed.mutants[0].kind != mutantKilled ||
-		completed.mutants[1].kind != mutantKilled || !completed.singleAdmissionFallback ||
-		completed.mutants[0].confirmation.kind != campaignEvidenceSettled {
-		t.Fatalf("outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	}
-	if attempts.launches != 4 || shell.snapshot().mode != singleAdmission {
-		t.Fatalf("launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
-	}
+	require.True(t, ok, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	require.Len(t, completed.mutants, 2, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	assert.Equal(t, mutantKilled, completed.mutants[0].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	assert.Equal(t, mutantKilled, completed.mutants[1].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	assert.True(t, completed.singleAdmissionFallback, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	assert.EqualValues(t, 4, attempts.launches, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
+	assert.Equal(t, singleAdmission, shell.snapshot().mode, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
 }
 
 func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t *testing.T) {
@@ -245,9 +243,11 @@ func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t 
 		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.outcome.(abortedOutcome); !ok || shell.snapshot().mode != singleAdmission ||
-		attempts.launches != 2 {
-		t.Fatalf("outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
+	{
+		_, ok := result.outcome.(abortedOutcome)
+		require.True(t, ok, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
+		assert.Equal(t, singleAdmission, shell.snapshot().mode, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
+		assert.EqualValues(t, 2, attempts.launches, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
 	}
 }
 
@@ -273,8 +273,10 @@ func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testin
 		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.outcome.(abortedOutcome); !ok || attempts.stops != 1 {
-		t.Fatalf("outcome/stops = %#v/%d, want aborted after one peer stop", result.outcome, attempts.stops)
+	{
+		_, ok := result.outcome.(abortedOutcome)
+		require.True(t, ok, "outcome/stops = %#v/%d, want aborted after one peer stop", result.outcome, attempts.stops)
+		assert.EqualValues(t, 1, attempts.stops, "outcome/stops = %#v/%d, want aborted after one peer stop", result.outcome, attempts.stops)
 	}
 }
 
@@ -304,11 +306,12 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 	})
 
 	fault, ok := result.failure.(cleanupUnconfirmedFault)
-	if !ok || len(fault.attempts) != 1 || fault.attempts[0].attempt != "campaign-a:2" ||
-		fault.attempts[0].evidence.output.Cutoff != 7 ||
-		fault.attempts[0].evidence.failures.DrainCensus != "census failed" || attempts.emergencies != 1 {
-		t.Fatalf("failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
-	}
+	require.True(t, ok, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	require.Len(t, fault.attempts, 1, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	assert.EqualValues(t, "campaign-a:2", fault.attempts[0].attempt, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	assert.EqualValues(t, 7, fault.attempts[0].evidence.output.Cutoff, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	assert.EqualValues(t, "census failed", fault.attempts[0].evidence.failures.DrainCensus, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	assert.EqualValues(t, 1, attempts.emergencies, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
 }
 
 func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing.T) {
@@ -336,8 +339,10 @@ func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.outcome.(abortedOutcome); !ok || result.failure != nil {
-		t.Fatalf("outcome/failure = %#v/%#v, want forced Aborted", result.outcome, result.failure)
+	{
+		_, ok := result.outcome.(abortedOutcome)
+		require.True(t, ok, "outcome/failure = %#v/%#v, want forced Aborted", result.outcome, result.failure)
+		assert.Nil(t, result.failure, "outcome/failure = %#v/%#v, want forced Aborted", result.outcome, result.failure)
 	}
 }
 
@@ -352,10 +357,11 @@ func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if outcome, ok := result.outcome.(abortedOutcome); !ok ||
-		outcome.cause != "repository snapshot could not be materialized" ||
-		strings.Contains(outcome.cause, "/private/repository") {
-		t.Fatalf("boundary outcome = %#v, want typed snapshot abort", result.outcome)
+	{
+		outcome, ok := result.outcome.(abortedOutcome)
+		require.True(t, ok, "boundary outcome = %#v, want typed snapshot abort", result.outcome)
+		assert.EqualValues(t, "repository snapshot could not be materialized", outcome.cause, "boundary outcome = %#v, want typed snapshot abort", result.outcome)
+		assert.False(t, strings.Contains(outcome.cause, "/private/repository"), "boundary outcome = %#v, want typed snapshot abort", result.outcome)
 	}
 }
 
@@ -375,9 +381,11 @@ func TestManagedCampaignCleansWorkspaceAcquiredBeforeMutationPanic(t *testing.T)
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.outcome.(abortedOutcome); !ok || repository.workspace == nil || !repository.workspace.removed {
-		t.Fatalf("outcome/workspace = %#v/%#v, want aborted with acquired workspace removed",
-			result.outcome, repository.workspace)
+	{
+		_, ok := result.outcome.(abortedOutcome)
+		require.True(t, ok, "outcome/workspace = %#v/%#v, want aborted with acquired workspace removed", result.outcome, repository.workspace)
+		require.NotNil(t, repository.workspace, "outcome/workspace = %#v/%#v, want aborted with acquired workspace removed", result.outcome, repository.workspace)
+		assert.True(t, repository.workspace.removed, "outcome/workspace = %#v/%#v, want aborted with acquired workspace removed", result.outcome, repository.workspace)
 	}
 }
 
@@ -398,10 +406,10 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 	})
 
 	outcome, ok := result.outcome.(abortedOutcome)
-	if !ok || strings.Contains(outcome.cause, "/private/workspace") ||
-		len(outcome.artifactResidue) != 1 || !strings.HasPrefix(outcome.artifactResidue[0], "temporary-") {
-		t.Fatalf("outcome = %#v, want stable cause plus structured residue", result.outcome)
-	}
+	require.True(t, ok, "outcome = %#v, want stable cause plus structured residue", result.outcome)
+	assert.False(t, strings.Contains(outcome.cause, "/private/workspace"), "outcome = %#v, want stable cause plus structured residue", result.outcome)
+	require.Len(t, outcome.artifactResidue, 1, "outcome = %#v, want stable cause plus structured residue", result.outcome)
+	assert.True(t, strings.HasPrefix(outcome.artifactResidue[0], "temporary-"), "outcome = %#v, want stable cause plus structured residue", result.outcome)
 }
 
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
@@ -437,9 +445,11 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	if _, ok := result.outcome.(abortedOutcome); !ok || result.failure != nil || attempts.emergencies != 1 {
-		t.Fatalf("outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort",
-			result.outcome, result.failure, attempts.emergencies)
+	{
+		_, ok := result.outcome.(abortedOutcome)
+		require.True(t, ok, "outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort", result.outcome, result.failure, attempts.emergencies)
+		assert.Nil(t, result.failure, "outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort", result.outcome, result.failure, attempts.emergencies)
+		assert.EqualValues(t, 1, attempts.emergencies, "outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort", result.outcome, result.failure, attempts.emergencies)
 	}
 }
 
