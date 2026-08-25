@@ -48,6 +48,13 @@ jobs:
             test-command: devbox run -- go test
             catalogue-shard: campaign-cycle
             mutation-test: TestMutationCampaignCycle
+          - name: Ubuntu 24.04 / campaign-emergency
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+            test-command: devbox run -- go test
+            catalogue-shard: campaign-emergency
+            mutation-test: TestMutationCampaignEmergency
           - name: Ubuntu 24.04 / campaign-effects
             runner: ubuntu-24.04
             toolchain: devbox
@@ -83,6 +90,13 @@ jobs:
             test-command: devbox run -- go test
             catalogue-shard: campaign-cycle
             mutation-test: TestMutationCampaignCycle
+          - name: macOS 26 / campaign-emergency
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            test-command: devbox run -- go test
+            catalogue-shard: campaign-emergency
+            mutation-test: TestMutationCampaignEmergency
           - name: macOS 26 / campaign-effects
             runner: macos-26
             toolchain: devbox
@@ -125,6 +139,13 @@ jobs:
             test-command: go test
             catalogue-shard: campaign-cycle
             mutation-test: TestMutationCampaignCycle
+          - name: Windows 2025 / campaign-emergency
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+            test-command: go test
+            catalogue-shard: campaign-emergency
+            mutation-test: TestMutationCampaignEmergency
           - name: Windows 2025 / campaign-effects
             runner: windows-2025
             toolchain: raw-go
