@@ -253,13 +253,18 @@ func TestMutationWorkflowRunsOneCampaignPerOperatingSystem(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/mutation.yml", "mutation")
 	requireNativeToolchains(t, mutationJob)
 	requireMutationCampaignRows(t, mutationJob)
-	for _, name := range []string{
-		"Ubuntu 24.04",
-		"macOS 26",
+	for _, platform := range []struct {
+		name        string
+		testCommand string
+	}{
+		{name: "Ubuntu 24.04", testCommand: "devbox run -- go test"},
+		{name: "macOS 26", testCommand: "devbox run -- go test"},
+		{name: "Windows 2025", testCommand: "go test"},
 	} {
-		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "devbox run -- go test"})
+		t.Run(platform.name, func(t *testing.T) {
+			requireMatrixRow(t, mutationJob, platform.name, map[string]string{"test-command": platform.testCommand})
+		})
 	}
-	requireMatrixRow(t, mutationJob, "Windows 2025", map[string]string{"test-command": "go test"})
 	requireContract(t, mutationJob, "mutation job",
 		"toolchain: devbox",
 		"toolchain: raw-go",
