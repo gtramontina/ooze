@@ -5,7 +5,6 @@ package ooze
 import (
 	"fmt"
 	"os"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -59,6 +58,6 @@ func TestWindowsNativeOutputFaultPublishesResourceExhaustedThroughPublicLaunch(t
 	require.True(t, ok, "launch = %#v, want immutable Windows resource-exhausted fault", result)
 	assert.Equal(t, LaunchResourceExhausted, notReleased.Kind, "launch = %#v, want immutable Windows resource-exhausted fault", result)
 	require.NotNil(t, notReleased.Err, "launch = %#v, want immutable Windows resource-exhausted fault", result)
-	assert.True(t, strings.Contains(notReleased.Err.Error(), fault.Error()), "launch = %#v, want immutable Windows resource-exhausted fault", result)
+	assert.Contains(t, notReleased.Err.Error(), fault.Error(), "launch = %#v, want immutable Windows resource-exhausted fault", result)
 	assert.NotErrorIs(t, notReleased.Err, syscall.Errno(8), "public launch error retained mutable native identity: %v", notReleased.Err)
 }

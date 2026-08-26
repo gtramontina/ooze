@@ -177,8 +177,9 @@ func TestProcessRuntimeShellStartCommittedInstallsBeforeReentrantLaunchAndSettle
 		index := snapshot.admissionIndexByGeneration(installed)
 		assert.Equal(t, installed, generation, "launch observed uninstalled generation: installed=%d state=%#v", installed, snapshot)
 		assert.NotEqual(t, 0, installed, "launch observed uninstalled generation: installed=%d state=%#v", installed, snapshot)
-		assert.False(t, index < 0, "launch observed uninstalled generation: installed=%d state=%#v", installed, snapshot)
-		assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "launch observed uninstalled generation: installed=%d state=%#v", installed, snapshot)
+		if assert.False(t, index < 0, "launch observed uninstalled generation: installed=%d state=%#v", installed, snapshot) {
+			assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "launch observed uninstalled generation: installed=%d state=%#v", installed, snapshot)
+		}
 		reentrant = shell.registerCampaign(campaignProvenance{lineage: 22})
 
 		return launchNotReleased{reason: launchFailed}

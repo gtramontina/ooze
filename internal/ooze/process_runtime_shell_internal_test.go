@@ -272,8 +272,8 @@ func TestStartInstallationRejectsCrossPairedGrantBeforeCellMutation(t *testing.T
 			assert.EqualValues(t, 0, cellB.installedGeneration(), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
 			assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
 			assert.EqualValues(t, 0, len(snapshot.residualCustody()), "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-			assert.False(t, indexA < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
-			assert.False(t, indexB < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			require.False(t, indexA < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
+			require.False(t, indexB < 0, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
 			assert.Equal(t, admissionGranted, snapshot.admissions[indexA].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
 			assert.Equal(t, admissionGranted, snapshot.admissions[indexB].stage, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
 			assert.Equal(t, dispositionReturnedAfterClosure, snapshot.admissions[indexA].disposition, "reverse=%t cross-pair mutated installation/custody: %#v", reverse, snapshot)
@@ -624,7 +624,7 @@ func TestProcessRuntimeShellSerializesGateClosureAgainstStartCommit(t *testing.T
 		assert.Equal(t, wantCalls, launchCalls, "sample %d: cell/calls=%d/%d, want %d/%d", sample, cell.installedGeneration(), launchCalls, wantGeneration, wantCalls)
 		snapshot := shell.snapshot()
 		campaignAt := snapshot.campaignIndex(campaignA)
-		assert.False(t, campaignAt < 0, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
+		require.False(t, campaignAt < 0, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
 		assert.False(t, snapshot.campaigns[campaignAt].primaryGateOpen, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
 		assert.False(t, snapshot.unboundBarrierIndex(campaignA) < 0, "sample %d: non-atomic gate/barrier state=%#v", sample, snapshot)
 	}
@@ -830,7 +830,7 @@ func TestProcessRuntimeShellSerializesOwnedTerminalAgainstFatalClose(t *testing.
 			assert.False(t, index >= 0, "sample %d: open terminal path=%#v/%#v", sample, result, snapshot)
 		} else {
 			assert.True(t, result.runtimeClosureInProgress, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
-			assert.False(t, index < 0, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
+			require.False(t, index < 0, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
 			assert.Equal(t, dispositionTerminalDeferred, snapshot.admissions[index].disposition, "sample %d: deferred terminal path=%#v/%#v", sample, result, snapshot)
 		}
 	}

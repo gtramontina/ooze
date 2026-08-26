@@ -151,7 +151,7 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 		command.Env = replaceDarwinLimitRole("middle")
 		{
 			err := command.Start()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		awaitDarwinLimitFile(t, shape)
 		awaitDarwinLimitFile(t, release)
@@ -161,7 +161,7 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true} //nolint:exhaustruct // The session escape is the fixture.
 		{
 			err := command.Start()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	case "session":
 		{

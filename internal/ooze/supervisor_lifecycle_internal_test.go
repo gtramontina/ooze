@@ -117,10 +117,12 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 					index := snapshot.admissionIndexByGeneration(observed)
 					assert.NotEqual(t, 0, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
 					assert.Equal(t, generation, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
-					require.NotNil(t, cell, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
-					assert.Equal(t, observed, cell.installedGeneration(), "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
-					assert.False(t, index < 0, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
-					assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					if assert.NotNil(t, cell, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot) {
+						assert.Equal(t, observed, cell.installedGeneration(), "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					}
+					if assert.False(t, index < 0, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot) {
+						assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					}
 					assert.Equal(t, validSupervisorSpec().Attempt, spec.Attempt, "native spec attempt = %q", spec.Attempt)
 					spec.Command[0] = "mutated-by-native"
 					spec.Env[0] = "MUTATED=1"
@@ -189,13 +191,16 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			observedMu.Unlock()
 			snapshot := shell.snapshot()
 			index := snapshot.admissionIndexByGeneration(generation)
-			assert.NotNil(t, cell, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			cellPresent := assert.NotNil(t, cell, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			assert.NotEqual(t, 0, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			assert.Equal(t, wantGeneration, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
-			assert.Equal(t, generation, cell.installedGeneration(), "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
-			assert.False(t, index < 0, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
-			assert.Equal(t, attempt, snapshot.admissions[index].grant.attempt, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
-			assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			if cellPresent {
+				assert.Equal(t, generation, cell.installedGeneration(), "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			}
+			if assert.False(t, index < 0, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot) {
+				assert.Equal(t, attempt, snapshot.admissions[index].grant.attempt, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+				assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			}
 			if attempt == attemptIdentity(first.Attempt) {
 				spec.Command[0] = "mutated-first-snapshot"
 				spec.Env[0] = "MUTATED=1"

@@ -583,7 +583,7 @@ func TestCampaignGateRejectedStartOwnsExactlyOneGrantReturn(t *testing.T) {
 	harness.runtime, rejected = harness.runtime.startCommitted(runtimeAdmissionRequest(grant))
 	assert.Equal(t, startCommittedRejectedGate, rejected.decision, "start decision=%v, want gate rejection", rejected.decision)
 	admissionAt := harness.runtime.admissionIndex(runtimeAdmissionRequest(grant))
-	assert.False(t, admissionAt < 0, "rejected grant admission=%#v, want return-after-gate authority", harness.runtime.admissions)
+	require.False(t, admissionAt < 0, "rejected grant admission=%#v, want return-after-gate authority", harness.runtime.admissions)
 	assert.Equal(t, dispositionReturnedAfterGate, harness.runtime.admissions[admissionAt].disposition, "rejected grant admission=%#v, want return-after-gate authority", harness.runtime.admissions)
 	effects = harness.advance(startCommittedEvent{
 		attempt: effect.attempt, grant: grant, result: campaignStartEvidence(rejected),
@@ -1287,7 +1287,7 @@ func TestCampaignSettlesLateProvenNoReleaseDuringRuntimeEmergency(t *testing.T) 
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	attemptAt := harness.state.attemptIndex(prospective[1].attempt)
-	assert.False(t, attemptAt < 0, "late no-release state=%#v, want settled peer and unchanged drain %#v", harness.state, wantDrain)
+	require.False(t, attemptAt < 0, "late no-release state=%#v, want settled peer and unchanged drain %#v", harness.state, wantDrain)
 	assert.Equal(t, campaignAttemptSettled, harness.state.attempts[attemptAt].stage, "late no-release state=%#v, want settled peer and unchanged drain %#v", harness.state, wantDrain)
 	assert.Equal(t, wantDrain, harness.state.drain, "late no-release state=%#v, want settled peer and unchanged drain %#v", harness.state, wantDrain)
 }
@@ -1415,7 +1415,7 @@ func TestCampaignLateGrantDuringAbortAwaitsQueuedCancellation(t *testing.T) {
 	effects = harness.advance(admissionGrantedEvent{attempt: primaryEffects[1].attempt, grant: grant})
 	assert.EqualValues(t, 0, len(effects), "late abort grant effects=%#v, want queued cancellation only", effects)
 	attemptAt := harness.state.attemptIndex(primaryEffects[1].attempt)
-	assert.False(t, attemptAt < 0, "late abort grant state=%#v, want cancelling attempt under drain %#v", harness.state, wantDrain)
+	require.False(t, attemptAt < 0, "late abort grant state=%#v, want cancelling attempt under drain %#v", harness.state, wantDrain)
 	assert.Equal(t, campaignAttemptAdmissionWaiting, harness.state.attempts[attemptAt].stage, "late abort grant state=%#v, want cancelling attempt under drain %#v", harness.state, wantDrain)
 	assert.Equal(t, wantDrain, harness.state.drain, "late abort grant state=%#v, want cancelling attempt under drain %#v", harness.state, wantDrain)
 }
@@ -1508,10 +1508,10 @@ func TestCampaignInvariantProjectionOmitsPrivateCustodyAndFilesystemFacts(t *tes
 		"event=4 kind=resource settlement failed resource=workspace",
 		"campaign=campaign-a", "attempt=campaign-a:2", "workspace/attempt=campaign-a:2",
 	} {
-		assert.True(t, strings.Contains(projected, public), "safe invariant projection missing %q:\n%s", public, projected)
+		assert.Contains(t, projected, public, "safe invariant projection missing %q:\n%s", public, projected)
 	}
 	for _, private := range []string{"/private", "7777", "8888", "9999", "private cause", "generation", "token"} {
-		assert.False(t, strings.Contains(projected, private), "safe invariant projection leaked %q:\n%s", private, projected)
+		assert.NotContains(t, projected, private, "safe invariant projection leaked %q:\n%s", private, projected)
 	}
 }
 
@@ -1789,7 +1789,7 @@ func (harness *campaignHarness) settleAttempt(
 ) []campaignEffect {
 	t.Helper()
 	admissionAt := harness.runtime.admissionIndexByGeneration(attempt.generation)
-	assert.False(t, admissionAt < 0, "attempt generation is not live")
+	require.False(t, admissionAt < 0, "attempt generation is not live")
 	grant := harness.runtime.admissions[admissionAt].grant
 	var observation attemptObservation
 	switch observed := terminal.(type) {
@@ -1850,7 +1850,7 @@ func (harness *campaignHarness) launchConfirmation(
 	var started startCommittedResult
 	grant := effects[0].grant
 	grantAt := harness.runtime.admissionIndex(runtimeAdmissionRequest(grant))
-	assert.False(t, grantAt < 0, "confirmation grant is not live")
+	require.False(t, grantAt < 0, "confirmation grant is not live")
 	harness.runtime, started = harness.runtime.startCommitted(harness.runtime.admissions[grantAt].grant)
 	harness.advance(startCommittedEvent{
 		attempt: effect.attempt, grant: grant, result: campaignStartEvidence(started),
@@ -1873,7 +1873,7 @@ func (harness *campaignHarness) settleConfirmation(
 	t.Helper()
 	queueDrained := len(harness.state.drain.provisionals) == 1
 	admissionAt := harness.runtime.admissionIndexByGeneration(attempt.generation)
-	assert.False(t, admissionAt < 0, "confirmation generation is not live")
+	require.False(t, admissionAt < 0, "confirmation generation is not live")
 	grant := harness.runtime.admissions[admissionAt].grant
 	var observation attemptObservation
 	switch terminal := terminal.(type) {

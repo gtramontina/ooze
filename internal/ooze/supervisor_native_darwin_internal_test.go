@@ -376,14 +376,14 @@ func TestDarwinNativeSupervisorReturnsRuntimeProvedOverlapDeadlineForClassificat
 	})
 	primary, ok := primaryLaunch.(Owned)
 	require.True(t, ok, "primary launch = %#v, want Owned", primaryLaunch)
-	assert.NotNil(t, primary.Attempt, "primary launch = %#v, want Owned", primaryLaunch)
+	require.NotNil(t, primary.Attempt, "primary launch = %#v, want Owned", primaryLaunch)
 	peerLaunch := supervisor.Launch(Spec{
 		Attempt: "darwin-overlap-peer", Command: []string{"/bin/sh", "-c", "sleep 1"},
 		Dir: t.TempDir(), Env: os.Environ(), Profile: AutomaticProfile, Deadline: 2 * time.Second,
 	})
 	peer, ok := peerLaunch.(Owned)
 	require.True(t, ok, "peer launch = %#v, want Owned", peerLaunch)
-	assert.NotNil(t, peer.Attempt, "peer launch = %#v, want Owned", peerLaunch)
+	require.NotNil(t, peer.Attempt, "peer launch = %#v, want Owned", peerLaunch)
 
 	terminal := primary.Attempt.Wait()
 	disposition := ClassifyPrimaryMutation(terminal)

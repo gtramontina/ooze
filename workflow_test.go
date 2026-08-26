@@ -85,7 +85,7 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 		case "--format-hide-empty-pkg":
 			argument = "--format=testname"
 		}
-		assert.False(t, strings.Contains(argument, `"`), "self-mutation subprocess argument contains literal quote characters: %q", argument)
+		assert.NotContains(t, argument, `"`, "self-mutation subprocess argument contains literal quote characters: %q", argument)
 		if strings.HasPrefix(argument, "./") {
 			if argument == "./internal/ooze" {
 				arguments = append(arguments,
@@ -105,14 +105,14 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 		"TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged",
 	}
 	for _, fixture := range fixtures {
-		assert.True(t, strings.Contains(string(output), fixture), "self-mutation subprocess skipped ordinary owning-package fixture %q:\n%s", fixture, output)
+		assert.Contains(t, string(output), fixture, "self-mutation subprocess skipped ordinary owning-package fixture %q:\n%s", fixture, output)
 	}
 }
 
 func requireContract(t *testing.T, subject, contract string, required ...string) {
 	t.Helper()
 	for _, value := range required {
-		assert.True(t, strings.Contains(subject, value), "%s is missing %q", contract, value)
+		assert.Contains(t, subject, value, "%s is missing %q", contract, value)
 	}
 }
 
@@ -238,7 +238,7 @@ func requireMutationShardRows(t *testing.T, job string) {
 			"catalogue-shard": selection[0], "mutation-test": selection[1],
 		})
 	}
-	assert.False(t, strings.Contains(job, "OOZE_"), "mutation workflow uses a forbidden OOZE_* selector")
+	assert.NotContains(t, job, "OOZE_", "mutation workflow uses a forbidden OOZE_* selector")
 }
 
 func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testing.T) {
@@ -273,7 +273,7 @@ func TestAcceptanceGateDocumentsNativeToolchainPolicy(t *testing.T) {
 		"Linux and macOS use the repository's pinned Devbox environment",
 		"Windows uses pinned raw Go 1.26.6",
 	)
-	assert.False(t, strings.Contains(policy, "symmetrically on Linux, Darwin, and Windows"), "acceptance gate still claims one raw-Go path for every native platform")
+	assert.NotContains(t, policy, "symmetrically on Linux, Darwin, and Windows", "acceptance gate still claims one raw-Go path for every native platform")
 }
 
 func TestAcceptanceEvidenceDoesNotCreditPrototypeWithProductionSimulation(t *testing.T) {
@@ -284,7 +284,7 @@ func TestAcceptanceEvidenceDoesNotCreditPrototypeWithProductionSimulation(t *tes
 		"The tested revision did not contain the accepted production simulation module",
 		"a8e3e2440e1e06800458104e881d4aa8da951653",
 	)
-	assert.False(t, strings.Contains(evidence, "#64 nested simulation module passes"), "historical evidence still credits the prototype with production simulation delivery")
+	assert.NotContains(t, evidence, "#64 nested simulation module passes", "historical evidence still credits the prototype with production simulation delivery")
 }
 
 func TestAcceptanceGateDocumentsAuthoritativeDarwinControl(t *testing.T) {
@@ -369,7 +369,7 @@ func TestPerformanceDocumentDoesNotMislabelHistoricalRunAsExactHead(t *testing.T
 		"The #72 closure comment records the exact published-head revalidation",
 		"Retained implementation run",
 	)
-	assert.False(t, strings.Contains(document, "## Final native run"), "historical implementation run is still labeled as final exact-head evidence")
+	assert.NotContains(t, document, "## Final native run", "historical implementation run is still labeled as final exact-head evidence")
 }
 
 func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
@@ -378,7 +378,7 @@ func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 		`name: "🎲 Production deterministic simulation"`,
 		`devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze`,
 	)
-	assert.False(t, strings.Contains(testJob, "docs/prototypes/deterministic-simulation-contract"), "CI still presents the throwaway prototype as simulation delivery")
+	assert.NotContains(t, testJob, "docs/prototypes/deterministic-simulation-contract", "CI still presents the throwaway prototype as simulation delivery")
 }
 
 func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
@@ -404,7 +404,7 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing
 		configured = option(configured)
 	}
 	command := strings.Join(configured.TestCommand, " ")
-	assert.True(t, strings.Contains(command, "TestDarwinNativeSupervisorTripsAutomaticDescendantFuse"), "self-mutation command does not exclude its deliberate 65-descendant fuse fixture")
+	assert.Contains(t, command, "TestDarwinNativeSupervisorTripsAutomaticDescendantFuse", "self-mutation command does not exclude its deliberate 65-descendant fuse fixture")
 	for _, argument := range configured.TestCommand {
 		assert.NotEqual(t, ".", argument, "self-mutation command selects root or full-module package %q", argument)
 		assert.NotEqual(t, "./...", argument, "self-mutation command selects root or full-module package %q", argument)

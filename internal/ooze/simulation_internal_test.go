@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -913,7 +912,7 @@ func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 
 	replayed := ReplayLegal(trace)
 	require.NotNil(t, replayed.failure, "wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
-	assert.True(t, strings.Contains(replayed.failure.Error(), "external campaign fact is not enabled"), "wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
+	assert.Contains(t, replayed.failure.Error(), "external campaign fact is not enabled", "wrong resource replay failure=%v, want exact resource rejection", replayed.failure)
 }
 
 func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
@@ -1746,7 +1745,7 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	{
 		failure := ReplayLegal(corrupted).failure
 		require.NotNil(t, failure, "corrupted barrier replay failure=%v", failure)
-		assert.True(t, strings.Contains(failure.Error(), "quiescent world diverged"), "corrupted barrier replay failure=%v", failure)
+		assert.Contains(t, failure.Error(), "quiescent world diverged", "corrupted barrier replay failure=%v", failure)
 	}
 }
 
@@ -2064,7 +2063,7 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 
 	trace, projection := recorder.quiescent(runner, shell, driver)
 	projected := fmt.Sprintf("%#v %#v", trace, projection)
-	assert.False(t, strings.Contains(projected, "/private/repository"), "simulation projection leaked a filesystem path: %s", projected)
+	assert.NotContains(t, projected, "/private/repository", "simulation projection leaked a filesystem path: %s", projected)
 	assert.EqualValues(t, "snapshot:campaign-paths", projection.campaign.snapshot, "logical snapshot identity=%q", projection.campaign.snapshot)
 }
 

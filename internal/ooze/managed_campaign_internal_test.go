@@ -361,7 +361,7 @@ func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
 		outcome, ok := result.outcome.(abortedOutcome)
 		require.True(t, ok, "boundary outcome = %#v, want typed snapshot abort", result.outcome)
 		assert.EqualValues(t, "repository snapshot could not be materialized", outcome.cause, "boundary outcome = %#v, want typed snapshot abort", result.outcome)
-		assert.False(t, strings.Contains(outcome.cause, "/private/repository"), "boundary outcome = %#v, want typed snapshot abort", result.outcome)
+		assert.NotContains(t, outcome.cause, "/private/repository", "boundary outcome = %#v, want typed snapshot abort", result.outcome)
 	}
 }
 
@@ -407,7 +407,7 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 
 	outcome, ok := result.outcome.(abortedOutcome)
 	require.True(t, ok, "outcome = %#v, want stable cause plus structured residue", result.outcome)
-	assert.False(t, strings.Contains(outcome.cause, "/private/workspace"), "outcome = %#v, want stable cause plus structured residue", result.outcome)
+	assert.NotContains(t, outcome.cause, "/private/workspace", "outcome = %#v, want stable cause plus structured residue", result.outcome)
 	require.Len(t, outcome.artifactResidue, 1, "outcome = %#v, want stable cause plus structured residue", result.outcome)
 	assert.True(t, strings.HasPrefix(outcome.artifactResidue[0], "temporary-"), "outcome = %#v, want stable cause plus structured residue", result.outcome)
 }

@@ -170,9 +170,9 @@ func readNativeFanoutPair(t *testing.T, path string) (int, int) {
 	pid, pidErr := strconv.Atoi(fields[0])
 	parent, parentErr := strconv.Atoi(fields[1])
 	require.NoError(t, pidErr, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
-	assert.NoError(t, parentErr, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
-	assert.False(t, pid <= 0, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
-	assert.False(t, parent <= 0, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
+	require.NoError(t, parentErr, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
+	require.Positive(t, pid, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
+	require.Positive(t, parent, "invalid fanout identities %q: %v/%v", contents, pidErr, parentErr)
 	return pid, parent
 }
 

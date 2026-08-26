@@ -160,7 +160,7 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 				last = at
 			}
 			for _, fragment := range test.absent {
-				assert.False(t, strings.Contains(text, fragment), "output unexpectedly contains %q:\n%s", fragment, text)
+				assert.NotContains(t, text, fragment, "output unexpectedly contains %q:\n%s", fragment, text)
 			}
 		})
 	}
