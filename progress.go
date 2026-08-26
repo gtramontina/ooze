@@ -102,6 +102,15 @@ func ComposeObservers(observers ...ProgressObserver) ProgressObserver {
 type multiObserver []ProgressObserver
 
 func (observers multiObserver) Observe(event CampaignEvent) error {
+	panicValue, failure := observers.observe(event)
+	if panicValue != nil {
+		panic(panicValue)
+	}
+
+	return failure
+}
+
+func (observers multiObserver) observe(event CampaignEvent) (any, error) {
 	failures := make([]error, 0, len(observers))
 	var panicValue any
 	for _, observer := range observers {
@@ -113,11 +122,7 @@ func (observers multiObserver) Observe(event CampaignEvent) error {
 			panicValue = recovered
 		}
 	}
-	if panicValue != nil {
-		panic(panicValue)
-	}
-
-	return errors.Join(failures...)
+	return panicValue, errors.Join(failures...)
 }
 
 type observerDispatcher struct {
@@ -195,6 +200,9 @@ func (dispatcher *observerDispatcher) run() {
 }
 
 func observeCampaignEvent(observer ProgressObserver, event CampaignEvent) (panicValue any, failure error) {
+	if observers, ok := observer.(multiObserver); ok {
+		return observers.observe(event)
+	}
 	defer func() {
 		panicValue = recover()
 	}()

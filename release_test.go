@@ -330,7 +330,8 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 			name: "observer panic", role: "observer-panic", wantFailure: true,
 			want: []string{
 				"EVENT: ooze.CampaignStarted", "EVENT: ooze.CampaignCompleted",
-				"Score:     0.00 (minimum: 0.00)", "panic: observer panic",
+				"Score:     0.00 (minimum: 0.00)", "observer failed: observation failed",
+				"panic: observer panic",
 			},
 			absent: []string{"AFTER RELEASE"},
 		},
@@ -422,7 +423,9 @@ func TestReleaseDispositionHelper(t *testing.T) {
 		options = append(options, ooze.WithObserver(errorObserver{}))
 	}
 	if role == "observer-panic" {
-		options = append(options, ooze.WithObserver(ooze.ComposeObservers(&panicOnceObserver{}, eventOutputObserver{})))
+		options = append(options, ooze.WithObserver(ooze.ComposeObservers(
+			&panicOnceObserver{}, &errorOnceObserver{}, eventOutputObserver{},
+		)))
 	}
 	ooze.Release(t, options...)
 	fmt.Println("AFTER RELEASE")
@@ -470,6 +473,19 @@ func (errorObserver) Observe(ooze.CampaignEvent) error {
 
 type panicOnceObserver struct {
 	panicked bool
+}
+
+type errorOnceObserver struct {
+	failed bool
+}
+
+func (observer *errorOnceObserver) Observe(ooze.CampaignEvent) error {
+	if !observer.failed {
+		observer.failed = true
+		return fmt.Errorf("observation failed")
+	}
+
+	return nil
 }
 
 func (observer *panicOnceObserver) Observe(ooze.CampaignEvent) error {

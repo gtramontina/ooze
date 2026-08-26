@@ -144,15 +144,14 @@ func Release(t *testing.T, options ...Option) {
 	if err := reporter.Report(result); err != nil {
 		t.Errorf("ooze: reporter failed: %v", err)
 	}
-	applyManagedReportDisposition(t, result.report)
+	applyReleaseDisposition(t, result.report, observerPanic)
+}
+
+func applyReleaseDisposition(t *testing.T, report ooze.ManagedReport, observerPanic any) {
+	t.Helper()
 	if observerPanic != nil {
 		panic(observerPanic)
 	}
-}
-
-func publishManagedReport(t *testing.T, logger ooze.Logger, report ooze.ManagedReport) {
-	t.Helper()
-	logger.Logf("%s", report.Text)
 	applyManagedReportDisposition(t, report)
 }
 
