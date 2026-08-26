@@ -2515,6 +2515,7 @@ func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceB
 func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{1, 7, 9})
+	f.Add([]byte{2})
 	f.Fuzz(func(t *testing.T, source []byte) {
 		definition, choices := simulationFuzzInput(source)
 		explored := Explore(definition, choices)
