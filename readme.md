@@ -88,7 +88,7 @@ Ooze supports Go 1.25 and every stable Go release through the current version.
 
 Only a completed campaign publishes a score. Every catalogue mutant is either `Survived`, `Killed`, `TimedOut`, or `Runaway`; detected mutants are the last three classes. The score remains `detected / total`, and the test passes when the `float32` score is greater than or equal to [`WithMinimumThreshold`](#settings).
 
-Survivors include their full diff. Timed-out and runaway mutants are called out separately, and a mutant that needed an exclusive confirmation includes both observations even when the confirmation killed it. Ordinary killed mutants stay quiet. A completed automatic campaign looks like this (also available as the [plain-text report artifact](.assets/report.txt)):
+Survivors include their full diff. Timed-out and runaway mutants are called out separately, and a mutant that needed an exclusive confirmation includes both observations even when the confirmation killed it. Ordinary killed mutants stay quiet. A completed automatic campaign looks like this:
 
 ```text
 Mutant survived: internal/gotextdiff/gotextdiff.go → Integer Increment
