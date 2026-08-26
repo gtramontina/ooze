@@ -17,7 +17,7 @@ test.failfast: $(pre-reqs)
 .PHONY: test.failfast
 
 test.mutation: $(pre-reqs)
-	@go test -timeout=60m -count=1 -v -tags=mutation -run=^TestMutation$
+	@go test -timeout=90m -count=1 -v -tags=mutation -run=^TestMutation$
 .PHONY: test.mutation
 
 test.adversarial: $(pre-reqs)

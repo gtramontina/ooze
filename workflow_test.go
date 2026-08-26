@@ -268,7 +268,7 @@ func TestMutationWorkflowRunsOneCampaignPerOperatingSystem(t *testing.T) {
 		"go-command: devbox run -- go",
 		"test-command: devbox run -- go test",
 		"Verify pinned Go 1.26.6",
-		"-timeout=60m",
+		"-timeout=90m",
 		"-run=^TestMutation$",
 	)
 }
@@ -307,7 +307,7 @@ func TestMutationTargetRunsOneCampaign(t *testing.T) {
 	makefile := strings.ReplaceAll(string(contents), "\r\n", "\n")
 	requireContract(t, makefile, "mutation target",
 		"test.mutation: $(pre-reqs)",
-		"go test -timeout=60m -count=1 -v -tags=mutation -run=^TestMutation$",
+		"go test -timeout=90m -count=1 -v -tags=mutation -run=^TestMutation$",
 	)
 	assert.NotContains(t, makefile, "for test_name in")
 }

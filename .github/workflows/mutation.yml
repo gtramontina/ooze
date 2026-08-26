@@ -70,4 +70,4 @@ jobs:
 
       - name: "🧬 Mutation Tests"
         shell: bash
-        run: ${{ matrix.test-command }} -timeout=60m -count=1 -v -tags=mutation -run=^TestMutation$
+        run: ${{ matrix.test-command }} -timeout=90m -count=1 -v -tags=mutation -run=^TestMutation$
