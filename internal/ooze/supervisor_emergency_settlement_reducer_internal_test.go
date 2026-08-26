@@ -374,6 +374,30 @@ func TestSupervisorReducerEmergencySettlementWaitsForLateProspectiveClose(t *tes
 	assert.Equal(t, wantActions, actions, "late no-release close actions = %#v, want %#v", actions, wantActions)
 	assert.Equal(t, wantState, next, "late no-release close state = %#v, want %#v", next, wantState)
 	assert.Equal(t, input, active, "late no-release settlement mutated input: before=%#v after=%#v", input, active)
+	for _, test := range []struct {
+		name string
+		kind supervisorRuntimeReceiptKind
+	}{
+		{name: "closure pending", kind: supervisorRuntimeClosurePending},
+		{name: "provisional deadline", kind: supervisorRuntimeProvisionalDeadline},
+		{name: "empty"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rejected := supervisorRuntimeCompletion{
+				generation: emergencyLateNoReleaseGeneration,
+				action: supervisorPendingAction{
+					kind: supervisorCloseProspective, token: closeToken,
+				},
+				kind: test.kind,
+			}
+			assertSupervisorInvariant(t, func() {
+				reduceSupervisor(next, supervisorEvent{
+					kind: supervisorRuntimeCompleted, generation: emergencyLateNoReleaseGeneration,
+					runtime: &rejected,
+				})
+			})
+		})
+	}
 
 	receipt := supervisorRuntimeCompletion{
 		generation: emergencyLateNoReleaseGeneration,

@@ -23,6 +23,31 @@ func (source simulationFocusedChoiceSource) chooseMove(moves []simulationEngineM
 	return source(moves)
 }
 
+func TestSimulationStopEligibilityUsesExplicitSupervisorPhases(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		phase supervisorAttemptPhase
+		want  bool
+	}{
+		{name: "running", phase: supervisorRunning, want: true},
+		{name: "intent latched", phase: supervisorIntentLatched, want: true},
+		{name: "emergency draining", phase: supervisorEmergencyDraining, want: true},
+		{name: "releasing domain", phase: supervisorReleasingDomain, want: true},
+		{name: "transferring residual custody", phase: supervisorTransferringResidualCustody, want: true},
+		{name: "settling runtime", phase: supervisorSettlingRuntime, want: true},
+		{name: "awaiting emergency settlement", phase: supervisorAwaitingEmergencySettlement, want: true},
+		{name: "closing prospective", phase: supervisorClosingProspective, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := simulationEngine{supervisor: supervisorState{attempts: []supervisorAttemptState{{
+				generation: 1,
+				phase:      test.phase,
+			}}}}
+			assert.Equal(t, test.want, engine.supervisorAcceptsStop(1), "stop eligibility for phase %d", test.phase)
+		})
+	}
+}
+
 func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *testing.T) {
 	definition := simulationDefinition{
 		campaign: campaignDefinition{

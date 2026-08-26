@@ -275,9 +275,38 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 			require.FailNow(t, "multi-prospective emergency did not release every callback")
 		}
 	}
+	shell.mutex.Lock()
+	runtimeLocked := true
+	defer func() {
+		if runtimeLocked {
+			shell.mutex.Unlock()
+		}
+	}()
 	for _, launch := range pending {
 		close(launch.release)
 	}
+	closuresPending := assert.Eventually(t, func() bool {
+		driver.mutex.Lock()
+		defer driver.mutex.Unlock()
+		closing := 0
+		for _, attempt := range driver.state.attempts {
+			if attempt.phase == supervisorClosingProspective {
+				closing++
+			}
+		}
+
+		return closing == 2
+	}, time.Second, time.Millisecond, "prospective closes did not wait for their runtime receipts")
+	settledEarly := false
+	select {
+	case <-settled:
+		settledEarly = true
+	default:
+	}
+	shell.mutex.Unlock()
+	runtimeLocked = false
+	require.True(t, closuresPending, "prospective close receipt boundary was not reached")
+	require.False(t, settledEarly, "emergency settled before prospective close receipts")
 	select {
 	case settlement := <-settled:
 		{

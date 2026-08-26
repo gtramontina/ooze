@@ -365,7 +365,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 
 			return fmt.Errorf("simulation stop effect has no registered generation %d", move.effect.generation)
 		}
-		if attempt.phase >= supervisorReleasingDomain {
+		if simulationSupervisorStopResolved(attempt.phase) {
 			return nil
 		}
 		if attempt.phase != supervisorRunning && attempt.phase != supervisorIntentLatched &&
@@ -512,13 +512,10 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeObservationOut: simulationTraceObservationResult(result),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, result.deliveries)
-		if !result.settlementAcknowledged || result.confirmationProvisional {
-			return fmt.Errorf("simulation runtime rejected prospective close")
-		}
 		completion := supervisorRuntimeCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
-			kind:       supervisorRuntimeAcknowledged,
+			kind:       normalizedSupervisorRuntimeReceipt(result),
 		}
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorRuntimeCompleted, generation: action.generation, runtime: &completion,
@@ -669,18 +666,10 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeObservationOut: simulationTraceObservationResult(receipt),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, receipt.deliveries)
-		kind := supervisorRuntimeClosurePending
-		if receipt.settlementAcknowledged {
-			kind = supervisorRuntimeAcknowledged
-			if receipt.confirmationProvisional {
-				kind = supervisorRuntimeProvisionalDeadline
-			}
-		} else if !receipt.runtimeClosureInProgress {
-			return fmt.Errorf("simulation runtime returned no terminal disposition")
-		}
 		completion := supervisorRuntimeCompletion{
 			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token}, kind: kind,
+			action:     supervisorPendingAction{kind: action.kind, token: action.token},
+			kind:       normalizedSupervisorRuntimeReceipt(receipt),
 		}
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorRuntimeCompleted, generation: action.generation, runtime: &completion,
@@ -1066,12 +1055,22 @@ func (engine simulationEngine) supervisorAcceptsStop(generation attemptGeneratio
 		}
 
 		return attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
-			attempt.phase == supervisorEmergencyDraining || attempt.phase >= supervisorReleasingDomain
+			attempt.phase == supervisorEmergencyDraining || simulationSupervisorStopResolved(attempt.phase)
 	}
 
 	_, registered := engine.launches[generation]
 
 	return registered
+}
+
+func simulationSupervisorStopResolved(phase supervisorAttemptPhase) bool {
+	switch phase {
+	case supervisorReleasingDomain, supervisorTransferringResidualCustody,
+		supervisorSettlingRuntime, supervisorAwaitingEmergencySettlement:
+		return true
+	default:
+		return false
+	}
 }
 
 func (engine simulationEngine) firstSupervisorAction(generation attemptGeneration) supervisorActionToken {

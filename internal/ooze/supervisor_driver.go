@@ -529,13 +529,10 @@ func (driver *supervisorDriver) publishLaunchUnconfirmed(action supervisorAction
 
 func (driver *supervisorDriver) closeProspective(action supervisorAction) {
 	receipt := driver.runtime.observeAttempt(action.generation, launchObservationFromAction(action))
-	if !receipt.settlementAcknowledged || receipt.confirmationProvisional {
-		invariant(supervisorDriverOperation, "runtime rejected prospective close")
-	}
 	completion := supervisorRuntimeCompletion{
 		generation: action.generation,
 		action:     supervisorPendingAction{kind: action.kind, token: action.token},
-		kind:       supervisorRuntimeAcknowledged,
+		kind:       normalizedSupervisorRuntimeReceipt(receipt),
 	}
 	driver.apply(supervisorEvent{
 		kind: supervisorRuntimeCompleted, generation: action.generation,
@@ -987,24 +984,30 @@ func (driver *supervisorDriver) sealStopAdmission(action supervisorAction) {
 func (driver *supervisorDriver) settleRuntime(action supervisorAction) {
 	receipt := driver.runtime.observeAttempt(action.generation, terminalObservation(action.terminal))
 	driver.recordRuntimeReceipt(action.generation, receipt)
-	kind := supervisorRuntimeClosurePending
-	if receipt.settlementAcknowledged {
-		kind = supervisorRuntimeAcknowledged
-		if receipt.confirmationProvisional {
-			kind = supervisorRuntimeProvisionalDeadline
-		}
-	} else if !receipt.runtimeClosureInProgress {
-		invariant(supervisorDriverOperation, "runtime returned no terminal disposition")
-	}
 	completion := supervisorRuntimeCompletion{
 		generation: action.generation,
 		action:     supervisorPendingAction{kind: action.kind, token: action.token},
-		kind:       kind,
+		kind:       normalizedSupervisorRuntimeReceipt(receipt),
 	}
 	driver.apply(supervisorEvent{
 		kind: supervisorRuntimeCompleted, generation: action.generation,
 		runtime: &completion,
 	})
+}
+
+func normalizedSupervisorRuntimeReceipt(receipt observationResult) supervisorRuntimeReceiptKind {
+	if receipt.settlementAcknowledged {
+		if receipt.confirmationProvisional {
+			return supervisorRuntimeProvisionalDeadline
+		}
+
+		return supervisorRuntimeAcknowledged
+	}
+	if receipt.runtimeClosureInProgress {
+		return supervisorRuntimeClosurePending
+	}
+
+	return 0
 }
 
 func (driver *supervisorDriver) transferResidualCustody(action supervisorAction) {
