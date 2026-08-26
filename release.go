@@ -135,7 +135,8 @@ func Release(t *testing.T, options ...Option) {
 	if observerFailure != nil {
 		t.Errorf("ooze: observer failed: %v", observerFailure)
 	}
-	result := projectResult(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
+	projected := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
+	result := projectResult(managed, projected)
 	reporter := opts.Reporter
 	if reporter == nil {
 		reporter = consoleReporter{logger: logger}

@@ -76,7 +76,19 @@ func TestProjectResultPreservesFatalCampaignEvidence(t *testing.T) {
 					Failures: internalooze.FailureDiagnostics{Termination: "kill failed"},
 				},
 			}},
-		}, 1, false, false)
+		}, internalooze.ProjectManagedReport(internalooze.ManagedReleaseResult{
+			Outcome: internalooze.ManagedCleanupUnconfirmed,
+			Residual: []internalooze.ManagedResidualCustody{{
+				Attempt: "campaign-1:2", Generation: 7, Stage: internalooze.ManagedResidualOwned, Transferred: true,
+			}},
+			FatalAttempts: []internalooze.ManagedFatalAttemptEvidence{{
+				Attempt: "campaign-1:2",
+				Evidence: internalooze.ManagedAttemptEvidence{
+					Kind:     internalooze.ManagedAttemptDrainUnconfirmed,
+					Failures: internalooze.FailureDiagnostics{Termination: "kill failed"},
+				},
+			}},
+		}, 1, false, false))
 
 		assert.Equal(t, CleanupUnconfirmed, result.Outcome)
 		assert.Equal(t, []ResidualCustody{{
@@ -95,7 +107,14 @@ func TestProjectResultPreservesFatalCampaignEvidence(t *testing.T) {
 				RejectedEvent: "attempt terminal", StableIdentities: []string{"campaign-1", "attempt-2"},
 				Obligations: []string{"execution-domain"}, TraceTail: []string{"event-7"},
 			},
-		}, 1, false, false)
+		}, internalooze.ProjectManagedReport(internalooze.ManagedReleaseResult{
+			Outcome: internalooze.ManagedInvariantViolation,
+			Invariant: &internalooze.ManagedInvariantEvidence{
+				Operation: "campaign advance", Reason: "invalid transition", Phase: "Running",
+				RejectedEvent: "attempt terminal", StableIdentities: []string{"campaign-1", "attempt-2"},
+				Obligations: []string{"execution-domain"}, TraceTail: []string{"event-7"},
+			},
+		}, 1, false, false))
 
 		assert.Equal(t, InvariantViolation, result.Outcome)
 		require.NotNil(t, result.Invariant)

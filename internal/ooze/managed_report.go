@@ -29,6 +29,15 @@ type managedReport struct {
 	disposition   managedReportDisposition
 	panicValue    string
 	callerMessage string
+	score         *managedReportScore
+}
+
+type managedReportScore struct {
+	detected int
+	total    int
+	value    float32
+	minimum  float32
+	passed   bool
 }
 
 type ManagedReportDisposition uint8
@@ -44,6 +53,16 @@ type ManagedReport struct {
 	Disposition   ManagedReportDisposition
 	PanicValue    string
 	CallerMessage string
+	Score         *ManagedReportScore
+}
+
+// ManagedReportScore contains the authoritative score and threshold decision.
+type ManagedReportScore struct {
+	Detected int
+	Total    int
+	Value    float32
+	Minimum  float32
+	Passed   bool
 }
 
 func ProjectManagedReport(result ManagedReleaseResult, minimumThreshold float32, serial, colors bool) ManagedReport {
@@ -61,10 +80,18 @@ func ProjectManagedReport(result ManagedReleaseResult, minimumThreshold float32,
 		panic("managed report disposition is invalid")
 	}
 
-	return ManagedReport{
+	report := ManagedReport{
 		Text: projected.text, Disposition: disposition, PanicValue: projected.panicValue,
 		CallerMessage: projected.callerMessage,
 	}
+	if projected.score != nil {
+		report.Score = &ManagedReportScore{
+			Detected: projected.score.detected, Total: projected.score.total,
+			Value: projected.score.value, Minimum: projected.score.minimum, Passed: projected.score.passed,
+		}
+	}
+
+	return report
 }
 
 func projectManagedReport(result ManagedReleaseResult, configuration managedReportConfiguration) managedReport {
@@ -126,7 +153,13 @@ func projectManagedReport(result ManagedReleaseResult, configuration managedRepo
 		disposition = managedReportError
 	}
 
-	projected := managedReport{text: strings.TrimSuffix(report.String(), "\n"), disposition: disposition}
+	projected := managedReport{
+		text: strings.TrimSuffix(report.String(), "\n"), disposition: disposition,
+		score: &managedReportScore{
+			detected: detected, total: total, value: score,
+			minimum: configuration.minimumThreshold, passed: disposition == managedReportPass,
+		},
+	}
 	if disposition == managedReportError {
 		projected.callerMessage = fmt.Sprintf(
 			"mutation score %.2f is below minimum %.2f", score, configuration.minimumThreshold,

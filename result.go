@@ -220,12 +220,12 @@ type Result struct {
 	report                  internalooze.ManagedReport
 }
 
-func projectResult(managed internalooze.ManagedReleaseResult, minimum float32, serial, colors bool) Result {
+func projectResult(managed internalooze.ManagedReleaseResult, report internalooze.ManagedReport) Result {
 	result := Result{
 		Outcome: projectOutcome(managed.Outcome), Total: managed.Total,
 		ArtifactResidue:         append([]string(nil), managed.ArtifactResidue...),
 		SingleAdmissionFallback: managed.SingleAdmissionFallback,
-		report:                  internalooze.ProjectManagedReport(managed, minimum, serial, colors),
+		report:                  report,
 	}
 	if managed.Cause != 0 {
 		result.Cause = projectAbortCause(managed.Cause)
@@ -257,7 +257,6 @@ func projectResult(managed internalooze.ManagedReleaseResult, minimum float32, s
 		}
 	}
 	result.Mutations = make([]MutationResult, len(managed.Mutations))
-	detected := 0
 	for index, mutation := range managed.Mutations {
 		outcome := projectMutationOutcome(mutation.Outcome)
 		result.Mutations[index] = MutationResult{
@@ -268,16 +267,12 @@ func projectResult(managed internalooze.ManagedReleaseResult, minimum float32, s
 			confirmation := projectAttempt(*mutation.Confirmation)
 			result.Mutations[index].Confirmation = &confirmation
 		}
-		if outcome != Survived && outcome != 0 {
-			detected++
-		}
 	}
-	if result.Outcome == Completed {
-		total := len(result.Mutations)
-		result.Total = total
-		value := float32(detected) / float32(total)
+	if report.Score != nil {
+		result.Total = report.Score.Total
 		result.Score = &Score{
-			Detected: detected, Total: total, Value: value, Minimum: minimum, Passed: value >= minimum,
+			Detected: report.Score.Detected, Total: report.Score.Total, Value: report.Score.Value,
+			Minimum: report.Score.Minimum, Passed: report.Score.Passed,
 		}
 	}
 
