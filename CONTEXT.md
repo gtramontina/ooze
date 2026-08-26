@@ -8,6 +8,18 @@ Ooze evaluates source mutations through supervised test-command executions. This
 One invocation of Ooze that attempts to establish and evaluate one fixed repository snapshot and mutant catalogue. A campaign either produces one trustworthy mutation score or produces no score.
 _Avoid_: Run, release
 
+**Campaign event**:
+An immutable, ordered fact about a domain-significant campaign transition. Campaign events form the published observation language; execution coordination and operating-system evidence are not campaign events.
+_Avoid_: Reducer event, progress snapshot, trace record
+
+**Progress observer**:
+An injected recipient of campaign events. Observation may fail, but it never determines campaign policy, evidence, or outcome.
+_Avoid_: Subscriber, event handler
+
+**Reporter**:
+An injected presentation behavior that receives one authoritative terminal campaign result. It never calculates mutation outcomes, scores, or pass/fail policy.
+_Avoid_: Result classifier, campaign listener
+
 **Process runtime**:
 The process-local coordination authority shared by every Ooze campaign in one Go process. It owns campaign registration, admission, start and terminal linearization, and runtime-wide emergency settlement; after a fatal epoch it remains closed for the life of the process.
 _Avoid_: Global lock, campaign scheduler
