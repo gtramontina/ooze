@@ -86,7 +86,7 @@ func TestProcessRuntimeShellBroadcastsEmergencyOnceToEveryCampaign(t *testing.T)
 		require.FailNow(t, "emergency broadcast closed while runtime was open")
 	default:
 	}
-	shell.registerCampaign(campaignProvenance{lineage: 11}) // No waiter to close for this campaign.
+	shell.registerCampaign(campaignProvenance{lineage: 11})
 	campaignB := shell.registerCampaign(campaignProvenance{lineage: 22})
 	requested := shell.requestAdmission(admissionRequest{
 		campaign: campaignB.token, attempt: "fatal seed", class: sharedAdmission,

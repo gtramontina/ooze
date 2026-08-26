@@ -25,133 +25,114 @@ jobs:
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: repository
             mutation-test: TestMutationRepository
           - name: Ubuntu 24.04 / attempt-system
             runner: ubuntu-24.04
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: attempt-system
             mutation-test: TestMutationAttemptSystem
           - name: Ubuntu 24.04 / campaign-runner
             runner: ubuntu-24.04
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-runner
             mutation-test: TestMutationCampaignRunner
           - name: Ubuntu 24.04 / campaign-cycle
             runner: ubuntu-24.04
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-cycle
             mutation-test: TestMutationCampaignCycle
           - name: Ubuntu 24.04 / campaign-emergency
             runner: ubuntu-24.04
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-emergency
             mutation-test: TestMutationCampaignEmergency
           - name: Ubuntu 24.04 / campaign-effects
             runner: ubuntu-24.04
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-effects
             mutation-test: TestMutationCampaignEffects
           - name: macOS 26 / repository
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: repository
             mutation-test: TestMutationRepository
           - name: macOS 26 / attempt-system
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: attempt-system
             mutation-test: TestMutationAttemptSystem
           - name: macOS 26 / campaign-runner
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-runner
             mutation-test: TestMutationCampaignRunner
           - name: macOS 26 / campaign-cycle
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-cycle
             mutation-test: TestMutationCampaignCycle
           - name: macOS 26 / campaign-emergency
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-emergency
             mutation-test: TestMutationCampaignEmergency
           - name: macOS 26 / campaign-effects
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: campaign-effects
             mutation-test: TestMutationCampaignEffects
           - name: macOS 26 / darwin
             runner: macos-26
             toolchain: devbox
             go-command: devbox run -- go
             test-command: devbox run -- go test
-            catalogue-shard: darwin
             mutation-test: TestMutationPlatform
           - name: Windows 2025 / repository
             runner: windows-2025
             toolchain: raw-go
             go-command: go
             test-command: go test
-            catalogue-shard: repository
             mutation-test: TestMutationRepository
           - name: Windows 2025 / attempt-system
             runner: windows-2025
             toolchain: raw-go
             go-command: go
             test-command: go test
-            catalogue-shard: attempt-system
             mutation-test: TestMutationAttemptSystem
           - name: Windows 2025 / campaign-runner
             runner: windows-2025
             toolchain: raw-go
             go-command: go
             test-command: go test
-            catalogue-shard: campaign-runner
             mutation-test: TestMutationCampaignRunner
           - name: Windows 2025 / campaign-cycle
             runner: windows-2025
             toolchain: raw-go
             go-command: go
             test-command: go test
-            catalogue-shard: campaign-cycle
             mutation-test: TestMutationCampaignCycle
           - name: Windows 2025 / campaign-emergency
             runner: windows-2025
             toolchain: raw-go
             go-command: go
             test-command: go test
-            catalogue-shard: campaign-emergency
             mutation-test: TestMutationCampaignEmergency
           - name: Windows 2025 / campaign-effects
             runner: windows-2025
             toolchain: raw-go
             go-command: go
             test-command: go test
-            catalogue-shard: campaign-effects
             mutation-test: TestMutationCampaignEffects
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

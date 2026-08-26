@@ -210,34 +210,33 @@ func requireNativeToolchains(t *testing.T, job string) {
 
 func requireMutationShardRows(t *testing.T, job string) {
 	t.Helper()
-	want := map[string][2]string{
-		"Ubuntu 24.04 / repository":         {"repository", "TestMutationRepository"},
-		"Ubuntu 24.04 / attempt-system":     {"attempt-system", "TestMutationAttemptSystem"},
-		"Ubuntu 24.04 / campaign-runner":    {"campaign-runner", "TestMutationCampaignRunner"},
-		"Ubuntu 24.04 / campaign-cycle":     {"campaign-cycle", "TestMutationCampaignCycle"},
-		"Ubuntu 24.04 / campaign-emergency": {"campaign-emergency", "TestMutationCampaignEmergency"},
-		"Ubuntu 24.04 / campaign-effects":   {"campaign-effects", "TestMutationCampaignEffects"},
-		"macOS 26 / repository":             {"repository", "TestMutationRepository"},
-		"macOS 26 / attempt-system":         {"attempt-system", "TestMutationAttemptSystem"},
-		"macOS 26 / campaign-runner":        {"campaign-runner", "TestMutationCampaignRunner"},
-		"macOS 26 / campaign-cycle":         {"campaign-cycle", "TestMutationCampaignCycle"},
-		"macOS 26 / campaign-emergency":     {"campaign-emergency", "TestMutationCampaignEmergency"},
-		"macOS 26 / campaign-effects":       {"campaign-effects", "TestMutationCampaignEffects"},
-		"macOS 26 / darwin":                 {"darwin", "TestMutationPlatform"},
-		"Windows 2025 / repository":         {"repository", "TestMutationRepository"},
-		"Windows 2025 / attempt-system":     {"attempt-system", "TestMutationAttemptSystem"},
-		"Windows 2025 / campaign-runner":    {"campaign-runner", "TestMutationCampaignRunner"},
-		"Windows 2025 / campaign-cycle":     {"campaign-cycle", "TestMutationCampaignCycle"},
-		"Windows 2025 / campaign-emergency": {"campaign-emergency", "TestMutationCampaignEmergency"},
-		"Windows 2025 / campaign-effects":   {"campaign-effects", "TestMutationCampaignEffects"},
+	want := map[string]string{
+		"Ubuntu 24.04 / repository":         "TestMutationRepository",
+		"Ubuntu 24.04 / attempt-system":     "TestMutationAttemptSystem",
+		"Ubuntu 24.04 / campaign-runner":    "TestMutationCampaignRunner",
+		"Ubuntu 24.04 / campaign-cycle":     "TestMutationCampaignCycle",
+		"Ubuntu 24.04 / campaign-emergency": "TestMutationCampaignEmergency",
+		"Ubuntu 24.04 / campaign-effects":   "TestMutationCampaignEffects",
+		"macOS 26 / repository":             "TestMutationRepository",
+		"macOS 26 / attempt-system":         "TestMutationAttemptSystem",
+		"macOS 26 / campaign-runner":        "TestMutationCampaignRunner",
+		"macOS 26 / campaign-cycle":         "TestMutationCampaignCycle",
+		"macOS 26 / campaign-emergency":     "TestMutationCampaignEmergency",
+		"macOS 26 / campaign-effects":       "TestMutationCampaignEffects",
+		"macOS 26 / darwin":                 "TestMutationPlatform",
+		"Windows 2025 / repository":         "TestMutationRepository",
+		"Windows 2025 / attempt-system":     "TestMutationAttemptSystem",
+		"Windows 2025 / campaign-runner":    "TestMutationCampaignRunner",
+		"Windows 2025 / campaign-cycle":     "TestMutationCampaignCycle",
+		"Windows 2025 / campaign-emergency": "TestMutationCampaignEmergency",
+		"Windows 2025 / campaign-effects":   "TestMutationCampaignEffects",
 	}
 	rows := workflowMatrixRows(t, job)
 	assert.Equal(t, len(want), len(rows), "mutation matrix has %d rows, want %d", len(rows), len(want))
 	for name, selection := range want {
-		requireMatrixRow(t, job, name, map[string]string{
-			"catalogue-shard": selection[0], "mutation-test": selection[1],
-		})
+		requireMatrixRow(t, job, name, map[string]string{"mutation-test": selection})
 	}
+	assert.NotContains(t, job, "catalogue-shard:")
 	assert.NotContains(t, job, "OOZE_", "mutation workflow uses a forbidden OOZE_* selector")
 }
 

@@ -12,6 +12,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+
 jobs:
 
   test:
@@ -73,8 +76,6 @@ jobs:
 
       - name: Native acceptance
         if: ${{ always() }}
-        env:
-          ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
         shell: bash
         run: |
           selected="$(${{ matrix.go-command }} test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze | grep -c '^Test')"
@@ -93,8 +94,6 @@ jobs:
     name: Stress / ${{ matrix.name }}
     if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.runner }}
-    env:
-      ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
     strategy:
       fail-fast: false
       matrix:
