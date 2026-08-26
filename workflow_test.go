@@ -273,6 +273,17 @@ func TestMutationWorkflowRunsOneCampaignPerOperatingSystem(t *testing.T) {
 	)
 }
 
+func TestMutationWorkflowCanRunCurrentRevisionManually(t *testing.T) {
+	contents, err := os.ReadFile(".github/workflows/mutation.yml")
+	require.NoError(t, err)
+	workflow := strings.ReplaceAll(string(contents), "\r\n", "\n")
+	requireContract(t, workflow, "manual mutation workflow",
+		"  workflow_dispatch:",
+		"if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+		"ref: ${{ github.event.workflow_run.head_sha || github.sha }}",
+	)
+}
+
 func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/ci.yml", "test")
 	requireContract(t, testJob, "CI production simulation contract",
