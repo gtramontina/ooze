@@ -1697,6 +1697,45 @@ func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) 
 	}
 }
 
+func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T) {
+	recorder := newSimulationRecorder()
+	const generation = attemptGeneration(2)
+	publish := supervisorAction{kind: supervisorPublishOwned, token: 11, generation: generation}
+	recorder.recordSupervisorActions([]supervisorAction{publish})
+	launchReservation := recorder.reserve(simulationRuntimeAuthority)
+	recorder.recordRuntime(launchReservation, simulationRecord{
+		runtimeOperation:   simulationObserveAttempt,
+		runtimeGeneration:  generation,
+		runtimeObservation: simulationRuntimeObservation{kind: simulationLaunchOwnedObservation},
+	}, processRuntime{})
+	recorder.recordSupervisorAction(publish)
+
+	settle := supervisorAction{kind: supervisorSettleRuntime, token: 12, generation: generation}
+	recorder.recordSupervisorActions([]supervisorAction{settle})
+	terminalReservation := recorder.reserve(simulationRuntimeAuthority)
+	recorder.recordRuntime(terminalReservation, simulationRecord{
+		runtimeOperation:   simulationObserveAttempt,
+		runtimeGeneration:  generation,
+		runtimeObservation: simulationRuntimeObservation{kind: simulationAttemptSettledObservation},
+	}, processRuntime{})
+	receipt := supervisorRuntimeCompletion{
+		generation: generation,
+		action: supervisorPendingAction{
+			kind: supervisorSettleRuntime, token: settle.token,
+		},
+		kind: supervisorRuntimeAcknowledged,
+	}
+	terminalSource := recorder.supervisorSource(supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: generation, runtime: &receipt,
+	})
+	assert.Equal(t, simulationOwnerDeliverySource, terminalSource.kind, "runtime receipt source=%#v", terminalSource)
+	assert.Equal(t, terminalReservation.sequence, terminalSource.identity, "runtime receipt source=%#v", terminalSource)
+
+	launchSource := recorder.campaignSource(attemptLaunchEvent{generation: generation})
+	assert.Equal(t, simulationOwnerDeliverySource, launchSource.kind, "launch source=%#v", launchSource)
+	assert.Equal(t, launchReservation.sequence, launchSource.identity, "launch source=%#v", launchSource)
+}
+
 func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)

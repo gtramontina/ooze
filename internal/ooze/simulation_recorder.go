@@ -177,7 +177,8 @@ func (recorder *simulationRecorder) runtimeActionSource(record simulationRecord)
 		switch record.runtimeOperation {
 		case simulationObserveAttempt:
 			matches = action.generation == record.runtimeGeneration &&
-				(action.kind == supervisorPublishOwned || action.kind == supervisorSettleRuntime ||
+				(action.kind == supervisorPublishOwned || action.kind == supervisorCloseProspective ||
+					action.kind == supervisorSettleRuntime ||
 					action.kind == supervisorTransferResidualCustody)
 		case simulationCompleteConfirmationQueue:
 			matches = action.kind == supervisorDeliverTerminal
@@ -279,8 +280,11 @@ func (recorder *simulationRecorder) supervisorSource(event supervisorEvent) simu
 		return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(token)}
 	}
 	if event.kind == supervisorRuntimeCompleted {
+		action := event.runtime.action
 		return recorder.takeRuntimeCut(func(record simulationRecord) bool {
-			return record.runtimeOperation == simulationObserveAttempt && record.runtimeGeneration == event.generation
+			return record.runtimeOperation == simulationObserveAttempt && record.runtimeGeneration == event.generation &&
+				record.source.kind == simulationSupervisorActionSource &&
+				record.source.identity == uint64(action.token)
 		})
 	}
 	recorder.causalMutex.Lock()
