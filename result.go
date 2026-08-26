@@ -343,7 +343,7 @@ func projectAttempt(evidence internalooze.ManagedAttemptEvidence) AttemptResult 
 	return AttemptResult{
 		Kind: projectAttemptKind(evidence.Kind), Passed: evidence.Passed,
 		Deadline: evidence.Deadline, LaunchDuration: evidence.LaunchDuration,
-		CommandDuration: evidence.CommandDuration, BoundFired: BoundFired(evidence.BoundFired),
+		CommandDuration: evidence.CommandDuration, BoundFired: projectBoundFired(evidence.BoundFired),
 		Output: OutputSnapshot{
 			Bytes: evidence.Output.Bytes, Cutoff: evidence.Output.Cutoff,
 			CompleteThroughCutoff: evidence.Output.CompleteThroughCutoff, Final: evidence.Output.Final,
@@ -355,6 +355,17 @@ func projectAttempt(evidence internalooze.ManagedAttemptEvidence) AttemptResult 
 		},
 		Count:                   ObservedCount{Value: evidence.Count.Value, Present: evidence.Count.Present},
 		ConfirmationProvisional: evidence.ConfirmationProvisional,
+	}
+}
+
+func projectBoundFired(bound internalooze.BoundFired) BoundFired {
+	switch bound {
+	case internalooze.NoBoundFired:
+		return NoBoundFired
+	case internalooze.CommandDeadlineFired:
+		return CommandDeadlineFired
+	default:
+		panic("managed attempt bound is invalid")
 	}
 }
 

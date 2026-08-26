@@ -124,3 +124,11 @@ func TestProjectResultPreservesFatalCampaignEvidence(t *testing.T) {
 		assert.Equal(t, []string{"event-7"}, result.Invariant.TraceTail)
 	})
 }
+
+func TestProjectResultRejectsUnknownAttemptBound(t *testing.T) {
+	assert.PanicsWithValue(t, "managed attempt bound is invalid", func() {
+		projectAttempt(internalooze.ManagedAttemptEvidence{
+			Kind: internalooze.ManagedAttemptSettled, BoundFired: internalooze.BoundFired(255),
+		})
+	})
+}
