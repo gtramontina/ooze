@@ -38,7 +38,7 @@ func workflowJob(t *testing.T, path, name string) string {
 
 func TestSelfMutationSubprocessDoesNotExcludeRootEntryPoints(t *testing.T) {
 	configured := ooze.Options{}
-	for _, option := range selfMutationOptions("campaign-runner") {
+	for _, option := range selfMutationOptions() {
 		configured = option(configured)
 	}
 	var skip *regexp.Regexp
@@ -48,13 +48,13 @@ func TestSelfMutationSubprocessDoesNotExcludeRootEntryPoints(t *testing.T) {
 		}
 	}
 	require.NotNil(t, skip, "self-mutation subprocess has no test-selection exclusion")
-	assert.False(t, skip.MatchString("TestMutationCampaignRunner"), "self-mutation subprocess excludes a root entry point from an unselected package")
+	assert.False(t, skip.MatchString("TestMutation"), "self-mutation subprocess excludes the root entry point")
 	assert.False(t, skip.MatchString("TestOptions"), "self-mutation subprocess excludes an ordinary production test")
 }
 
 func TestSelfMutationSubprocessSkipsFilesystemReentrantNativeFixture(t *testing.T) {
 	configured := ooze.Options{}
-	for _, option := range selfMutationOptions("campaign-runner") {
+	for _, option := range selfMutationOptions() {
 		configured = option(configured)
 	}
 	var skip *regexp.Regexp
@@ -76,7 +76,7 @@ func TestSelfMutationSubprocessSkipsFilesystemReentrantNativeFixture(t *testing.
 
 func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 	configured := ooze.Options{}
-	for _, option := range selfMutationOptions("campaign-runner") {
+	for _, option := range selfMutationOptions() {
 		configured = option(configured)
 	}
 	arguments := make([]string, 0, len(configured.TestCommand)+1)
@@ -208,35 +208,20 @@ func requireNativeToolchains(t *testing.T, job string) {
 	})
 }
 
-func requireMutationShardRows(t *testing.T, job string) {
+func requireMutationCampaignRows(t *testing.T, job string) {
 	t.Helper()
-	want := map[string]string{
-		"Ubuntu 24.04 / repository":         "TestMutationRepository",
-		"Ubuntu 24.04 / attempt-system":     "TestMutationAttemptSystem",
-		"Ubuntu 24.04 / campaign-runner":    "TestMutationCampaignRunner",
-		"Ubuntu 24.04 / campaign-cycle":     "TestMutationCampaignCycle",
-		"Ubuntu 24.04 / campaign-emergency": "TestMutationCampaignEmergency",
-		"Ubuntu 24.04 / campaign-effects":   "TestMutationCampaignEffects",
-		"macOS 26 / repository":             "TestMutationRepository",
-		"macOS 26 / attempt-system":         "TestMutationAttemptSystem",
-		"macOS 26 / campaign-runner":        "TestMutationCampaignRunner",
-		"macOS 26 / campaign-cycle":         "TestMutationCampaignCycle",
-		"macOS 26 / campaign-emergency":     "TestMutationCampaignEmergency",
-		"macOS 26 / campaign-effects":       "TestMutationCampaignEffects",
-		"macOS 26 / darwin":                 "TestMutationPlatform",
-		"Windows 2025 / repository":         "TestMutationRepository",
-		"Windows 2025 / attempt-system":     "TestMutationAttemptSystem",
-		"Windows 2025 / campaign-runner":    "TestMutationCampaignRunner",
-		"Windows 2025 / campaign-cycle":     "TestMutationCampaignCycle",
-		"Windows 2025 / campaign-emergency": "TestMutationCampaignEmergency",
-		"Windows 2025 / campaign-effects":   "TestMutationCampaignEffects",
+	want := []string{
+		"Ubuntu 24.04",
+		"macOS 26",
+		"Windows 2025",
 	}
 	rows := workflowMatrixRows(t, job)
 	assert.Equal(t, len(want), len(rows), "mutation matrix has %d rows, want %d", len(rows), len(want))
-	for name, selection := range want {
-		requireMatrixRow(t, job, name, map[string]string{"mutation-test": selection})
+	for _, name := range want {
+		requireMatrixRow(t, job, name, nil)
 	}
 	assert.NotContains(t, job, "catalogue-shard:")
+	assert.NotContains(t, job, "mutation-test:")
 	assert.NotContains(t, job, "OOZE_", "mutation workflow uses a forbidden OOZE_* selector")
 }
 
@@ -264,30 +249,17 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 	)
 }
 
-func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
+func TestMutationWorkflowRunsOneCampaignPerOperatingSystem(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/mutation.yml", "mutation")
 	requireNativeToolchains(t, mutationJob)
-	requireMutationShardRows(t, mutationJob)
+	requireMutationCampaignRows(t, mutationJob)
 	for _, name := range []string{
-		"Ubuntu 24.04 / repository", "Ubuntu 24.04 / attempt-system",
-		"Ubuntu 24.04 / campaign-runner", "Ubuntu 24.04 / campaign-effects",
-		"Ubuntu 24.04 / campaign-cycle",
-		"Ubuntu 24.04 / campaign-emergency",
-		"macOS 26 / repository", "macOS 26 / attempt-system",
-		"macOS 26 / campaign-runner", "macOS 26 / campaign-effects", "macOS 26 / darwin",
-		"macOS 26 / campaign-cycle",
-		"macOS 26 / campaign-emergency",
+		"Ubuntu 24.04",
+		"macOS 26",
 	} {
 		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "devbox run -- go test"})
 	}
-	for _, name := range []string{
-		"Windows 2025 / repository", "Windows 2025 / attempt-system",
-		"Windows 2025 / campaign-runner", "Windows 2025 / campaign-effects",
-		"Windows 2025 / campaign-cycle",
-		"Windows 2025 / campaign-emergency",
-	} {
-		requireMatrixRow(t, mutationJob, name, map[string]string{"test-command": "go test"})
-	}
+	requireMatrixRow(t, mutationJob, "Windows 2025", map[string]string{"test-command": "go test"})
 	requireContract(t, mutationJob, "mutation job",
 		"toolchain: devbox",
 		"toolchain: raw-go",
@@ -296,7 +268,8 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 		"go-command: devbox run -- go",
 		"test-command: devbox run -- go test",
 		"Verify pinned Go 1.26.6",
-		"-run=^${{ matrix.mutation-test }}$",
+		"-timeout=60m",
+		"-run=^TestMutation$",
 	)
 }
 
@@ -317,6 +290,17 @@ func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
 	)
 }
 
+func TestMutationTargetRunsOneCampaign(t *testing.T) {
+	contents, err := os.ReadFile("makefile")
+	require.NoError(t, err)
+	makefile := strings.ReplaceAll(string(contents), "\r\n", "\n")
+	requireContract(t, makefile, "mutation target",
+		"test.mutation: $(pre-reqs)",
+		"go test -timeout=60m -count=1 -v -tags=mutation -run=^TestMutation$",
+	)
+	assert.NotContains(t, makefile, "for test_name in")
+}
+
 func TestCompatibilityWorkflowInstallsSelfMutationTestTool(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/compatibility.yml", "test")
 	requireContract(t, testJob, "compatibility test job",
@@ -327,7 +311,7 @@ func TestCompatibilityWorkflowInstallsSelfMutationTestTool(t *testing.T) {
 
 func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing.T) {
 	configured := ooze.Options{}
-	for _, option := range selfMutationOptions("campaign-runner") {
+	for _, option := range selfMutationOptions() {
 		configured = option(configured)
 	}
 	command := strings.Join(configured.TestCommand, " ")

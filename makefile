@@ -17,11 +17,7 @@ test.failfast: $(pre-reqs)
 .PHONY: test.failfast
 
 test.mutation: $(pre-reqs)
-	@tests="TestMutationRepository TestMutationAttemptSystem TestMutationCampaignRunner TestMutationCampaignCycle TestMutationCampaignEmergency TestMutationCampaignEffects"; \
-		if test "$$(go env GOOS)" = darwin; then tests="$$tests TestMutationPlatform"; fi; \
-		for test_name in $$tests; do \
-			go test -timeout=30m -count=1 -v -tags=mutation -run="^$$test_name$$"; \
-		done
+	@go test -timeout=60m -count=1 -v -tags=mutation -run=^TestMutation$
 .PHONY: test.mutation
 
 test.adversarial: $(pre-reqs)
