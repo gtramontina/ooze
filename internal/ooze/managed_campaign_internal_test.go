@@ -222,6 +222,47 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	assert.Equal(t, singleAdmission, shell.snapshot().mode, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
 }
 
+func TestManagedCampaignResumesWithSingleAdmissionAfterConfirmationPressure(t *testing.T) {
+	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\nvar third = 0\nvar fourth = 0\n")),
+	}}
+	deadlineTrip := Tripped{Trip: AutomaticDeadlineTrip{}}
+	killed := Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}}
+	attempts := &managedAttemptFixture{
+		waitForLaunches: 3,
+		launchesReady:   make(chan struct{}),
+		terminals: []Terminal{
+			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+			deadlineTrip, killed,
+			killed,
+			killed, killed,
+		},
+	}
+	runner := newManagedCampaignRunner(managedCampaignConstruction{
+		runtime: newProcessRuntimeShell(2), repository: repository,
+		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	})
+	completed := make(chan managedCampaignResult, 1)
+	go func() {
+		completed <- runner.run(managedCampaignRequest{
+			identity: "campaign-a", lineage: 11, command: []string{"test"},
+			profile: AutomaticProfile, peers: 2, mutationTimeout: time.Minute,
+			viruses: []viruses.Virus{integerincrement.New()},
+		})
+	}()
+
+	select {
+	case result := <-completed:
+		outcome, ok := result.outcome.(completedOutcome)
+		require.True(t, ok, "outcome = %#v", result.outcome)
+		assert.Len(t, outcome.mutants, 4)
+		assert.True(t, outcome.singleAdmissionFallback)
+		assert.EqualValues(t, 6, attempts.launches)
+	case <-time.After(time.Second):
+		require.FailNow(t, "campaign did not resume with single admission after confirmation pressure")
+	}
+}
+
 func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t *testing.T) {
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),

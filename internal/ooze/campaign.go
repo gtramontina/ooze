@@ -1821,7 +1821,7 @@ func (state campaignState) materializeAttempt(kind campaignAttemptKind, mutant m
 
 func (state campaignState) materializePrimaryBatch() (campaignState, []campaignEffect) {
 	limit := state.definition.peers
-	if state.definition.profile == SerialProfile {
+	if state.definition.profile == SerialProfile || state.singleAdmissionFallback {
 		limit = 1
 	}
 	active := 0
