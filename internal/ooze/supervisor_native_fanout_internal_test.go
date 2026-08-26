@@ -108,7 +108,7 @@ func runNativeFanoutRoot(t *testing.T) {
 		)
 		{
 			err := command.Start()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	deadline := time.Now().Add(10 * time.Second)

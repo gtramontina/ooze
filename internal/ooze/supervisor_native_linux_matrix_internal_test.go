@@ -201,7 +201,7 @@ func runLinuxMatrixFixture(t *testing.T, role string) {
 			"OOZE_LINUX_MATRIX_DIRECTORY="+directory)
 		{
 			err := command.Start()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		_ = command.Process.Release()
 		awaitLinuxMatrixFile(t, filepath.Join(directory, "subject.pid"), 5*time.Second)
@@ -219,7 +219,7 @@ func runLinuxMatrixFixture(t *testing.T, role string) {
 		if os.Getenv("OOZE_LINUX_MATRIX_SETSID") == "1" {
 			{
 				_, err := syscall.Setsid()
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		}
 		writeLinuxMatrixPID(t, filepath.Join(directory, "subject.pid"), os.Getpid())
@@ -378,7 +378,7 @@ func writeLinuxMatrixReady(t *testing.T, directory string) {
 	t.Helper()
 	{
 		err := os.WriteFile(filepath.Join(directory, "ready"), []byte("ready"), 0o600)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 }
 
@@ -386,7 +386,7 @@ func writeLinuxMatrixPID(t *testing.T, path string, process int) {
 	t.Helper()
 	{
 		err := os.WriteFile(path, []byte(strconv.Itoa(process)), 0o600)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 }
 
