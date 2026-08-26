@@ -362,6 +362,7 @@ func TestReleaseVerboseModeObservesCampaignProgress(t *testing.T) {
 	require.NoError(t, err, "verbose helper failed:\n%s", output)
 	text := string(output)
 	for _, fragment := range []string{
+		"EVENT: ooze.CampaignStarted",
 		"campaign started",
 		"discovered 1 mutant",
 		"baseline started",
@@ -414,7 +415,7 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	if role == "reporter-error" {
 		options = append(options, ooze.WithReporter(errorReporter{}))
 	}
-	if role == "no-mutants" || role == "baseline" {
+	if role == "no-mutants" || role == "baseline" || role == "verbose" {
 		options = append(options, ooze.WithObserver(eventOutputObserver{}))
 	}
 	if role == "observer-error" {
