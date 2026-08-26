@@ -40,6 +40,7 @@ type managedCampaignConstruction struct {
 	repository         Repository
 	temporaryDirectory managedTemporaryDirectoryFactory
 	attempts           managedAttemptSystem
+	observe            func(ManagedProgress)
 }
 
 type managedCampaignRequest struct {

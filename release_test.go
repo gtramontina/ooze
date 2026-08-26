@@ -75,6 +75,45 @@ func TestReleaseReportsCompletedCampaignThroughConfiguredReporter(t *testing.T) 
 	assert.Contains(t, result.Mutations[0].Label, "source.go")
 }
 
+func TestReleasePublishesCampaignEventsInAcceptedOrder(t *testing.T) {
+	repository := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(repository, "source.go"),
+		[]byte("package fixture\nvar number = 0\n"),
+		0o600,
+	)
+	require.NoError(t, err)
+	t.Setenv(managedReleaseHelper, "1")
+	var events []ooze.CampaignEvent
+	observer := observerFunc(func(event ooze.CampaignEvent) error {
+		events = append(events, event)
+
+		return nil
+	})
+
+	ooze.Release(t,
+		ooze.WithRepositoryRoot(repository),
+		ooze.WithTestCommand(os.Args[0]+" -test.run=^TestManagedReleaseCommandHelper$"),
+		ooze.WithViruses(integerincrement.New()),
+		ooze.WithMinimumThreshold(0),
+		ooze.WithReporter(&recordingReporter{}),
+		ooze.WithObserver(observer),
+	)
+
+	assert.Equal(t, []ooze.CampaignEvent{
+		ooze.CampaignStarted{},
+		ooze.CatalogueDiscovered{Total: 1},
+		ooze.BaselineStarted{},
+		ooze.BaselineFinished{Passed: true},
+		ooze.MutationStarted{Mutation: ooze.Mutation{Label: "source.go → Integer Increment"}},
+		ooze.MutationFinished{
+			Mutation: ooze.Mutation{Label: "source.go → Integer Increment"},
+			Outcome:  ooze.Killed,
+		},
+		ooze.CampaignCompleted{},
+	}, events)
+}
+
 type recordingReporter struct {
 	results []ooze.Result
 }

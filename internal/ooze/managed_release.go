@@ -23,6 +23,7 @@ type ManagedReleaseConfiguration struct {
 	Profile         Profile
 	MutationTimeout time.Duration
 	Viruses         []viruses.Virus
+	Observe         func(ManagedProgress)
 }
 
 type ManagedOutcome uint8
@@ -210,6 +211,7 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: process.runtime, repository: configuration.Repository,
 		temporaryDirectory: configuration.TemporaryDir, attempts: process.attempts,
+		observe: configuration.Observe,
 	})
 	result := runner.run(managedCampaignRequest{
 		identity: identity, lineage: campaignLineage(configuration.Lineage),

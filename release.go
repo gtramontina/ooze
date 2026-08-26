@@ -119,21 +119,38 @@ func Release(t *testing.T, options ...Option) {
 	if opts.Serial {
 		profile = ooze.SerialProfile
 	}
+	dispatcher := newObserverDispatcher(opts.Observer)
+	var observe func(ooze.ManagedProgress)
+	if dispatcher != nil {
+		observe = func(progress ooze.ManagedProgress) {
+			dispatcher.publish(projectCampaignEvent(progress))
+		}
+	}
 	managed := ooze.ProcessManagedRelease(ooze.ManagedReleaseConfiguration{
 		Lineage: uint64(reflect.ValueOf(t).Pointer()), Repository: opts.Repository,
 		TemporaryDir: opts.TemporaryDir, Command: opts.TestCommand,
 		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
-		Viruses: opts.Viruses,
+		Viruses: opts.Viruses, Observe: observe,
 	})
+	observerFailure, observerPanic := dispatcher.finish()
+	if observerFailure != nil {
+		t.Errorf("ooze: observer failed: %v", observerFailure)
+	}
 	report := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
 	if opts.Reporter != nil {
 		if err := opts.Reporter.Report(projectResult(managed, opts.MinimumThreshold)); err != nil {
 			t.Errorf("ooze: reporter failed: %v", err)
 		}
 		applyManagedReportDisposition(t, report)
+		if observerPanic != nil {
+			panic(observerPanic)
+		}
 		return
 	}
 	publishManagedReport(t, logger, report)
+	if observerPanic != nil {
+		panic(observerPanic)
+	}
 }
 
 func publishManagedReport(t *testing.T, logger ooze.Logger, report ooze.ManagedReport) {

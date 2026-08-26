@@ -23,6 +23,7 @@ type Options struct {
 	IgnoreSourceFilesPatterns []*regexp.Regexp
 	Viruses                   []viruses.Virus
 	Reporter                  Reporter
+	Observer                  ProgressObserver
 }
 
 // WithRepositoryRoot configures which directory is the repository root. This is
@@ -126,6 +127,19 @@ func WithReporter(reporter Reporter) func(Options) Options {
 
 	return func(options Options) Options {
 		options.Reporter = reporter
+
+		return options
+	}
+}
+
+// WithObserver configures an observer for campaign domain events.
+func WithObserver(observer ProgressObserver) func(Options) Options {
+	if observer == nil {
+		panic("observer must not be nil")
+	}
+
+	return func(options Options) Options {
+		options.Observer = observer
 
 		return options
 	}

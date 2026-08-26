@@ -50,6 +50,7 @@ func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []cam
 	previous := runner.state
 	runner.state, effects = advanceCampaign(runner.state, event)
 	runner.recorder.recordCampaign(reservation, event, previous, runner.state, effects)
+	runner.publishProgress(payload, previous, runner.state)
 
 	return effects
 }
