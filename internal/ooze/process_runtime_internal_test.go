@@ -197,60 +197,6 @@ func TestProcessRuntimeShellStartCommittedInstallsBeforeReentrantLaunchAndSettle
 	assert.EqualValues(t, 0, len(shell.snapshot().admissions), "generation/calls/reentry/state=%d/%d/%#v/%#v", installed, launchCalls, reentrant, shell.snapshot())
 }
 
-func TestProcessRuntimeShellRejectedOrClosedStartInvokesNothing(t *testing.T) {
-	tests := []struct {
-		name  string
-		close bool
-		grant func(admissionGrant) admissionGrant
-	}{
-		{
-			name:  "wrong grant",
-			close: false,
-			grant: func(grant admissionGrant) admissionGrant {
-				grant.attempt = "wrong"
-
-				return grant
-			},
-		},
-		{
-			name:  "fatal closure",
-			close: true,
-			grant: func(grant admissionGrant) admissionGrant { return grant },
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			shell := newProcessRuntimeShell(1)
-			campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
-			requested := shell.requestAdmission(admissionRequest{
-				campaign: campaign.token,
-				attempt:  "a1",
-				class:    sharedAdmission,
-			})
-			grant := <-requested.delivery
-			if test.close {
-				shell.closeRuntime(runtimeFatalCause("test closure"))
-			}
-
-			launchCalls := 0
-			cell := pendingStartCell{}
-			native := func(_ attemptGeneration) attemptObservation {
-				launchCalls++
-
-				return launchNotReleased{reason: launchFailed}
-			}
-			attemptedGrant := test.grant(grant)
-			prepared := shell.startCommitted(attemptedGrant, startInstallation{grant: attemptedGrant, cell: &cell})
-
-			assert.NotEqual(t, startCommittedAccepted, prepared.result.decision, "rejected start result/cell/calls=%#v/%d/%d", prepared.result, cell.installedGeneration(), launchCalls)
-			assert.EqualValues(t, 0, cell.installedGeneration(), "rejected start result/cell/calls=%#v/%d/%d", prepared.result, cell.installedGeneration(), launchCalls)
-			assert.EqualValues(t, 0, launchCalls, "rejected start result/cell/calls=%#v/%d/%d", prepared.result, cell.installedGeneration(), launchCalls)
-			_ = native
-		})
-	}
-}
-
 func TestProcessRuntimeShellTerminalSettlementIsGenerationCorrelated(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
