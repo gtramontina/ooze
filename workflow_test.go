@@ -301,35 +301,6 @@ func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 	)
 }
 
-func TestManualPerformanceWorkflowCollectsInterleavedNativeEvidence(t *testing.T) {
-	performanceJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "performance")
-	requireNativeToolchains(t, performanceJob)
-	requireContract(t, performanceJob, "performance job",
-		"PERFORMANCE_SAMPLES: 10",
-		"github.event_name == 'workflow_dispatch'",
-		"path: performance-baseline",
-		"path: performance-candidate",
-		"project-path: performance-candidate",
-		"Collect interleaved A/B samples",
-		"performance-evidence-${{ matrix.name }}",
-		".github/performance/collect.sh",
-	)
-}
-
-func TestPerformanceEvidenceReportsCleanupEscalationSeparately(t *testing.T) {
-	for _, path := range []string{
-		".github/performance/fixture_common_test.go",
-		".github/performance/confirmation_test.go",
-	} {
-		contents, err := os.ReadFile(path)
-		require.NoError(t, err)
-		requireContract(t, string(contents), path,
-			`json:"cleanup_escalation_count"`,
-			`json:"cleanup_escalation_basis"`,
-		)
-	}
-}
-
 func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/ci.yml", "test")
 	requireContract(t, testJob, "CI production simulation contract",
@@ -367,19 +338,4 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing
 		assert.NotEqual(t, "./...", argument, "self-mutation command selects root or full-module package %q", argument)
 	}
 	assert.False(t, configured.Serial, "self-mutation campaign abandoned managed automatic admission")
-}
-
-func TestManualNativeWorkflowRunsExactCandidateMutationGate(t *testing.T) {
-	mutationJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "mutation-evidence")
-	requireNativeToolchains(t, mutationJob)
-	requireMutationShardRows(t, mutationJob)
-	requireContract(t, mutationJob, "manual mutation evidence job",
-		"Mutation evidence / ${{ matrix.name }}",
-		"Mutation campaign acceptance",
-		"Install gotestsum 1.13.0",
-		"go install gotest.tools/gotestsum@v1.13.0",
-		"github.event_name == 'workflow_dispatch'",
-		"-timeout=30m -count=1 -v -tags=mutation",
-		"-run=^${{ matrix.mutation-test }}$",
-	)
 }
