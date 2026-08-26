@@ -618,7 +618,7 @@ func retainWindowsFixtureProcess(t *testing.T, processID int) windows.Handle {
 		}
 		result, waitErr := windows.WaitForSingleObject(process, 2_000)
 		assert.NoError(t, waitErr, "drain retained nested-job child %d: terminate=%v wait=(%d, %v)", processID, terminateErr, result, waitErr)
-		assert.Equal(t, windows.WAIT_OBJECT_0, result, "drain retained nested-job child %d: terminate=%v wait=(%d, %v)", processID, terminateErr, result, waitErr)
+		assert.Equal(t, uint32(windows.WAIT_OBJECT_0), result, "drain retained nested-job child %d: terminate=%v wait=(%d, %v)", processID, terminateErr, result, waitErr)
 	})
 
 	return process
@@ -628,7 +628,7 @@ func assertWindowsFixtureProcessStopped(t *testing.T, process windows.Handle, pr
 	t.Helper()
 	result, err := windows.WaitForSingleObject(process, 2_000)
 	assert.NoError(t, err, "nested-job child %d exit proof = (%d, %v), want exact retained handle signaled", processID, result, err)
-	assert.Equal(t, windows.WAIT_OBJECT_0, result, "nested-job child %d exit proof = (%d, %v), want exact retained handle signaled", processID, result, err)
+	assert.Equal(t, uint32(windows.WAIT_OBJECT_0), result, "nested-job child %d exit proof = (%d, %v), want exact retained handle signaled", processID, result, err)
 }
 
 func windowsJobFixtureEnvironment(role string, additions ...string) []string {
