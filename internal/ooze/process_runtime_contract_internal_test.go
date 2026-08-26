@@ -1,4 +1,3 @@
-//nolint:exhaustruct,lll // Pure reducer traces deliberately omit shell-only fields.
 package ooze
 
 import (
@@ -21,7 +20,6 @@ func automaticDeadlineTrip() attemptTripped {
 	return attemptTripped{kind: deadlineTrip, profile: AutomaticProfile, deadline: 31 * time.Second}
 }
 
-//nolint:cyclop // This is one ordered trace; splitting its checks would hide the event sequence.
 func TestProcessRuntimeOverlapDeadlineAtomicallyClosesGateAndInstallsBarrier(t *testing.T) {
 	runtime := newProcessRuntime(3)
 	runtime, campaignA := runtime.registerCampaign(campaignProvenance{lineage: 11})
@@ -240,7 +238,6 @@ func TestProcessRuntimeConfirmationSettlementAuthorizesSingleAdmission(t *testin
 	assert.True(t, runtime.campaigns[runtime.campaignIndex(grant.campaign)].primaryGateOpen, "confirmation queue completion/state = %#v/%#v", completed, runtime)
 }
 
-//nolint:cyclop // This trace distinguishes repeated continuation from the final queue-drained cut.
 func TestProcessRuntimeConfirmationPressureDoesNotReopenGateBeforeQueueDrains(t *testing.T) {
 	runtime := runtimeAtBoundConfirmation(t)
 	firstAt := runtime.grantedConfirmationIndex()
@@ -288,7 +285,6 @@ func TestProcessRuntimeRejectsConfirmationBeforePrimaryGateCloses(t *testing.T) 
 	assert.Equal(t, unchanged, runtime, "early confirmation result/state=%#v/%#v", result, runtime)
 }
 
-//nolint:cyclop // This trace checks the ordered closure outputs and residual snapshot together.
 func TestProcessRuntimeFatalClosurePreservesStableCorrelatedResidualCustody(t *testing.T) {
 	runtime := newProcessRuntime(3)
 	runtime, campaign := runtime.registerCampaign(campaignProvenance{lineage: 11})
@@ -889,7 +885,6 @@ func TestProcessRuntimeFatalClosureDoesNotCompensateGateReturnedGrantTwice(t *te
 	assert.Equal(t, runtimeClosedUnconfirmed, runtime.lifecycle, "gate return did not permit final settlement: %#v", runtime)
 }
 
-//nolint:cyclop,gocognit,nestif // Both legal return/sweep orders must assert the same final cut in one corpus.
 func TestProcessRuntimeFinalClosureWaitsForCompensatedGrantReturn(t *testing.T) {
 	for _, returnFirst := range []bool{true, false} {
 		name := "emergency before return"

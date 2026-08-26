@@ -1,4 +1,3 @@
-//nolint:exhaustruct,lll,nonamedreturns // Zero states and guarded results encode expected transitions.
 package ooze
 
 import "sync"

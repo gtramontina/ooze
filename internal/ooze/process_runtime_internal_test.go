@@ -1,4 +1,3 @@
-//nolint:cyclop,exhaustruct // Ordered traces deliberately omit shell-only fields.
 package ooze
 
 import (

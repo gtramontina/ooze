@@ -38,7 +38,6 @@ type darwinProcessSnapshot struct {
 }
 
 func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
-	//nolint:exhaustruct // Every other process attribute deliberately retains the OS default.
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Ptrace: true}
 
 	return nativePlatformState{domain: &darwinNativeDomain{
@@ -65,7 +64,7 @@ func confirmNativeCommandStopped(command *exec.Cmd, state nativePlatformState) e
 	change := unix.Kevent_t{
 		Ident: uint64(command.Process.Pid), Filter: unix.EVFILT_PROC,
 		Flags: unix.EV_ADD | unix.EV_ENABLE, Fflags: unix.NOTE_EXIT,
-	} //nolint:exhaustruct // The kernel event carries no user data or preset result fields.
+	}
 	if _, err = unix.Kevent(queue, []unix.Kevent_t{change}, nil, nil); err != nil {
 		_ = unix.Close(queue)
 
@@ -392,7 +391,7 @@ func nativeDescendantCount(_ nativePlatformState, root int) (bool, uint64, error
 			walk(child)
 		}
 	}
-	walk(int32(root)) //nolint:gosec // Darwin process IDs are signed 32-bit values.
+	walk(int32(root))
 
 	return rootLive, count, nil
 }

@@ -412,7 +412,6 @@ type supervisorAction struct {
 	residuals        []supervisorEmergencyResidual
 }
 
-//nolint:cyclop // One sealed deterministic event dispatch intentionally enumerates every supervisor event.
 func reduceSupervisor(state supervisorState, event supervisorEvent) (supervisorState, []supervisorAction) {
 	if event.kind != supervisorRuntimeCompleted && event.runtime != nil {
 		invariant(supervisorReducerOperation, "non-runtime event carries a runtime completion")

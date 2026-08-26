@@ -18,7 +18,7 @@ type selfMutationShard struct {
 	packages []string
 }
 
-var selfMutationProductionShards = []selfMutationShard{ //nolint:gochecknoglobals // Immutable test-campaign contract.
+var selfMutationProductionShards = []selfMutationShard{
 	{name: "repository", paths: []string{
 		"internal/fsrepository/fstemporaryrepository.go",
 		"internal/fsrepository/remove_unix.go",

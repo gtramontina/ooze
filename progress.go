@@ -105,7 +105,7 @@ func (observers multiObserver) Observe(event CampaignEvent) error {
 	failures := make([]error, 0, len(observers))
 	var panicValue any
 	for _, observer := range observers {
-		failure, recovered := observeCampaignEvent(observer, event)
+		recovered, failure := observeCampaignEvent(observer, event)
 		if failure != nil {
 			failures = append(failures, failure)
 		}
@@ -152,7 +152,7 @@ func (dispatcher *observerDispatcher) publish(event CampaignEvent) {
 	dispatcher.wake.Signal()
 }
 
-func (dispatcher *observerDispatcher) finish() (error, any) {
+func (dispatcher *observerDispatcher) finish() (any, error) {
 	if dispatcher == nil {
 		return nil, nil
 	}
@@ -162,7 +162,7 @@ func (dispatcher *observerDispatcher) finish() (error, any) {
 	dispatcher.mutex.Unlock()
 	<-dispatcher.done
 
-	return errors.Join(dispatcher.failures...), dispatcher.panic
+	return dispatcher.panic, errors.Join(dispatcher.failures...)
 }
 
 func (dispatcher *observerDispatcher) run() {
@@ -180,7 +180,7 @@ func (dispatcher *observerDispatcher) run() {
 		dispatcher.queue = dispatcher.queue[1:]
 		dispatcher.mutex.Unlock()
 
-		failure, panicValue := observeCampaignEvent(dispatcher.observer, event)
+		panicValue, failure := observeCampaignEvent(dispatcher.observer, event)
 		if failure != nil || panicValue != nil {
 			dispatcher.mutex.Lock()
 			if failure != nil {
@@ -194,12 +194,12 @@ func (dispatcher *observerDispatcher) run() {
 	}
 }
 
-func observeCampaignEvent(observer ProgressObserver, event CampaignEvent) (failure error, panicValue any) {
+func observeCampaignEvent(observer ProgressObserver, event CampaignEvent) (panicValue any, failure error) {
 	defer func() {
 		panicValue = recover()
 	}()
 
-	return observer.Observe(event), nil
+	return nil, observer.Observe(event)
 }
 
 func projectCampaignEvent(progress internalooze.ManagedProgress) CampaignEvent {

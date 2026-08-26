@@ -1,4 +1,3 @@
-//nolint:cyclop,exhaustruct // Race tables deliberately construct zero-state private values.
 package ooze
 
 import (
@@ -222,7 +221,6 @@ func TestStartInstallationKeepsLaunchDormantUntilInstalledStart(t *testing.T) {
 	cell := pendingStartCell{}
 	launchCalls := 0
 	installation := startInstallation{cell: &cell}
-	//nolint:unparam // A fixed observation keeps this thunk useful only as a launch counter.
 	dormant := func(_ attemptGeneration) attemptObservation {
 		launchCalls++
 
@@ -745,7 +743,6 @@ func TestProcessRuntimeShellSerializesCancellationAgainstGrant(t *testing.T) {
 		close(begin)
 		wait.Wait()
 
-		//nolint:exhaustive // The default arm attributes every impossible decision.
 		switch waitingCancellation.decision {
 		case admissionCancelledWaiting:
 			{

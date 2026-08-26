@@ -78,19 +78,21 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 //   - IgnoreSourceFiles: `nil`
 //   - WithViruses: all available (see viruses.Virus' implementations)
 //   - ForceColors: `false`
+//   - WithReporter: console output
+//   - WithObserver: none
 //
 // Automatic execution manages aggregate process-local admission. Serial chooses
 // process-local exclusive attempts while preserving the detected-capacity Go
 // execution profile. WithMutationTimeout is the sole absolute mutation-deadline
 // override.
 //
-// Release writes one report to stdout before returning. Only a completed
-// campaign publishes a score; it succeeds when the float32 detected/total score
-// is greater than or equal to WithMinimumThreshold. NoMutants and infrastructure
-// aborts fail without a score. Cleanup uncertainty and invariant violations emit
-// one consolidated diagnostic and panic once. Go may discard stdout for passing
-// package-pattern runs without -v, so use go test -v when retaining the report is
-// required.
+// The default reporter writes one console report to stdout before returning.
+// Only a completed campaign publishes a score; it succeeds when the float32
+// detected/total score is greater than or equal to WithMinimumThreshold.
+// NoMutants and infrastructure aborts fail without a score. Cleanup uncertainty
+// and invariant violations emit one consolidated diagnostic and panic once. Go
+// may discard stdout for passing package-pattern runs without -v, so use go test
+// -v when retaining the report is required.
 func Release(t *testing.T, options ...Option) {
 	t.Helper()
 
@@ -129,7 +131,7 @@ func Release(t *testing.T, options ...Option) {
 		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
 		Viruses: opts.Viruses, Observe: observe,
 	})
-	observerFailure, observerPanic := dispatcher.finish()
+	observerPanic, observerFailure := dispatcher.finish()
 	if observerFailure != nil {
 		t.Errorf("ooze: observer failed: %v", observerFailure)
 	}

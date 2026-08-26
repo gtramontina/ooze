@@ -127,12 +127,11 @@ func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 
 		return nativePlatformState{}, fmt.Errorf("locate Linux managed-attempt guardian: %w", err)
 	}
-	guardianCommand := exec.Command(executable) //nolint:noctx // Re-executes this trusted binary in private guardian mode.
+	guardianCommand := exec.Command(executable)
 	guardianCommand.Env = append(targetEnvironment, linuxNativeGuardianEnvironment+"="+linuxNativeGuardianMode)
 	guardianCommand.ExtraFiles = []*os.File{configuration, statusWriter, controlReader}
 	guardianCommand.Stdout = command.Stdout
 	guardianCommand.Stderr = command.Stderr
-	//nolint:exhaustruct // Every other process attribute deliberately retains the OS default.
 	guardianCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Ptrace: true}
 	*command = *guardianCommand
 	guardian := &linuxNativeGuardian{
@@ -372,7 +371,7 @@ func runLinuxNativeGuardian() int {
 
 		return linuxNativeInfrastructureExit
 	}
-	command := exec.Command(configuration.Path, configuration.Args[1:]...) //nolint:gosec,noctx
+	command := exec.Command(configuration.Path, configuration.Args[1:]...)
 	command.Dir = configuration.Dir
 	command.Env = configuration.Env
 	command.Stdout = os.Stdout

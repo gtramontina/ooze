@@ -161,7 +161,7 @@ func (executor *supervisorNativeExecutor) launch(action supervisorAction) *super
 			},
 		), err)
 	}
-	command := exec.Command(attempt.spec.Command[0], attempt.spec.Command[1:]...) //nolint:gosec,noctx
+	command := exec.Command(attempt.spec.Command[0], attempt.spec.Command[1:]...)
 	command.Dir = attempt.spec.Dir
 	command.Env = attempt.spec.Env
 	command.Stdout = output

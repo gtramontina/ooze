@@ -151,7 +151,7 @@ type managedProcess struct {
 	next     atomic.Uint64
 }
 
-var defaultManagedProcess struct { //nolint:gochecknoglobals
+var defaultManagedProcess struct {
 	once    sync.Once
 	process *managedProcess
 }

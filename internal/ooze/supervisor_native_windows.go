@@ -40,7 +40,7 @@ func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 	if err != nil {
 		return nativePlatformState{}, fmt.Errorf("create managed-attempt job: %w", err)
 	}
-	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{} //nolint:exhaustruct
+	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	_, err = windows.SetInformationJobObject(
 		job,
@@ -53,14 +53,13 @@ func prepareNativeCommand(command *exec.Cmd) (nativePlatformState, error) {
 
 		return nativePlatformState{}, fmt.Errorf("configure managed-attempt job: %w", err)
 	}
-	//nolint:exhaustruct // Every other process attribute deliberately retains the OS default.
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
 
 	return nativePlatformState{job: job, shared: &windowsNativeState{}}, nil
 }
 
 func releaseNativeCommand(command *exec.Cmd, state nativePlatformState) (time.Time, error) {
-	processID := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit.
+	processID := uint32(command.Process.Pid)
 	process, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
 		false,
@@ -124,7 +123,7 @@ func resumeNativeProcess(processID uint32) (released bool, resultErr error) {
 		}
 	}
 	defer func() { resultErr = errors.Join(resultErr, windows.CloseHandle(snapshot)) }()
-	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))} //nolint:exhaustruct
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
 	if err = windows.Thread32First(snapshot, &entry); err != nil {
 		return false, nativeLaunchOperationError{
 			operation: nativeLaunchContainmentPrepare, stage: nativeLaunchPreRelease,
@@ -226,7 +225,7 @@ func nativeDescendantCount(state nativePlatformState, root int) (bool, uint64, e
 	rootLive := false
 	count := uint64(0)
 	for _, processID := range processes {
-		if processID == uint32(root) { //nolint:gosec // Windows process IDs are 32-bit.
+		if processID == uint32(root) {
 			rootLive = true
 		} else {
 			count++
@@ -288,7 +287,7 @@ func queryNativeJobProcessIDs(
 	values := unsafe.Slice((*uintptr)(unsafe.Add(pointer, headerSize)), listed)
 	processes := make([]uint32, len(values))
 	for index, processID := range values {
-		processes[index] = uint32(processID) //nolint:gosec // Windows process IDs are 32-bit.
+		processes[index] = uint32(processID)
 	}
 
 	return processes, assigned, nil

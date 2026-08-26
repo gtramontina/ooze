@@ -1,4 +1,3 @@
-//nolint:cyclop,exhaustruct,lll // Flat bounded reducers and typed stage results are intentional.
 package ooze
 
 import (
@@ -671,7 +670,7 @@ func (r processRuntime) installBarrier(
 			cancelled = append(cancelled, admission.grant)
 		}
 	}
-	r.admissions = append(kept, admittedAttempt{ //nolint:gocritic // Replaces the filtered source slice.
+	r.admissions = append(kept, admittedAttempt{
 		grant: admissionAuthority{
 			campaign: campaign, class: confirmationBarrierAdmission,
 			profile: profile, deadline: deadline,

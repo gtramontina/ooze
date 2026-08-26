@@ -115,7 +115,7 @@ func TestDarwinManagedPlatformLimitsRemainExplicit(t *testing.T) {
 			darwinLimitFixtureShape+"="+shape,
 			darwinLimitFixtureRelease+"="+release,
 		)
-		root.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} //nolint:exhaustruct // OS defaults are intentional.
+		root.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		{
 			err := root.Start()
 			require.NoError(t, err)
@@ -158,7 +158,7 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 	case "middle":
 		command := exec.Command(os.Args[0], "-test.run=^TestDarwinManagedPlatformLimitsRemainExplicit$")
 		command.Env = replaceDarwinLimitRole("session")
-		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true} //nolint:exhaustruct // The session escape is the fixture.
+		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		{
 			err := command.Start()
 			require.NoError(t, err)
@@ -283,8 +283,8 @@ func plantManagedDarwinShape(t *testing.T, plant, parent string) (*exec.Cmd, int
 	t.Helper()
 	directory := t.TempDir()
 	script := strings.ReplaceAll(plant, "%[1]s", directory) + "read discarded\nexit 0\n"
-	root := exec.Command("/bin/sh", "-c", script)          //nolint:gosec,noctx // Fixed executable; bounded below.
-	root.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} //nolint:exhaustruct // OS defaults are intentional.
+	root := exec.Command("/bin/sh", "-c", script)
+	root.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := root.StdinPipe()
 	require.NoError(t, err)
 	{

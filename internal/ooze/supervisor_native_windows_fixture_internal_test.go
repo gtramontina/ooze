@@ -341,7 +341,7 @@ func startWindowsMatrixProcessInJob(t *testing.T, job windows.Handle, role strin
 		require.NoError(t, err)
 	}
 	releaseWindowsFixtureProcess(t, command.Process)
-	processID := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit values.
+	processID := uint32(command.Process.Pid)
 	process, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
 		false, processID,
@@ -476,7 +476,7 @@ func runWindowsNestedJobRoot(t *testing.T) {
 		require.NoError(t, err)
 	}
 	releaseWindowsFixtureProcess(t, command.Process)
-	child := uint32(command.Process.Pid) //nolint:gosec // Windows process IDs are 32-bit values.
+	child := uint32(command.Process.Pid)
 	process, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
 		false,
@@ -594,7 +594,7 @@ func retainWindowsFixtureProcess(t *testing.T, processID int) windows.Handle {
 	process, err := windows.OpenProcess(
 		windows.SYNCHRONIZE|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION,
 		false,
-		uint32(processID), //nolint:gosec // Windows process IDs are 32-bit values.
+		uint32(processID),
 	)
 	require.NoError(t, err, "retain nested-job child %d: %v", processID, err)
 	t.Cleanup(func() {
