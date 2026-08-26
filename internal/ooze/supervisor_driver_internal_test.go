@@ -1823,7 +1823,7 @@ func TestSupervisorDriverPromotesForceTimeWaitFailureToInfrastructure(t *testing
 	infrastructure, ok := terminal.(Infrastructure)
 	require.True(t, ok, "terminal = %#v, want force-time wait infrastructure", terminal)
 	assert.Equal(t, WaitFailed, infrastructure.Cause, "terminal = %#v, want force-time wait infrastructure", terminal)
-	require.NotNil(t, infrastructure.Err, "terminal = %#v, want force-time wait infrastructure", terminal)
+	require.Error(t, infrastructure.Err, "terminal = %#v, want force-time wait infrastructure", terminal)
 	assert.Equal(t, waitErr.Error(), infrastructure.Err.Error(), "terminal = %#v, want force-time wait infrastructure", terminal)
 	assert.Equal(t, waitErr.Error(), infrastructure.Failures.Wait, "terminal = %#v, want force-time wait infrastructure", terminal)
 }

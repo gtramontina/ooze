@@ -1824,7 +1824,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 					},
 				}
 			default:
-				require.FailNowf(t, "unexpected scripted native action", "action: %#v", action)
+				assert.Fail(t, "unexpected scripted native action", "action: %#v", action)
 
 				return nil
 			}

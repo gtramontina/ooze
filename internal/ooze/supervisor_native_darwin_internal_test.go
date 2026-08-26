@@ -122,7 +122,7 @@ func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) 
 	notReleased, ok := result.(NotReleased)
 	require.True(t, ok, "launch = %#v, want immutable NotReleased error", result)
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want immutable NotReleased error", result)
-	assert.NotNil(t, notReleased.Err, "launch = %#v, want immutable NotReleased error", result)
+	assert.Error(t, notReleased.Err, "launch = %#v, want immutable NotReleased error", result)
 	{
 		snapshot := shell.snapshot()
 		assert.EqualValues(t, 0, len(snapshot.admissions), "proven no-release retained runtime custody: %#v", snapshot)

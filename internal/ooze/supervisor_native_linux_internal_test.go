@@ -70,7 +70,7 @@ func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 	notReleased, ok := result.(NotReleased)
 	require.True(t, ok, "launch = %#v, want proven typed target exec failure", result)
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want proven typed target exec failure", result)
-	assert.NotNil(t, notReleased.Err, "launch = %#v, want proven typed target exec failure", result)
+	assert.Error(t, notReleased.Err, "launch = %#v, want proven typed target exec failure", result)
 	{
 		snapshot := shell.snapshot()
 		assert.EqualValues(t, 0, len(snapshot.admissions), "typed target exec failure retained custody: %#v", snapshot)

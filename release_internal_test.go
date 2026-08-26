@@ -25,7 +25,7 @@ func TestPublishManagedFatalReportsOnceBeforeOnePanic(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestPublishManagedFatalHelper$")
 			command.Env = append(os.Environ(), fatalReportHelper+"="+test.role)
 			output, err := command.CombinedOutput()
-			require.NotNil(t, err, "fatal helper passed:\n%s", output)
+			require.Error(t, err, "fatal helper passed:\n%s", output)
 			text := string(output)
 			diagnosticAt := strings.Index(text, test.diagnostic)
 			panicAt := strings.Index(text, test.panicLine)
