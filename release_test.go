@@ -179,7 +179,7 @@ func TestReleaseDispositionHelper(t *testing.T) {
 				[]byte("package fixture\nvar number = 0\n"),
 				0o600,
 			)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	threshold := float32(0)

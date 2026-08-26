@@ -226,7 +226,7 @@ func TestProcessRuntimeConfirmationSettlementAuthorizesSingleAdmission(t *testin
 			barrierAt = index
 		}
 	}
-	assert.False(t, barrierAt < 0, "confirmation setup=%#v", runtime)
+	require.False(t, barrierAt < 0, "confirmation setup=%#v", runtime)
 	assert.Equal(t, fullAutomatic, runtime.mode, "confirmation setup=%#v", runtime)
 	grant := runtime.admissions[barrierAt].grant
 	runtime, started := runtime.startCommitted(grant)

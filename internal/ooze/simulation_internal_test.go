@@ -602,7 +602,7 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 				attemptAt := slices.IndexFunc(record.campaignState.attempts, func(attempt campaignAttempt) bool {
 					return attempt.identity == effect.attempt
 				})
-				assert.False(t, attemptAt < 0, "confirmation launch attempt %q is absent", effect.attempt)
+				require.False(t, attemptAt < 0, "confirmation launch attempt %q is absent", effect.attempt)
 				confirmations = append(confirmations, record.campaignState.attempts[attemptAt].mutant)
 			}
 		}
@@ -1324,7 +1324,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 			break
 		}
 	}
-	assert.False(t, cut < 0, "positive boundary trace has no equality cut")
+	require.False(t, cut < 0, "positive boundary trace has no equality cut")
 	counterexample.records = slices.Clone(counterexample.records[:cut+1])
 	counterexample.records[cut].supervisorState.nextAction++
 	replayed := ReplayLegal(counterexample)

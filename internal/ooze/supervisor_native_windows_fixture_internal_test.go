@@ -280,7 +280,7 @@ func runWindowsMatrixRoot(t *testing.T, role string) {
 		subject = awaitWindowsMatrixSubjectIdentity(t)
 	case "matrix-nested-root":
 		job, err := windows.CreateJobObject(nil, nil)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		defer func() {
 			{
 				closeErr := windows.CloseHandle(job)

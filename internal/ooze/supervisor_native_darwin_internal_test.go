@@ -199,7 +199,7 @@ func runDarwinEscapeFixture(t *testing.T, role string) {
 		command.Env = darwinEscapeFixtureEnvironment("intermediate")
 		{
 			err := command.Start()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		awaitDarwinEscapeFixtureFile(t, pidPath)
 	case "intermediate":
@@ -207,7 +207,7 @@ func runDarwinEscapeFixture(t *testing.T, role string) {
 		command.Env = darwinEscapeFixtureEnvironment("escapee")
 		{
 			err := command.Start()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		awaitDarwinEscapeFixtureFile(t, pidPath)
 		for {
@@ -216,11 +216,11 @@ func runDarwinEscapeFixture(t *testing.T, role string) {
 	case "escapee":
 		{
 			err := syscall.Setpgid(0, 0)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		{
 			err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		for {
 			file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)

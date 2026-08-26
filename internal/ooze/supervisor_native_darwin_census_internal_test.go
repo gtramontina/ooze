@@ -166,7 +166,7 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 	case "session":
 		{
 			err := os.WriteFile(shape, []byte(strconv.Itoa(os.Getpid())), 0o600)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		time.Sleep(30 * time.Second)
 	default:
