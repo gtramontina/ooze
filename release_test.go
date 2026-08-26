@@ -71,8 +71,13 @@ func TestReleaseReportsCompletedCampaignThroughConfiguredReporter(t *testing.T) 
 	require.NotNil(t, result.Score)
 	assert.Equal(t, ooze.Score{Detected: 1, Total: 1, Value: 1, Minimum: 0, Passed: true}, *result.Score)
 	require.Len(t, result.Mutations, 1)
-	assert.Equal(t, ooze.Killed, result.Mutations[0].Outcome)
-	assert.Contains(t, result.Mutations[0].Label, "source.go")
+	mutation := result.Mutations[0]
+	assert.Equal(t, ooze.Killed, mutation.Outcome)
+	assert.Contains(t, mutation.Label, "source.go")
+	assert.Contains(t, mutation.Diff, "var number = 1")
+	assert.Equal(t, ooze.AttemptSettled, mutation.Primary.Kind)
+	assert.False(t, mutation.Primary.Passed)
+	assert.Nil(t, mutation.Confirmation)
 }
 
 func TestReleasePublishesCampaignEventsInAcceptedOrder(t *testing.T) {
@@ -231,6 +236,13 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 			},
 			absent: []string{"Score:"},
 		},
+		{
+			name: "custom reporter receives baseline abort evidence", role: "custom-baseline", wantFailure: true,
+			want: []string{
+				"CUSTOM ABORT: baseline failed with output FULL BASELINE FAILURE OUTPUT", "AFTER RELEASE",
+			},
+			absent: []string{"Campaign aborted. No mutation score."},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestReleaseDispositionHelper$")
@@ -305,6 +317,9 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	if role == "custom-threshold" {
 		options = append(options, ooze.WithReporter(outputReporter{}))
 	}
+	if role == "custom-baseline" {
+		options = append(options, ooze.WithReporter(abortReporter{}))
+	}
 	if role == "no-mutants" || role == "baseline" {
 		options = append(options, ooze.WithObserver(eventOutputObserver{}))
 	}
@@ -328,8 +343,20 @@ func (eventOutputObserver) Observe(event ooze.CampaignEvent) error {
 	return nil
 }
 
+type abortReporter struct{}
+
+func (abortReporter) Report(result ooze.Result) error {
+	if result.Outcome != ooze.Aborted || result.Cause != ooze.BaselineFailed || result.Baseline == nil ||
+		result.Baseline.Kind != ooze.AttemptSettled {
+		return fmt.Errorf("unexpected abort result: %+v", result)
+	}
+	fmt.Printf("CUSTOM ABORT: baseline failed with output %s\n", strings.TrimSpace(result.Baseline.Output.Bytes))
+
+	return nil
+}
+
 func TestReleaseAlwaysPassCommandHelper(t *testing.T) {
-	if os.Getenv(releaseDispositionHelper) == "baseline" {
+	if role := os.Getenv(releaseDispositionHelper); role == "baseline" || role == "custom-baseline" {
 		fmt.Println("FULL BASELINE FAILURE OUTPUT")
 		os.Exit(1)
 	}

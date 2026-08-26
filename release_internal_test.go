@@ -61,3 +61,47 @@ func TestPublishManagedFatalHelper(t *testing.T) {
 	}
 	publishManagedReport(t, iologger.New(os.Stdout), internalooze.ProjectManagedReport(result, 1, false, false))
 }
+
+func TestProjectResultPreservesFatalCampaignEvidence(t *testing.T) {
+	t.Run("cleanup remains unconfirmed", func(t *testing.T) {
+		result := projectResult(internalooze.ManagedReleaseResult{
+			Outcome: internalooze.ManagedCleanupUnconfirmed,
+			Residual: []internalooze.ManagedResidualCustody{{
+				Attempt: "campaign-1:2", Generation: 7, Stage: internalooze.ManagedResidualOwned, Transferred: true,
+			}},
+			FatalAttempts: []internalooze.ManagedFatalAttemptEvidence{{
+				Attempt: "campaign-1:2",
+				Evidence: internalooze.ManagedAttemptEvidence{
+					Kind:     internalooze.ManagedAttemptDrainUnconfirmed,
+					Failures: internalooze.FailureDiagnostics{Termination: "kill failed"},
+				},
+			}},
+		}, 1)
+
+		assert.Equal(t, CleanupUnconfirmed, result.Outcome)
+		assert.Equal(t, []ResidualCustody{{
+			Attempt: "campaign-1:2", Generation: 7, Stage: ResidualOwned, Transferred: true,
+		}}, result.Residual)
+		require.Len(t, result.FatalAttempts, 1)
+		assert.Equal(t, "campaign-1:2", result.FatalAttempts[0].Attempt)
+		assert.Equal(t, "kill failed", result.FatalAttempts[0].Evidence.Failures.Termination)
+	})
+
+	t.Run("invariant violation retains diagnostic context", func(t *testing.T) {
+		result := projectResult(internalooze.ManagedReleaseResult{
+			Outcome: internalooze.ManagedInvariantViolation,
+			Invariant: &internalooze.ManagedInvariantEvidence{
+				Operation: "campaign advance", Reason: "invalid transition", Phase: "Running",
+				RejectedEvent: "attempt terminal", StableIdentities: []string{"campaign-1", "attempt-2"},
+				Obligations: []string{"execution-domain"}, TraceTail: []string{"event-7"},
+			},
+		}, 1)
+
+		assert.Equal(t, InvariantViolation, result.Outcome)
+		require.NotNil(t, result.Invariant)
+		assert.Equal(t, "campaign advance", result.Invariant.Operation)
+		assert.Equal(t, []string{"campaign-1", "attempt-2"}, result.Invariant.StableIdentities)
+		assert.Equal(t, []string{"execution-domain"}, result.Invariant.Obligations)
+		assert.Equal(t, []string{"event-7"}, result.Invariant.TraceTail)
+	})
+}
