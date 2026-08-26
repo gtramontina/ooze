@@ -528,7 +528,19 @@ func (driver *supervisorDriver) publishLaunchUnconfirmed(action supervisorAction
 }
 
 func (driver *supervisorDriver) closeProspective(action supervisorAction) {
-	driver.runtime.observeAttempt(action.generation, launchObservationFromAction(action))
+	receipt := driver.runtime.observeAttempt(action.generation, launchObservationFromAction(action))
+	if !receipt.settlementAcknowledged || receipt.confirmationProvisional {
+		invariant(supervisorDriverOperation, "runtime rejected prospective close")
+	}
+	completion := supervisorRuntimeCompletion{
+		generation: action.generation,
+		action:     supervisorPendingAction{kind: action.kind, token: action.token},
+		kind:       supervisorRuntimeAcknowledged,
+	}
+	driver.apply(supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: action.generation,
+		runtime: &completion,
+	})
 }
 
 func (driver *supervisorDriver) adoptOwned(action supervisorAction) {
@@ -1210,7 +1222,7 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 				waitAction:   state.waitAction,
 				sampleAction: state.sampleAction,
 			}
-		case supervisorLaunchOwned, supervisorCapturingOutput,
+		case supervisorClosingProspective, supervisorLaunchOwned, supervisorCapturingOutput,
 			supervisorSealingStopAdmission, supervisorReleasingDomain,
 			supervisorTransferringResidualCustody, supervisorSettlingRuntime,
 			supervisorAwaitingEmergencySettlement:

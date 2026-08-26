@@ -500,11 +500,31 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
 			})
 		}
-	case supervisorCloseProspective, supervisorAdoptOwned:
-		observation := attemptObservation(launchOwned{})
-		if action.kind == supervisorCloseProspective {
-			observation = launchObservationFromAction(action)
+	case supervisorCloseProspective:
+		observation := launchObservationFromAction(action)
+		var result observationResult
+		engine.runtime, result = engine.runtime.observeAttempt(action.generation, observation)
+		sequence := engine.append(simulationRecord{
+			authority: simulationRuntimeAuthority, source: move.source,
+			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
+			runtimeObservation:    simulationTraceObservation(observation),
+			runtimeState:          simulationTraceRuntimeState(engine.runtime),
+			runtimeObservationOut: simulationTraceObservationResult(result),
+		})
+		engine.enqueueAdmissionDeliveries(sequence, result.deliveries)
+		if !result.settlementAcknowledged || result.confirmationProvisional {
+			return fmt.Errorf("simulation runtime rejected prospective close")
 		}
+		completion := supervisorRuntimeCompletion{
+			generation: action.generation,
+			action:     supervisorPendingAction{kind: action.kind, token: action.token},
+			kind:       supervisorRuntimeAcknowledged,
+		}
+		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
+			kind: supervisorRuntimeCompleted, generation: action.generation, runtime: &completion,
+		})
+	case supervisorAdoptOwned:
+		observation := attemptObservation(launchOwned{})
 		var result observationResult
 		engine.runtime, result = engine.runtime.observeAttempt(action.generation, observation)
 		engine.append(simulationRecord{

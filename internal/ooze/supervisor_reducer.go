@@ -33,6 +33,7 @@ const (
 	supervisorTransferringResidualCustody
 	supervisorSettlingRuntime
 	supervisorAwaitingEmergencySettlement
+	supervisorClosingProspective
 )
 
 type supervisorEventKind uint8
@@ -815,6 +816,12 @@ func reduceLaunchEmergency(
 			var emitted []supervisorAction
 			state, emitted = state.completeLaunch(index, completion, event.at, event.drainBy)
 			actions = append(actions, emitted...)
+		case supervisorClosingProspective:
+			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) ||
+				attempt.pendingAction.kind != supervisorCloseProspective || attempt.pendingAction.token == 0 {
+				invariant(supervisorReducerOperation, "prospective-close emergency snapshot is invalid")
+			}
+			state.attempts[index].lastEventAt = event.at
 		case supervisorLaunchOwned:
 			if snapshot.completion != nil || snapshot.running != nil || event.at.Before(attempt.lastEventAt) {
 				invariant(supervisorReducerOperation, "owned emergency snapshot contains launch completion")
@@ -1257,6 +1264,14 @@ func reduceRuntimeCompletion(
 	attempt := state.attempts[index]
 	completion := requireRuntimeCompletion(attempt, event)
 	switch attempt.pendingAction.kind {
+	case supervisorCloseProspective:
+		if attempt.phase != supervisorClosingProspective || completion.kind != supervisorRuntimeAcknowledged {
+			invariant(supervisorReducerOperation, "prospective close lacks its runtime acknowledgement")
+		}
+		state.attempts[index].pendingAction = supervisorPendingAction{}
+		state.attempts[index].phase = supervisorLaunchClosedNotReleased
+
+		return state, nil
 	case supervisorSettleRuntime:
 		validateRuntimeSettlementCustody(attempt)
 		validateNormalizedTerminalCustody(attempt, state.emergency)
@@ -2237,12 +2252,17 @@ func (state supervisorState) completeLaunch(
 	}
 	switch completion.kind {
 	case supervisorLaunchProvenNotReleased:
-		state.attempts[index].phase = supervisorLaunchClosedNotReleased
 		kind := supervisorPublishNotReleased
 		if late {
 			kind = supervisorCloseProspective
+			state.attempts[index].phase = supervisorClosingProspective
+		} else {
+			state.attempts[index].phase = supervisorLaunchClosedNotReleased
 		}
 		action := state.newAction(kind, index, at, drainBy, &completion)
+		if late {
+			state.attempts[index].pendingAction = supervisorPendingAction{kind: action.kind, token: action.token}
+		}
 
 		return state, []supervisorAction{action}
 	case supervisorLaunchReleased:

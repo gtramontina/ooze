@@ -139,7 +139,7 @@ func TestSupervisorReducerLaunchNilBoundaryRevokesAndLateCompletionRetainsCustod
 			name: "late proven no release closes prospective custody", generation: 21,
 			completionKind: supervisorLaunchProvenNotReleased, failure: LaunchFailed,
 			wantActions: []supervisorActionKind{supervisorCloseProspective},
-			wantPhase:   supervisorLaunchClosedNotReleased,
+			wantPhase:   supervisorClosingProspective,
 		},
 		{
 			name: "late unavoidable release is adopted and forced", generation: 22,

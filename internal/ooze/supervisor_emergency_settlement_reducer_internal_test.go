@@ -326,7 +326,7 @@ func TestSupervisorReducerEmergencySettlementEmptyCompletionOccursOnce(t *testin
 	assertEmergencySettlementInvariantByteStable(t, next, event)
 }
 
-func TestSupervisorReducerEmergencySettlementStartsAfterLateProvenNoRelease(t *testing.T) {
+func TestSupervisorReducerEmergencySettlementWaitsForLateProspectiveClose(t *testing.T) {
 	launchBy := time.Unix(80_000, 0)
 	state, launch := appendReducerLaunchWithFacts(
 		t, supervisorState{}, emergencyLateNoReleaseGeneration,
@@ -352,29 +352,90 @@ func TestSupervisorReducerEmergencySettlementStartsAfterLateProvenNoRelease(t *t
 		kind: supervisorLaunchCompleted, generation: emergencyLateNoReleaseGeneration,
 		at: completion.at, completion: &completion,
 	})
-	wantToken := input.nextAction + 1
+	closeToken := input.nextAction + 1
 	wantState := cloneSupervisorState(input)
-	wantState.nextAction = wantToken + 1
-	wantState.emergency.pendingAction = supervisorPendingAction{
-		kind: supervisorSettleEmergency, token: wantToken + 1,
-	}
+	wantState.nextAction = closeToken
 	wantAttempt := &wantState.attempts[runtimeReceiptAttemptIndex(
 		t, wantState, emergencyLateNoReleaseGeneration,
 	)]
-	wantAttempt.phase = supervisorLaunchClosedNotReleased
+	wantAttempt.phase = supervisorClosingProspective
 	wantAttempt.lastEventAt = completion.at
+	wantAttempt.pendingAction = supervisorPendingAction{
+		kind: supervisorCloseProspective, token: closeToken,
+	}
 	wantActions := []supervisorAction{
 		{
 			kind: supervisorCloseProspective, generation: emergencyLateNoReleaseGeneration,
-			token: wantToken, at: input.emergency.at, drainBy: input.emergency.drainBy,
+			token: closeToken, at: input.emergency.at, drainBy: input.emergency.drainBy,
 			launchKind: supervisorLaunchProvenNotReleased, launchFailure: LaunchFailed,
 			launchDuration: completion.at.Sub(wantAttempt.registeredAt),
 		},
-		{kind: supervisorSettleEmergency, token: wantToken + 1},
 	}
-	assert.Equal(t, wantActions, actions, "late no-release settlement actions = %#v, want %#v", actions, wantActions)
-	assert.Equal(t, wantState, next, "late no-release settlement state = %#v, want %#v", next, wantState)
+	assert.Equal(t, wantActions, actions, "late no-release close actions = %#v, want %#v", actions, wantActions)
+	assert.Equal(t, wantState, next, "late no-release close state = %#v, want %#v", next, wantState)
 	assert.Equal(t, input, active, "late no-release settlement mutated input: before=%#v after=%#v", input, active)
+
+	receipt := supervisorRuntimeCompletion{
+		generation: emergencyLateNoReleaseGeneration,
+		action: supervisorPendingAction{
+			kind: supervisorCloseProspective, token: closeToken,
+		},
+		kind: supervisorRuntimeAcknowledged,
+	}
+	closed, settlementActions := reduceSupervisorMustAccept(t, next, supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: emergencyLateNoReleaseGeneration,
+		runtime: &receipt,
+	})
+	settlementToken := closeToken + 1
+	wantState.nextAction = settlementToken
+	wantState.emergency.pendingAction = supervisorPendingAction{
+		kind: supervisorSettleEmergency, token: settlementToken,
+	}
+	wantAttempt = &wantState.attempts[runtimeReceiptAttemptIndex(
+		t, wantState, emergencyLateNoReleaseGeneration,
+	)]
+	wantAttempt.phase = supervisorLaunchClosedNotReleased
+	wantAttempt.pendingAction = supervisorPendingAction{}
+	assert.Equal(t, []supervisorAction{{
+		kind: supervisorSettleEmergency, token: settlementToken,
+	}}, settlementActions, "runtime close receipt actions = %#v", settlementActions)
+	assert.Equal(t, wantState, closed, "runtime close receipt state = %#v, want %#v", closed, wantState)
+}
+
+func TestSupervisorReducerEmergencyWaitsForProspectiveCloseInFlight(t *testing.T) {
+	launchBy := time.Unix(81_000, 0)
+	state, launch := appendReducerLaunchWithFacts(
+		t, supervisorState{}, emergencyLateNoReleaseGeneration,
+		"emergency-close-in-flight", AutomaticProfile, 20*time.Second, launchBy,
+	)
+	state, _ = reduceSupervisorMustAccept(t, state, supervisorEvent{
+		kind: supervisorLaunchBoundary, generation: emergencyLateNoReleaseGeneration,
+		at: launchBy,
+	})
+	completion := supervisorLaunchCompletion{
+		generation: emergencyLateNoReleaseGeneration,
+		action:     launch.token,
+		at:         launchBy.Add(time.Nanosecond),
+		kind:       supervisorLaunchProvenNotReleased,
+		failure:    LaunchFailed,
+	}
+	closing, closeActions := reduceSupervisorMustAccept(t, state, supervisorEvent{
+		kind: supervisorLaunchCompleted, generation: emergencyLateNoReleaseGeneration,
+		at: completion.at, completion: &completion,
+	})
+	assertSupervisorActions(t, closeActions, supervisorCloseProspective)
+
+	emergencyAt := completion.at.Add(time.Nanosecond)
+	emergency, actions := reduceSupervisorMustAccept(t, closing, supervisorEvent{
+		kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(time.Second),
+		emergencySnapshots: []supervisorEmergencySnapshot{{generation: emergencyLateNoReleaseGeneration}},
+	})
+	assert.Empty(t, actions, "emergency overtook prospective close: %#v", actions)
+	attempt := supervisorAttemptByGeneration(t, emergency, emergencyLateNoReleaseGeneration)
+	assert.Equal(t, supervisorClosingProspective, attempt.phase, "emergency changed close custody: %#v", attempt)
+	assert.Equal(t, (supervisorPendingAction{
+		kind: supervisorCloseProspective, token: closeActions[0].token,
+	}), attempt.pendingAction, "emergency changed close correlation: %#v", attempt)
 }
 
 func TestSupervisorReducerEmergencySettlementStartsAfterMixedLateProvenNoRelease(t *testing.T) {
@@ -416,24 +477,46 @@ func TestSupervisorReducerEmergencySettlementStartsAfterMixedLateProvenNoRelease
 				supervisorAttemptByGeneration(t, input, emergencyMixedLateNoReleaseGeneration).registeredAt,
 			),
 		},
-		{
-			kind: supervisorSettleEmergency, token: wantSettlementToken,
-			resolutions: mixedEmergencySettlementResolutions(),
-		},
 	}
 	want := cloneSupervisorState(input)
+	want.nextAction = wantCloseToken
+	target := &want.attempts[runtimeReceiptAttemptIndex(
+		t, want, emergencyMixedLateNoReleaseGeneration,
+	)]
+	target.phase = supervisorClosingProspective
+	target.pendingAction = supervisorPendingAction{
+		kind: supervisorCloseProspective, token: wantCloseToken,
+	}
+	target.lastEventAt = completion.at
+	assert.Equal(t, wantActions, actions, "mixed late no-release close = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
+	assert.Equal(t, want, next, "mixed late no-release close = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
+	assert.Equal(t, input, active, "mixed late no-release mutated input: before=%#v after=%#v", input, active)
+
+	receipt := supervisorRuntimeCompletion{
+		generation: emergencyMixedLateNoReleaseGeneration,
+		action: supervisorPendingAction{
+			kind: supervisorCloseProspective, token: wantCloseToken,
+		},
+		kind: supervisorRuntimeAcknowledged,
+	}
+	closed, settlementActions := reduceSupervisorMustAccept(t, next, supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: emergencyMixedLateNoReleaseGeneration,
+		runtime: &receipt,
+	})
 	want.nextAction = wantSettlementToken
 	want.emergency.pendingAction = supervisorPendingAction{
 		kind: supervisorSettleEmergency, token: wantSettlementToken,
 	}
-	target := &want.attempts[runtimeReceiptAttemptIndex(
+	target = &want.attempts[runtimeReceiptAttemptIndex(
 		t, want, emergencyMixedLateNoReleaseGeneration,
 	)]
 	target.phase = supervisorLaunchClosedNotReleased
-	target.lastEventAt = completion.at
-	assert.Equal(t, wantActions, actions, "mixed late no-release settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
-	assert.Equal(t, want, next, "mixed late no-release settlement = %#v actions=%#v, want %#v/%#v", next, actions, want, wantActions)
-	assert.Equal(t, input, active, "mixed late no-release mutated input: before=%#v after=%#v", input, active)
+	target.pendingAction = supervisorPendingAction{}
+	assert.Equal(t, []supervisorAction{{
+		kind: supervisorSettleEmergency, token: wantSettlementToken,
+		resolutions: mixedEmergencySettlementResolutions(),
+	}}, settlementActions, "mixed runtime close receipt actions = %#v", settlementActions)
+	assert.Equal(t, want, closed, "mixed runtime close receipt state = %#v, want %#v", closed, want)
 }
 
 func TestSupervisorReducerEmergencySettlementPayloadRejectsOtherEventByteStable(t *testing.T) {
