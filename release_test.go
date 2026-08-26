@@ -252,6 +252,27 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 	}
 }
 
+func TestReleaseVerboseModeObservesCampaignProgress(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^TestReleaseDispositionHelper$", "-test.v")
+	command.Env = append(os.Environ(), releaseDispositionHelper+"=verbose")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "verbose helper failed:\n%s", output)
+	text := string(output)
+	for _, fragment := range []string{
+		"campaign started",
+		"discovered 1 mutant",
+		"baseline started",
+		"baseline passed",
+		"mutation started: source.go → Integer Increment",
+		"mutation survived: source.go → Integer Increment",
+		"campaign completed",
+	} {
+		assert.Contains(t, text, fragment)
+	}
+	assert.NotContains(t, text, "setting up new temporary directory")
+	assert.NotContains(t, text, "materializing all files")
+}
+
 func TestReleaseDispositionHelper(t *testing.T) {
 	role := os.Getenv(releaseDispositionHelper)
 	if role == "" {

@@ -12,8 +12,6 @@ import (
 	"github.com/gtramontina/ooze/internal/ignoredrepository"
 	"github.com/gtramontina/ooze/internal/iologger"
 	"github.com/gtramontina/ooze/internal/ooze"
-	"github.com/gtramontina/ooze/internal/verboserepository"
-	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/arithmetic"
 	"github.com/gtramontina/ooze/viruses/arithmeticassignment"
@@ -107,11 +105,6 @@ func Release(t *testing.T, options ...Option) {
 		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPatterns, opts.Repository)
 	}
 
-	if verbose() {
-		opts.Repository = verboserepository.New(logger, opts.Repository)
-		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
-	}
-
 	colorsEnabled := opts.ForceColors || color.EnabledByDefault()
 	palette := color.NewPalette(colorsEnabled)
 	logger.Logf("%s %s", palette.Yellow("┃"), palette.Green("Releasing Ooze…"))
@@ -119,7 +112,11 @@ func Release(t *testing.T, options ...Option) {
 	if opts.Serial {
 		profile = ooze.SerialProfile
 	}
-	dispatcher := newObserverDispatcher(opts.Observer)
+	observer := opts.Observer
+	if verbose() {
+		observer = ComposeObservers(observer, verboseObserver{logger: iologger.New(os.Stderr)})
+	}
+	dispatcher := newObserverDispatcher(observer)
 	var observe func(ooze.ManagedProgress)
 	if dispatcher != nil {
 		observe = func(progress ooze.ManagedProgress) {
