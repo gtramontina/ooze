@@ -22,6 +22,7 @@ type Options struct {
 	ForceColors               bool
 	IgnoreSourceFilesPatterns []*regexp.Regexp
 	Viruses                   []viruses.Virus
+	Reporter                  Reporter
 }
 
 // WithRepositoryRoot configures which directory is the repository root. This is
@@ -112,6 +113,19 @@ func WithViruses(virus viruses.Virus, rest ...viruses.Virus) func(Options) Optio
 func ForceColors() func(Options) Options {
 	return func(options Options) Options {
 		options.ForceColors = true
+
+		return options
+	}
+}
+
+// WithReporter configures the reporter that publishes the terminal campaign result.
+func WithReporter(reporter Reporter) func(Options) Options {
+	if reporter == nil {
+		panic("reporter must not be nil")
+	}
+
+	return func(options Options) Options {
+		options.Reporter = reporter
 
 		return options
 	}

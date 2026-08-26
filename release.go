@@ -125,6 +125,12 @@ func Release(t *testing.T, options ...Option) {
 		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
 		Viruses: opts.Viruses,
 	})
+	if opts.Reporter != nil {
+		if err := opts.Reporter.Report(projectResult(managed, opts.MinimumThreshold)); err != nil {
+			t.Errorf("ooze: reporter failed: %v", err)
+		}
+		return
+	}
 	report := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
 	publishManagedReport(t, logger, report)
 }

@@ -46,6 +46,45 @@ func TestReleaseRunsManagedBaselineAndMutation(t *testing.T) {
 	)
 }
 
+func TestReleaseReportsCompletedCampaignThroughConfiguredReporter(t *testing.T) {
+	repository := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(repository, "source.go"),
+		[]byte("package fixture\nvar number = 0\n"),
+		0o600,
+	)
+	require.NoError(t, err)
+	t.Setenv(managedReleaseHelper, "1")
+	reporter := &recordingReporter{}
+
+	ooze.Release(t,
+		ooze.WithRepositoryRoot(repository),
+		ooze.WithTestCommand(os.Args[0]+" -test.run=^TestManagedReleaseCommandHelper$"),
+		ooze.WithViruses(integerincrement.New()),
+		ooze.WithMinimumThreshold(0),
+		ooze.WithReporter(reporter),
+	)
+
+	require.Len(t, reporter.results, 1)
+	result := reporter.results[0]
+	assert.Equal(t, ooze.Completed, result.Outcome)
+	require.NotNil(t, result.Score)
+	assert.Equal(t, ooze.Score{Detected: 1, Total: 1, Value: 1, Minimum: 0, Passed: true}, *result.Score)
+	require.Len(t, result.Mutations, 1)
+	assert.Equal(t, ooze.Killed, result.Mutations[0].Outcome)
+	assert.Contains(t, result.Mutations[0].Label, "source.go")
+}
+
+type recordingReporter struct {
+	results []ooze.Result
+}
+
+func (reporter *recordingReporter) Report(result ooze.Result) error {
+	reporter.results = append(reporter.results, result)
+
+	return nil
+}
+
 func TestManagedReleaseCommandHelper(t *testing.T) {
 	role := os.Getenv(managedReleaseHelper)
 	if role == "serial" {
