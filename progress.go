@@ -62,6 +62,26 @@ type CampaignCompleted struct{}
 
 func (CampaignCompleted) campaignEvent() {}
 
+// CampaignFoundNoMutants reports that the campaign discovered an empty mutant catalogue.
+type CampaignFoundNoMutants struct{}
+
+func (CampaignFoundNoMutants) campaignEvent() {}
+
+// CampaignAborted reports that infrastructure or baseline evidence prevented a score.
+type CampaignAborted struct{}
+
+func (CampaignAborted) campaignEvent() {}
+
+// CampaignCleanupUnconfirmed reports unresolved execution-domain custody after emergency cleanup.
+type CampaignCleanupUnconfirmed struct{}
+
+func (CampaignCleanupUnconfirmed) campaignEvent() {}
+
+// CampaignInvariantViolated reports that the campaign rejected an invalid internal transition.
+type CampaignInvariantViolated struct{}
+
+func (CampaignInvariantViolated) campaignEvent() {}
+
 // ProgressObserver observes campaign events without controlling campaign policy.
 type ProgressObserver interface {
 	Observe(CampaignEvent) error
@@ -194,6 +214,14 @@ func projectCampaignEvent(progress internalooze.ManagedProgress) CampaignEvent {
 		}
 	case internalooze.ManagedCampaignCompleted:
 		return CampaignCompleted{}
+	case internalooze.ManagedCampaignFoundNoMutants:
+		return CampaignFoundNoMutants{}
+	case internalooze.ManagedCampaignAborted:
+		return CampaignAborted{}
+	case internalooze.ManagedCampaignCleanupUnconfirmed:
+		return CampaignCleanupUnconfirmed{}
+	case internalooze.ManagedCampaignInvariantViolated:
+		return CampaignInvariantViolated{}
 	default:
 		panic("managed campaign progress is invalid")
 	}

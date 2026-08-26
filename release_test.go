@@ -217,13 +217,16 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 		},
 		{
 			name: "no mutants", role: "no-mutants", wantFailure: true,
-			want:   []string{"No mutants were discovered. Nothing to score.", "AFTER RELEASE"},
+			want: []string{
+				"EVENT: ooze.CampaignFoundNoMutants", "No mutants were discovered. Nothing to score.", "AFTER RELEASE",
+			},
 			absent: []string{"Score:"},
 		},
 		{
 			name: "failed baseline", role: "baseline", wantFailure: true,
 			want: []string{
-				"Campaign aborted. No mutation score.", "Cause: the unmutated baseline failed.",
+				"EVENT: ooze.CampaignAborted", "Campaign aborted. No mutation score.",
+				"Cause: the unmutated baseline failed.",
 				"FULL BASELINE FAILURE OUTPUT", "AFTER RELEASE",
 			},
 			absent: []string{"Score:"},
@@ -281,6 +284,9 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	if role == "custom-threshold" {
 		options = append(options, ooze.WithReporter(outputReporter{}))
 	}
+	if role == "no-mutants" || role == "baseline" {
+		options = append(options, ooze.WithObserver(eventOutputObserver{}))
+	}
 	ooze.Release(t, options...)
 	fmt.Println("AFTER RELEASE")
 }
@@ -289,6 +295,14 @@ type outputReporter struct{}
 
 func (outputReporter) Report(result ooze.Result) error {
 	fmt.Printf("CUSTOM REPORT: score=%.2f passed=%t\n", result.Score.Value, result.Score.Passed)
+
+	return nil
+}
+
+type eventOutputObserver struct{}
+
+func (eventOutputObserver) Observe(event ooze.CampaignEvent) error {
+	fmt.Printf("EVENT: %T\n", event)
 
 	return nil
 }

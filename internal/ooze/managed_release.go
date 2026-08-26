@@ -176,6 +176,9 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
+			if configuration.Observe != nil {
+				configuration.Observe(terminalManagedProgress(presented.Outcome))
+			}
 			return
 		}
 		violation, ok := recovered.(runtimeInvariantViolation)
@@ -198,6 +201,9 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 				TraceTail:        append([]string(nil), violation.traceTail...),
 			},
 			Residual: presentManagedResiduals(residual),
+		}
+		if configuration.Observe != nil {
+			configuration.Observe(terminalManagedProgress(presented.Outcome))
 		}
 	}()
 

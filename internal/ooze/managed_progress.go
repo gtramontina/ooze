@@ -11,6 +11,10 @@ const (
 	ManagedMutationStarted
 	ManagedMutationFinished
 	ManagedCampaignCompleted
+	ManagedCampaignFoundNoMutants
+	ManagedCampaignAborted
+	ManagedCampaignCleanupUnconfirmed
+	ManagedCampaignInvariantViolated
 )
 
 // ManagedProgress contains capability-free campaign-domain facts for the root package.
@@ -68,11 +72,27 @@ func (runner *managedCampaignRunner) publishProgress(
 				Outcome: presentManagedMutation(mutant.result),
 			})
 		}
-	case terminalCommittedEvent:
-		if _, completed := next.outcome.(completedOutcome); completed {
-			runner.observe(ManagedProgress{Kind: ManagedCampaignCompleted})
-		}
 	}
+}
+
+func terminalManagedProgress(outcome ManagedOutcome) ManagedProgress {
+	var kind ManagedProgressKind
+	switch outcome {
+	case ManagedCompleted:
+		kind = ManagedCampaignCompleted
+	case ManagedNoMutants:
+		kind = ManagedCampaignFoundNoMutants
+	case ManagedAborted:
+		kind = ManagedCampaignAborted
+	case ManagedCleanupUnconfirmed:
+		kind = ManagedCampaignCleanupUnconfirmed
+	case ManagedInvariantViolation:
+		kind = ManagedCampaignInvariantViolated
+	default:
+		panic("managed terminal progress outcome is invalid")
+	}
+
+	return ManagedProgress{Kind: kind}
 }
 
 func (runner *managedCampaignRunner) mutationLabel(identity mutantIdentity) string {
