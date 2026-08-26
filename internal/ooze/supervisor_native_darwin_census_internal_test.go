@@ -170,7 +170,7 @@ func runDarwinLimitFixture(t *testing.T, role string) {
 		}
 		time.Sleep(30 * time.Second)
 	default:
-		require.FailNow(t, "unknown Darwin limit fixture role %q", role)
+		require.FailNowf(t, "unknown Darwin limit fixture role", "role: %q", role)
 	}
 }
 
@@ -194,7 +194,7 @@ func awaitDarwinLimitFile(t *testing.T, path string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	require.FailNow(t, "Darwin limit fixture did not create %s", path)
+	require.FailNowf(t, "Darwin limit fixture did not create its file", "path: %s", path)
 }
 
 func readDarwinLimitIdentity(t *testing.T, path string) int {
@@ -327,7 +327,7 @@ func waitManagedDarwinParent(t *testing.T, shape, root int, parent string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	require.FailNow(t, "descendant did not settle to %s parentage", parent)
+	require.FailNowf(t, "descendant did not settle to expected parentage", "parent: %s", parent)
 }
 
 func releaseManagedDarwinRoot(t *testing.T, root *exec.Cmd, release io.Closer) {

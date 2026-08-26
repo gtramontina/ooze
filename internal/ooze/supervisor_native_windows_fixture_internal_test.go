@@ -263,7 +263,7 @@ func runWindowsJobFixture(t *testing.T, role string) {
 	case "matrix-subject":
 		awaitWindowsFixtureFile(t, os.Getenv("OOZE_WINDOWS_MATRIX_SUBJECT_RELEASE"), 8*time.Second)
 	default:
-		require.FailNow(t, "unknown Windows job fixture role %q", role)
+		require.FailNowf(t, "unknown Windows job fixture role", "role: %q", role)
 	}
 }
 
@@ -289,7 +289,7 @@ func runWindowsMatrixRoot(t *testing.T, role string) {
 		}()
 		subject = startWindowsMatrixProcessInJob(t, job, "matrix-subject")
 	default:
-		require.FailNow(t, "unknown Windows matrix root role %q", role)
+		require.FailNowf(t, "unknown Windows matrix root role", "role: %q", role)
 	}
 	identity := fmt.Sprintf("%d %d", root, subject)
 	if middle > 0 {

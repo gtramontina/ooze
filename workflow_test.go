@@ -32,7 +32,7 @@ func workflowJob(t *testing.T, path, name string) string {
 	if start >= 0 {
 		return strings.Join(lines[start:], "\n")
 	}
-	require.FailNow(t, "workflow %s has no %q job", path, name)
+	require.FailNowf(t, "workflow job not found", "workflow %s has no %q job", path, name)
 	return ""
 }
 

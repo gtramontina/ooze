@@ -281,7 +281,7 @@ func TestStartInstallationRejectsCrossPairedGrantBeforeCellMutation(t *testing.T
 			select {
 			case <-emergency:
 			default:
-				require.FailNow(t, "reverse=%t cross-pair did not broadcast fatal closure", reverse)
+				require.FailNowf(t, "cross-pair did not broadcast fatal closure", "reverse=%t", reverse)
 			}
 			{
 				returned := shell.acknowledgeGrantReturn(grantA)
@@ -757,7 +757,7 @@ func TestProcessRuntimeShellSerializesCancellationAgainstGrant(t *testing.T) {
 			assert.True(t, open, "sample %d: late grant=%#v/%t", sample, grant, open)
 			assert.Equal(t, waiting.request, grant, "sample %d: late grant=%#v/%t", sample, grant, open)
 		default:
-			require.FailNow(t, "sample %d: cancellation=%#v", sample, waitingCancellation)
+			require.FailNowf(t, "sample cancellation was not observed", "sample %d: cancellation=%#v", sample, waitingCancellation)
 		}
 	}
 }
@@ -875,7 +875,7 @@ func TestProcessRuntimeShellSerializesFatalCloseAgainstStartCommit(t *testing.T)
 			assert.EqualValues(t, 0, cell.installedGeneration(), "sample %d rejected cell/residual=%d/%#v", sample, cell.installedGeneration(), residual)
 			assert.EqualValues(t, 0, len(residual), "sample %d rejected cell/residual=%d/%#v", sample, cell.installedGeneration(), residual)
 		case startCommittedRejectedGrant, startCommittedRejectedGate:
-			require.FailNow(t, "sample %d start decision=%#v", sample, prepared.result)
+			require.FailNowf(t, "unexpected sample start decision", "sample %d start decision=%#v", sample, prepared.result)
 		}
 	}
 }

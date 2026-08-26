@@ -225,7 +225,7 @@ func runLinuxMatrixFixture(t *testing.T, role string) {
 		writeLinuxMatrixPID(t, filepath.Join(directory, "subject.pid"), os.Getpid())
 		runBoundedLinuxMatrixSubject()
 	default:
-		require.FailNow(t, "unknown Linux matrix fixture role %q", role)
+		require.FailNowf(t, "unknown Linux matrix fixture role", "role: %q", role)
 	}
 }
 
@@ -349,7 +349,7 @@ func linuxMatrixParent(t *testing.T, process int) int {
 			return parent
 		}
 	}
-	require.FailNow(t, "Linux process %d has no parent identity", process)
+	require.FailNowf(t, "Linux process has no parent identity", "process: %d", process)
 
 	return 0
 }
@@ -363,7 +363,7 @@ func awaitLinuxMatrixParent(t *testing.T, process, want int, bound time.Duration
 		}
 		time.Sleep(time.Millisecond)
 	}
-	require.FailNow(t, "Linux process %d was not adopted by %d within %s", process, want, bound)
+	require.FailNowf(t, "Linux process was not adopted within the bound", "process %d, expected parent %d within %s", process, want, bound)
 }
 
 func assertLinuxMatrixProcessGone(t *testing.T, process int) {
@@ -424,7 +424,7 @@ func awaitLinuxMatrixFile(t *testing.T, path string, bound time.Duration) []byte
 		require.False(t, err != nil && !os.IsNotExist(err), err)
 		time.Sleep(time.Millisecond)
 	}
-	require.FailNow(t, "Linux matrix file %q was not populated within %s", path, bound)
+	require.FailNowf(t, "Linux matrix file was not populated within the bound", "path %q, bound %s", path, bound)
 
 	return nil
 }

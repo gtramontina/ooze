@@ -206,7 +206,7 @@ func runLinuxEscapeFixture(t *testing.T, role string) {
 			time.Sleep(5 * time.Millisecond)
 		}
 	default:
-		require.FailNow(t, "unknown Linux escape fixture role %q", role)
+		require.FailNowf(t, "unknown Linux escape fixture role", "role: %q", role)
 	}
 }
 
@@ -232,5 +232,5 @@ func awaitLinuxEscapeFixtureFile(t *testing.T, path string) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	require.FailNow(t, "timed out awaiting Linux escape fixture file %s", path)
+	require.FailNowf(t, "timed out awaiting Linux escape fixture file", "path: %s", path)
 }

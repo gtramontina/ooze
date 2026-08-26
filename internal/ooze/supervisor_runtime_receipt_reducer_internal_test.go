@@ -340,7 +340,7 @@ func runtimeReceiptAttemptIndex(
 			return index
 		}
 	}
-	require.FailNow(t, "runtime receipt generation %d absent from %#v", generation, state)
+	require.FailNowf(t, "runtime receipt generation absent from state", "generation %d, state %#v", generation, state)
 
 	return -1
 }

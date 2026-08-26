@@ -1809,7 +1809,7 @@ func (harness *campaignHarness) settleAttempt(
 	case DrainUnconfirmed:
 		observation = drainUnconfirmed{}
 	default:
-		require.FailNow(t, "unsupported fixture terminal %#v", terminal)
+		require.FailNowf(t, "unsupported fixture terminal", "terminal: %#v", terminal)
 	}
 	var receipt observationResult
 	harness.runtime, receipt = harness.runtime.observeAttempt(attempt.generation, observation)

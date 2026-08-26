@@ -515,7 +515,7 @@ func newForcedDrainReducerFixture(t *testing.T, kind supervisorRunningIntentKind
 		fact.source = supervisorObservationRunning
 		fact.diagnostic = 601
 	default:
-		require.FailNow(t, "unsupported forced drain intent %d", kind)
+		require.FailNowf(t, "unsupported forced drain intent", "intent: %d", kind)
 	}
 	facts := []supervisorRunningFact{fact}
 	if kind == supervisorIntentDeadline {

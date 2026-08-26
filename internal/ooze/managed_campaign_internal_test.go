@@ -113,7 +113,7 @@ func TestManagedCampaignSerialPrimariesAreExclusiveWithDetectedCapacityProfile(t
 	select {
 	case second := <-started:
 		close(release)
-		require.FailNow(t, "serial primary overlapped: %#v", second)
+		require.FailNowf(t, "serial primary overlapped", "second primary: %#v", second)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)

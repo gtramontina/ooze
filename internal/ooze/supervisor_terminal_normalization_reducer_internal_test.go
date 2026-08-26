@@ -326,7 +326,7 @@ func selectTerminalNormalizationIntent(
 	case supervisorIntentObservationFailure:
 		return selectNormalizationObservationFailure(t, running, spec)
 	default:
-		require.FailNow(t, "unsupported terminal normalization intent %d", spec.intent)
+		require.FailNowf(t, "unsupported terminal normalization intent", "intent: %d", spec.intent)
 
 		return supervisorState{}, supervisorAction{}
 	}
@@ -702,7 +702,7 @@ func terminalNormalizationSpecNamed(t *testing.T, name string) terminalNormaliza
 			return spec
 		}
 	}
-	require.FailNow(t, "terminal normalization spec %q not found", name)
+	require.FailNowf(t, "terminal normalization spec not found", "name: %q", name)
 
 	return terminalNormalizationSpec{}
 }

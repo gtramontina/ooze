@@ -45,7 +45,7 @@ func TestManagedProcessRejectsRecursiveReleaseWhileCallerOwnsWait(t *testing.T) 
 	assert.EqualValues(t, 1, attempts.launches, "recursive outcome/launches = %v/%d, want aborted before a second launch", recursive.Outcome, attempts.launches)
 	select {
 	case result := <-first:
-		require.FailNow(t, "first release returned before owned wait settled: %#v", result)
+		require.FailNowf(t, "first release returned before owned wait settled", "result: %#v", result)
 	default:
 	}
 

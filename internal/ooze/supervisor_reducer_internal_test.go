@@ -898,7 +898,7 @@ func supervisorAttemptByGeneration(
 			return attempt
 		}
 	}
-	require.FailNow(t, "generation %d absent from state %#v", generation, state)
+	require.FailNowf(t, "generation absent from supervisor state", "generation %d, state %#v", generation, state)
 
 	return supervisorAttemptState{}
 }
@@ -960,7 +960,7 @@ func assertReducerDataOnly(t *testing.T, dataType reflect.Type, visiting map[ref
 
 	switch dataType.Kind() {
 	case reflect.Func, reflect.Chan, reflect.Interface, reflect.Map, reflect.UnsafePointer, reflect.Uintptr:
-		require.FailNow(t, "reducer data contains execution capability at %s: %s", path, dataType)
+		require.FailNowf(t, "reducer data contains execution capability", "path %s, type %s", path, dataType)
 	case reflect.Pointer, reflect.Slice, reflect.Array:
 		assertReducerDataOnly(t, dataType.Elem(), visiting, path+" -> "+dataType.String())
 	case reflect.Struct:

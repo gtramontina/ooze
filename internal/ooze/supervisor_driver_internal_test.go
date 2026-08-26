@@ -814,7 +814,7 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 		}
 		select {
 		case <-deadline:
-			require.FailNow(t, "late not-released completion retained custody: %#v", snapshot)
+			require.FailNowf(t, "late not-released completion retained custody", "snapshot: %#v", snapshot)
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -1075,7 +1075,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 		}
 		select {
 		case <-deadline:
-			require.FailNow(t, "late released attempt did not await emergency settlement: phase=%d runtime=%#v", phase, shell.snapshot())
+			require.FailNowf(t, "late released attempt did not await emergency settlement", "phase=%d runtime=%#v", phase, shell.snapshot())
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -2209,7 +2209,7 @@ func automaticDeadlineTerminalWithReadyPeak(
 	select {
 	case terminal = <-terminalReady:
 	case <-time.After(time.Second):
-		require.FailNow(t, "iteration %d owned attempt wait did not settle", iteration)
+		require.FailNowf(t, "owned attempt wait did not settle", "iteration %d", iteration)
 	}
 	close(waitReleased)
 

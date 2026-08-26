@@ -148,7 +148,7 @@ func awaitNativeFanoutFile(t *testing.T, path string, deadline time.Time) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	require.FailNow(t, "fanout fixture did not create %s", path)
+	require.FailNowf(t, "fanout fixture did not create its file", "path: %s", path)
 }
 
 func readNativeFanoutIdentity(t *testing.T, path string) int {

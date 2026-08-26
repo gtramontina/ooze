@@ -775,7 +775,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 				last = record
 			}
 		}
-		require.FailNow(t, "drain-expiry exploration failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%T", explored.failure, expired, last.campaignState.phase, last.campaignEvent.kind, len(last.campaignState.obligations), last.campaignState.failure)
+		require.FailNowf(t, "drain-expiry exploration failed", "failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%T", explored.failure, expired, last.campaignState.phase, last.campaignEvent.kind, len(last.campaignState.obligations), last.campaignState.failure)
 	}
 	{
 		_, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault)
@@ -1824,7 +1824,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 					},
 				}
 			default:
-				require.FailNow(t, "unexpected scripted native action: %#v", action)
+				require.FailNowf(t, "unexpected scripted native action", "action: %#v", action)
 
 				return nil
 			}
