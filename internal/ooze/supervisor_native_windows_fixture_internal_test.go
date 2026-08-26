@@ -86,10 +86,6 @@ func TestWindowsJobVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				require.FailNow(t, "Windows matrix did not observe parent-Job membership after root exit")
 			}
-			// A terminated root may remain in Job accounting while a retained
-			// process handle exists. The supervisor's accepted root-exit fact,
-			// rather than disappearance from the accounting list, defines this
-			// state; the descendant must remain transitively visible either way.
 			assertWindowsMatrixMember(t, "root exited", uint32(subject), exitedMembers)
 
 			terminal := waitWindowsFixtureTerminal(t, owned.Attempt)

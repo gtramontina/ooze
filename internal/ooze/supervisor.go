@@ -7,17 +7,13 @@ import (
 	"time"
 )
 
-// Profile fixes the supervision strategy before an attempt starts.
 type Profile uint8
 
 const (
-	// AutomaticProfile enables automatic process-fuse supervision.
 	AutomaticProfile Profile = iota + 1
-	// SerialProfile excludes process-fuse supervision.
 	SerialProfile
 )
 
-// Spec contains only caller-resolved facts for one managed attempt.
 type Spec struct {
 	Attempt  string
 	Command  []string
@@ -27,7 +23,6 @@ type Spec struct {
 	Deadline time.Duration
 }
 
-// ErrInvalidSpec identifies a malformed managed-attempt specification.
 var ErrInvalidSpec = errors.New("invalid attempt spec")
 
 func (s Spec) validate() error {
@@ -52,48 +47,35 @@ func (s Spec) snapshot() Spec {
 	return s
 }
 
-// LaunchFailure distinguishes ordinary launch failure from normalized launch
-// resource exhaustion.
 type LaunchFailure uint8
 
 const (
-	// LaunchFailed means the command was proved not released after an ordinary failure.
 	LaunchFailed LaunchFailure = iota + 1
-	// LaunchResourceExhausted means an eligible primary launch operation exhausted resources.
 	LaunchResourceExhausted
 )
 
-// Residual identifies retained native custody after a bounded drain.
 type Residual uint8
 
 const (
-	// ProspectiveUnresolved means target release could not be confirmed or excluded.
 	ProspectiveUnresolved Residual = iota + 1
-	// OwnedUndrained means a released attempt could not be proved empty.
 	OwnedUndrained
 )
 
-// LaunchResult closes an accepted prospective start in exactly one of three ways.
 type LaunchResult interface{ launchResult() }
 
-// Owned transfers an attempt capability after release inside containment.
 type Owned struct{ Attempt *OwnedAttempt }
 
-// NotReleased proves that target code did not run.
 type NotReleased struct {
 	Kind LaunchFailure
 	Err  error
 }
 
-// LaunchUnconfirmed retains prospective custody when release remains unknown.
 type LaunchUnconfirmed struct{ Residual Residual }
 
 func (Owned) launchResult()             {}
 func (NotReleased) launchResult()       {}
 func (LaunchUnconfirmed) launchResult() {}
 
-// ErrUnsupportedPlatform is returned before admission or native work on an
-// unsupported build target.
 var ErrUnsupportedPlatform = errors.New("managed attempts are unsupported on this platform")
 
 type supervisorConstruction struct {
@@ -102,7 +84,6 @@ type supervisorConstruction struct {
 	launchNative func(attemptGeneration, Spec) LaunchResult
 }
 
-// Supervisor is the concrete entry point for managed command execution.
 type Supervisor struct {
 	installStart   func(attemptIdentity, *pendingStartCell) installedStart
 	launchNative   func(attemptGeneration, Spec) LaunchResult
@@ -140,8 +121,6 @@ func newSupervisorForTest(
 	return supervisor
 }
 
-// Launch validates and snapshots caller facts, registers the exact prospective
-// generation, and only then invokes native launch mechanics after unlock.
 func (s *Supervisor) Launch(spec Spec) LaunchResult {
 	if err := spec.validate(); err != nil {
 		panic(err)
@@ -169,7 +148,6 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 	return result
 }
 
-// EmergencyDrain runs one exact runtime-wide emergency settlement.
 func (s *Supervisor) EmergencyDrain(request EmergencyRequest) SweepResult {
 	if err := request.validate(); err != nil {
 		panic(err)
@@ -209,13 +187,11 @@ func brokerLaunchObservation(result LaunchResult) attemptObservation {
 	}
 }
 
-// StopRequest separates the terminal fact time from the absolute drainage bound.
 type StopRequest struct {
 	At      time.Time
 	DrainBy time.Time
 }
 
-// EmergencyRequest fixes the logical emergency cut and its drainage bound.
 type EmergencyRequest struct {
 	At      time.Time
 	DrainBy time.Time
@@ -225,22 +201,17 @@ func (request EmergencyRequest) validate() error {
 	return StopRequest(request).validate()
 }
 
-// SweepResult is the stable settlement of one emergency epoch.
 type SweepResult interface{ sweepResult() }
 
-// SweepDrained reports that the emergency epoch retained no residual custody.
 type SweepDrained struct{}
 
-// ResidualRef identifies one stable ordered emergency residual.
 type ResidualRef struct {
 	Attempt string
 	Kind    Residual
 }
 
-// SweepUnconfirmed reports immutable ordered residual custody.
 type SweepUnconfirmed struct{ residuals []ResidualRef }
 
-// Residuals returns a defensive copy of the ordered residual inventory.
 func (settlement SweepUnconfirmed) Residuals() []ResidualRef {
 	return append([]ResidualRef(nil), settlement.residuals...)
 }
@@ -258,7 +229,6 @@ func (r StopRequest) validate() error {
 	return nil
 }
 
-// ExecutionData is the evidence common to every owned terminal.
 type ExecutionData struct {
 	Deadline        time.Duration
 	LaunchDuration  time.Duration
@@ -271,17 +241,13 @@ type ExecutionData struct {
 	confirmationProvisional bool
 }
 
-// BoundFired identifies the command bound that selected terminal intent.
 type BoundFired uint8
 
 const (
-	// NoBoundFired means an observed fact selected terminal intent.
 	NoBoundFired BoundFired = iota
-	// CommandDeadlineFired means the resolved command deadline selected intent.
 	CommandDeadlineFired
 )
 
-// OutputSnapshot is one immutable prefix of the private merged-output file.
 type OutputSnapshot struct {
 	Bytes                 string
 	Cutoff                uint64
@@ -289,7 +255,6 @@ type OutputSnapshot struct {
 	Final                 bool
 }
 
-// FailureDiagnostics retains independent supervision failures.
 type FailureDiagnostics struct {
 	Wait          string
 	RunningCensus string
@@ -299,56 +264,44 @@ type FailureDiagnostics struct {
 	Release       string
 }
 
-// ExitStatus is the native root's normalized exit evidence.
 type ExitStatus struct {
 	Code   int
 	Signal int
 }
 
-// Passed reports an ordinary zero exit.
 func (status ExitStatus) Passed() bool { return status.Code == 0 && status.Signal == 0 }
 
-// Terminal is the immutable result returned by an owned attempt.
 type Terminal interface{ terminal() }
 
-// Settled reports an ordinary root exit after authoritative drainage.
 type Settled struct {
 	Exit ExitStatus
 	ExecutionData
 }
 
-// Trip distinguishes fuse and deadline terminal evidence.
 type Trip interface{ trip() }
 
-// FuseTrip records the live descendant count that crossed the fuse.
 type FuseTrip struct{ Live int }
 
-// ObservedCount preserves whether an automatic running count was observed.
 type ObservedCount struct {
 	Value   int
 	Present bool
 }
 
-// AutomaticDeadlineTrip records the observed running peak, if any.
 type AutomaticDeadlineTrip struct{ Peak ObservedCount }
 
-// SerialDeadlineTrip carries no fabricated count.
 type SerialDeadlineTrip struct{}
 
 func (FuseTrip) trip()              {}
 func (AutomaticDeadlineTrip) trip() {}
 func (SerialDeadlineTrip) trip()    {}
 
-// Tripped reports a process-fuse or command-deadline trip.
 type Tripped struct {
 	Trip Trip
 	ExecutionData
 }
 
-// Stopped reports that Stop supplied the earliest running intent.
 type Stopped struct{ ExecutionData }
 
-// Cause identifies the stable presentation cause of infrastructure failure.
 type Cause uint8
 
 const (
@@ -359,14 +312,12 @@ const (
 	ReleaseFailed
 )
 
-// Infrastructure reports a supervision failure after authoritative drainage.
 type Infrastructure struct {
 	Cause Cause
 	Err   error
 	ExecutionData
 }
 
-// DrainUnconfirmed reports retained owned custody without an emptiness proof.
 type DrainUnconfirmed struct {
 	Residual Residual
 	ExecutionData
@@ -378,7 +329,6 @@ func (Stopped) terminal()          {}
 func (Infrastructure) terminal()   {}
 func (DrainUnconfirmed) terminal() {}
 
-// OwnedAttempt is the opaque capability for one released, contained attempt.
 type OwnedAttempt struct {
 	stop func(StopRequest)
 	wait func() Terminal
@@ -402,7 +352,6 @@ func newOwnedAttempt(stop func(StopRequest), wait func() Terminal) *OwnedAttempt
 	return attempt
 }
 
-// Stop submits a timestamped stop fact until terminal delivery seals admission.
 func (a *OwnedAttempt) Stop(request StopRequest) {
 	if err := request.validate(); err != nil {
 		panic(err)
@@ -425,7 +374,6 @@ func (a *OwnedAttempt) Stop(request StopRequest) {
 	a.stop(request)
 }
 
-// Wait joins supervision and returns the same immutable terminal to every caller.
 func (a *OwnedAttempt) Wait() Terminal {
 	a.waitOnce.Do(func() {
 		terminal := a.wait()

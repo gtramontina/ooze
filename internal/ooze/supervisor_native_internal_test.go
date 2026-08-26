@@ -55,9 +55,6 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		},
 	}
 	t.Cleanup(func() {
-		// DrainUnconfirmed deliberately retains native custody. Close retained
-		// test handles even after an assertion failure; every real child in this
-		// fixture exits before the false-negative emptiness oracle is consulted.
 		executor.mutex.Lock()
 		defer executor.mutex.Unlock()
 		for _, nativeAttempt := range executor.attempts {

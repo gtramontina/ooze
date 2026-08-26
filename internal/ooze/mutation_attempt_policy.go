@@ -7,11 +7,8 @@ import (
 	"time"
 )
 
-// ErrInvalidMutationAttemptPlan identifies unresolved mutation-attempt facts.
 var ErrInvalidMutationAttemptPlan = errors.New("invalid mutation attempt plan")
 
-// MutationAttemptPlanInput contains the already-observed facts used to fix one
-// campaign's mutation-attempt execution policy.
 type MutationAttemptPlanInput struct {
 	BaselineDuration time.Duration
 	Peers            int
@@ -19,13 +16,11 @@ type MutationAttemptPlanInput struct {
 	Profile          Profile
 }
 
-// MutationAttemptPlan fixes the facts shared by every primary and confirmation.
 type MutationAttemptPlan struct {
 	deadline time.Duration
 	profile  Profile
 }
 
-// NewMutationAttemptPlan resolves one immutable mutation-attempt plan.
 func NewMutationAttemptPlan(input MutationAttemptPlanInput) (MutationAttemptPlan, error) {
 	switch {
 	case input.BaselineDuration <= 0:
@@ -63,14 +58,10 @@ func NewMutationAttemptPlan(input MutationAttemptPlanInput) (MutationAttemptPlan
 	return MutationAttemptPlan{deadline: deadline, profile: input.Profile}, nil
 }
 
-// Deadline returns the full resolved command deadline.
 func (plan MutationAttemptPlan) Deadline() time.Duration { return plan.deadline }
 
-// Profile returns the originating primary's cooperative execution profile.
 func (plan MutationAttemptPlan) Profile() Profile { return plan.profile }
 
-// ConfirmationSpec derives one confirmation from its primary while replacing
-// only the attempt identity and fresh snapshot-derived workspace.
 func (plan MutationAttemptPlan) ConfirmationSpec(primary Spec, attempt, workspace string) (Spec, error) {
 	if err := primary.validate(); err != nil {
 		return Spec{}, fmt.Errorf("%w: primary spec: %v", ErrInvalidMutationAttemptPlan, err)
@@ -92,7 +83,6 @@ func (plan MutationAttemptPlan) ConfirmationSpec(primary Spec, attempt, workspac
 	return confirmation, nil
 }
 
-// MutationOutcome is an attributable scored result for one mutant.
 type MutationOutcome uint8
 
 const (
@@ -102,10 +92,8 @@ const (
 	MutationRunaway
 )
 
-// MutationDisposition is the policy result for one drained observation.
 type MutationDisposition interface{ mutationDisposition() }
 
-// AttributableMutation retains the observation or observations supporting one outcome.
 type AttributableMutation struct {
 	Outcome           MutationOutcome
 	Primary           Terminal
@@ -115,16 +103,12 @@ type AttributableMutation struct {
 
 func (AttributableMutation) mutationDisposition() {}
 
-// MutationNeedsConfirmation retains one overlap-ambiguous primary deadline.
-// Only primary classification can construct this proof.
 type MutationNeedsConfirmation struct{ primary Tripped }
 
 func (MutationNeedsConfirmation) mutationDisposition() {}
 
-// Primary returns the overlap-ambiguous primary deadline observation.
 func (provisional MutationNeedsConfirmation) Primary() Tripped { return provisional.primary }
 
-// MutationAborted retains infrastructure uncertainty that cannot be scored.
 type MutationAborted struct {
 	Primary      Terminal
 	Confirmation Terminal
@@ -132,7 +116,6 @@ type MutationAborted struct {
 
 func (MutationAborted) mutationDisposition() {}
 
-// MutationFatalUncertainty retains drainage uncertainty for runtime-fatal handling.
 type MutationFatalUncertainty struct {
 	Primary      Terminal
 	Confirmation Terminal
@@ -140,7 +123,6 @@ type MutationFatalUncertainty struct {
 
 func (MutationFatalUncertainty) mutationDisposition() {}
 
-// ClassifyPrimaryMutation maps one drained primary observation into mutation policy.
 func ClassifyPrimaryMutation(primary Terminal) MutationDisposition {
 	switch terminal := primary.(type) {
 	case Settled:
@@ -172,8 +154,6 @@ func ClassifyPrimaryMutation(primary Terminal) MutationDisposition {
 	}
 }
 
-// ClassifyMutationConfirmation maps one exclusive confirmation without
-// producing another confirmation request.
 func ClassifyMutationConfirmation(
 	provisional MutationNeedsConfirmation,
 	confirmation Terminal,

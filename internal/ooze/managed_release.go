@@ -62,8 +62,6 @@ const (
 	ManagedAttemptDrainUnconfirmed
 )
 
-// ManagedAttemptEvidence is the immutable reporting projection of one owned
-// attempt terminal. It contains no native identity or runtime custody object.
 type ManagedAttemptEvidence struct {
 	Kind                    ManagedAttemptKind
 	Passed                  bool

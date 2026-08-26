@@ -814,9 +814,6 @@ func TestSupervisorReducerLaunchRejectsStaleWrongAndDuplicateCompletionCorrelati
 }
 
 func TestSupervisorReducerLaunchDataTypesContainNoExecutionCapability(t *testing.T) {
-	// Stable slices preserve reducer order. The only permitted pointer is a
-	// pointer to a data-only optional completion snapshot carried atomically by
-	// a boundary event. time.Time is an explicitly approved logical fact type.
 	types := []reflect.Type{
 		reflect.TypeOf(supervisorState{}),
 		reflect.TypeOf(supervisorEvent{}),

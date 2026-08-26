@@ -212,9 +212,6 @@ type campaignPreparationFailedEvent struct {
 	cause string
 }
 
-// Campaign facts deliberately copy runtime authority into a reducer-owned
-// vocabulary. Channels, broker custody, and settlement objects never enter the
-// pure campaign state machine.
 type campaignAdmission struct {
 	campaign campaignToken
 	attempt  attemptIdentity

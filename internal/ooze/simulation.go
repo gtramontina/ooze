@@ -145,7 +145,6 @@ type simulationWorld struct {
 	supervisor supervisorState
 }
 
-// SimulationResult contains the canonical trace and its replayed production world.
 type SimulationResult struct {
 	trace   simulationTrace
 	world   simulationWorld
@@ -165,7 +164,6 @@ type simulationMalformedFact struct {
 	supervisor         simulationSupervisorEvent
 }
 
-// FailureKey is the alpha-normalized semantic identity retained while shrinking.
 type simulationFailureKind uint8
 
 const (
@@ -215,7 +213,6 @@ const (
 	simulationSupervisorDivergence
 )
 
-// ViolationResult retains the original invariant and the world after guarded cleanup.
 type ViolationResult struct {
 	world     simulationWorld
 	invariant runtimeInvariantViolation
@@ -223,7 +220,6 @@ type ViolationResult struct {
 	failure   error
 }
 
-// Explore expands choices only through facts enabled by the production owners.
 func Explore(definition simulationDefinition, choices simulationChoiceSource) SimulationResult {
 	if values, ok := choices.(simulationChoiceBytes); ok {
 		choices = &simulationChoiceCursor{values: slices.Clone(values)}
@@ -277,7 +273,6 @@ func simulationCampaignRecord(
 	}
 }
 
-// ReplayLegal replays a typed legal trace through fresh production owner states.
 func ReplayLegal(trace simulationTrace) SimulationResult {
 	return simulationReplayLegal(trace, true)
 }
@@ -1040,7 +1035,6 @@ func simulationCausalCampaignPayload(recorded, derived campaignEventPayload) cam
 	return derived
 }
 
-// ReplayViolation applies one malformed fact after a legal prefix and captures the guard's re-panic.
 func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) (result ViolationResult) {
 	legal := ReplayLegal(prefix)
 	if legal.failure != nil {
@@ -1206,7 +1200,6 @@ func simulationEmergencySweep(runtime processRuntime, closure runtimeClosure) em
 	return emergencySweep{resolutions: resolutions}
 }
 
-// Shrink removes semantic records and definition members while retaining one typed failure.
 func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 	shrunk := simulationCloneTrace(trace)
 	for {

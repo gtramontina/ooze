@@ -46,7 +46,6 @@ type preparedStart struct {
 	start  installedStart
 }
 
-// install mutates only the broker cell; only its narrower return value can launch.
 func (installation startInstallation) install(generation attemptGeneration, shell *processRuntimeShell) installedStart {
 	if generation == 0 || installation.cell == nil || shell == nil {
 		invariant(startInstallerOperation, "generation or cell is zero")
@@ -271,7 +270,6 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 	})
 }
 
-// No executable value enters this lock; only the post-unlock return accepts a native thunk.
 func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation startInstallation) preparedStart {
 	return underRuntimeLock(s, startInstallerOperation, func(result preparedStart, _ processRuntime) simulationRecord {
 		return simulationRecord{

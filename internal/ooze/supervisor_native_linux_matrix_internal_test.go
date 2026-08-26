@@ -30,9 +30,6 @@ func TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState(t *testing.T) {
 		name string
 		role string
 
-		// Exact subject visibility: [root alive, root exited]. The subreaper
-		// column is deliberately depth one; repeated sweeps reveal deeper
-		// subjects after their adopted ancestor is reaped.
 		walkFromRoot [2]bool
 		waitable     [2]bool
 		postRootSeed string

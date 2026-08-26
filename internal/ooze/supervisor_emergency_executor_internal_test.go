@@ -266,8 +266,6 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 	})
 	low := startOwned(shell, <-admittedLow.delivery)
 	high := startOwned(shell, <-admittedHigh.delivery)
-	// The second admission starts first, so generation order and the raw
-	// admission ledger order disagree.
 	assert.False(t, high.generation <= low.generation, "start generations = high %d low %d", high.generation, low.generation)
 	shell.observeAttempt(high.generation, drainUnconfirmed{})
 	shell.observeAttempt(low.generation, drainUnconfirmed{})
