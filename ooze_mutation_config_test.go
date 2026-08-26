@@ -103,7 +103,7 @@ func selfMutationOptions(shardName string) []ooze.Option {
 		ooze.WithTestCommand("gotestsum --format-hide-empty-pkg --max-fails=1 -- -failfast -skip=" +
 			selfMutationSubprocessSkip + " " + strings.Join(shard.packages, " ")),
 		ooze.WithMinimumThreshold(0.5),
-		ooze.IgnoreSourceFiles("(^release\\.go$|^docs/prototypes/|testdata\\/.*)"),
+		ooze.IgnoreSourceFiles("(^release\\.go$|testdata\\/.*)"),
 	}
 }
 

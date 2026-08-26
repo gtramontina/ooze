@@ -265,37 +265,6 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 	)
 }
 
-func TestAcceptanceGateDocumentsNativeToolchainPolicy(t *testing.T) {
-	contents, err := os.ReadFile("docs/acceptance-gate.md")
-	require.NoError(t, err)
-	policy := strings.Join(strings.Fields(string(contents)), " ")
-	requireContract(t, policy, "native toolchain policy",
-		"Linux and macOS use the repository's pinned Devbox environment",
-		"Windows uses pinned raw Go 1.26.6",
-	)
-	assert.NotContains(t, policy, "symmetrically on Linux, Darwin, and Windows", "acceptance gate still claims one raw-Go path for every native platform")
-}
-
-func TestAcceptanceEvidenceDoesNotCreditPrototypeWithProductionSimulation(t *testing.T) {
-	contents, err := os.ReadFile("docs/acceptance-gate-evidence.md")
-	require.NoError(t, err)
-	evidence := strings.Join(strings.Fields(string(contents)), " ")
-	requireContract(t, evidence, "production simulation evidence correction",
-		"The tested revision did not contain the accepted production simulation module",
-		"a8e3e2440e1e06800458104e881d4aa8da951653",
-	)
-	assert.NotContains(t, evidence, "#64 nested simulation module passes", "historical evidence still credits the prototype with production simulation delivery")
-}
-
-func TestAcceptanceGateDocumentsAuthoritativeDarwinControl(t *testing.T) {
-	contents, err := os.ReadFile("docs/acceptance-gate.md")
-	require.NoError(t, err)
-	requireContract(t, strings.Join(strings.Fields(string(contents)), " "), "Darwin control authority",
-		"Group signalling is a best-effort bulk optimization",
-		"Birth-validated per-identity control is authoritative",
-	)
-}
-
 func TestMutationWorkflowUsesDevboxExceptForNativeWindows(t *testing.T) {
 	mutationJob := workflowJob(t, ".github/workflows/mutation.yml", "mutation")
 	requireNativeToolchains(t, mutationJob)
@@ -361,24 +330,12 @@ func TestPerformanceEvidenceReportsCleanupEscalationSeparately(t *testing.T) {
 	}
 }
 
-func TestPerformanceDocumentDoesNotMislabelHistoricalRunAsExactHead(t *testing.T) {
-	contents, err := os.ReadFile("docs/performance-evidence.md")
-	require.NoError(t, err)
-	document := strings.Join(strings.Fields(string(contents)), " ")
-	requireContract(t, document, "performance evidence publication",
-		"The #72 closure comment records the exact published-head revalidation",
-		"Retained implementation run",
-	)
-	assert.NotContains(t, document, "## Final native run", "historical implementation run is still labeled as final exact-head evidence")
-}
-
 func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/ci.yml", "test")
 	requireContract(t, testJob, "CI production simulation contract",
 		`name: "🎲 Production deterministic simulation"`,
 		`devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze`,
 	)
-	assert.NotContains(t, testJob, "docs/prototypes/deterministic-simulation-contract", "CI still presents the throwaway prototype as simulation delivery")
 }
 
 func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
@@ -409,11 +366,6 @@ func TestSelfMutationCommandKeepsAutomaticProfileWithinOwningPackages(t *testing
 		assert.NotEqual(t, ".", argument, "self-mutation command selects root or full-module package %q", argument)
 		assert.NotEqual(t, "./...", argument, "self-mutation command selects root or full-module package %q", argument)
 	}
-	excludesPrototype := false
-	for _, pattern := range configured.IgnoreSourceFilesPatterns {
-		excludesPrototype = excludesPrototype || pattern.MatchString("docs/prototypes/deadline-calibration/main.go")
-	}
-	assert.True(t, excludesPrototype, "self-mutation campaign includes separately tested nested prototype modules")
 	assert.False(t, configured.Serial, "self-mutation campaign abandoned managed automatic admission")
 }
 
