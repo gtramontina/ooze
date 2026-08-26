@@ -33,6 +33,25 @@ func TestComposeObserversPreservesOrderAndJoinsFailures(t *testing.T) {
 	assert.ErrorIs(t, err, secondFailure)
 }
 
+func TestComposeObserversNotifiesEveryObserverBeforeRepanicking(t *testing.T) {
+	var observed []string
+	first := observerFunc(func(ooze.CampaignEvent) error {
+		observed = append(observed, "first")
+		panic("observer panic")
+	})
+	second := observerFunc(func(ooze.CampaignEvent) error {
+		observed = append(observed, "second")
+
+		return nil
+	})
+	observer := ooze.ComposeObservers(first, second)
+
+	assert.PanicsWithValue(t, "observer panic", func() {
+		_ = observer.Observe(ooze.CampaignStarted{})
+	})
+	assert.Equal(t, []string{"first", "second"}, observed)
+}
+
 type observerFunc func(ooze.CampaignEvent) error
 
 func (observe observerFunc) Observe(event ooze.CampaignEvent) error {

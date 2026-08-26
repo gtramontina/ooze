@@ -103,10 +103,18 @@ type multiObserver []ProgressObserver
 
 func (observers multiObserver) Observe(event CampaignEvent) error {
 	failures := make([]error, 0, len(observers))
+	var panicValue any
 	for _, observer := range observers {
-		if err := observer.Observe(event); err != nil {
-			failures = append(failures, err)
+		failure, recovered := observeCampaignEvent(observer, event)
+		if failure != nil {
+			failures = append(failures, failure)
 		}
+		if panicValue == nil && recovered != nil {
+			panicValue = recovered
+		}
+	}
+	if panicValue != nil {
+		panic(panicValue)
 	}
 
 	return errors.Join(failures...)
