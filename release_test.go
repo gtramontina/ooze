@@ -326,6 +326,14 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 				"Score:     0.00 (minimum: 0.00)", "AFTER RELEASE", "observer failed: observation failed",
 			},
 		},
+		{
+			name: "observer panic", role: "observer-panic", wantFailure: true,
+			want: []string{
+				"EVENT: ooze.CampaignStarted", "EVENT: ooze.CampaignCompleted",
+				"Score:     0.00 (minimum: 0.00)", "panic: observer panic",
+			},
+			absent: []string{"AFTER RELEASE"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestReleaseDispositionHelper$")
@@ -412,6 +420,9 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	if role == "observer-error" {
 		options = append(options, ooze.WithObserver(errorObserver{}))
 	}
+	if role == "observer-panic" {
+		options = append(options, ooze.WithObserver(ooze.ComposeObservers(&panicOnceObserver{}, eventOutputObserver{})))
+	}
 	ooze.Release(t, options...)
 	fmt.Println("AFTER RELEASE")
 }
@@ -454,6 +465,19 @@ type errorObserver struct{}
 
 func (errorObserver) Observe(ooze.CampaignEvent) error {
 	return fmt.Errorf("observation failed")
+}
+
+type panicOnceObserver struct {
+	panicked bool
+}
+
+func (observer *panicOnceObserver) Observe(ooze.CampaignEvent) error {
+	if !observer.panicked {
+		observer.panicked = true
+		panic("observer panic")
+	}
+
+	return nil
 }
 
 func TestReleaseAlwaysPassCommandHelper(t *testing.T) {
