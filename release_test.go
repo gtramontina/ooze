@@ -337,6 +337,7 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			command := exec.Command(os.Args[0], "-test.run=^TestReleaseDispositionHelper$")
 			command.Env = append(os.Environ(), releaseDispositionHelper+"="+test.role)
 			output, err := command.CombinedOutput()
