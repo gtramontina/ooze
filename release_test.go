@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,8 @@ import (
 const releaseDispositionHelper = "OOZE_RELEASE_DISPOSITION_HELPER"
 
 const managedReleaseHelper = "OOZE_MANAGED_RELEASE_HELPER"
+
+const observedReleaseMarker = "OOZE_OBSERVED_RELEASE_MARKER"
 
 const (
 	managedSerialExpected = "OOZE_MANAGED_SERIAL_EXPECTED"
@@ -117,6 +120,74 @@ func TestReleasePublishesCampaignEventsInAcceptedOrder(t *testing.T) {
 		},
 		ooze.CampaignCompleted{},
 	}, events)
+}
+
+func TestReleaseExecutionDoesNotWaitForObserver(t *testing.T) {
+	repository := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(repository, "source.go"),
+		[]byte("package fixture\nvar number = 0\n"),
+		0o600,
+	)
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "executed")
+	t.Setenv(observedReleaseMarker, marker)
+	entered := make(chan struct{})
+	blocked := make(chan struct{})
+	var once sync.Once
+	observer := observerFunc(func(ooze.CampaignEvent) error {
+		once.Do(func() { close(entered) })
+		<-blocked
+
+		return nil
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ooze.Release(t,
+			ooze.WithRepositoryRoot(repository),
+			ooze.WithTestCommand(os.Args[0]+" -test.run=^TestObservedReleaseCommandHelper$"),
+			ooze.WithViruses(integerincrement.New()),
+			ooze.WithMinimumThreshold(0),
+			ooze.WithReporter(&recordingReporter{}),
+			ooze.WithObserver(observer),
+		)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(blocked)
+		require.FailNow(t, "observer did not receive the campaign start")
+	}
+	executed := assert.Eventually(t, func() bool {
+		_, statErr := os.Stat(marker)
+
+		return statErr == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	close(blocked)
+	require.True(t, executed, "native execution waited for the blocked observer")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "release did not join observer delivery")
+	}
+}
+
+func TestObservedReleaseCommandHelper(t *testing.T) {
+	marker := os.Getenv(observedReleaseMarker)
+	if marker == "" {
+		return
+	}
+	if err := os.WriteFile(marker, []byte("executed"), 0o600); err != nil {
+		os.Exit(2)
+	}
+	data, err := os.ReadFile("source.go")
+	if err != nil {
+		os.Exit(2)
+	}
+	if strings.Contains(string(data), "number = 1") {
+		os.Exit(1)
+	}
 }
 
 type recordingReporter struct {
@@ -243,6 +314,17 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 			},
 			absent: []string{"Campaign aborted. No mutation score."},
 		},
+		{
+			name: "reporter failure", role: "reporter-error", wantFailure: true,
+			want:   []string{"AFTER RELEASE", "reporter failed: report failed"},
+			absent: []string{"Score:"},
+		},
+		{
+			name: "observer failure", role: "observer-error", wantFailure: true,
+			want: []string{
+				"Score:     0.00 (minimum: 0.00)", "AFTER RELEASE", "observer failed: observation failed",
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestReleaseDispositionHelper$")
@@ -320,8 +402,14 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	if role == "custom-baseline" {
 		options = append(options, ooze.WithReporter(abortReporter{}))
 	}
+	if role == "reporter-error" {
+		options = append(options, ooze.WithReporter(errorReporter{}))
+	}
 	if role == "no-mutants" || role == "baseline" {
 		options = append(options, ooze.WithObserver(eventOutputObserver{}))
+	}
+	if role == "observer-error" {
+		options = append(options, ooze.WithObserver(errorObserver{}))
 	}
 	ooze.Release(t, options...)
 	fmt.Println("AFTER RELEASE")
@@ -353,6 +441,18 @@ func (abortReporter) Report(result ooze.Result) error {
 	fmt.Printf("CUSTOM ABORT: baseline failed with output %s\n", strings.TrimSpace(result.Baseline.Output.Bytes))
 
 	return nil
+}
+
+type errorReporter struct{}
+
+func (errorReporter) Report(ooze.Result) error {
+	return fmt.Errorf("report failed")
+}
+
+type errorObserver struct{}
+
+func (errorObserver) Observe(ooze.CampaignEvent) error {
+	return fmt.Errorf("observation failed")
 }
 
 func TestReleaseAlwaysPassCommandHelper(t *testing.T) {
