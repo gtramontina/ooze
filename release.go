@@ -125,19 +125,25 @@ func Release(t *testing.T, options ...Option) {
 		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
 		Viruses: opts.Viruses,
 	})
+	report := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
 	if opts.Reporter != nil {
 		if err := opts.Reporter.Report(projectResult(managed, opts.MinimumThreshold)); err != nil {
 			t.Errorf("ooze: reporter failed: %v", err)
 		}
+		applyManagedReportDisposition(t, report)
 		return
 	}
-	report := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
 	publishManagedReport(t, logger, report)
 }
 
 func publishManagedReport(t *testing.T, logger ooze.Logger, report ooze.ManagedReport) {
 	t.Helper()
 	logger.Logf("%s", report.Text)
+	applyManagedReportDisposition(t, report)
+}
+
+func applyManagedReportDisposition(t *testing.T, report ooze.ManagedReport) {
+	t.Helper()
 	switch report.Disposition {
 	case ooze.ManagedReportPass:
 		return

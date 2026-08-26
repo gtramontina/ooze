@@ -172,6 +172,11 @@ func TestReleaseReportsInlineWithRealTestingDisposition(t *testing.T) {
 			want: []string{"⨯ Score:     0.00 (minimum: 1.00)", "AFTER RELEASE"},
 		},
 		{
+			name: "custom reporter preserves threshold failure", role: "custom-threshold", wantFailure: true,
+			want:   []string{"CUSTOM REPORT: score=0.00 passed=false", "AFTER RELEASE"},
+			absent: []string{"⨯ Score:"},
+		},
+		{
 			name: "no mutants", role: "no-mutants", wantFailure: true,
 			want:   []string{"No mutants were discovered. Nothing to score.", "AFTER RELEASE"},
 			absent: []string{"Score:"},
@@ -222,7 +227,7 @@ func TestReleaseDispositionHelper(t *testing.T) {
 		}
 	}
 	threshold := float32(0)
-	if role == "threshold" {
+	if role == "threshold" || role == "custom-threshold" {
 		threshold = 1
 	}
 	options := []ooze.Option{
@@ -234,8 +239,19 @@ func TestReleaseDispositionHelper(t *testing.T) {
 	if role == "colors" {
 		options = append(options, ooze.ForceColors())
 	}
+	if role == "custom-threshold" {
+		options = append(options, ooze.WithReporter(outputReporter{}))
+	}
 	ooze.Release(t, options...)
 	fmt.Println("AFTER RELEASE")
+}
+
+type outputReporter struct{}
+
+func (outputReporter) Report(result ooze.Result) error {
+	fmt.Printf("CUSTOM REPORT: score=%.2f passed=%t\n", result.Score.Value, result.Score.Passed)
+
+	return nil
 }
 
 func TestReleaseAlwaysPassCommandHelper(t *testing.T) {
