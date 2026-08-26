@@ -2519,9 +2519,9 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Fuzz(func(t *testing.T, source []byte) {
 		definition, choices := simulationFuzzInput(source)
 		explored := Explore(definition, choices)
-		assert.Nil(t, explored.failure, "legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure, simulationTraceRuntimeState(explored.world.runtime), simulationRecordedActionSummary(explored.trace))
+		require.Nil(t, explored.failure, "legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure, simulationTraceRuntimeState(explored.world.runtime), simulationRecordedActionSummary(explored.trace))
 		replayed := ReplayLegal(explored.trace)
-		assert.Nil(t, replayed.failure, "legal replay failed: %v", replayed.failure)
+		require.Nil(t, replayed.failure, "legal replay failed: %v", replayed.failure)
 		assert.Equal(t, replayed.world, explored.world, "legal replay world diverged:\nexplored=%#v\nreplayed=%#v", explored.world, replayed.world)
 		prefix := simulationTrace{
 			definition: explored.trace.definition,
@@ -2550,7 +2550,7 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 		}
 		first := ReplayViolation(prefix, malformed)
 		second := ReplayViolation(prefix, malformed)
-		assert.Nil(t, first.failure, "violation replay diverged: first=%#v second=%#v", first, second)
+		require.Nil(t, first.failure, "violation replay diverged: first=%#v second=%#v", first, second)
 		assert.Equal(t, second, first, "violation replay diverged: first=%#v second=%#v", first, second)
 	})
 }
