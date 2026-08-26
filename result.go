@@ -274,6 +274,7 @@ func projectResult(managed internalooze.ManagedReleaseResult, minimum float32, s
 	}
 	if result.Outcome == Completed {
 		total := len(result.Mutations)
+		result.Total = total
 		value := float32(detected) / float32(total)
 		result.Score = &Score{
 			Detected: detected, Total: total, Value: value, Minimum: minimum, Passed: value >= minimum,

@@ -73,6 +73,7 @@ func TestReleaseReportsCompletedCampaignThroughConfiguredReporter(t *testing.T) 
 	assert.Equal(t, ooze.Completed, result.Outcome)
 	require.NotNil(t, result.Score)
 	assert.Equal(t, ooze.Score{Detected: 1, Total: 1, Value: 1, Minimum: 0, Passed: true}, *result.Score)
+	assert.Equal(t, 1, result.Total)
 	require.Len(t, result.Mutations, 1)
 	mutation := result.Mutations[0]
 	assert.Equal(t, ooze.Killed, mutation.Outcome)
