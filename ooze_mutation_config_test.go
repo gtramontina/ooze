@@ -73,7 +73,6 @@ func selfMutationOptions() []ooze.Option {
 			selfMutationSubprocessSkip +
 			" ./internal/fsrepository ./internal/ignoredrepository ./internal/ooze"),
 		ooze.WithMinimumThreshold(0.5),
-		ooze.IgnoreSourceFiles("(^release\\.go$|testdata\\/.*)"),
 	}
 }
 
