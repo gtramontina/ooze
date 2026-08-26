@@ -133,18 +133,15 @@ func Release(t *testing.T, options ...Option) {
 	if observerFailure != nil {
 		t.Errorf("ooze: observer failed: %v", observerFailure)
 	}
-	report := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
-	if opts.Reporter != nil {
-		if err := opts.Reporter.Report(projectResult(managed, opts.MinimumThreshold)); err != nil {
-			t.Errorf("ooze: reporter failed: %v", err)
-		}
-		applyManagedReportDisposition(t, report)
-		if observerPanic != nil {
-			panic(observerPanic)
-		}
-		return
+	result := projectResult(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
+	reporter := opts.Reporter
+	if reporter == nil {
+		reporter = consoleReporter{logger: logger}
 	}
-	publishManagedReport(t, logger, report)
+	if err := reporter.Report(result); err != nil {
+		t.Errorf("ooze: reporter failed: %v", err)
+	}
+	applyManagedReportDisposition(t, result.report)
 	if observerPanic != nil {
 		panic(observerPanic)
 	}

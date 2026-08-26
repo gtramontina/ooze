@@ -217,13 +217,15 @@ type Result struct {
 	Invariant               *InvariantEvidence
 	ArtifactResidue         []string
 	SingleAdmissionFallback bool
+	report                  internalooze.ManagedReport
 }
 
-func projectResult(managed internalooze.ManagedReleaseResult, minimum float32) Result {
+func projectResult(managed internalooze.ManagedReleaseResult, minimum float32, serial, colors bool) Result {
 	result := Result{
 		Outcome: projectOutcome(managed.Outcome), Total: managed.Total,
 		ArtifactResidue:         append([]string(nil), managed.ArtifactResidue...),
 		SingleAdmissionFallback: managed.SingleAdmissionFallback,
+		report:                  internalooze.ProjectManagedReport(managed, minimum, serial, colors),
 	}
 	if managed.Cause != 0 {
 		result.Cause = projectAbortCause(managed.Cause)

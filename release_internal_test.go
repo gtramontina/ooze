@@ -76,7 +76,7 @@ func TestProjectResultPreservesFatalCampaignEvidence(t *testing.T) {
 					Failures: internalooze.FailureDiagnostics{Termination: "kill failed"},
 				},
 			}},
-		}, 1)
+		}, 1, false, false)
 
 		assert.Equal(t, CleanupUnconfirmed, result.Outcome)
 		assert.Equal(t, []ResidualCustody{{
@@ -95,7 +95,7 @@ func TestProjectResultPreservesFatalCampaignEvidence(t *testing.T) {
 				RejectedEvent: "attempt terminal", StableIdentities: []string{"campaign-1", "attempt-2"},
 				Obligations: []string{"execution-domain"}, TraceTail: []string{"event-7"},
 			},
-		}, 1)
+		}, 1, false, false)
 
 		assert.Equal(t, InvariantViolation, result.Outcome)
 		require.NotNil(t, result.Invariant)
