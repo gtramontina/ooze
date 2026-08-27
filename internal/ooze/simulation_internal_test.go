@@ -1592,7 +1592,7 @@ func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T
 
 func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	definition := campaignDefinition{
 		identity: "campaign-conformance", lineage: 51, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -1674,7 +1674,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 
 func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	activeCampaign := shell.registerCampaign(campaignProvenance{lineage: 512})
 	waitingCampaign := shell.registerCampaign(campaignProvenance{lineage: 513})
 	active := shell.requestAdmission(admissionRequest{
@@ -1738,7 +1738,7 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 
 func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	campaign, _ := beginCampaign(campaignDefinition{
 		identity: "campaign-action-barrier", lineage: 511, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -1772,7 +1772,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 
 func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, &simulationProcessRuntimeRecorder{recorder})
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	definition := campaignDefinition{
 		identity: "campaign-recorded-replay", lineage: 52, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -1813,13 +1813,9 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 }
 
-type simulationProcessRuntimeRecorder struct {
-	*simulationRecorder
-}
-
 func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	var clockMutex sync.Mutex
 	now := time.Unix(10_000, 0)
 	exitCodes := make(map[attemptGeneration]int)
@@ -1980,7 +1976,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	driver := &supervisorDriver{recorder: recorder}
 	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
 	runner.advance(campaignRegisteredEvent{registration: registration})
@@ -1996,7 +1992,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	registration := shell.registerCampaign(campaignProvenance{lineage: 71})
 	await := shell.requestAdmission(admissionRequest{
 		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
@@ -2117,7 +2113,7 @@ func TestSimulationNonEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 
 func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	definition := campaignDefinition{
 		identity: "campaign-paths", lineage: 81, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,

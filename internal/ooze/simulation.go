@@ -936,6 +936,10 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 }
 
 func simulationApplyRecordedRuntimeCut(state processRuntime, record simulationRecord) (processRuntime, error) {
+	return simulationApplyRuntimeCut(state, record, true)
+}
+
+func simulationApplyRuntimeCut(state processRuntime, record simulationRecord, compareState bool) (processRuntime, error) {
 	var output any
 	switch record.runtimeOperation {
 	case simulationRegisterCampaign:
@@ -1014,7 +1018,7 @@ func simulationApplyRecordedRuntimeCut(state processRuntime, record simulationRe
 	default:
 		return processRuntime{}, fmt.Errorf("runtime commutation operation is invalid")
 	}
-	if !reflect.DeepEqual(simulationTraceRuntimeState(state), record.runtimeState) {
+	if compareState && !reflect.DeepEqual(simulationTraceRuntimeState(state), record.runtimeState) {
 		return processRuntime{}, fmt.Errorf("runtime owner state diverged")
 	}
 

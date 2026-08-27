@@ -48,6 +48,26 @@ func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	assert.EqualValues(t, terminal.decision, events[4].Result().Terminal.Decision)
 }
 
+func TestProcessRuntimeObserverFailureDoesNotCloseRuntime(t *testing.T) {
+	observations := 0
+	observer := processruntime.ObserverFunc(func() func(processruntime.Event) {
+		return func(processruntime.Event) {
+			observations++
+			if observations == 1 {
+				panic("observer failed")
+			}
+		}
+	})
+	runtime := newProcessRuntimeShellWithObserver(1, observer)
+
+	assert.PanicsWithValue(t, "observer failed", func() {
+		runtime.registerCampaign(campaignProvenance{lineage: 42})
+	})
+	registration := runtime.registerCampaign(campaignProvenance{lineage: 43})
+
+	assert.Equal(t, campaignRegistered, registration.decision)
+}
+
 func eventKinds(events []processruntime.Event) []processruntime.EventKind {
 	kinds := make([]processruntime.EventKind, len(events))
 	for index, event := range events {

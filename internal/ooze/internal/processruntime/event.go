@@ -2,8 +2,10 @@ package processruntime
 
 import "slices"
 
+// EventKind identifies an accepted process-runtime command.
 type EventKind uint8
 
+// Accepted process-runtime commands.
 const (
 	RegisterCampaign EventKind = iota + 1
 	RequestAdmission
@@ -19,11 +21,13 @@ const (
 	Close
 )
 
+// Campaign identifies one registered campaign.
 type Campaign struct {
 	ID      uint64
 	Lineage uint64
 }
 
+// Admission identifies one admission request or grant.
 type Admission struct {
 	Campaign Campaign
 	Attempt  string
@@ -32,6 +36,7 @@ type Admission struct {
 	Deadline int64
 }
 
+// Observation is terminal or launch evidence for one attempt generation.
 type Observation struct {
 	Kind     ObservationKind
 	Reason   uint8
@@ -41,8 +46,10 @@ type Observation struct {
 	Cause    string
 }
 
+// ObservationKind identifies attempt evidence.
 type ObservationKind uint8
 
+// Process-runtime attempt observations.
 const (
 	LaunchOwned ObservationKind = iota + 1
 	LaunchNotReleased
@@ -54,11 +61,13 @@ const (
 	AttemptInfrastructure
 )
 
+// Resolution records emergency custody for one generation.
 type Resolution struct {
 	Generation  uint64
 	Disposition uint8
 }
 
+// Residual identifies custody left after an emergency operation.
 type Residual struct {
 	Generation  uint64
 	Attempt     string
@@ -66,6 +75,7 @@ type Residual struct {
 	Transferred bool
 }
 
+// Command contains the fact accepted by one process-runtime transition.
 type Command struct {
 	Lineage     uint64
 	Campaign    Campaign
@@ -78,11 +88,13 @@ type Command struct {
 	FatalEpoch  uint64
 }
 
+// Registration is a campaign-registration result.
 type Registration struct {
 	Decision uint8
 	Campaign Campaign
 }
 
+// AdmissionResult is an admission command result.
 type AdmissionResult struct {
 	Decision   uint8
 	Request    Admission
@@ -90,17 +102,20 @@ type AdmissionResult struct {
 	FatalEpoch uint64
 }
 
+// BarrierResult is a confirmation-barrier result.
 type BarrierResult struct {
 	Decision   uint8
 	Request    Admission
 	Deliveries []Admission
 }
 
+// QueueResult is a completed-confirmation-queue result.
 type QueueResult struct {
 	Decision   uint8
 	Deliveries []Admission
 }
 
+// StartResult is a start-commitment result.
 type StartResult struct {
 	Decision                 uint8
 	Generation               uint64
@@ -108,6 +123,7 @@ type StartResult struct {
 	RuntimeClosureInProgress bool
 }
 
+// ObservationResult is the process-runtime response to attempt evidence.
 type ObservationResult struct {
 	Generation               uint64
 	Deliveries               []Admission
@@ -122,6 +138,7 @@ type ObservationResult struct {
 	FatalEpoch               uint64
 }
 
+// EmergencyResult is the result of one emergency settlement.
 type EmergencyResult struct {
 	Epoch        uint64
 	Owner        Campaign
@@ -129,11 +146,13 @@ type EmergencyResult struct {
 	Residual     []Residual
 }
 
+// TerminalResult is a campaign terminal-commitment result.
 type TerminalResult struct {
 	Decision uint8
 	Epoch    uint64
 }
 
+// ClosureResult is the result of closing the process runtime.
 type ClosureResult struct {
 	Epoch             uint64
 	CancelledWaiting  []Admission
@@ -141,6 +160,7 @@ type ClosureResult struct {
 	Residual          []Residual
 }
 
+// Result contains the response to one accepted command.
 type Result struct {
 	Registration Registration
 	Admission    AdmissionResult
@@ -153,28 +173,36 @@ type Result struct {
 	Closure      ClosureResult
 }
 
+// Event is an immutable accepted process-runtime command and result.
 type Event struct {
 	kind    EventKind
 	command Command
 	result  Result
 }
 
+// Accepted creates an immutable event from an accepted command and result.
 func Accepted(kind EventKind, command Command, result Result) Event {
 	return Event{kind: kind, command: cloneCommand(command), result: cloneResult(result)}
 }
 
+// Kind returns the accepted command kind.
 func (event Event) Kind() EventKind { return event.kind }
 
+// Command returns a copy of the accepted command.
 func (event Event) Command() Command { return cloneCommand(event.command) }
 
+// Result returns a copy of the command result.
 func (event Event) Result() Result { return cloneResult(event.result) }
 
+// Observer reserves an owner cut before receiving its accepted event.
 type Observer interface {
 	Begin() func(Event)
 }
 
+// ObserverFunc adapts a function to Observer.
 type ObserverFunc func() func(Event)
 
+// Begin reserves an owner cut and returns its event recipient.
 func (observe ObserverFunc) Begin() func(Event) { return observe() }
 
 func cloneCommand(command Command) Command {
