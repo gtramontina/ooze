@@ -1772,7 +1772,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 
 func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithRecorder(1, recorder)
+	shell := newProcessRuntimeShellWithRecorder(1, &simulationProcessRuntimeRecorder{recorder})
 	definition := campaignDefinition{
 		identity: "campaign-recorded-replay", lineage: 52, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -1813,6 +1813,10 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 }
 
+type simulationProcessRuntimeRecorder struct {
+	*simulationRecorder
+}
+
 func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithRecorder(1, recorder)
@@ -1827,7 +1831,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 		return now
 	}
 	driver := newSupervisorDriver(supervisorDriverConstruction{
-		runtime: shell, now: tick, launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		runtime: shell, recorder: recorder, now: tick, launchProgress: time.Second, drainEpoch: 5 * time.Second,
 		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
 		prepare: func(generation attemptGeneration, spec Spec) {
 			clockMutex.Lock()
@@ -1900,7 +1904,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, repository: repository,
+		runtime: shell, recorder: recorder, repository: repository,
 		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
 	})
 	result := runner.run(managedCampaignRequest{

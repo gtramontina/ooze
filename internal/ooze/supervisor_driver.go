@@ -13,6 +13,7 @@ const nominalSupervisorFuseCadence = 50 * time.Millisecond
 
 type supervisorDriverConstruction struct {
 	runtime          *processRuntimeShell
+	recorder         *simulationRecorder
 	now              func() time.Time
 	launchBoundary   func(time.Time) <-chan time.Time
 	commandBoundary  func(time.Time) <-chan time.Time
@@ -113,7 +114,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		attempts:         make(map[attemptGeneration]*supervisorDrivenAttempt),
 		reservations:     make(map[*pendingStartCell]Spec),
 		emergency:        make(chan SweepResult, 1),
-		recorder:         construction.runtime.recorder,
+		recorder:         construction.recorder,
 	}
 }
 

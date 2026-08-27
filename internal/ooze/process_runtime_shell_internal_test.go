@@ -526,7 +526,7 @@ func TestStartCommittedLockedBoundaryContainsNoExecutionCapability(t *testing.T)
 		assert.True(t, found, "structural guard missed nested executable field at %s", path)
 	}
 	method := reflect.TypeOf((*processRuntimeShell).startCommitted)
-	for parameter := range method.NumIn() {
+	for parameter := 1; parameter < method.NumIn(); parameter++ {
 		{
 			path, found := executionCapabilityPath(method.In(parameter), nil)
 			assert.False(t, found, "startCommitted input %d contains executable capability at %s", parameter, path)

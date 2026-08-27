@@ -15,21 +15,19 @@ const (
 	simulationSupervisorAuthority
 )
 
-type simulationRuntimeOperation uint8
-
 const (
-	simulationRegisterCampaign simulationRuntimeOperation = iota + 1
-	simulationRequestAdmission
-	simulationCancelAdmission
-	simulationAcknowledgeGrantReturn
-	simulationBindConfirmationBarrier
-	simulationCompleteConfirmationQueue
-	simulationStartCommitted
-	simulationObserveAttempt
-	simulationSettleEmergency
-	simulationCommitTerminal
-	simulationAuthorizeForcedAbort
-	simulationCloseRuntime
+	simulationRegisterCampaign          = processRuntimeRegisterCampaign
+	simulationRequestAdmission          = processRuntimeRequestAdmission
+	simulationCancelAdmission           = processRuntimeCancelAdmission
+	simulationAcknowledgeGrantReturn    = processRuntimeAcknowledgeGrantReturn
+	simulationBindConfirmationBarrier   = processRuntimeBindConfirmationBarrier
+	simulationCompleteConfirmationQueue = processRuntimeCompleteConfirmationQueue
+	simulationStartCommitted            = processRuntimeStartCommitted
+	simulationObserveAttempt            = processRuntimeObserveAttempt
+	simulationSettleEmergency           = processRuntimeSettleEmergency
+	simulationCommitTerminal            = processRuntimeCommitTerminal
+	simulationAuthorizeForcedAbort      = processRuntimeAuthorizeForcedAbort
+	simulationCloseRuntime              = processRuntimeClose
 )
 
 const simulationChooseBaselineFailure byte = 1
@@ -110,7 +108,7 @@ type simulationRecord struct {
 	campaignState   simulationCampaignState
 	campaignEffects []campaignEffect
 
-	runtimeOperation      simulationRuntimeOperation
+	runtimeOperation      processRuntimeOperation
 	runtimeOperationName  string
 	runtimeProvenance     campaignProvenance
 	runtimeCampaign       campaignToken
@@ -155,7 +153,7 @@ type SimulationResult struct {
 type simulationMalformedFact struct {
 	authority          simulationAuthority
 	campaign           simulationCampaignEvent
-	runtimeOperation   simulationRuntimeOperation
+	runtimeOperation   processRuntimeOperation
 	runtimeAdmission   simulationAdmission
 	runtimeGeneration  attemptGeneration
 	runtimeObservation simulationRuntimeObservation

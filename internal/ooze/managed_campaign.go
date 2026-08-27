@@ -37,6 +37,7 @@ type managedAttemptSystem interface {
 
 type managedCampaignConstruction struct {
 	runtime            *processRuntimeShell
+	recorder           *simulationRecorder
 	repository         Repository
 	temporaryDirectory managedTemporaryDirectoryFactory
 	attempts           managedAttemptSystem
@@ -103,7 +104,7 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		owned:                       make(map[attemptGeneration]*OwnedAttempt),
 		authorities:                 make(map[campaignAdmission]admissionAuthority),
 		attemptFacts:                make(map[attemptGeneration]managedAttemptFacts),
-		recorder:                    construction.runtime.recorder,
+		recorder:                    construction.recorder,
 	}
 }
 

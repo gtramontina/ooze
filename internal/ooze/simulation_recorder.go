@@ -53,6 +53,18 @@ func (recorder *simulationRecorder) enter() func() {
 	return recorder.gate.RUnlock
 }
 
+func (recorder *simulationRecorder) enterProcessRuntime() func() {
+	return recorder.enter()
+}
+
+func (recorder *simulationRecorder) reserveProcessRuntime() processRuntimeRecording {
+	reservation := recorder.reserve(simulationRuntimeAuthority)
+
+	return func(transition processRuntimeTransition, state processRuntime) {
+		recorder.recordRuntime(reservation, simulationRuntimeRecord(transition), state)
+	}
+}
+
 func (recorder *simulationRecorder) reserve(authority simulationAuthority) simulationReservation {
 	if recorder == nil {
 		return simulationReservation{}
@@ -102,6 +114,57 @@ func (recorder *simulationRecorder) recordRuntime(
 		sequence: record.sequence, record: record,
 	})
 	recorder.causalMutex.Unlock()
+}
+
+func simulationRuntimeRecord(transition processRuntimeTransition) simulationRecord {
+	record := simulationRecord{
+		runtimeOperation: transition.operation, runtimeOperationName: transition.name,
+	}
+	switch transition.operation {
+	case 0:
+	case processRuntimeRegisterCampaign:
+		record.runtimeProvenance = transition.provenance
+		record.runtimeRegistration = transition.registration
+	case processRuntimeRequestAdmission:
+		record.runtimeAdmission = simulationTraceAdmission(transition.request)
+		record.runtimeAdmissionOut = simulationTraceAdmissionResult(transition.admission)
+	case processRuntimeCancelAdmission:
+		record.runtimeAdmissionToken = simulationTraceAdmission(transition.requestToken)
+		record.runtimeAdmissionOut = simulationTraceAdmissionResult(transition.admission)
+	case processRuntimeAcknowledgeGrantReturn:
+		record.runtimeGrant = simulationTraceAdmission(transition.grant)
+		record.runtimeAdmissionOut = simulationTraceAdmissionResult(transition.admission)
+	case processRuntimeBindConfirmationBarrier:
+		record.runtimeBarrier = simulationTraceBarrierBinding(transition.barrier)
+		record.runtimeBarrierOut = simulationTraceBarrierResult(transition.barrierResult)
+	case processRuntimeCompleteConfirmationQueue:
+		record.runtimeCampaign = transition.campaign
+		record.runtimeQueueOut = simulationTraceConfirmationQueueResult(transition.queue)
+	case processRuntimeStartCommitted:
+		record.runtimeGrant = simulationTraceAdmission(transition.grant)
+		record.runtimeStart = transition.start
+	case processRuntimeObserveAttempt:
+		record.runtimeGeneration = transition.generation
+		record.runtimeObservation = simulationTraceObservation(transition.observation)
+		record.runtimeObservationOut = simulationTraceObservationResult(transition.observed)
+	case processRuntimeSettleEmergency:
+		record.runtimeSweep = simulationTraceEmergencySweep(transition.sweep)
+		record.runtimeEmergencyOut = simulationTraceEmergencySettlement(transition.emergency)
+	case processRuntimeCommitTerminal:
+		record.runtimeCampaign = transition.campaign
+		record.runtimeTerminal = transition.terminal
+	case processRuntimeAuthorizeForcedAbort:
+		record.runtimeCampaign = transition.campaign
+		record.runtimeFatalEpoch = transition.fatalEpoch
+		record.runtimeTerminal = transition.terminal
+	case processRuntimeClose:
+		record.runtimeFatalCause = transition.fatalCause
+		record.runtimeClosure = simulationTraceRuntimeClosure(transition.runtimeClosure)
+	default:
+		invariant("record runtime", "runtime operation has no typed trace projection")
+	}
+
+	return record
 }
 
 func (recorder *simulationRecorder) recordCampaign(

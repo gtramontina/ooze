@@ -4,6 +4,69 @@ import "sync"
 
 const startInstallerOperation, startLaunchOperation = "start committed installer", "start committed launch"
 
+type processRuntimeOperation uint8
+
+const (
+	processRuntimeRegisterCampaign processRuntimeOperation = iota + 1
+	processRuntimeRequestAdmission
+	processRuntimeCancelAdmission
+	processRuntimeAcknowledgeGrantReturn
+	processRuntimeBindConfirmationBarrier
+	processRuntimeCompleteConfirmationQueue
+	processRuntimeStartCommitted
+	processRuntimeObserveAttempt
+	processRuntimeSettleEmergency
+	processRuntimeCommitTerminal
+	processRuntimeAuthorizeForcedAbort
+	processRuntimeClose
+)
+
+type processRuntimeTransition struct {
+	operation      processRuntimeOperation
+	name           string
+	provenance     campaignProvenance
+	campaign       campaignToken
+	request        admissionRequest
+	requestToken   admissionRequestToken
+	grant          admissionGrant
+	barrier        barrierBinding
+	sweep          emergencySweep
+	fatalCause     runtimeFatalCause
+	fatalEpoch     fatalEpochID
+	generation     attemptGeneration
+	observation    attemptObservation
+	registration   campaignRegistration
+	admission      admissionResult
+	barrierResult  barrierResult
+	queue          confirmationQueueResult
+	start          startCommittedResult
+	observed       observationResult
+	emergency      emergencySettlement
+	terminal       terminalResult
+	runtimeClosure runtimeClosure
+}
+
+type processRuntimeRecording func(processRuntimeTransition, processRuntime)
+
+type processRuntimeRecorder interface {
+	enterProcessRuntime() func()
+	reserveProcessRuntime() processRuntimeRecording
+}
+
+type processRuntimeRecordingSlot struct {
+	recorder processRuntimeRecorder
+}
+
+type unrecordedProcessRuntime struct{}
+
+func (unrecordedProcessRuntime) enterProcessRuntime() func() {
+	return func() {}
+}
+
+func (unrecordedProcessRuntime) reserveProcessRuntime() processRuntimeRecording {
+	return func(processRuntimeTransition, processRuntime) {}
+}
+
 type oneShotAwait[Decision any] struct {
 	decision Decision
 	request  admissionRequestToken
@@ -115,7 +178,7 @@ type processRuntimeShell struct {
 	mutex         sync.Mutex
 	core          processRuntime
 	emergency     chan struct{}
-	recorder      *simulationRecorder
+	recording     *processRuntimeRecordingSlot
 	notifications runtimeNotificationQueue
 }
 
@@ -134,9 +197,11 @@ func newProcessRuntimeShell(capacity int) *processRuntimeShell {
 	return &processRuntimeShell{core: newProcessRuntime(capacity), emergency: make(chan struct{})}
 }
 
-func newProcessRuntimeShellWithRecorder(capacity int, recorder *simulationRecorder) *processRuntimeShell {
+func newProcessRuntimeShellWithRecorder(capacity int, recorder processRuntimeRecorder) *processRuntimeShell {
 	shell := newProcessRuntimeShell(capacity)
-	shell.recorder = recorder
+	if recorder != nil {
+		shell.recording = &processRuntimeRecordingSlot{recorder: recorder}
+	}
 
 	return shell
 }
@@ -144,17 +209,15 @@ func newProcessRuntimeShellWithRecorder(capacity int, recorder *simulationRecord
 func (s *processRuntimeShell) runtimeEmergency() <-chan struct{} { return s.emergency }
 
 func (s *processRuntimeShell) registerCampaign(p campaignProvenance) campaignRegistration {
-	return applyCore(s, "register campaign", simulationRegisterCampaign, p, processRuntime.registerCampaign)
+	return applyCore(s, "register campaign", processRuntimeRegisterCampaign, p, processRuntime.registerCampaign)
 }
 
 func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissionAwait {
 	var recorded admissionResult
 
-	return underRuntimeLock(s, "request admission", func(result admissionAwait, _ processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation:    simulationRequestAdmission,
-			runtimeAdmission:    simulationTraceAdmission(request),
-			runtimeAdmissionOut: simulationTraceAdmissionResult(recorded),
+	return underRuntimeLock(s, "request admission", func(admissionAwait, processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeRequestAdmission, request: request, admission: recorded,
 		}
 	}, func() admissionAwait {
 		delivery := make(chan admissionGrant, 1)
@@ -191,11 +254,9 @@ func (s *processRuntimeShell) emergencySettlementRequired() bool {
 func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admissionResult {
 	var recorded admissionResult
 
-	return underRuntimeLock(s, "cancel admission", func(admissionResult, processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation:      simulationCancelAdmission,
-			runtimeAdmissionToken: simulationTraceAdmission(token),
-			runtimeAdmissionOut:   simulationTraceAdmissionResult(recorded),
+	return underRuntimeLock(s, "cancel admission", func(admissionResult, processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeCancelAdmission, requestToken: token, admission: recorded,
 		}
 	}, func() (result admissionResult) {
 		if token.delivery == nil {
@@ -221,7 +282,7 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 
 func (s *processRuntimeShell) acknowledgeGrantReturn(grant admissionGrant) admissionResult {
 	return applyCore(
-		s, "acknowledge grant return", simulationAcknowledgeGrantReturn,
+		s, "acknowledge grant return", processRuntimeAcknowledgeGrantReturn,
 		grant, processRuntime.acknowledgeGrantReturn,
 	)
 }
@@ -229,11 +290,9 @@ func (s *processRuntimeShell) acknowledgeGrantReturn(grant admissionGrant) admis
 func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBinding) barrierAwait {
 	var recorded barrierResult
 
-	return underRuntimeLock(s, "bind confirmation barrier", func(result barrierAwait, _ processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation:  simulationBindConfirmationBarrier,
-			runtimeBarrier:    simulationTraceBarrierBinding(binding),
-			runtimeBarrierOut: simulationTraceBarrierResult(recorded),
+	return underRuntimeLock(s, "bind confirmation barrier", func(barrierAwait, processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeBindConfirmationBarrier, barrier: binding, barrierResult: recorded,
 		}
 	}, func() barrierAwait {
 		delivery := make(chan admissionGrant, 1)
@@ -254,10 +313,9 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) confirmationQueueResult {
 	var recorded confirmationQueueResult
 
-	return underRuntimeLock(s, "complete confirmation queue", func(confirmationQueueResult, processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation: simulationCompleteConfirmationQueue, runtimeCampaign: campaign,
-			runtimeQueueOut: simulationTraceConfirmationQueueResult(recorded),
+	return underRuntimeLock(s, "complete confirmation queue", func(confirmationQueueResult, processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeCompleteConfirmationQueue, campaign: campaign, queue: recorded,
 		}
 	}, func() (result confirmationQueueResult) {
 		s.core, result = s.core.completeConfirmationQueue(campaign)
@@ -270,10 +328,9 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 }
 
 func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation startInstallation) preparedStart {
-	return underRuntimeLock(s, startInstallerOperation, func(result preparedStart, _ processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation: simulationStartCommitted, runtimeGrant: simulationTraceAdmission(grant),
-			runtimeStart: result.result,
+	return underRuntimeLock(s, startInstallerOperation, func(result preparedStart, _ processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeStartCommitted, grant: grant, start: result.result,
 		}
 	}, func() preparedStart {
 		if installation.grant != grant {
@@ -317,11 +374,10 @@ func (s *processRuntimeShell) failLaunchInvariant(generation attemptGeneration, 
 func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, observed attemptObservation) observationResult {
 	var recorded observationResult
 
-	return underRuntimeLock(s, observeOperation, func(observationResult, processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: generation,
-			runtimeObservation:    simulationTraceObservation(observed),
-			runtimeObservationOut: simulationTraceObservationResult(recorded),
+	return underRuntimeLock(s, observeOperation, func(observationResult, processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeObserveAttempt, generation: generation,
+			observation: observed, observed: recorded,
 		}
 	}, func() (result observationResult) {
 		s.core, result = s.core.observeAttempt(generation, observed)
@@ -336,18 +392,17 @@ func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, obser
 }
 
 func (s *processRuntimeShell) settleEmergency(sweep emergencySweep) emergencySettlement {
-	return applyCore(s, settleEmergencyOperation, simulationSettleEmergency, sweep, processRuntime.settleEmergency)
+	return applyCore(s, settleEmergencyOperation, processRuntimeSettleEmergency, sweep, processRuntime.settleEmergency)
 }
 
 func (s *processRuntimeShell) commitTerminal(campaign campaignToken) terminalResult {
-	return applyCore(s, "commit terminal", simulationCommitTerminal, campaign, processRuntime.commitTerminal)
+	return applyCore(s, "commit terminal", processRuntimeCommitTerminal, campaign, processRuntime.commitTerminal)
 }
 
 func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) terminalResult {
-	return underRuntimeLock(s, "authorize forced abort", func(result terminalResult, _ processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation: simulationAuthorizeForcedAbort, runtimeCampaign: campaign,
-			runtimeFatalEpoch: epoch, runtimeTerminal: result,
+	return underRuntimeLock(s, "authorize forced abort", func(result terminalResult, _ processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeAuthorizeForcedAbort, campaign: campaign, fatalEpoch: epoch, terminal: result,
 		}
 	}, func() (result terminalResult) {
 		s.core, result = s.core.authorizeForcedAbort(campaign, epoch)
@@ -357,10 +412,9 @@ func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch
 }
 
 func (s *processRuntimeShell) closeRuntime(cause runtimeFatalCause) runtimeClosure {
-	return underRuntimeLock(s, "close runtime", func(result runtimeClosure, _ processRuntime) simulationRecord {
-		return simulationRecord{
-			runtimeOperation: simulationCloseRuntime, runtimeFatalCause: cause,
-			runtimeClosure: simulationTraceRuntimeClosure(result),
+	return underRuntimeLock(s, "close runtime", func(result runtimeClosure, _ processRuntime) processRuntimeTransition {
+		return processRuntimeTransition{
+			operation: processRuntimeClose, fatalCause: cause, runtimeClosure: result,
 		}
 	}, func() runtimeClosure { return s.closeCore(cause) })
 }
@@ -393,14 +447,21 @@ func (s *processRuntimeShell) assertReturnable(grants []admissionGrant) {
 func underRuntimeLock[T any](
 	shell *processRuntimeShell,
 	operation string,
-	record func(T, processRuntime) simulationRecord,
+	record func(T, processRuntime) processRuntimeTransition,
 	apply func() T,
 ) (result T) {
-	leaveRecorder := shell.recorder.enter()
+	recorder := processRuntimeRecorder(nil)
+	if shell.recording != nil {
+		recorder = shell.recording.recorder
+	}
+	if recorder == nil {
+		recorder = unrecordedProcessRuntime{}
+	}
+	leaveRecorder := recorder.enterProcessRuntime()
 	defer leaveRecorder()
 	shell.mutex.Lock()
 	shell.beginRuntimeNotifications()
-	reservation := shell.recorder.reserve(simulationRuntimeAuthority)
+	recordRuntime := recorder.reserveProcessRuntime()
 	wasOpen := shell.core.open()
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -421,12 +482,12 @@ func underRuntimeLock[T any](
 	}()
 
 	result = apply()
-	runtimeRecord := simulationRecord{runtimeOperationName: operation}
+	transition := processRuntimeTransition{name: operation}
 	if record != nil {
-		runtimeRecord = record(result, shell.core)
-		runtimeRecord.runtimeOperationName = operation
+		transition = record(result, shell.core)
+		transition.name = operation
 	}
-	shell.recorder.recordRuntime(reservation, runtimeRecord, shell.core)
+	recordRuntime(transition, shell.core)
 	shell.flushRuntimeNotifications()
 
 	return result
@@ -445,12 +506,12 @@ func (s *processRuntimeShell) broadcastEmergency(wasOpen bool) {
 func applyCore[I, O any](
 	s *processRuntimeShell,
 	operationName string,
-	operation simulationRuntimeOperation,
+	operation processRuntimeOperation,
 	input I,
 	reduce func(processRuntime, I) (processRuntime, O),
 ) O {
-	return underRuntimeLock(s, operationName, func(result O, _ processRuntime) simulationRecord {
-		return simulationRuntimeRecord(operation, input, result)
+	return underRuntimeLock(s, operationName, func(result O, _ processRuntime) processRuntimeTransition {
+		return processRuntimeTransitionFor(operation, input, result)
 	}, func() (result O) {
 		s.core, result = reduce(s.core, input)
 
@@ -458,30 +519,30 @@ func applyCore[I, O any](
 	})
 }
 
-func simulationRuntimeRecord[I, O any](
-	operation simulationRuntimeOperation,
+func processRuntimeTransitionFor[I, O any](
+	operation processRuntimeOperation,
 	input I,
-	result O,
-) simulationRecord {
-	record := simulationRecord{runtimeOperation: operation}
+	output O,
+) processRuntimeTransition {
+	transition := processRuntimeTransition{operation: operation}
 	switch operation {
-	case simulationRegisterCampaign:
-		record.runtimeProvenance = any(input).(campaignProvenance)
-		record.runtimeRegistration = any(result).(campaignRegistration)
-	case simulationAcknowledgeGrantReturn:
-		record.runtimeGrant = simulationTraceAdmission(any(input).(admissionGrant))
-		record.runtimeAdmissionOut = simulationTraceAdmissionResult(any(result).(admissionResult))
-	case simulationSettleEmergency:
-		record.runtimeSweep = simulationTraceEmergencySweep(any(input).(emergencySweep))
-		record.runtimeEmergencyOut = simulationTraceEmergencySettlement(any(result).(emergencySettlement))
-	case simulationCommitTerminal:
-		record.runtimeCampaign = any(input).(campaignToken)
-		record.runtimeTerminal = any(result).(terminalResult)
+	case processRuntimeRegisterCampaign:
+		transition.provenance = any(input).(campaignProvenance)
+		transition.registration = any(output).(campaignRegistration)
+	case processRuntimeAcknowledgeGrantReturn:
+		transition.grant = any(input).(admissionGrant)
+		transition.admission = any(output).(admissionResult)
+	case processRuntimeSettleEmergency:
+		transition.sweep = any(input).(emergencySweep)
+		transition.emergency = any(output).(emergencySettlement)
+	case processRuntimeCommitTerminal:
+		transition.campaign = any(input).(campaignToken)
+		transition.terminal = any(output).(terminalResult)
 	default:
-		invariant("record runtime", "runtime operation has no typed trace projection")
+		invariant("record runtime", "runtime operation has no typed transition")
 	}
 
-	return record
+	return transition
 }
 
 func (s *processRuntimeShell) deliver(deliveries []admissionGrant) {
