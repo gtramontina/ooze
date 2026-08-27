@@ -109,7 +109,6 @@ type simulationRecord struct {
 	campaignEffects []campaignEffect
 
 	runtimeOperation      processRuntimeOperation
-	runtimeOperationName  string
 	runtimeProvenance     campaignProvenance
 	runtimeCampaign       campaignToken
 	runtimeAdmission      simulationAdmission
