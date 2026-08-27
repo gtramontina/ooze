@@ -22,6 +22,15 @@ type simulationRecorder struct {
 	causalMutex  sync.Mutex
 	activeEffect campaignEffect
 	runtimeCuts  []simulationRecordedRuntimeCut
+	runtimeError error
+}
+
+func (recorder *simulationRecorder) recordRuntimeError(err error) {
+	recorder.mutex.Lock()
+	defer recorder.mutex.Unlock()
+	if recorder.runtimeError == nil {
+		recorder.runtimeError = err
+	}
 }
 
 type simulationRecordedRuntimeCut struct {
@@ -451,6 +460,11 @@ func (recorder *simulationRecorder) quiescent(
 	defer recorder.gate.Unlock()
 
 	recorder.mutex.Lock()
+	if recorder.runtimeError != nil {
+		err := recorder.runtimeError
+		recorder.mutex.Unlock()
+		panic(err)
+	}
 	records := slices.Clone(recorder.records)
 	recorder.mutex.Unlock()
 	sort.Slice(records, func(left, right int) bool {

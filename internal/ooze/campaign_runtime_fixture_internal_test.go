@@ -13,6 +13,15 @@ const (
 	serialPrimaryAdmission = processruntime.SerialPrimaryAdmission
 )
 
+type campaignProvenance struct{ lineage campaignLineage }
+
+type admissionAwait struct {
+	decision processruntime.AdmissionDecision
+	request  admissionRequestToken
+	delivery <-chan admissionGrant
+	fatal    fatalEpochID
+}
+
 type pendingStartCell = processruntime.StartCell
 type installedStart = processruntime.PreparedStart
 type processRuntimeShell = processruntime.Runtime

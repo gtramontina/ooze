@@ -1642,6 +1642,30 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	assert.Equal(t, simulationTraceSupervisorActions(wantActions), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
 }
 
+func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
+	recorder := newSimulationRecorder()
+	observer := newSimulationRuntimeObserver(recorder, 1)
+	runtime := newProcessRuntimeShellWithObserver(2, observer)
+	first := runtime.RegisterCampaign(71).Campaign()
+	second := runtime.RegisterCampaign(72).Campaign()
+	runtime.RequestAdmission(processruntime.Admission{
+		Campaign: first, Attempt: "first", Class: processruntime.SharedAdmission,
+	})
+	runtime.RequestAdmission(processruntime.Admission{
+		Campaign: second, Attempt: "second", Class: processruntime.SharedAdmission,
+	})
+	campaign, _ := beginCampaign(campaignDefinition{
+		identity: "campaign-conformance", lineage: 71, command: []string{"test"},
+		profile: AutomaticProfile, peers: 2,
+	})
+	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	driver := &supervisorDriver{recorder: recorder}
+
+	assert.PanicsWithError(t, "process runtime event diverged", func() {
+		recorder.quiescent(runner, runtime, driver)
+	})
+}
+
 func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignDefinition{

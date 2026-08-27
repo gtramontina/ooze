@@ -247,7 +247,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
 			runtimeOperation:  simulationRegisterCampaign,
-			runtimeProvenance: campaignProvenance{lineage: engine.definition.campaign.lineage},
+			runtimeProvenance: processruntime.Lineage(engine.definition.campaign.lineage),
 			runtimeState:      simulationTraceRuntimeState(engine.runtime), runtimeRegistration: registration,
 		})
 		engine.enqueueDelivery(sequence, campaignRegisteredEvent{registration: registration})

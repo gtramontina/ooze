@@ -6,11 +6,6 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
-const (
-	observeOperation         = "observe attempt"
-	settleEmergencyOperation = "settle emergency"
-)
-
 type (
 	campaignLineage   = processruntime.Lineage
 	attemptIdentity   string
@@ -19,8 +14,6 @@ type (
 	runtimeFatalCause string
 	campaignToken     = processruntime.Campaign
 )
-
-type campaignProvenance struct{ lineage campaignLineage }
 
 type campaignRegistration struct {
 	decision processruntime.CampaignDecision
@@ -45,13 +38,6 @@ type admissionResult struct {
 	request    admissionRequestToken
 	deliveries []admissionGrant
 	fatalEpoch fatalEpochID
-}
-
-type admissionAwait struct {
-	decision processruntime.AdmissionDecision
-	request  admissionRequestToken
-	delivery <-chan admissionGrant
-	fatal    fatalEpochID
 }
 
 type startCommittedResult struct {

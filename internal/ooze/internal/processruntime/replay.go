@@ -227,9 +227,15 @@ func (replay Replay) Apply(cut Cut) (Replay, ReplayResult) {
 // Accepts reports whether the production reducer accepts a proposed cut.
 func (replay Replay) Accepts(cut Cut) (accepted bool) {
 	defer func() {
-		if recover() != nil {
-			accepted = false
+		recovered := recover()
+		if recovered == nil {
+			return
 		}
+		if _, invalid := recovered.(Violation); invalid {
+			accepted = false
+			return
+		}
+		panic(recovered)
 	}()
 	replay.Apply(cut)
 	return true

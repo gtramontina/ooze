@@ -158,3 +158,45 @@ func TestReplayUsesRuntimePolicyToDecideWhetherCutsAreAccepted(t *testing.T) {
 		)))
 	})
 }
+
+func TestReplayLegalityTracksReturnedGrantAndFatalCustodyPolicy(t *testing.T) {
+	t.Run("returned grant", func(t *testing.T) {
+		replay := processruntime.NewReplay(1)
+		replay, registered := replay.Apply(processruntime.RegisterCampaignCut(61))
+		replay, admitted := replay.Apply(processruntime.RequestAdmissionCut(processruntime.Admission{
+			Campaign: registered.Registration().Campaign(), Attempt: "mutant-a",
+			Class: processruntime.SharedAdmission,
+		}))
+		grant := admitted.Admission().Deliveries()[0]
+		replay, closed := replay.Apply(processruntime.CloseCut("fatal"))
+		require.Equal(t, []processruntime.Admission{grant}, closed.Closure().CompensatedGrants())
+
+		cut := processruntime.ReturnGrantCut(grant)
+		assert.True(t, replay.Accepts(cut))
+		replay, _ = replay.Apply(cut)
+		assert.False(t, replay.Accepts(cut))
+	})
+
+	t.Run("deferred terminal custody", func(t *testing.T) {
+		replay := processruntime.NewReplay(1)
+		replay, registered := replay.Apply(processruntime.RegisterCampaignCut(62))
+		replay, admitted := replay.Apply(processruntime.RequestAdmissionCut(processruntime.Admission{
+			Campaign: registered.Registration().Campaign(), Attempt: "mutant-a",
+			Class: processruntime.SharedAdmission,
+		}))
+		replay, started := replay.Apply(processruntime.CommitStartCut(admitted.Admission().Deliveries()[0]))
+		generation := started.Start().Generation()
+		replay, _ = replay.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Owned()))
+		replay, _ = replay.Apply(processruntime.CloseCut("fatal"))
+		drain := processruntime.ObserveAttemptCut(generation, processruntime.DrainUnconfirmed())
+		assert.True(t, replay.Accepts(drain))
+
+		replay, _ = replay.Apply(processruntime.ObserveAttemptCut(
+			generation, processruntime.Settled(processruntime.AutomaticProfile, 0),
+		))
+		assert.False(t, replay.Accepts(drain))
+		assert.True(t, replay.Accepts(processruntime.SettleEmergencyCut([]processruntime.Resolution{
+			processruntime.ConfirmedDrained(generation),
+		})))
+	})
+}

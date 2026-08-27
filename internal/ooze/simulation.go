@@ -9,6 +9,11 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
+const (
+	observeOperation         = "observe attempt"
+	settleEmergencyOperation = "settle emergency"
+)
+
 type simulationAuthority uint8
 
 const (
@@ -111,7 +116,7 @@ type simulationRecord struct {
 	campaignEffects []campaignEffect
 
 	runtimeOperation      processruntime.Operation
-	runtimeProvenance     campaignProvenance
+	runtimeProvenance     processruntime.Lineage
 	runtimeCampaign       campaignToken
 	runtimeAdmission      simulationAdmission
 	runtimeAdmissionToken simulationAdmission
@@ -316,7 +321,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				_ = registrationEffect
 				effects = remaining
 				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.RegisterCampaignCut(record.runtimeProvenance.lineage))
+				runtime, applied = runtime.Apply(processruntime.RegisterCampaignCut(record.runtimeProvenance))
 				registered := applied.Registration()
 				registration := campaignRegistrationEvidence(registered)
 				if !reflect.DeepEqual(registration, record.runtimeRegistration) {
@@ -1050,7 +1055,7 @@ func simulationApplyRuntimeCut(state processruntime.Replay, record simulationRec
 func simulationRuntimeCut(record simulationRecord) processruntime.Cut {
 	switch record.runtimeOperation {
 	case simulationRegisterCampaign:
-		return processruntime.RegisterCampaignCut(record.runtimeProvenance.lineage)
+		return processruntime.RegisterCampaignCut(record.runtimeProvenance)
 	case simulationRequestAdmission:
 		return processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeAdmission.production())))
 	case simulationCancelAdmission:

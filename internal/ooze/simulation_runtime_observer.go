@@ -9,7 +9,6 @@ import (
 type simulationRuntimeObserver struct {
 	recorder *simulationRecorder
 	state    processruntime.Replay
-	mismatch error
 }
 
 func newSimulationRuntimeObserver(recorder *simulationRecorder, capacity int) *simulationRuntimeObserver {
@@ -23,7 +22,7 @@ func (observer *simulationRuntimeObserver) Observe(event processruntime.Event) {
 	record := simulationRuntimeEventRecord(event)
 	state, matches := observer.state.ApplyEvent(event)
 	if !matches {
-		observer.mismatch = fmt.Errorf("process runtime event diverged")
+		observer.recorder.recordRuntimeError(fmt.Errorf("process runtime event diverged"))
 		return
 	}
 	observer.state = state
@@ -36,7 +35,7 @@ func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 	switch event := event.(type) {
 	case processruntime.CampaignRegistrationProcessed:
 		record.runtimeOperation = processruntime.RegisterCampaignOperation
-		record.runtimeProvenance = campaignProvenance{lineage: event.Lineage()}
+		record.runtimeProvenance = event.Lineage()
 		record.runtimeRegistration = campaignRegistrationEvidence(event.Registration())
 	case processruntime.AdmissionRequestProcessed:
 		record.runtimeOperation = processruntime.RequestAdmissionOperation
