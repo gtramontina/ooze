@@ -5,8 +5,12 @@ type supervisorMachine struct {
 }
 
 type supervisorTransition struct {
-	events  []supervisorEvent
+	events  []supervisorDomainEvent
 	effects []supervisorAction
+}
+
+type supervisorDomainEvent struct {
+	fact supervisorEvent
 }
 
 func newSupervisorMachine() *supervisorMachine {
@@ -23,7 +27,7 @@ func (machine *supervisorMachine) Apply(fact supervisorEvent) supervisorTransiti
 	machine.state = next
 
 	return supervisorTransition{
-		events:  []supervisorEvent{fact},
+		events:  []supervisorDomainEvent{{fact: fact}},
 		effects: cloneSupervisorActions(effects),
 	}
 }
@@ -32,13 +36,17 @@ func (machine *supervisorMachine) snapshot() supervisorState {
 	return cloneSupervisorState(machine.state)
 }
 
-func (transition supervisorTransition) Events() []supervisorEvent {
-	events := make([]supervisorEvent, len(transition.events))
+func (transition supervisorTransition) Events() []supervisorDomainEvent {
+	events := make([]supervisorDomainEvent, len(transition.events))
 	for index, event := range transition.events {
-		events[index] = cloneSupervisorEvent(event)
+		events[index] = supervisorDomainEvent{fact: cloneSupervisorEvent(event.fact)}
 	}
 
 	return events
+}
+
+func (event supervisorDomainEvent) Fact() supervisorEvent {
+	return cloneSupervisorEvent(event.fact)
 }
 
 func (transition supervisorTransition) Effects() []supervisorAction {
