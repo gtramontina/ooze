@@ -57,7 +57,7 @@ type supervisorDrivenAttempt struct {
 
 type supervisorDriver struct {
 	mutex             sync.Mutex
-	state             supervisorState
+	machine           *supervisorMachine
 	runtime           *processruntime.Runtime
 	now               func() time.Time
 	launchBoundary    func(time.Time) <-chan time.Time
@@ -106,6 +106,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 	}
 
 	return &supervisorDriver{
+		machine: newSupervisorMachine(),
 		runtime: construction.runtime, now: construction.now,
 		launchBoundary: launchBoundary, commandBoundary: commandBoundary, sampleTicks: sampleTicks,
 		launchProgress: construction.launchProgress, drainEpoch: construction.drainEpoch,
@@ -450,12 +451,28 @@ func (driver *supervisorDriver) reduce(event supervisorEvent) []supervisorAction
 }
 
 func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisorAction {
+	if driver.machine == nil {
+		driver.machine = newSupervisorMachine()
+	}
 	reservation := driver.recorder.reserve(simulationSupervisorAuthority)
-	next, actions := reduceSupervisor(driver.state, event)
-	driver.state = next
+	transition := driver.machine.Apply(event)
+	events := transition.Events()
+	actions := transition.Effects()
+	if len(events) != 1 {
+		invariant(supervisorDriverOperation, "supervisor transition did not publish one accepted fact")
+	}
+	next := driver.machine.snapshot()
 	driver.recorder.recordSupervisor(reservation, event, next, actions)
 
 	return actions
+}
+
+func (driver *supervisorDriver) supervisorState() supervisorState {
+	if driver.machine == nil {
+		return supervisorState{}
+	}
+
+	return driver.machine.snapshot()
 }
 
 func (driver *supervisorDriver) apply(event supervisorEvent) {
@@ -636,9 +653,10 @@ func (driver *supervisorDriver) startEligibleMonitors() {
 			continue
 		}
 		attempt.monitorStarted = true
-		state := driver.state.attempts[driver.state.requireAttempt(generation)]
+		state := driver.supervisorState()
+		attemptState := state.attempts[state.requireAttempt(generation)]
 		starts = append(starts, monitorStart{
-			wait: attempt.waitAction, sample: attempt.sampleAction, deadline: state.deadlineAt,
+			wait: attempt.waitAction, sample: attempt.sampleAction, deadline: attemptState.deadlineAt,
 		})
 	}
 	driver.mutex.Unlock()
@@ -914,12 +932,13 @@ func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 		}
 	}()
 	driver.mutex.Lock()
-	index := driver.state.attemptIndex(event.generation)
+	state := driver.supervisorState()
+	index := state.attemptIndex(event.generation)
 	if index < 0 {
 		driver.mutex.Unlock()
 		return
 	}
-	attempt := driver.state.attempts[index]
+	attempt := state.attempts[index]
 	accept := attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
 		attempt.phase == supervisorEmergencyDraining
 	if !accept {
@@ -1114,9 +1133,10 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 	}
 	driver.emergencyStarted = true
 	preempted := driver.preemptReservedLaunchesLocked(request)
-	snapshots := make([]supervisorEmergencySnapshot, 0, len(driver.state.attempts))
+	stateSnapshot := driver.supervisorState()
+	snapshots := make([]supervisorEmergencySnapshot, 0, len(stateSnapshot.attempts))
 	returning := make(map[attemptGeneration]struct{})
-	for _, state := range driver.state.attempts {
+	for _, state := range stateSnapshot.attempts {
 		if state.phase == supervisorLaunchClosedNotReleased {
 			continue
 		}
@@ -1348,7 +1368,7 @@ func snapshotsCompletion(
 
 func (driver *supervisorDriver) executeEmergency(action supervisorAction) {
 	driver.mutex.Lock()
-	state := cloneSupervisorState(driver.state)
+	state := driver.supervisorState()
 	driver.mutex.Unlock()
 	executor := supervisorEmergencyExecutor{
 		settleEmergency: func(sweep emergencySweep) emergencySettlement {

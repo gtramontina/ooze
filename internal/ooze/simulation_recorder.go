@@ -486,7 +486,7 @@ func (recorder *simulationRecorder) quiescent(
 
 	runtimeState := simulationTraceRuntimeState(recorder.runtimeState)
 	driver.mutex.Lock()
-	supervisorState := simulationProjectSupervisorState(driver.state)
+	supervisorState := simulationProjectSupervisorState(driver.supervisorState())
 	driver.mutex.Unlock()
 	campaignState := simulationProjectCampaign(runner.state)
 	definition := campaignState.definition

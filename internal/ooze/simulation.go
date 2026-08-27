@@ -253,6 +253,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 	campaign, effects := beginCampaign(trace.definition.campaign)
 	runtime := processruntime.NewReplay(trace.definition.capacity)
 	supervisor := supervisorState{}
+	supervisorMachine := newSupervisorMachine()
 	var delivered campaignEventPayload
 	pendingDeliveries := make(map[simulationCausalSource][]campaignEventPayload)
 	activeLaunches := make(map[attemptGeneration]campaignEffect)
@@ -721,8 +722,9 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 			}
-			var actions []supervisorAction
-			supervisor, actions = reduceSupervisor(supervisor, event)
+			transition := supervisorMachine.Apply(event)
+			actions := transition.Effects()
+			supervisor = supervisorMachine.snapshot()
 			for _, action := range actions {
 				actionKinds[action.token] = action.kind
 			}
@@ -914,7 +916,10 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 		world.runtimeState = state
 		world.runtime = simulationTraceRuntimeState(state)
 	case simulationSupervisorAuthority:
-		state, actions := reduceSupervisor(world.supervisor, record.supervisorEvent.production())
+		machine := newSupervisorMachineFrom(world.supervisor)
+		transition := machine.Apply(record.supervisorEvent.production())
+		actions := transition.Effects()
+		state := machine.snapshot()
 		if !reflect.DeepEqual(simulationTraceSupervisorState(state), record.supervisorState) ||
 			!reflect.DeepEqual(simulationTraceSupervisorActions(actions), record.supervisorActions) {
 			return simulationWorld{}, fmt.Errorf("supervisor owner cut diverged")
@@ -1077,7 +1082,8 @@ func simulationAdvanceSupervisorGuarded(
 		panic(violation)
 	}()
 
-	_, _ = reduceSupervisor(state, event)
+	machine := newSupervisorMachineFrom(state)
+	_ = machine.Apply(event)
 }
 
 func simulationSettleInvariantCleanup(runtime *processruntime.Replay, violation runtimeInvariantViolation) {

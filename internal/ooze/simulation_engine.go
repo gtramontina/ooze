@@ -68,6 +68,7 @@ type simulationEngine struct {
 	campaign     campaignState
 	runtime      processruntime.Replay
 	supervisor   supervisorState
+	machine      *supervisorMachine
 	trace        simulationTrace
 	pending      []simulationEngineMove
 	registration campaignRegistration
@@ -758,8 +759,13 @@ func (engine *simulationEngine) applySupervisor(
 		event.drainBy = event.at.Add(5 * time.Second)
 		event.emergencySnapshots = simulationEmergencySnapshots(engine.supervisor, event.at)
 	}
-	state, actions := reduceSupervisor(engine.supervisor, event)
-	engine.supervisor = state
+	if engine.machine == nil {
+		engine.machine = newSupervisorMachineFrom(engine.supervisor)
+	}
+	transition := engine.machine.Apply(event)
+	actions := transition.Effects()
+	engine.supervisor = engine.machine.snapshot()
+	state := engine.supervisor
 	record := simulationRecord{
 		authority: simulationSupervisorAuthority, source: source,
 		supervisorEvent:   simulationTraceSupervisorEvent(event),
