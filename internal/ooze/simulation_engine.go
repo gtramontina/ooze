@@ -316,10 +316,11 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 	case campaignEffectReturnAdmission:
 		grant := runtimeAdmissionRequest(move.effect.grant)
-		if !engine.runtime.CanReturn(processRuntimeAdmission(campaignAdmissionValue(grant))) {
+		cut := processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(grant)))
+		if !engine.runtime.Accepts(cut) {
 			return fmt.Errorf("simulation grant return %v has no returnable runtime authority", move.effect.grant)
 		}
-		processed := engine.applyRuntime(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(grant)))).Admission()
+		processed := engine.applyRuntime(cut).Admission()
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -995,12 +996,16 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 		}
 		if move.source.kind == simulationSupervisorActionSource &&
 			move.action.kind == supervisorTransferResidualCustody &&
-			!engine.runtime.CanTransferResidual(move.action.generation) {
+			!engine.runtime.Accepts(processruntime.ObserveAttemptCut(
+				move.action.generation, processruntime.DrainUnconfirmed(),
+			)) {
 			continue
 		}
 		if move.source.kind == simulationSupervisorActionSource &&
 			move.action.kind == supervisorSettleRuntime &&
-			!engine.runtime.CanObserveOwnedTerminal(move.action.generation) {
+			!engine.runtime.Accepts(processruntime.ObserveAttemptCut(
+				move.action.generation, processruntime.Settled(processruntime.AutomaticProfile, 0),
+			)) {
 			continue
 		}
 		if move.source.kind == simulationSupervisorActionSource {

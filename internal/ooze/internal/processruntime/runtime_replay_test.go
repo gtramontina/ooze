@@ -119,3 +119,42 @@ func TestRuntimeInstallsStartBeforeLaunchAndCorrelatesTerminalEvidence(t *testin
 		runtime.Observe(start.Generation()+1, processruntime.Settled(processruntime.AutomaticProfile, 0))
 	})
 }
+
+func TestReplayUsesRuntimePolicyToDecideWhetherCutsAreAccepted(t *testing.T) {
+	replay := processruntime.NewReplay(1)
+	replay, registered := replay.Apply(processruntime.RegisterCampaignCut(51))
+	admission := processruntime.Admission{
+		Campaign: registered.Registration().Campaign(), Attempt: "mutant-a", Class: processruntime.SharedAdmission,
+	}
+	replay, requested := replay.Apply(processruntime.RequestAdmissionCut(admission))
+	grant := requested.Admission().Deliveries()[0]
+	replay, committed := replay.Apply(processruntime.CommitStartCut(grant))
+	generation := committed.Start().Generation()
+
+	t.Run("prospective", func(t *testing.T) {
+		before := replay.Projection()
+		assert.True(t, replay.Accepts(processruntime.ObserveAttemptCut(generation, processruntime.NotReleased(false))))
+		assert.False(t, replay.Accepts(processruntime.ObserveAttemptCut(
+			generation, processruntime.Settled(processruntime.AutomaticProfile, 0),
+		)))
+		assert.Equal(t, before, replay.Projection())
+	})
+
+	replay, _ = replay.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Owned()))
+	t.Run("owned", func(t *testing.T) {
+		assert.True(t, replay.Accepts(processruntime.ObserveAttemptCut(
+			generation, processruntime.Settled(processruntime.AutomaticProfile, 0),
+		)))
+		assert.True(t, replay.Accepts(processruntime.ObserveAttemptCut(generation, processruntime.DrainUnconfirmed())))
+		assert.False(t, replay.Accepts(processruntime.ObserveAttemptCut(generation, processruntime.NotReleased(false))))
+	})
+
+	replay, _ = replay.Apply(processruntime.ObserveAttemptCut(
+		generation, processruntime.Settled(processruntime.AutomaticProfile, 0),
+	))
+	t.Run("settled", func(t *testing.T) {
+		assert.False(t, replay.Accepts(processruntime.ObserveAttemptCut(
+			generation, processruntime.Settled(processruntime.AutomaticProfile, 0),
+		)))
+	})
+}

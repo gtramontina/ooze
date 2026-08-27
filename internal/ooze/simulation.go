@@ -1256,7 +1256,9 @@ func simulationEmergencySweep(runtime processruntime.Replay, closure runtimeClos
 	resolutions := make([]emergencyResolution, len(closure.residual))
 	for index, residual := range closure.residual {
 		disposition := emergencyCustodyTransferred
-		if runtime.TerminalDeferred(residual.generation) {
+		if !residual.transferred && residual.stage == admissionOwned && !runtime.Accepts(processruntime.ObserveAttemptCut(
+			residual.generation, processruntime.DrainUnconfirmed(),
+		)) {
 			disposition = emergencyConfirmedDrained
 		}
 		resolutions[index] = emergencyResolution{

@@ -169,8 +169,12 @@ func TestReplayFoldsProductionEventsIntoCapabilityFreeProjections(t *testing.T) 
 
 	t.Run("owned generation", func(t *testing.T) {
 		assert.True(t, replay.Projection().Owned(start.Generation()))
-		assert.True(t, replay.CanObserveOwnedTerminal(start.Generation()))
-		assert.False(t, replay.CanObserveNotReleased(start.Generation()))
+		assert.True(t, replay.Accepts(processruntime.ObserveAttemptCut(
+			start.Generation(), processruntime.Settled(processruntime.AutomaticProfile, 0),
+		)))
+		assert.False(t, replay.Accepts(processruntime.ObserveAttemptCut(
+			start.Generation(), processruntime.NotReleased(false),
+		)))
 	})
 
 	runtime.Observe(start.Generation(), processruntime.Settled(processruntime.AutomaticProfile, 0))

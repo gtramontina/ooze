@@ -224,6 +224,17 @@ func (replay Replay) Apply(cut Cut) (Replay, ReplayResult) {
 	return replay, result
 }
 
+// Accepts reports whether the production reducer accepts a proposed cut.
+func (replay Replay) Accepts(cut Cut) (accepted bool) {
+	defer func() {
+		if recover() != nil {
+			accepted = false
+		}
+	}()
+	replay.Apply(cut)
+	return true
+}
+
 // ApplyEvent replays one accepted production event and verifies its result.
 func (replay Replay) ApplyEvent(event Event) (Replay, bool) {
 	cut, expected := replayEvent(event)
@@ -311,53 +322,3 @@ func (replay Replay) Open() bool { return replay.state.open() }
 
 // Residual returns exact live execution-domain custody.
 func (replay Replay) Residual() []Residual { return residualValues(replay.state.residualCustody()) }
-
-// CanReturn reports whether an admission holds return authority.
-func (replay Replay) CanReturn(admission Admission) bool {
-	index := replay.state.admissionIndex(admissionAuthorityValue(admission))
-	if index < 0 {
-		return false
-	}
-	disposition := replay.state.admissions[index].disposition
-	return disposition == dispositionReturnedAfterGate || disposition == dispositionReturnedAfterClosure
-}
-
-// CanObserveOwnedTerminal reports whether a generation accepts owned terminal evidence.
-func (replay Replay) CanObserveOwnedTerminal(generation Generation) bool {
-	index := replay.state.admissionIndexByGeneration(attemptGeneration(generation))
-	if index < 0 {
-		return false
-	}
-	admission := replay.state.admissions[index]
-	return admission.stage == admissionOwned && replay.state.lifecycle <= runtimeFatalClosing &&
-		admission.disposition == dispositionNone
-}
-
-// CanTransferResidual reports whether a generation accepts residual-custody transfer.
-func (replay Replay) CanTransferResidual(generation Generation) bool {
-	index := replay.state.admissionIndexByGeneration(attemptGeneration(generation))
-	if index < 0 {
-		return false
-	}
-	admission := replay.state.admissions[index]
-	return admission.stage == admissionOwned && replay.state.lifecycle <= runtimeFatalClosing &&
-		(admission.disposition == dispositionNone || admission.disposition == dispositionFatalSeeded)
-}
-
-// CanObserveNotReleased reports whether a generation accepts proven no-release evidence.
-func (replay Replay) CanObserveNotReleased(generation Generation) bool {
-	index := replay.state.admissionIndexByGeneration(attemptGeneration(generation))
-	if index < 0 {
-		return false
-	}
-	admission := replay.state.admissions[index]
-	return admission.stage == admissionProspective &&
-		(admission.disposition == dispositionNone || admission.disposition == dispositionFatalSeeded) &&
-		(replay.state.lifecycle == runtimeOpen || replay.state.lifecycle == runtimeFatalClosing)
-}
-
-// TerminalDeferred reports whether fatal closure retained terminal evidence.
-func (replay Replay) TerminalDeferred(generation Generation) bool {
-	index := replay.state.admissionIndexByGeneration(attemptGeneration(generation))
-	return index >= 0 && replay.state.admissions[index].disposition == dispositionTerminalDeferred
-}
