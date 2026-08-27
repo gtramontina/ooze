@@ -46,13 +46,6 @@ func runtimeAdmissions(values []processruntime.Admission) []admissionAuthority {
 	return result
 }
 
-func runtimeBarrier(value processruntime.Barrier) barrierBinding {
-	return barrierBinding{
-		campaign: value.Campaign, attempt: attemptIdentity(value.Attempt),
-		profile: value.Profile, deadline: value.Deadline,
-	}
-}
-
 func runtimeBarrierResult(result processruntime.BarrierResult) barrierResult {
 	return barrierResult{
 		decision: result.Decision(), request: runtimeAdmissionValue(result.Request()),
@@ -72,37 +65,6 @@ func runtimeStartResult(result processruntime.StartResult) startCommittedResult 
 	}
 }
 
-func runtimeObservation(value processruntime.Observation) attemptObservation {
-	switch value.Kind() {
-	case processruntime.LaunchOwned:
-		return launchOwned{}
-	case processruntime.LaunchNotReleased:
-		reason := launchFailed
-		if value.ResourceExhausted() {
-			reason = launchResourceExhausted
-		}
-		return launchNotReleased{reason: reason}
-	case processruntime.AttemptSettled:
-		return attemptSettled{profile: value.Profile(), deadline: value.Deadline()}
-	case processruntime.AttemptTripped:
-		kind := deadlineTrip
-		if value.FuseTrip() {
-			kind = fuseTrip
-		}
-		return attemptTripped{kind: kind, profile: value.Profile(), deadline: value.Deadline()}
-	case processruntime.LaunchUnconfirmedKind:
-		return launchUnconfirmed{}
-	case processruntime.DrainUnconfirmedKind:
-		return drainUnconfirmed{}
-	case processruntime.AttemptStopped:
-		return attemptStopped{}
-	case processruntime.AttemptInfrastructure:
-		return attemptInfrastructure{cause: value.Cause()}
-	default:
-		return nil
-	}
-}
-
 func runtimeReceipt(receipt processruntime.Receipt) observationResult {
 	return observationResult{
 		generation: receipt.Generation(), deliveries: runtimeAdmissions(receipt.Deliveries()),
@@ -115,18 +77,6 @@ func runtimeReceipt(receipt processruntime.Receipt) observationResult {
 		confirmationObserved:     receipt.ConfirmationObserved(),
 		confirmationQueueDrained: receipt.ConfirmationQueueDrained(), fatalEpoch: fatalEpochID(receipt.FatalEpoch()),
 	}
-}
-
-func runtimeSweep(values []processruntime.Resolution) emergencySweep {
-	result := emergencySweep{resolutions: make([]emergencyResolution, len(values))}
-	for index, value := range values {
-		disposition := emergencyConfirmedDrained
-		if value.Transferred() {
-			disposition = emergencyCustodyTransferred
-		}
-		result.resolutions[index] = emergencyResolution{generation: value.Generation(), disposition: disposition}
-	}
-	return result
 }
 
 func runtimeClosureValue(value processruntime.Closure) runtimeClosure {
