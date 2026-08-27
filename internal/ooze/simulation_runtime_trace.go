@@ -205,10 +205,10 @@ func simulationTraceConfirmationQueueResult(value confirmationQueueResult) simul
 	}
 }
 
-type simulationRuntimeState = processruntime.Image
+type simulationRuntimeState = processruntime.Projection
 
-func simulationTraceRuntimeState(value processRuntime) simulationRuntimeState {
-	return value.Image()
+func simulationTraceRuntimeState(value processruntime.Replay) simulationRuntimeState {
+	return value.Projection()
 }
 
 type simulationEmergencySweepRecord struct{ resolutions []emergencyResolution }

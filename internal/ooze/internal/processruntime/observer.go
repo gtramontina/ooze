@@ -203,8 +203,8 @@ func (event runtimeEmergencySettlementProcessed) Resolutions() []Resolution {
 	result := make([]Resolution, len(event.sweep.resolutions))
 	for index, resolution := range event.sweep.resolutions {
 		result[index] = Resolution{
-			Generation:  Generation(resolution.generation),
-			Transferred: resolution.disposition == emergencyCustodyTransferred,
+			generation:  Generation(resolution.generation),
+			transferred: resolution.disposition == emergencyCustodyTransferred,
 		}
 	}
 	return result
@@ -247,17 +247,11 @@ type Observer interface{ Observe(Event) error }
 
 type processRuntimeObserver = Observer
 
-type processRuntimeObserverFunc func(processRuntimeEvent) error
-
 // ObserverFunc adapts a function to Observer.
 type ObserverFunc func(Event) error
 
 // Observe receives one accepted process-runtime event.
 func (observe ObserverFunc) Observe(event Event) error { return observe(event) }
-
-func (observe processRuntimeObserverFunc) Observe(event processRuntimeEvent) error {
-	return observe(event)
-}
 
 func runtimeEventAdmission(authority admissionAuthority) admissionAuthority {
 	authority.delivery = nil

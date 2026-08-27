@@ -34,7 +34,7 @@ func TestLinuxNativeSupervisorSettlesTargetStatusThroughGuardian(t *testing.T) {
 	assert.Equal(t, (ExitStatus{Code: 17}), settled.Exit, "terminal = %#v, want exact target status and output", terminal)
 	assert.EqualValues(t, "linux-native-output", settled.Output.Bytes, "terminal = %#v, want exact target status and output", terminal)
 	{
-		snapshot := shell.Image()
+		snapshot := shell.Projection()
 		assert.True(t, snapshot.Open(), "runtime after Linux settlement = %#v", snapshot)
 		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after Linux settlement = %#v", snapshot)
 	}
@@ -72,7 +72,7 @@ func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want proven typed target exec failure", result)
 	assert.Error(t, notReleased.Err, "launch = %#v, want proven typed target exec failure", result)
 	{
-		snapshot := shell.Image()
+		snapshot := shell.Projection()
 		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "typed target exec failure retained custody: %#v", snapshot)
 	}
 }

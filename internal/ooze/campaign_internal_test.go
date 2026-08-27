@@ -79,7 +79,7 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 		identity: "campaign-a", lineage: 11, command: []string{"go", "test"},
 		env: []string{"A=1"}, profile: AutomaticProfile, peers: 4,
 	}
-	runtime := newProcessRuntime(4)
+	runtime := newCampaignRuntimeFixture(4)
 	state, _ := beginCampaign(definition)
 	runtime, registered := runtime.registerCampaign(campaignProvenance{lineage: definition.lineage})
 	state, _ = advanceCampaign(state, campaignEvent{
@@ -738,7 +738,7 @@ func TestCampaignPreparationFailuresAbortWithoutCommands(t *testing.T) {
 	}
 
 	state, _ = beginCampaign(definition)
-	runtime := newProcessRuntime(1)
+	runtime := newCampaignRuntimeFixture(1)
 	_, registered := runtime.registerCampaign(campaignProvenance{lineage: definition.lineage})
 	state, _ = advanceCampaign(state, campaignEvent{id: 1, payload: campaignRegisteredEvent{registration: registered}})
 	state, effects = advanceCampaign(state, campaignEvent{id: 2, payload: campaignPreparationFailedEvent{
@@ -1014,7 +1014,7 @@ func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testi
 		kind: campaignResourceWorkspace, identity: "workspace-confirm-b",
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
-	image := harness.runtime.Image()
+	image := harness.runtime.Projection()
 	assert.EqualValues(t, 5, harness.state.commandCount(), "command count/single admission=%d/%v", harness.state.commandCount(), image.SingleAdmission())
 	assert.True(t, image.SingleAdmission(), "command count/single admission=%d/%v", harness.state.commandCount(), image.SingleAdmission())
 
@@ -1442,7 +1442,7 @@ func TestCampaignMalformedEventEmergencyCleansRuntimeAndRepanicsOriginalViolatio
 		identity: "campaign-a", lineage: 11, command: []string{"test"}, profile: AutomaticProfile, peers: 1,
 	}
 	state, _ := beginCampaign(definition)
-	runtime := newProcessRuntime(1)
+	runtime := newCampaignRuntimeFixture(1)
 	var registered campaignRegistration
 	runtime, registered = runtime.registerCampaign(campaignProvenance{lineage: definition.lineage})
 	state, _ = advanceCampaign(state, campaignEvent{
@@ -1453,7 +1453,7 @@ func TestCampaignMalformedEventEmergencyCleansRuntimeAndRepanicsOriginalViolatio
 	var recovered any
 	func() {
 		defer func() { recovered = recover() }()
-		_, _ = advanceCampaignGuarded(&runtime.processRuntime, state, malformed, func(closure runtimeClosure) emergencySweep {
+		_, _ = advanceCampaignGuarded(&runtime.Replay, state, malformed, func(closure runtimeClosure) emergencySweep {
 			assert.NotEqual(t, 0, closure.epoch, "invariant closure=%#v", closure)
 			assert.EqualValues(t, 0, len(closure.residual), "invariant closure=%#v", closure)
 
@@ -1469,7 +1469,7 @@ func TestCampaignMalformedEventEmergencyCleansRuntimeAndRepanicsOriginalViolatio
 	assert.NotEqual(t, 0, len(violation.stableIdentities), "invariant diagnostic is incomplete: %#v", violation)
 	assert.NotEqual(t, 0, len(violation.obligationSnapshot), "invariant diagnostic is incomplete: %#v", violation)
 	assert.NotEqual(t, 0, len(violation.traceTail), "invariant diagnostic is incomplete: %#v", violation)
-	image := runtime.Image()
+	image := runtime.Projection()
 	assert.True(t, image.Drained(), "runtime after invariant=%#v", image)
 	assert.NotEqual(t, 0, image.FatalEpoch(), "runtime after invariant=%#v", image)
 	assert.EqualValues(t, 1, image.FatalCauseCount(), "runtime after invariant=%#v", image)
@@ -1675,13 +1675,13 @@ func runSerialCampaignChoices(t *testing.T, choices []byte) campaignState {
 
 type campaignHarness struct {
 	state     campaignState
-	runtime   testProcessRuntime
+	runtime   campaignRuntimeFixture
 	nextEvent campaignEventID
 	effects   []campaignEffect
 }
 
 func (harness *campaignHarness) admissionByGeneration(generation attemptGeneration) (admissionAuthority, bool) {
-	return runtimeAdmissionByGeneration(harness.runtime.Image(), generation)
+	return runtimeAdmissionByGeneration(harness.runtime.Projection(), generation)
 }
 
 type launchedCampaignAttempt struct {
@@ -1700,7 +1700,7 @@ func newCampaignHarness(
 		identity: "campaign-a", lineage: 11, command: []string{"go", "test"}, profile: profile, peers: peers,
 	}
 	state, _ := beginCampaign(definition)
-	runtime := newProcessRuntime(peers)
+	runtime := newCampaignRuntimeFixture(peers)
 	runtime, registered := runtime.registerCampaign(campaignProvenance{lineage: definition.lineage})
 	harness := &campaignHarness{state: state, runtime: runtime}
 	harness.advance(campaignRegisteredEvent{registration: registered})

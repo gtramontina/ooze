@@ -20,59 +20,6 @@ type (
 	campaignToken     = processruntime.Campaign
 )
 
-type processRuntime = processruntime.State
-
-type processRuntimeOperation uint8
-
-const (
-	processRuntimeRegisterCampaign processRuntimeOperation = iota + 1
-	processRuntimeRequestAdmission
-	processRuntimeCancelAdmission
-	processRuntimeAcknowledgeGrantReturn
-	processRuntimeBindConfirmationBarrier
-	processRuntimeCompleteConfirmationQueue
-	processRuntimeStartCommitted
-	processRuntimeObserveAttempt
-	processRuntimeSettleEmergency
-	processRuntimeCommitTerminal
-	processRuntimeAuthorizeForcedAbort
-	processRuntimeClose
-)
-
-type admissionMode uint8
-
-const (
-	fullAutomatic admissionMode = iota + 1
-	singleAdmission
-)
-
-type runtimeLifecycle uint8
-
-const (
-	runtimeOpen runtimeLifecycle = iota + 1
-	runtimeFatalClosing
-	runtimeFatalSettledClosing
-	runtimeClosedDrained
-	runtimeClosedUnconfirmed
-)
-
-type registeredCampaign struct {
-	token           campaignToken
-	primaryGateOpen bool
-}
-
-type admissionDisposition uint8
-
-const (
-	dispositionNone admissionDisposition = iota
-	dispositionReturnedAfterGate
-	dispositionReturnedAfterClosure
-	dispositionFatalSeeded
-	dispositionTerminalDeferred
-	dispositionCustodyTransferred
-	dispositionCustodySettled
-)
-
 type admissionClass = processruntime.AdmissionClass
 
 const (
@@ -147,12 +94,6 @@ type barrierResult struct {
 	decision   barrierDecision
 	request    admissionRequestToken
 	deliveries []admissionGrant
-}
-
-type barrierAwait struct {
-	decision barrierDecision
-	request  admissionRequestToken
-	delivery <-chan admissionGrant
 }
 
 type confirmationQueueResult struct {

@@ -753,7 +753,11 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 			continue
 		}
 		for _, residual := range record.runtimeState.Residual() {
-			stages = append(stages, admissionStage(residual.Stage))
+			stage := admissionOwned
+			if residual.Prospective() {
+				stage = admissionProspective
+			}
+			stages = append(stages, stage)
 		}
 		break
 	}
@@ -1016,8 +1020,8 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	residual := first.world.runtime.Residual()
 	assert.True(t, first.world.runtime.Unconfirmed(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 	require.Len(t, residual, 1, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
-	assert.Equal(t, registered.generation, residual[0].Generation, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
-	assert.True(t, residual[0].Transferred, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.Equal(t, registered.generation, residual[0].Generation(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.True(t, residual[0].Transferred(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T) {
@@ -1296,7 +1300,7 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 	}, nil)
 	assert.Nil(t, explored.failure, "positive shrink exploration failure=%v", explored.failure)
 	counterexample := simulationCloneTrace(explored.trace)
-	counterexample.records[0].runtimeState = processruntime.NewState(counterexample.records[0].runtimeState.Capacity() + 1).Image()
+	counterexample.records[0].runtimeState = processruntime.NewReplay(counterexample.records[0].runtimeState.Capacity() + 1).Projection()
 	replayed := ReplayLegal(counterexample)
 	assert.NotNil(t, replayed.failure, "positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
 	assert.NotEqual(t, FailureKey{}, replayed.key, "positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
@@ -1414,7 +1418,7 @@ func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *
 	candidate := simulationRecord{authority: simulationRuntimeAuthority}
 	failing := simulationRecord{
 		authority:    simulationRuntimeAuthority,
-		runtimeState: processruntime.NewState(3).Image(),
+		runtimeState: processruntime.NewReplay(3).Projection(),
 	}
 	firstKey := simulationReplayDivergenceFailure(
 		simulationTrace{}, simulationRuntimeStateDivergence, "rewritten diagnostic",
@@ -1623,14 +1627,14 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		assert.Equal(t, uint64(index+1), record.sequence, "production sequence at %d=%d", index, record.sequence)
 	}
 
-	wantRuntime := newProcessRuntime(1)
+	wantRuntime := newCampaignRuntimeFixture(1)
 	wantRuntime, wantRegistration := wantRuntime.registerCampaign(campaignProvenance{lineage: definition.lineage})
 	wantCampaign, wantEffects := advanceCampaign(campaign, campaignEvent{
 		id: 1, payload: campaignRegisteredEvent{registration: wantRegistration},
 	})
 	wantSupervisor, wantActions := reduceSupervisor(supervisorState{}, event)
 	wantProjection := simulationWorld{
-		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime.processRuntime),
+		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime.Replay),
 		supervisor: simulationProjectSupervisorState(wantSupervisor),
 	}
 	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
@@ -1706,7 +1710,7 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 		runtimeOperation:   simulationObserveAttempt,
 		runtimeGeneration:  generation,
 		runtimeObservation: simulationRuntimeObservation{kind: simulationLaunchOwnedObservation},
-	}, processRuntime{})
+	}, processruntime.Replay{})
 	recorder.recordSupervisorAction(publish)
 
 	settle := supervisorAction{kind: supervisorSettleRuntime, token: 12, generation: generation}
@@ -1716,7 +1720,7 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 		runtimeOperation:   simulationObserveAttempt,
 		runtimeGeneration:  generation,
 		runtimeObservation: simulationRuntimeObservation{kind: simulationAttemptSettledObservation},
-	}, processRuntime{})
+	}, processruntime.Replay{})
 	receipt := supervisorRuntimeCompletion{
 		generation: generation,
 		action: supervisorPendingAction{
@@ -1802,11 +1806,11 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	assert.EqualValues(t, 7, len(trace.barriers), "retained prefix barriers=%d, want 7", len(trace.barriers))
 	replayed := ReplayLegal(trace)
 	require.Nil(t, replayed.failure, "recorded production trace did not replay: %v", replayed.failure)
-	replayed.world.runtimeState = processRuntime{}
+	replayed.world.runtimeState = processruntime.Replay{}
 	assert.Equal(t, production, replayed.world, "recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 	corrupted := trace
 	corrupted.barriers = slices.Clone(trace.barriers)
-	corrupted.barriers[0].runtime = processruntime.NewState(corrupted.barriers[0].runtime.Capacity() + 1).Image()
+	corrupted.barriers[0].runtime = processruntime.NewReplay(corrupted.barriers[0].runtime.Capacity() + 1).Projection()
 	{
 		failure := ReplayLegal(corrupted).failure
 		require.NotNil(t, failure, "corrupted barrier replay failure=%v", failure)
@@ -1931,7 +1935,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 	}
 	replayed := ReplayLegal(trace)
 	assert.Nil(t, replayed.failure, "non-empty production trace did not replay: %v", replayed.failure)
-	replayed.world.runtimeState = processRuntime{}
+	replayed.world.runtimeState = processruntime.Replay{}
 	assert.Equal(t, production, replayed.world, "non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 }
 
@@ -2269,7 +2273,7 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 	runtime, generation := simulationOwnedRuntime(t)
 	runtime, _ = runtime.observeAttempt(generation, drainUnconfirmed{})
 	engine := simulationEngine{
-		runtime: runtime.processRuntime,
+		runtime: runtime.Replay,
 		pending: []simulationEngineMove{{
 			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
 			action: supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9},
@@ -2282,9 +2286,9 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 	}
 }
 
-func simulationOwnedRuntime(t *testing.T) (testProcessRuntime, attemptGeneration) {
+func simulationOwnedRuntime(t *testing.T) (campaignRuntimeFixture, attemptGeneration) {
 	t.Helper()
-	runtime := newProcessRuntime(1)
+	runtime := newCampaignRuntimeFixture(1)
 	runtime, registration := runtime.registerCampaign(campaignProvenance{lineage: 91})
 	runtime, admitted := runtime.requestAdmission(admissionRequest{
 		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
@@ -2298,7 +2302,7 @@ func simulationOwnedRuntime(t *testing.T) (testProcessRuntime, attemptGeneration
 func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 	runtime, generation := simulationOwnedRuntime(t)
 	engine := simulationEngine{
-		runtime: runtime.processRuntime,
+		runtime: runtime.Replay,
 		pending: []simulationEngineMove{
 			{
 				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},

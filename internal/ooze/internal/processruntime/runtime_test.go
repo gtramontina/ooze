@@ -157,3 +157,39 @@ func TestRuntimePublishesAcceptedEventBeforeCausalGrant(t *testing.T) {
 		require.FailNow(t, "admission grant was not delivered after event publication")
 	}
 }
+
+func TestReplayFoldsProductionEventsIntoCapabilityFreeProjections(t *testing.T) {
+	replay := processruntime.NewReplay(1)
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) error {
+		var matches bool
+		replay, matches = replay.ApplyEvent(event)
+		require.True(t, matches)
+		return nil
+	}))
+
+	registration := runtime.RegisterCampaign(48)
+	await := runtime.RequestAdmission(processruntime.Admission{
+		Campaign: registration.Campaign(), Attempt: "mutant-a", Class: processruntime.SharedAdmission,
+	})
+	grant, received := await.Receive()
+	require.True(t, received)
+	start := runtime.CommitStart(grant, processruntime.NewStartCell())
+	runtime.Observe(start.Generation(), start.Launch(func(processruntime.Generation) processruntime.Observation {
+		return processruntime.Owned()
+	}))
+
+	t.Run("owned generation", func(t *testing.T) {
+		assert.True(t, replay.Projection().Owned(start.Generation()))
+		assert.True(t, replay.CanObserveOwnedTerminal(start.Generation()))
+		assert.False(t, replay.CanObserveNotReleased(start.Generation()))
+	})
+
+	runtime.Observe(start.Generation(), processruntime.Settled(processruntime.AutomaticProfile, 0))
+	runtime.CommitTerminal(registration.Campaign())
+
+	t.Run("terminal state", func(t *testing.T) {
+		assert.True(t, replay.Projection().Open())
+		assert.Empty(t, replay.Residual())
+		assert.Zero(t, replay.Projection().CampaignCount())
+	})
+}

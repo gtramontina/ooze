@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
 const baselineBootstrapDeadline = 10 * time.Minute
@@ -611,7 +613,7 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 }
 
 func advanceCampaignGuarded(
-	runtime *processRuntime,
+	runtime *processruntime.Replay,
 	state campaignState,
 	event campaignEvent,
 	emergencyDrain func(runtimeClosure) emergencySweep,
@@ -629,11 +631,11 @@ func advanceCampaignGuarded(
 			violation = runtimeInvariantViolation{operation: "campaign advance", reason: "unexpected panic"}
 		}
 		var closure runtimeClosure
-		nextRuntime, closed := runtime.Close(violation.reason)
+		nextRuntime, applied := runtime.Apply(processruntime.CloseCut(violation.reason))
 		*runtime = nextRuntime
-		closure = runtimeClosureValue(closed)
+		closure = runtimeClosureValue(applied.Closure())
 		sweep := emergencyDrain(closure)
-		nextRuntime, _ = runtime.SettleEmergency(processRuntimeResolutions(sweep))
+		nextRuntime, _ = runtime.Apply(processruntime.SettleEmergencyCut(processRuntimeResolutions(sweep)))
 		*runtime = nextRuntime
 		panic(violation)
 	}()

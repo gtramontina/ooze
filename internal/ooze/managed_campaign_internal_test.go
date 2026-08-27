@@ -219,8 +219,8 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	assert.Equal(t, mutantKilled, completed.mutants[1].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	assert.True(t, completed.singleAdmissionFallback, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.EqualValues(t, 4, attempts.launches, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Image().SingleAdmission())
-	assert.True(t, shell.Image().SingleAdmission(), "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Image().SingleAdmission())
+	assert.EqualValues(t, 4, attempts.launches, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Projection().SingleAdmission())
+	assert.True(t, shell.Projection().SingleAdmission(), "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Projection().SingleAdmission())
 }
 
 func TestManagedCampaignResumesWithSingleAdmissionAfterConfirmationPressure(t *testing.T) {
@@ -287,9 +287,9 @@ func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t 
 
 	{
 		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Image().SingleAdmission(), attempts.launches)
-		assert.True(t, shell.Image().SingleAdmission(), "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Image().SingleAdmission(), attempts.launches)
-		assert.EqualValues(t, 2, attempts.launches, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Image().SingleAdmission(), attempts.launches)
+		require.True(t, ok, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Projection().SingleAdmission(), attempts.launches)
+		assert.True(t, shell.Projection().SingleAdmission(), "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Projection().SingleAdmission(), attempts.launches)
+		assert.EqualValues(t, 2, attempts.launches, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Projection().SingleAdmission(), attempts.launches)
 	}
 }
 
@@ -476,7 +476,7 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 	})
 	go func() {
 		deadline := time.Now().Add(time.Second)
-		for shell.Image().AdmissionCount() < 2 && time.Now().Before(deadline) {
+		for shell.Projection().AdmissionCount() < 2 && time.Now().Before(deadline) {
 			time.Sleep(time.Millisecond)
 		}
 		shell.Observe(prepared.Generation(), processruntime.DrainUnconfirmed())
@@ -768,7 +768,7 @@ func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEme
 
 		return managedObservedEmergency{epoch: epoch, settlement: settlement}
 	}
-	settlement := f.shell.SettleEmergency([]processruntime.Resolution{{Generation: generation, Transferred: true}})
+	settlement := f.shell.SettleEmergency([]processruntime.Resolution{processruntime.TransferCustody(generation)})
 
 	return managedObservedEmergency{epoch: epoch, settlement: settlement}
 }

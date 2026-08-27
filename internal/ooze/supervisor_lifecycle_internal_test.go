@@ -113,7 +113,7 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 				},
 				func(observed attemptGeneration, spec Spec) LaunchResult {
 					order = append(order, "native")
-					snapshot := shell.Image()
+					snapshot := shell.Projection()
 					_, admitted := runtimeAdmissionByGeneration(snapshot, observed)
 					assert.NotEqual(t, 0, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
 					assert.Equal(t, generation, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
@@ -188,7 +188,7 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			wantGeneration := generations[attempt]
 			nativeCalls[attempt]++
 			observedMu.Unlock()
-			snapshot := shell.Image()
+			snapshot := shell.Projection()
 			admission, admitted := runtimeAdmissionByGeneration(snapshot, generation)
 			cellPresent := assert.NotNil(t, cell, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			assert.NotEqual(t, 0, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
@@ -241,7 +241,7 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 	assert.EqualValues(t, "GOMAXPROCS=1", first.Env[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
 	assert.EqualValues(t, "go", second.Command[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
 	assert.EqualValues(t, "GOMAXPROCS=2", second.Env[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
-	snapshot := shell.Image()
+	snapshot := shell.Projection()
 	assert.True(t, snapshot.Open(), "concurrent launch runtime = %#v", snapshot)
 	require.EqualValues(t, 2, snapshot.AdmissionCount(), "concurrent launch runtime = %#v", snapshot)
 	assert.True(t, snapshot.Owned(firstGeneration), "concurrent launch runtime = %#v", snapshot)

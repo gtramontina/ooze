@@ -124,7 +124,7 @@ func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) 
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want immutable NotReleased error", result)
 	assert.Error(t, notReleased.Err, "launch = %#v, want immutable NotReleased error", result)
 	{
-		snapshot := shell.Image()
+		snapshot := shell.Projection()
 		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "proven no-release retained runtime custody: %#v", snapshot)
 	}
 }
@@ -299,7 +299,7 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 	assert.True(t, settled.Output.CompleteThroughCutoff, "settled native evidence = %#v", settled)
 	assert.True(t, settled.Output.Final, "settled native evidence = %#v", settled)
 	{
-		snapshot := shell.Image()
+		snapshot := shell.Projection()
 		assert.True(t, snapshot.Open(), "runtime after native settlement = %#v", snapshot)
 		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after native settlement = %#v", snapshot)
 	}

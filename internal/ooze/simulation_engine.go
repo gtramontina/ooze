@@ -66,7 +66,7 @@ const (
 type simulationEngine struct {
 	definition   simulationDefinition
 	campaign     campaignState
-	runtime      processRuntime
+	runtime      processruntime.Replay
 	supervisor   supervisorState
 	trace        simulationTrace
 	pending      []simulationEngineMove
@@ -102,7 +102,7 @@ func simulationExploreEngine(
 ) SimulationResult {
 	campaign, effects := beginCampaign(definition.campaign)
 	engine := simulationEngine{
-		definition: definition, campaign: campaign, runtime: processruntime.NewState(definition.capacity),
+		definition: definition, campaign: campaign, runtime: processruntime.NewReplay(definition.capacity),
 		trace:    simulationTrace{definition: definition},
 		launches: make(map[attemptGeneration]campaignEffect),
 		receipts: make(map[attemptGeneration]observationResult),
@@ -241,8 +241,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	}
 	switch move.effect.kind {
 	case campaignEffectRegister:
-		var registered processruntime.Registration
-		engine.runtime, registered = engine.runtime.RegisterCampaign(engine.definition.campaign.lineage)
+		registered := engine.applyRuntime(processruntime.RegisterCampaignCut(engine.definition.campaign.lineage)).Registration()
 		registration := campaignRegistrationEvidence(registered)
 		engine.registration = registration
 		sequence := engine.append(simulationRecord{
@@ -266,8 +265,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 	case campaignEffectRequestAdmission:
 		request := runtimeAdmissionRequest(move.effect.request)
-		var processed processruntime.AdmissionResult
-		engine.runtime, processed = engine.runtime.RequestAdmission(processRuntimeAdmission(campaignAdmissionValue(request)))
+		processed := engine.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(request)))).Admission()
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -290,8 +288,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		}
 	case campaignEffectCancelAdmission:
 		request := runtimeAdmissionRequest(move.effect.request)
-		var processed processruntime.AdmissionResult
-		engine.runtime, processed = engine.runtime.CancelAdmission(processRuntimeAdmission(campaignAdmissionValue(request)))
+		processed := engine.applyRuntime(processruntime.CancelAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(request)))).Admission()
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -306,8 +303,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 	case campaignEffectRequestStartCommitment:
 		grant := runtimeAdmissionRequest(move.effect.grant)
-		var processed processruntime.StartResult
-		engine.runtime, processed = engine.runtime.CommitStart(processRuntimeAdmission(campaignAdmissionValue(grant)))
+		processed := engine.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(grant)))).Start()
 		result := runtimeStartResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -323,8 +319,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		if !engine.runtime.CanReturn(processRuntimeAdmission(campaignAdmissionValue(grant))) {
 			return fmt.Errorf("simulation grant return %v has no returnable runtime authority", move.effect.grant)
 		}
-		var processed processruntime.AdmissionResult
-		engine.runtime, processed = engine.runtime.ReturnGrant(processRuntimeAdmission(campaignAdmissionValue(grant)))
+		processed := engine.applyRuntime(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(grant)))).Admission()
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -338,10 +333,9 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 	case campaignEffectBindConfirmationBarrier:
 		binding := runtimeBarrierBinding(move.effect.binding)
-		var processed processruntime.BarrierResult
-		engine.runtime, processed = engine.runtime.BindConfirmationBarrier(processruntime.Barrier{
+		processed := engine.applyRuntime(processruntime.BindConfirmationBarrierCut(processruntime.Barrier{
 			Campaign: binding.campaign, Attempt: string(binding.attempt), Profile: binding.profile, Deadline: binding.deadline,
-		})
+		})).Barrier()
 		result := runtimeBarrierResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -403,15 +397,13 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		var terminal terminalResult
 		operation := simulationCommitTerminal
 		if move.effect.fatalEpoch == 0 {
-			var processed processruntime.TerminalResult
-			engine.runtime, processed = engine.runtime.CommitTerminal(engine.registration.token)
+			processed := engine.applyRuntime(processruntime.CommitTerminalCut(engine.registration.token)).Terminal()
 			terminal = terminalResult{decision: processed.Decision()}
 		} else {
 			operation = simulationAuthorizeForcedAbort
-			var processed processruntime.TerminalResult
-			engine.runtime, processed = engine.runtime.AuthorizeForcedAbort(
+			processed := engine.applyRuntime(processruntime.AuthorizeForcedAbortCut(
 				engine.registration.token, uint64(move.effect.fatalEpoch),
-			)
+			)).Terminal()
 			terminal = terminalResult{decision: processed.Decision()}
 		}
 		sequence := engine.append(simulationRecord{
@@ -426,6 +418,12 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	}
 
 	return nil
+}
+
+func (engine *simulationEngine) applyRuntime(cut processruntime.Cut) processruntime.ReplayResult {
+	next, result := engine.runtime.Apply(cut)
+	engine.runtime = next
+	return result
 }
 
 func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove) error {
@@ -465,8 +463,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 	case supervisorPublishOwned:
 		launch := engine.launches[action.generation]
-		var processed processruntime.Receipt
-		engine.runtime, processed = engine.runtime.Observe(action.generation, processruntime.Owned())
+		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.Owned())).Receipt()
 		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -491,8 +488,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 				kind: campaignLaunchNotReleased, failure: action.launchFailure,
 			}
 		}
-		var processed processruntime.Receipt
-		engine.runtime, processed = engine.runtime.Observe(action.generation, processRuntimeObservation(observation))
+		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
 		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -514,8 +510,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		}
 	case supervisorCloseProspective:
 		observation := launchObservationFromAction(action)
-		var processed processruntime.Receipt
-		engine.runtime, processed = engine.runtime.Observe(action.generation, processRuntimeObservation(observation))
+		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
 		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -535,8 +530,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 	case supervisorAdoptOwned:
 		observation := attemptObservation(launchOwned{})
-		var processed processruntime.Receipt
-		engine.runtime, processed = engine.runtime.Observe(action.generation, processRuntimeObservation(observation))
+		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
 		result := runtimeReceipt(processed)
 		engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -608,8 +602,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 	case supervisorTransferResidualCustody:
 		wasOpen := engine.runtime.Open()
-		var processed processruntime.Receipt
-		engine.runtime, processed = engine.runtime.Observe(action.generation, processruntime.DrainUnconfirmed())
+		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.DrainUnconfirmed())).Receipt()
 		receipt := runtimeReceipt(processed)
 		engine.receipts[action.generation] = receipt
 		closure := runtimeClosure{
@@ -646,8 +639,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 				action.token, acknowledged, runtimeResiduals,
 			)
 		}
-		var processed processruntime.EmergencySettlement
-		engine.runtime, processed = engine.runtime.SettleEmergency(processRuntimeResolutions(emergencySweep{resolutions: resolutions}))
+		processed := engine.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: resolutions}))).Settlement()
 		settlement := runtimeEmergencySettlement(processed)
 		validateSupervisorRuntimeSettlement(settlement, acknowledged, residuals)
 		engine.emergency = settlement
@@ -671,8 +663,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 	case supervisorSettleRuntime:
 		observation := terminalObservation(action.terminal)
-		var processed processruntime.Receipt
-		engine.runtime, processed = engine.runtime.Observe(action.generation, processRuntimeObservation(observation))
+		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
 		receipt := runtimeReceipt(processed)
 		engine.receipts[action.generation] = receipt
 		sequence := engine.append(simulationRecord{
@@ -705,8 +696,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			)
 		}
 		if launch.completesConfirmationQueue {
-			var processed processruntime.QueueResult
-			engine.runtime, processed = engine.runtime.CompleteConfirmationQueue(engine.registration.token)
+			processed := engine.applyRuntime(processruntime.CompleteConfirmationQueueCut(engine.registration.token)).Queue()
 			completed := runtimeQueueResult(processed)
 			sequence := engine.append(simulationRecord{
 				authority: simulationRuntimeAuthority, source: move.source,
@@ -1005,12 +995,12 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 		}
 		if move.source.kind == simulationSupervisorActionSource &&
 			move.action.kind == supervisorTransferResidualCustody &&
-			!simulationRuntimeOwnsResidualTransfer(engine.runtime, move.action.generation) {
+			!engine.runtime.CanTransferResidual(move.action.generation) {
 			continue
 		}
 		if move.source.kind == simulationSupervisorActionSource &&
 			move.action.kind == supervisorSettleRuntime &&
-			!simulationRuntimeOwnsTerminalSettlement(engine.runtime, move.action.generation) {
+			!engine.runtime.CanObserveOwnedTerminal(move.action.generation) {
 			continue
 		}
 		if move.source.kind == simulationSupervisorActionSource {
@@ -1151,14 +1141,6 @@ func (engine simulationEngine) runtimeCustodyToken(move simulationEngineMove) su
 func simulationMutatesRuntimeCustody(kind supervisorActionKind) bool {
 	return kind == supervisorTransferResidualCustody || kind == supervisorSettleRuntime ||
 		kind == supervisorSettleEmergency
-}
-
-func simulationRuntimeOwnsResidualTransfer(runtime processRuntime, generation attemptGeneration) bool {
-	return runtime.CanTransferResidual(generation)
-}
-
-func simulationRuntimeOwnsTerminalSettlement(runtime processRuntime, generation attemptGeneration) bool {
-	return runtime.CanObserveOwnedTerminal(generation)
 }
 
 func (engine simulationEngine) hasPendingLaunchDelivery(generation attemptGeneration) bool {

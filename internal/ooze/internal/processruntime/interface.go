@@ -24,8 +24,11 @@ func (campaign Campaign) Lineage() Lineage { return Lineage(campaign.token.linea
 type CampaignDecision uint8
 
 const (
+	// CampaignRegistered accepts a new campaign lineage.
 	CampaignRegistered CampaignDecision = iota + 1
+	// CampaignRejectedRecursive rejects recursive registration.
 	CampaignRejectedRecursive
+	// CampaignRejectedClosed rejects registration after fatal closure.
 	CampaignRejectedClosed
 )
 
@@ -46,9 +49,13 @@ func (registration Registration) Campaign() Campaign {
 type AdmissionClass uint8
 
 const (
+	// SharedAdmission shares detected process capacity.
 	SharedAdmission AdmissionClass = iota + 1
+	// ExclusiveAdmission requires process-wide exclusivity.
 	ExclusiveAdmission
+	// SerialPrimaryAdmission is a serial campaign primary.
 	SerialPrimaryAdmission
+	// ConfirmationAdmission is an exclusive confirmation attempt.
 	ConfirmationAdmission
 )
 
@@ -65,18 +72,31 @@ type Admission struct {
 type AdmissionDecision uint8
 
 const (
+	// AdmissionAccepted retains an admission request.
 	AdmissionAccepted AdmissionDecision = iota + 1
+	// AdmissionRejectedClosed rejects work after fatal closure.
 	AdmissionRejectedClosed
+	// AdmissionRejectedUnknownCampaign rejects unknown campaign authority.
 	AdmissionRejectedUnknownCampaign
+	// AdmissionRejectedGateClosed rejects ordinary work behind a closed campaign gate.
 	AdmissionRejectedGateClosed
+	// AdmissionRejectedGateOpen rejects confirmation before its gate closes.
 	AdmissionRejectedGateOpen
+	// AdmissionRejectedDuplicate rejects a repeated attempt identity.
 	AdmissionRejectedDuplicate
+	// AdmissionRejectedExclusiveOutstanding rejects a second exclusive request.
 	AdmissionRejectedExclusiveOutstanding
+	// AdmissionRejectedSharedLimit rejects shared demand beyond the campaign bound.
 	AdmissionRejectedSharedLimit
+	// AdmissionRejectedAlreadyCommitted rejects cancellation after start commitment.
 	AdmissionRejectedAlreadyCommitted
+	// AdmissionCancelledWaiting cancels a request before grant.
 	AdmissionCancelledWaiting
+	// AdmissionCancelledGranted cancels a granted request.
 	AdmissionCancelledGranted
+	// AdmissionReturnedAfterClosure accepts a compensated grant after fatal closure.
 	AdmissionReturnedAfterClosure
+	// AdmissionReturnedAfterGateClosure accepts a grant after campaign gate closure.
 	AdmissionReturnedAfterGateClosure
 )
 
@@ -124,9 +144,13 @@ func (await Await) Request() Admission { return admissionValue(await.value.reque
 type StartDecision uint8
 
 const (
+	// StartAccepted commits process-runtime custody.
 	StartAccepted StartDecision = iota + 1
+	// StartRejectedGrant rejects invalid grant authority.
 	StartRejectedGrant
+	// StartRejectedGate rejects a grant closed by its campaign gate.
 	StartRejectedGate
+	// StartRejectedClosed rejects a start after fatal closure.
 	StartRejectedClosed
 )
 
@@ -187,13 +211,21 @@ type Observation struct{ value attemptObservation }
 type ObservationKind uint8
 
 const (
+	// LaunchOwned reports successful ownership publication.
 	LaunchOwned ObservationKind = iota + 1
+	// LaunchNotReleased reports proven pre-release failure.
 	LaunchNotReleased
+	// AttemptSettled reports ordinary terminal settlement.
 	AttemptSettled
+	// AttemptTripped reports deadline or fuse evidence.
 	AttemptTripped
+	// LaunchUnconfirmedKind reports unresolved prospective custody.
 	LaunchUnconfirmedKind
+	// DrainUnconfirmedKind reports unresolved owned custody.
 	DrainUnconfirmedKind
+	// AttemptStopped reports stop before terminal evidence.
 	AttemptStopped
+	// AttemptInfrastructure reports infrastructure failure.
 	AttemptInfrastructure
 )
 
@@ -368,9 +400,13 @@ type Barrier struct {
 type BarrierDecision uint8
 
 const (
+	// BarrierBound installs the confirmation barrier.
 	BarrierBound BarrierDecision = iota + 1
+	// BarrierRejectedMissing rejects a missing provisional barrier.
 	BarrierRejectedMissing
+	// BarrierRejectedClosureOutstanding rejects binding before campaign closure settles.
 	BarrierRejectedClosureOutstanding
+	// BarrierRejectedExecutionMismatch rejects confirmation facts that differ from the primary.
 	BarrierRejectedExecutionMismatch
 )
 
@@ -393,8 +429,11 @@ func (await BarrierAwait) Receive() (Grant, bool) {
 type QueueDecision uint8
 
 const (
+	// ConfirmationQueueCompleted completes an empty confirmation queue.
 	ConfirmationQueueCompleted QueueDecision = iota + 1
+	// ConfirmationQueueRejectedMissing rejects a missing queue.
 	ConfirmationQueueRejectedMissing
+	// ConfirmationQueueRejectedOutstanding rejects a nonempty queue.
 	ConfirmationQueueRejectedOutstanding
 )
 
@@ -407,8 +446,8 @@ func (result QueueResult) Decision() QueueDecision { return QueueDecision(result
 // Deliveries returns immutable admission facts granted by queue completion.
 func (result QueueResult) Deliveries() []Admission { return admissionValues(result.value.deliveries) }
 
-// Image is an opaque immutable process-runtime state projection.
-type Image struct {
+// Projection is an opaque immutable process-runtime state projection.
+type Projection struct {
 	capacity    int
 	nextID      uint64
 	mode        admissionMode
@@ -437,37 +476,37 @@ type imageAuthority struct {
 }
 
 // Capacity returns the admission capacity.
-func (image Image) Capacity() int { return image.capacity }
+func (image Projection) Capacity() int { return image.capacity }
 
 // Open reports whether the runtime accepts new work.
-func (image Image) Open() bool { return image.lifecycle == runtimeOpen }
+func (image Projection) Open() bool { return image.lifecycle == runtimeOpen }
 
 // Closing reports whether the fatal epoch still requires settlement.
-func (image Image) Closing() bool { return image.lifecycle == runtimeFatalClosing }
+func (image Projection) Closing() bool { return image.lifecycle == runtimeFatalClosing }
 
 // Drained reports proven empty terminal custody.
-func (image Image) Drained() bool { return image.lifecycle == runtimeClosedDrained }
+func (image Projection) Drained() bool { return image.lifecycle == runtimeClosedDrained }
 
 // Unconfirmed reports terminal residual custody.
-func (image Image) Unconfirmed() bool { return image.lifecycle == runtimeClosedUnconfirmed }
+func (image Projection) Unconfirmed() bool { return image.lifecycle == runtimeClosedUnconfirmed }
 
 // SingleAdmission reports irreversible single-admission fallback.
-func (image Image) SingleAdmission() bool { return image.mode == singleAdmission }
+func (image Projection) SingleAdmission() bool { return image.mode == singleAdmission }
 
 // FatalEpoch returns the current fatal epoch.
-func (image Image) FatalEpoch() uint64 { return uint64(image.fatalEpoch) }
+func (image Projection) FatalEpoch() uint64 { return uint64(image.fatalEpoch) }
 
 // FatalCauseCount returns the retained fatal-cause count.
-func (image Image) FatalCauseCount() int { return len(image.fatalCauses) }
+func (image Projection) FatalCauseCount() int { return len(image.fatalCauses) }
 
 // CampaignCount returns the registered campaign count.
-func (image Image) CampaignCount() int { return len(image.campaigns) }
+func (image Projection) CampaignCount() int { return len(image.campaigns) }
 
 // AdmissionCount returns the retained admission count.
-func (image Image) AdmissionCount() int { return len(image.admissions) }
+func (image Projection) AdmissionCount() int { return len(image.admissions) }
 
 // Admission returns the immutable fact for one generation.
-func (image Image) Admission(generation Generation) (Admission, bool) {
+func (image Projection) Admission(generation Generation) (Admission, bool) {
 	index := image.admissionIndex(attemptGeneration(generation))
 	if index < 0 {
 		return Admission{}, false
@@ -480,25 +519,25 @@ func (image Image) Admission(generation Generation) (Admission, bool) {
 }
 
 // Owned reports runtime ownership for one generation.
-func (image Image) Owned(generation Generation) bool {
+func (image Projection) Owned(generation Generation) bool {
 	index := image.admissionIndex(attemptGeneration(generation))
 	return index >= 0 && image.admissions[index].stage == admissionOwned
 }
 
 // Prospective reports committed start custody before owned publication.
-func (image Image) Prospective(generation Generation) bool {
+func (image Projection) Prospective(generation Generation) bool {
 	index := image.admissionIndex(attemptGeneration(generation))
 	return index >= 0 && image.admissions[index].stage == admissionProspective
 }
 
 // CustodyTransferred reports local residual-custody transfer for one generation.
-func (image Image) CustodyTransferred(generation Generation) bool {
+func (image Projection) CustodyTransferred(generation Generation) bool {
 	index := image.admissionIndex(attemptGeneration(generation))
 	return index >= 0 && image.admissions[index].disposition == dispositionCustodyTransferred
 }
 
 // HasOverlappedPair reports whether at least two retained admissions overlapped.
-func (image Image) HasOverlappedPair() bool {
+func (image Projection) HasOverlappedPair() bool {
 	count := 0
 	for _, admission := range image.admissions {
 		if admission.overlapped {
@@ -509,7 +548,7 @@ func (image Image) HasOverlappedPair() bool {
 }
 
 // ContainsAttempt reports whether an attempt remains admitted.
-func (image Image) ContainsAttempt(attempt string) bool {
+func (image Projection) ContainsAttempt(attempt string) bool {
 	for _, admission := range image.admissions {
 		if admission.authority.attempt == attemptIdentity(attempt) {
 			return true
@@ -519,22 +558,23 @@ func (image Image) ContainsAttempt(attempt string) bool {
 }
 
 // Residual returns unresolved execution-domain custody in runtime order.
-func (image Image) Residual() []Residual {
+func (image Projection) Residual() []Residual {
 	result := make([]Residual, 0, len(image.admissions))
 	for _, admission := range image.admissions {
 		if admission.stage != admissionProspective && admission.stage != admissionOwned {
 			continue
 		}
 		result = append(result, Residual{
-			Generation: Generation(admission.generation), Attempt: string(admission.authority.attempt),
-			Stage: uint8(admission.stage), Transferred: admission.disposition == dispositionCustodyTransferred ||
+			generation: Generation(admission.generation), attempt: string(admission.authority.attempt),
+			prospective: admission.stage == admissionProspective,
+			transferred: admission.disposition == dispositionCustodyTransferred ||
 				admission.disposition == dispositionCustodySettled,
 		})
 	}
 	return result
 }
 
-func (image Image) admissionIndex(generation attemptGeneration) int {
+func (image Projection) admissionIndex(generation attemptGeneration) int {
 	for index, admission := range image.admissions {
 		if generation != 0 && admission.generation == generation {
 			return index
@@ -545,17 +585,43 @@ func (image Image) admissionIndex(generation attemptGeneration) int {
 
 // Resolution records exact emergency custody for one generation.
 type Resolution struct {
-	Generation  Generation
-	Transferred bool
+	generation  Generation
+	transferred bool
 }
+
+// ConfirmedDrained resolves one generation with proven empty custody.
+func ConfirmedDrained(generation Generation) Resolution { return Resolution{generation: generation} }
+
+// TransferCustody resolves one generation by transferring residual custody.
+func TransferCustody(generation Generation) Resolution {
+	return Resolution{generation: generation, transferred: true}
+}
+
+// Generation returns the resolved generation.
+func (resolution Resolution) Generation() Generation { return resolution.generation }
+
+// Transferred reports whether residual custody was transferred.
+func (resolution Resolution) Transferred() bool { return resolution.transferred }
 
 // Residual records unresolved execution-domain custody.
 type Residual struct {
-	Generation  Generation
-	Attempt     string
-	Stage       uint8
-	Transferred bool
+	generation  Generation
+	attempt     string
+	prospective bool
+	transferred bool
 }
+
+// Generation returns the residual generation.
+func (residual Residual) Generation() Generation { return residual.generation }
+
+// Attempt returns the residual attempt identity.
+func (residual Residual) Attempt() string { return residual.attempt }
+
+// Prospective reports custody before owned publication.
+func (residual Residual) Prospective() bool { return residual.prospective }
+
+// Transferred reports whether residual custody was transferred.
+func (residual Residual) Transferred() bool { return residual.transferred }
 
 // Closure is the custody established when the runtime closes.
 type Closure struct{ value runtimeClosure }
@@ -605,10 +671,15 @@ func (settlement EmergencySettlement) Residual() []Residual {
 type TerminalDecision uint8
 
 const (
+	// TerminalCommitted retires a settled campaign.
 	TerminalCommitted TerminalDecision = iota + 1
+	// TerminalForcedAborted retires a campaign under fatal authority.
 	TerminalForcedAborted
+	// TerminalRejectedUnknown rejects unknown campaign authority.
 	TerminalRejectedUnknown
+	// TerminalRejectedOutstanding rejects a campaign with outstanding custody.
 	TerminalRejectedOutstanding
+	// TerminalRejectedClosed rejects ordinary commitment after fatal closure.
 	TerminalRejectedClosed
 )
 
@@ -626,33 +697,6 @@ func (result TerminalResult) Epoch() uint64 { return uint64(result.value.epoch) 
 // Runtime is the synchronized process-local coordination authority.
 type Runtime struct{ shell *processRuntimeShell }
 
-// State is an opaque immutable process-runtime reducer state.
-type State struct{ value processRuntime }
-
-// NewState creates an empty process-runtime reducer state.
-func NewState(capacity int) State { return State{value: newProcessRuntime(capacity)} }
-
-// RegisterCampaign applies campaign registration to immutable state.
-func (state State) RegisterCampaign(lineage Lineage) (State, Registration) {
-	next, result := state.value.registerCampaign(campaignProvenance{lineage: campaignLineage(lineage)})
-	return State{value: next}, Registration{value: result}
-}
-
-// RequestAdmission applies an admission request to immutable state.
-func (state State) RequestAdmission(request Admission) (State, AdmissionResult) {
-	next, result := state.value.requestAdmission(admissionAuthorityValue(request))
-	return State{value: next}, AdmissionResult{value: result}
-}
-
-// BindConfirmationBarrier applies a confirmation barrier binding to immutable state.
-func (state State) BindConfirmationBarrier(binding Barrier) (State, BarrierResult) {
-	next, result := state.value.sealAndBindConfirmationBarrier(barrierBinding{
-		campaign: binding.Campaign.token, attempt: attemptIdentity(binding.Attempt),
-		profile: binding.Profile, deadline: binding.Deadline,
-	})
-	return State{value: next}, BarrierResult{value: result}
-}
-
 // BarrierResult is the inert result of confirmation barrier binding.
 type BarrierResult struct{ value barrierResult }
 
@@ -664,127 +708,6 @@ func (result BarrierResult) Request() Admission { return admissionValue(result.v
 
 // Deliveries returns grants released by the barrier transition.
 func (result BarrierResult) Deliveries() []Admission { return admissionValues(result.value.deliveries) }
-
-// CancelAdmission applies admission cancellation to immutable state.
-func (state State) CancelAdmission(request Admission) (State, AdmissionResult) {
-	next, result := state.value.cancelAdmission(admissionAuthorityValue(request))
-	return State{value: next}, AdmissionResult{value: result}
-}
-
-// ReturnGrant applies a compensated grant acknowledgement to immutable state.
-func (state State) ReturnGrant(request Admission) (State, AdmissionResult) {
-	next, result := state.value.acknowledgeGrantReturn(admissionAuthorityValue(request))
-	return State{value: next}, AdmissionResult{value: result}
-}
-
-// CommitStart applies start commitment to immutable state.
-func (state State) CommitStart(grant Admission) (State, StartResult) {
-	next, result := state.value.startCommitted(admissionAuthorityValue(grant))
-	return State{value: next}, StartResult{value: result}
-}
-
-// Observe applies attempt evidence to immutable state.
-func (state State) Observe(generation Generation, observation Observation) (State, Receipt) {
-	next, result := state.value.observeAttempt(attemptGeneration(generation), observation.value)
-	return State{value: next}, Receipt{value: result}
-}
-
-// CommitTerminal applies terminal campaign commitment to immutable state.
-func (state State) CommitTerminal(campaign Campaign) (State, TerminalResult) {
-	next, result := state.value.commitTerminal(campaign.token)
-	return State{value: next}, TerminalResult{value: result}
-}
-
-// AuthorizeForcedAbort applies fatal-epoch terminal authorization to immutable state.
-func (state State) AuthorizeForcedAbort(campaign Campaign, epoch uint64) (State, TerminalResult) {
-	next, result := state.value.authorizeForcedAbort(campaign.token, fatalEpochID(epoch))
-	return State{value: next}, TerminalResult{value: result}
-}
-
-// CompleteConfirmationQueue applies confirmation queue completion to immutable state.
-func (state State) CompleteConfirmationQueue(campaign Campaign) (State, QueueResult) {
-	next, result := state.value.completeConfirmationQueue(campaign.token)
-	return State{value: next}, QueueResult{value: result}
-}
-
-// Close applies process-runtime fatal closure to immutable state.
-func (state State) Close(cause string) (State, Closure) {
-	next, result := state.value.closeRuntime(runtimeFatalCause(cause))
-	return State{value: next}, Closure{value: result}
-}
-
-// SettleEmergency applies exact emergency custody settlement to immutable state.
-func (state State) SettleEmergency(resolutions []Resolution) (State, EmergencySettlement) {
-	values := make([]emergencyResolution, len(resolutions))
-	for index, resolution := range resolutions {
-		disposition := emergencyConfirmedDrained
-		if resolution.Transferred {
-			disposition = emergencyCustodyTransferred
-		}
-		values[index] = emergencyResolution{generation: attemptGeneration(resolution.Generation), disposition: disposition}
-	}
-	next, result := state.value.settleEmergency(emergencySweep{resolutions: values})
-	return State{value: next}, EmergencySettlement{value: result}
-}
-
-// Image returns an opaque immutable state for deterministic conformance.
-func (state State) Image() Image { return imageState(state.value) }
-
-// Open reports whether the state accepts ordinary commands.
-func (state State) Open() bool { return state.value.open() }
-
-// Residual returns exact live execution-domain custody.
-func (state State) Residual() []Residual { return residualValues(state.value.residualCustody()) }
-
-// CanReturn reports whether an admission holds return authority.
-func (state State) CanReturn(admission Admission) bool {
-	index := state.value.admissionIndex(admissionAuthorityValue(admission))
-	if index < 0 {
-		return false
-	}
-	disposition := state.value.admissions[index].disposition
-	return disposition == dispositionReturnedAfterGate || disposition == dispositionReturnedAfterClosure
-}
-
-// CanObserveOwnedTerminal reports whether the generation accepts owned terminal evidence.
-func (state State) CanObserveOwnedTerminal(generation Generation) bool {
-	index := state.value.admissionIndexByGeneration(attemptGeneration(generation))
-	if index < 0 {
-		return false
-	}
-	admission := state.value.admissions[index]
-	return admission.stage == admissionOwned && state.value.lifecycle <= runtimeFatalClosing &&
-		admission.disposition == dispositionNone
-}
-
-// CanTransferResidual reports whether the generation accepts unconfirmed-drain custody transfer.
-func (state State) CanTransferResidual(generation Generation) bool {
-	index := state.value.admissionIndexByGeneration(attemptGeneration(generation))
-	if index < 0 {
-		return false
-	}
-	admission := state.value.admissions[index]
-	return admission.stage == admissionOwned && state.value.lifecycle <= runtimeFatalClosing &&
-		(admission.disposition == dispositionNone || admission.disposition == dispositionFatalSeeded)
-}
-
-// CanObserveNotReleased reports whether the generation accepts proven pre-release evidence.
-func (state State) CanObserveNotReleased(generation Generation) bool {
-	index := state.value.admissionIndexByGeneration(attemptGeneration(generation))
-	if index < 0 {
-		return false
-	}
-	admission := state.value.admissions[index]
-	return admission.stage == admissionProspective &&
-		(admission.disposition == dispositionNone || admission.disposition == dispositionFatalSeeded) &&
-		(state.value.lifecycle == runtimeOpen || state.value.lifecycle == runtimeFatalClosing)
-}
-
-// TerminalDeferred reports whether fatal closure retained terminal evidence for a generation.
-func (state State) TerminalDeferred(generation Generation) bool {
-	index := state.value.admissionIndexByGeneration(attemptGeneration(generation))
-	return index >= 0 && state.value.admissions[index].disposition == dispositionTerminalDeferred
-}
 
 // New creates a process runtime with a fixed detected-capacity bound.
 func New(capacity int) *Runtime { return &Runtime{shell: newProcessRuntimeShell(capacity)} }
@@ -825,9 +748,6 @@ func (runtime *Runtime) CommitStart(grant Grant, cell *StartCell) PreparedStart 
 func (runtime *Runtime) Observe(generation Generation, observation Observation) Receipt {
 	return Receipt{value: runtime.shell.observeAttempt(attemptGeneration(generation), observation.value)}
 }
-
-// Emergency returns the process-lifetime fatal epoch notification.
-func (runtime *Runtime) Emergency() <-chan struct{} { return runtime.shell.runtimeEmergency() }
 
 // FatalEpoch returns the current fatal epoch.
 func (runtime *Runtime) FatalEpoch() uint64 { return uint64(runtime.shell.fatalEpoch()) }
@@ -870,11 +790,11 @@ func (runtime *Runtime) SettleEmergency(resolutions []Resolution) EmergencySettl
 	values := make([]emergencyResolution, len(resolutions))
 	for index, resolution := range resolutions {
 		disposition := emergencyConfirmedDrained
-		if resolution.Transferred {
+		if resolution.Transferred() {
 			disposition = emergencyCustodyTransferred
 		}
 		values[index] = emergencyResolution{
-			generation: attemptGeneration(resolution.Generation), disposition: disposition,
+			generation: attemptGeneration(resolution.Generation()), disposition: disposition,
 		}
 	}
 	return EmergencySettlement{value: runtime.shell.settleEmergency(emergencySweep{resolutions: values})}
@@ -890,11 +810,11 @@ func (runtime *Runtime) CommitTerminal(campaign Campaign) TerminalResult {
 	return TerminalResult{value: runtime.shell.commitTerminal(campaign.token)}
 }
 
-// Image returns an opaque immutable synchronized runtime projection.
-func (runtime *Runtime) Image() Image {
+// Projection returns an opaque immutable synchronized runtime projection.
+func (runtime *Runtime) Projection() Projection {
 	runtime.shell.mutex.Lock()
 	defer runtime.shell.mutex.Unlock()
-	return imageState(runtime.shell.core)
+	return projectState(runtime.shell.core)
 }
 
 // Residual returns unresolved execution-domain custody in runtime order.
@@ -930,15 +850,15 @@ func residualValues(values []residualCustody) []Residual {
 	result := make([]Residual, len(values))
 	for index, value := range values {
 		result[index] = Residual{
-			Generation: Generation(value.generation), Attempt: string(value.attempt), Stage: uint8(value.stage),
-			Transferred: value.transferred,
+			generation: Generation(value.generation), attempt: string(value.attempt),
+			prospective: value.stage == admissionProspective, transferred: value.transferred,
 		}
 	}
 	return result
 }
 
-func imageState(state processRuntime) Image {
-	image := Image{
+func projectState(state processRuntime) Projection {
+	image := Projection{
 		capacity: state.capacity, nextID: state.nextID, mode: state.mode, lifecycle: state.lifecycle,
 		fatalCauses: slices.Clone(state.fatalCauses), fatalEpoch: state.fatalEpoch, fatalOwner: state.fatalOwner,
 		campaigns: slices.Clone(state.campaigns), admissions: make([]imageAdmission, len(state.admissions)),

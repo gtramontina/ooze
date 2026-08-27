@@ -324,12 +324,8 @@ type confirmationQueueResult struct {
 
 // Violation reports a process-runtime invariant breach.
 type Violation struct {
-	operation, reason  string
-	phase              uint8
-	rejectedEvent      string
-	stableIdentities   []string
-	obligationSnapshot []string
-	traceTail          []string
+	operation string
+	reason    string
 }
 
 type runtimeInvariantViolation = Violation

@@ -89,7 +89,7 @@ func (recorder *simulationRecorder) executeEffect(effect campaignEffect) func() 
 func (recorder *simulationRecorder) recordRuntime(
 	reservation simulationReservation,
 	record simulationRecord,
-	state processRuntime,
+	state processruntime.Replay,
 ) {
 	if recorder == nil {
 		return
@@ -457,7 +457,7 @@ func (recorder *simulationRecorder) quiescent(
 		return records[left].sequence < records[right].sequence
 	})
 
-	runtimeState := runtime.Image()
+	runtimeState := runtime.Projection()
 	driver.mutex.Lock()
 	supervisorState := simulationProjectSupervisorState(driver.state)
 	driver.mutex.Unlock()

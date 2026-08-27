@@ -294,7 +294,7 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 	require.NotNil(t, event, "normalized runtime completion = %#v", event)
 	require.NotNil(t, event.emergencySettlement, "normalized runtime completion = %#v", event)
 	assert.Equal(t, wantResiduals, event.emergencySettlement.residuals, "normalized runtime completion = %#v", event)
-	runtime := shell.Image()
+	runtime := shell.Projection()
 	rawResidual := runtimeResiduals(shell.Residual())
 	assert.True(t, runtime.Unconfirmed(), "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
 	require.Len(t, rawResidual, 2, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
@@ -379,8 +379,8 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 			action: state.emergency.pendingAction,
 		},
 	}
-	assert.Equal(t, want, event, "empty executor event/runtime = %#v/%#v", event, shell.Image())
-	assert.True(t, shell.Image().Drained(), "empty executor event/runtime = %#v/%#v", event, shell.Image())
+	assert.Equal(t, want, event, "empty executor event/runtime = %#v/%#v", event, shell.Projection())
+	assert.True(t, shell.Projection().Drained(), "empty executor event/runtime = %#v/%#v", event, shell.Projection())
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
 }
 

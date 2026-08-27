@@ -75,19 +75,16 @@ func campaignAdmissionValues(values []admissionAuthority) []campaignAdmission {
 	return result
 }
 
-func campaignClosure(result processruntime.Closure) campaignRuntimeClosure {
-	return campaignRuntimeClosure{
-		epoch: fatalEpochID(result.Epoch()), cancelledWaiting: campaignAdmissions(result.CancelledWaiting()),
-		compensatedGrants: campaignAdmissions(result.CompensatedGrants()), residual: campaignResiduals(result.Residual()),
-	}
-}
-
 func campaignResiduals(residual []processruntime.Residual) []campaignResidualCustody {
 	facts := make([]campaignResidualCustody, len(residual))
 	for index, custody := range residual {
+		stage := admissionOwned
+		if custody.Prospective() {
+			stage = admissionProspective
+		}
 		facts[index] = campaignResidualCustody{
-			generation: custody.Generation, attempt: attemptIdentity(custody.Attempt),
-			stage: admissionStage(custody.Stage), transferred: custody.Transferred,
+			generation: custody.Generation(), attempt: attemptIdentity(custody.Attempt()),
+			stage: stage, transferred: custody.Transferred(),
 		}
 	}
 	return facts
@@ -186,9 +183,9 @@ func processRuntimeObservation(observation attemptObservation) processruntime.Ob
 func processRuntimeResolutions(sweep emergencySweep) []processruntime.Resolution {
 	result := make([]processruntime.Resolution, len(sweep.resolutions))
 	for index, resolution := range sweep.resolutions {
-		result[index] = processruntime.Resolution{
-			Generation:  resolution.generation,
-			Transferred: resolution.disposition == emergencyCustodyTransferred,
+		result[index] = processruntime.ConfirmedDrained(resolution.generation)
+		if resolution.disposition == emergencyCustodyTransferred {
+			result[index] = processruntime.TransferCustody(resolution.generation)
 		}
 	}
 	return result
@@ -204,16 +201,18 @@ func runtimeEmergencySettlement(settlement processruntime.EmergencySettlement) e
 func runtimeResiduals(values []processruntime.Residual) []residualCustody {
 	result := make([]residualCustody, len(values))
 	for index, value := range values {
+		stage := admissionOwned
+		if value.Prospective() {
+			stage = admissionProspective
+		}
 		result[index] = residualCustody{
-			generation: value.Generation, attempt: attemptIdentity(value.Attempt),
-			stage: admissionStage(value.Stage), transferred: value.Transferred,
+			generation: value.Generation(), attempt: attemptIdentity(value.Attempt()),
+			stage: stage, transferred: value.Transferred(),
 		}
 	}
 	return result
 }
 
 func runtimeBarrierBinding(fact campaignBarrierBinding) barrierBinding {
-	return barrierBinding{
-		campaign: fact.campaign, attempt: fact.attempt, profile: fact.profile, deadline: fact.deadline,
-	}
+	return barrierBinding(fact)
 }
