@@ -434,7 +434,7 @@ func underRuntimeLock[T any](
 	shell.mutex.Lock()
 	shell.beginRuntimeNotifications()
 	publish := func(processruntime.Event) {}
-	if shell.observer != nil {
+	if shell.observer != nil && record != nil {
 		publish = shell.observer.Begin()
 	}
 	wasOpen := shell.core.open()
@@ -468,15 +468,17 @@ func underRuntimeLock[T any](
 		transition = record(result, shell.core)
 		transition.name = operation
 	}
-	func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				observerFailed = true
-				panic(recovered)
-			}
+	if record != nil {
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					observerFailed = true
+					panic(recovered)
+				}
+			}()
+			publish(processRuntimeEvent(transition))
 		}()
-		publish(processRuntimeEvent(transition))
-	}()
+	}
 	shell.flushRuntimeNotifications()
 
 	return result
