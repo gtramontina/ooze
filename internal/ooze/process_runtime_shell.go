@@ -523,7 +523,7 @@ func (s *processRuntimeShell) observeRuntimeEvent(publication runtimePublication
 		return
 	}
 	defer func() { _ = recover() }()
-	s.observer.Begin()(publication.event)
+	_ = s.observer.Begin()(publication.event)
 }
 
 func applyCore[I, O any](
