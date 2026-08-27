@@ -193,3 +193,106 @@ func TestReplayFoldsProductionEventsIntoCapabilityFreeProjections(t *testing.T) 
 		assert.Zero(t, replay.Projection().CampaignCount())
 	})
 }
+
+func TestRuntimeFatalClosureProgressesWhileLaunchIsBlocked(t *testing.T) {
+	runtime, start := preparedRuntimeStart(t, 49)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	observed := make(chan processruntime.Observation, 1)
+	go func() {
+		observed <- start.Launch(func(processruntime.Generation) processruntime.Observation {
+			close(entered)
+			<-release
+			return processruntime.NotReleased(false)
+		})
+	}()
+	<-entered
+	closed := make(chan processruntime.Closure, 1)
+	go func() { closed <- runtime.Close("fatal while launch blocked") }()
+
+	select {
+	case closure := <-closed:
+		assert.NotZero(t, closure.Epoch())
+	case <-time.After(time.Second):
+		require.FailNow(t, "fatal closure waited for dormant launch")
+	}
+	close(release)
+	runtime.Observe(start.Generation(), <-observed)
+	assert.True(t, runtime.Projection().Closing())
+}
+
+func TestRuntimeLaunchFailureRetainsOneFatalCause(t *testing.T) {
+	runtime, start := preparedRuntimeStart(t, 50)
+
+	assert.Panics(t, func() {
+		start.Launch(func(processruntime.Generation) processruntime.Observation {
+			panic("native launch failed")
+		})
+	})
+	projection := runtime.Projection()
+	assert.NotZero(t, projection.FatalEpoch())
+	assert.EqualValues(t, 1, projection.FatalCauseCount())
+}
+
+func TestRuntimeDeliversEachGrantOnce(t *testing.T) {
+	runtime, start := preparedRuntimeStart(t, 51)
+	waitingCampaign := runtime.RegisterCampaign(52).Campaign()
+	waiting := runtime.RequestAdmission(processruntime.Admission{
+		Campaign: waitingCampaign, Attempt: "waiting", Class: processruntime.SharedAdmission,
+	})
+	runtime.Observe(start.Generation(), start.Launch(func(processruntime.Generation) processruntime.Observation {
+		return processruntime.Owned()
+	}))
+	runtime.Observe(start.Generation(), processruntime.Settled(processruntime.AutomaticProfile, 0))
+
+	_, received := waiting.Receive()
+	assert.True(t, received)
+	_, received = waiting.Receive()
+	assert.False(t, received)
+}
+
+func TestRuntimeSerializesOwnedSettlementAgainstFatalClosure(t *testing.T) {
+	for iteration := 0; iteration < 50; iteration++ {
+		runtime, start := preparedRuntimeStart(t, processruntime.Lineage(100+iteration))
+		runtime.Observe(start.Generation(), start.Launch(func(processruntime.Generation) processruntime.Observation {
+			return processruntime.Owned()
+		}))
+		begin := make(chan struct{})
+		panics := make(chan any, 2)
+		var wait sync.WaitGroup
+		wait.Add(2)
+		go runRuntimeRace(&wait, begin, panics, func() {
+			runtime.Observe(start.Generation(), processruntime.Settled(processruntime.AutomaticProfile, 0))
+		})
+		go runRuntimeRace(&wait, begin, panics, func() { runtime.Close("concurrent fatal") })
+		close(begin)
+		wait.Wait()
+		close(panics)
+		assert.Empty(t, panics)
+		projection := runtime.Projection()
+		assert.True(t, projection.Closing() || projection.Drained())
+	}
+}
+
+func preparedRuntimeStart(t *testing.T, lineage processruntime.Lineage) (*processruntime.Runtime, processruntime.PreparedStart) {
+	t.Helper()
+	runtime := processruntime.New(1)
+	campaign := runtime.RegisterCampaign(lineage).Campaign()
+	await := runtime.RequestAdmission(processruntime.Admission{
+		Campaign: campaign, Attempt: "active", Class: processruntime.SharedAdmission,
+	})
+	grant, received := await.Receive()
+	require.True(t, received)
+	return runtime, runtime.CommitStart(grant, processruntime.NewStartCell())
+}
+
+func runRuntimeRace(wait *sync.WaitGroup, begin <-chan struct{}, panics chan<- any, action func()) {
+	defer wait.Done()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panics <- recovered
+		}
+	}()
+	<-begin
+	action()
+}

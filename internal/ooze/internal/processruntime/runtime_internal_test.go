@@ -2,7 +2,6 @@ package processruntime
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -14,8 +13,4 @@ func assertInvariantViolation(t *testing.T, action func()) {
 		require.True(t, ok)
 	}()
 	action()
-}
-
-func automaticDeadlineTrip() attemptTripped {
-	return attemptTripped{kind: deadlineTrip, profile: AutomaticProfile, deadline: 31 * time.Second}
 }
