@@ -1,8 +1,10 @@
 package ooze
 
 import (
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/stretchr/testify/assert"
@@ -12,11 +14,13 @@ import (
 func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	var mutex sync.Mutex
 	var events []processruntime.Event
-	observer := processruntime.ObserverFunc(func() func(processruntime.Event) {
-		return func(event processruntime.Event) {
+	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
+		return func(event processruntime.Event) error {
 			mutex.Lock()
 			events = append(events, event)
 			mutex.Unlock()
+
+			return nil
 		}
 	})
 	runtime := newProcessRuntimeShellWithObserver(1, observer)
@@ -49,23 +53,110 @@ func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 }
 
 func TestProcessRuntimeObserverFailureDoesNotCloseRuntime(t *testing.T) {
-	observations := 0
-	observer := processruntime.ObserverFunc(func() func(processruntime.Event) {
-		return func(processruntime.Event) {
-			observations++
-			if observations == 1 {
-				panic("observer failed")
+	tests := map[string]processruntime.Observer{
+		"reservation panic": processruntime.ObserverFunc(func() func(processruntime.Event) error {
+			panic("observer reservation failed")
+		}),
+		"delivery panic": processruntime.ObserverFunc(func() func(processruntime.Event) error {
+			return func(processruntime.Event) error { panic("observer delivery failed") }
+		}),
+		"delivery error": processruntime.ObserverFunc(func() func(processruntime.Event) error {
+			return func(processruntime.Event) error { return errors.New("observer delivery failed") }
+		}),
+	}
+	for name, observer := range tests {
+		t.Run(name, func(t *testing.T) {
+			runtime := newProcessRuntimeShellWithObserver(1, observer)
+
+			first := runtime.registerCampaign(campaignProvenance{lineage: 42})
+			registration := runtime.registerCampaign(campaignProvenance{lineage: 43})
+
+			assert.Equal(t, campaignRegistered, first.decision)
+			assert.Equal(t, campaignRegistered, registration.decision)
+		})
+	}
+}
+
+func TestProcessRuntimeObserverMayReenterRuntime(t *testing.T) {
+	var runtime *processRuntimeShell
+	reentered := make(chan campaignRegistration, 1)
+	var kinds []processruntime.EventKind
+	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
+		return func(event processruntime.Event) error {
+			kinds = append(kinds, event.Kind())
+			if event.Kind() == processruntime.RegisterCampaign && event.Command().Lineage == 44 {
+				reentered <- runtime.registerCampaign(campaignProvenance{lineage: 45})
 			}
+
+			return nil
+		}
+	})
+	runtime = newProcessRuntimeShellWithObserver(1, observer)
+
+	registered := make(chan campaignRegistration, 1)
+	go func() {
+		registered <- runtime.registerCampaign(campaignProvenance{lineage: 44})
+	}()
+
+	select {
+	case registration := <-registered:
+		assert.Equal(t, campaignRegistered, registration.decision)
+	case <-time.After(time.Second):
+		t.Fatal("runtime registration deadlocked in observer")
+	}
+	select {
+	case registration := <-reentered:
+		assert.Equal(t, campaignRegistered, registration.decision)
+	case <-time.After(time.Second):
+		t.Fatal("reentrant runtime registration was not observed")
+	}
+	assert.Equal(t, []processruntime.EventKind{
+		processruntime.RegisterCampaign,
+		processruntime.RegisterCampaign,
+	}, kinds)
+}
+
+func TestProcessRuntimePublishesAcceptedEventBeforeCausalNotification(t *testing.T) {
+	observing := make(chan struct{})
+	release := make(chan struct{})
+	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
+		return func(event processruntime.Event) error {
+			if event.Kind() == processruntime.ObserveAttempt &&
+				event.Command().Observation.Kind == processruntime.AttemptSettled {
+				close(observing)
+				<-release
+			}
+
+			return nil
 		}
 	})
 	runtime := newProcessRuntimeShellWithObserver(1, observer)
-
-	assert.PanicsWithValue(t, "observer failed", func() {
-		runtime.registerCampaign(campaignProvenance{lineage: 42})
+	activeCampaign := runtime.registerCampaign(campaignProvenance{lineage: 46})
+	waitingCampaign := runtime.registerCampaign(campaignProvenance{lineage: 47})
+	active := runtime.requestAdmission(admissionRequest{
+		campaign: activeCampaign.token, attempt: "active", class: sharedAdmission,
 	})
-	registration := runtime.registerCampaign(campaignProvenance{lineage: 43})
+	waiting := runtime.requestAdmission(admissionRequest{
+		campaign: waitingCampaign.token, attempt: "waiting", class: sharedAdmission,
+	})
+	require.Equal(t, admissionAccepted, waiting.decision)
+	started := startOwned(runtime, <-active.delivery)
 
-	assert.Equal(t, campaignRegistered, registration.decision)
+	settled := make(chan observationResult, 1)
+	go func() {
+		settled <- runtime.observeAttempt(started.generation, attemptSettled{})
+	}()
+	<-observing
+	select {
+	case grant, open := <-waiting.delivery:
+		t.Fatalf("admission notification arrived before its accepted runtime event: %#v/%t", grant, open)
+	default:
+	}
+	close(release)
+	<-settled
+	grant, open := <-waiting.delivery
+	assert.True(t, open)
+	assert.EqualValues(t, "waiting", grant.attempt)
 }
 
 func eventKinds(events []processruntime.Event) []processruntime.EventKind {

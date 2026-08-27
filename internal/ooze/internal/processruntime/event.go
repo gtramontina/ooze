@@ -196,14 +196,14 @@ func (event Event) Result() Result { return cloneResult(event.result) }
 
 // Observer reserves an owner cut before receiving its accepted event.
 type Observer interface {
-	Begin() func(Event)
+	Begin() func(Event) error
 }
 
 // ObserverFunc adapts a function to Observer.
-type ObserverFunc func() func(Event)
+type ObserverFunc func() func(Event) error
 
 // Begin reserves an owner cut and returns its event recipient.
-func (observe ObserverFunc) Begin() func(Event) { return observe() }
+func (observe ObserverFunc) Begin() func(Event) error { return observe() }
 
 func cloneCommand(command Command) Command {
 	command.Resolutions = slices.Clone(command.Resolutions)

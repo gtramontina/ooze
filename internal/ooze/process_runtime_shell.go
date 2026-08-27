@@ -163,6 +163,7 @@ type processRuntimeShell struct {
 	emergency     chan struct{}
 	observer      processruntime.Observer
 	notifications runtimeNotificationQueue
+	publication   runtimePublicationQueue
 }
 
 type runtimeNotificationQueue struct {
@@ -174,6 +175,19 @@ type runtimeNotification struct {
 	delivery  chan admissionGrant
 	grant     admissionGrant
 	closeOnly bool
+}
+
+type runtimePublicationQueue struct {
+	mutex    sync.Mutex
+	draining bool
+	values   []runtimePublication
+}
+
+type runtimePublication struct {
+	event         processruntime.Event
+	observed      bool
+	notifications []runtimeNotification
+	emergency     bool
 }
 
 func newProcessRuntimeShell(capacity int) *processRuntimeShell {
@@ -430,22 +444,11 @@ func underRuntimeLock[T any](
 	record func(T, processRuntime) runtimeEventData,
 	apply func() T,
 ) (result T) {
-	observerFailed := false
 	shell.mutex.Lock()
 	shell.beginRuntimeNotifications()
-	publish := func(processruntime.Event) {}
-	if shell.observer != nil && record != nil {
-		publish = shell.observer.Begin()
-	}
 	wasOpen := shell.core.open()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			if observerFailed {
-				shell.flushRuntimeNotifications()
-				shell.broadcastEmergency(wasOpen)
-				shell.mutex.Unlock()
-				panic(recovered)
-			}
 			violation, ok := recovered.(runtimeInvariantViolation)
 			if !ok {
 				violation = runtimeInvariantViolation{operation: operation, reason: "unexpected panic"}
@@ -453,13 +456,14 @@ func underRuntimeLock[T any](
 			if shell.core.lifecycle <= runtimeFatalSettledClosing {
 				shell.closeCore(runtimeFatalCause(violation.reason))
 			}
-			shell.flushRuntimeNotifications()
-			shell.broadcastEmergency(wasOpen)
+			shell.enqueueRuntimePublication(runtimePublication{
+				notifications: shell.takeRuntimeNotifications(),
+				emergency:     wasOpen && !shell.core.open(),
+			})
 			shell.mutex.Unlock()
+			shell.drainRuntimePublications()
 			panic(violation)
 		}
-		shell.broadcastEmergency(wasOpen)
-		shell.mutex.Unlock()
 	}()
 
 	result = apply()
@@ -468,30 +472,58 @@ func underRuntimeLock[T any](
 		transition = record(result, shell.core)
 		transition.name = operation
 	}
-	if record != nil {
-		func() {
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					observerFailed = true
-					panic(recovered)
-				}
-			}()
-			publish(processRuntimeEvent(transition))
-		}()
+	publication := runtimePublication{
+		notifications: shell.takeRuntimeNotifications(),
+		emergency:     wasOpen && !shell.core.open(),
 	}
-	shell.flushRuntimeNotifications()
+	if record != nil {
+		publication.event = processRuntimeEvent(transition)
+		publication.observed = true
+	}
+	shell.enqueueRuntimePublication(publication)
+	shell.mutex.Unlock()
+	shell.drainRuntimePublications()
 
 	return result
 }
 
-func (s *processRuntimeShell) broadcastEmergency(wasOpen bool) {
-	if !wasOpen || s.core.open() {
+func (s *processRuntimeShell) enqueueRuntimePublication(publication runtimePublication) {
+	s.publication.mutex.Lock()
+	s.publication.values = append(s.publication.values, publication)
+	s.publication.mutex.Unlock()
+}
+
+func (s *processRuntimeShell) drainRuntimePublications() {
+	s.publication.mutex.Lock()
+	if s.publication.draining {
+		s.publication.mutex.Unlock()
+
 		return
 	}
-	if s.emergency == nil {
-		invariant("broadcast runtime emergency", "process-wide channel is nil")
+	s.publication.draining = true
+	for len(s.publication.values) != 0 {
+		publication := s.publication.values[0]
+		s.publication.values = s.publication.values[1:]
+		s.publication.mutex.Unlock()
+
+		s.observeRuntimeEvent(publication)
+		s.deliverRuntimeNotifications(publication.notifications)
+		if publication.emergency {
+			close(s.emergency)
+		}
+
+		s.publication.mutex.Lock()
 	}
-	close(s.emergency)
+	s.publication.draining = false
+	s.publication.mutex.Unlock()
+}
+
+func (s *processRuntimeShell) observeRuntimeEvent(publication runtimePublication) {
+	if !publication.observed || s.observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	s.observer.Begin()(publication.event)
 }
 
 func applyCore[I, O any](
@@ -759,12 +791,17 @@ func (s *processRuntimeShell) beginRuntimeNotifications() {
 	s.notifications.active = true
 }
 
-func (s *processRuntimeShell) flushRuntimeNotifications() {
+func (s *processRuntimeShell) takeRuntimeNotifications() []runtimeNotification {
 	if !s.notifications.active {
-		return
+		return nil
 	}
 	notifications := s.notifications.values
 	s.notifications = runtimeNotificationQueue{}
+
+	return notifications
+}
+
+func (s *processRuntimeShell) deliverRuntimeNotifications(notifications []runtimeNotification) {
 	for _, notification := range notifications {
 		if !notification.closeOnly {
 			notification.delivery <- notification.grant

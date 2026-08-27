@@ -15,10 +15,10 @@ func newSimulationRuntimeObserver(recorder *simulationRecorder, capacity int) *s
 	return &simulationRuntimeObserver{recorder: recorder, state: newProcessRuntime(capacity)}
 }
 
-func (observer *simulationRuntimeObserver) Begin() func(processruntime.Event) {
+func (observer *simulationRuntimeObserver) Begin() func(processruntime.Event) error {
 	leave := observer.recorder.enter()
 	reservation := observer.recorder.reserve(simulationRuntimeAuthority)
-	return func(event processruntime.Event) {
+	return func(event processruntime.Event) error {
 		record := simulationRuntimeEventRecord(event)
 		state, err := simulationApplyRuntimeCut(observer.state, record, false)
 		if err != nil {
@@ -28,6 +28,8 @@ func (observer *simulationRuntimeObserver) Begin() func(processruntime.Event) {
 		observer.state = state
 		observer.recorder.recordRuntime(reservation, record, state)
 		leave()
+
+		return nil
 	}
 }
 
