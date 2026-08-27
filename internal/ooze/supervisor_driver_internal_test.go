@@ -207,16 +207,15 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	observationStarted := make(chan struct{})
 	allowObservation := make(chan struct{})
 	blocked := false
-	shell := newProcessRuntimeShellWithObserver(2, processruntime.ObserverFunc(func(event processruntime.Event) error {
+	shell := newProcessRuntimeShellWithObserver(2, processruntime.ObserverFunc(func(event processruntime.Event) {
 		observed, ok := event.(processruntime.AttemptObservationProcessed)
 		if !ok || observed.Observation().Kind() != processruntime.LaunchNotReleased || blocked {
-			return nil
+			return
 		}
 		blocked = true
 		close(observationStarted)
 		<-allowObservation
 
-		return nil
 	}))
 	grants := make(map[attemptIdentity]admissionGrant)
 	for index, attempt := range []attemptIdentity{"multi-prospective-a", "multi-prospective-b"} {

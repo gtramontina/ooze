@@ -1,7 +1,6 @@
 package processruntime_test
 
 import (
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -42,11 +41,10 @@ func TestRuntimeOwnsAnAttemptLifecycle(t *testing.T) {
 func TestRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	var mutex sync.Mutex
 	var events []processruntime.Event
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) error {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
 		mutex.Lock()
 		events = append(events, event)
 		mutex.Unlock()
-		return nil
 	}))
 
 	registration := runtime.RegisterCampaign(41)
@@ -70,29 +68,22 @@ func TestRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	assert.IsType(t, processruntime.TerminalCommitmentProcessed{}, events[4])
 }
 
-func TestRuntimeObserverFailuresDoNotChangeRuntimePolicy(t *testing.T) {
-	tests := map[string]processruntime.Observer{
-		"error": processruntime.ObserverFunc(func(processruntime.Event) error { return errors.New("observer failed") }),
-		"panic": processruntime.ObserverFunc(func(processruntime.Event) error { panic("observer failed") }),
-	}
-	for name, observer := range tests {
-		t.Run(name, func(t *testing.T) {
-			runtime := processruntime.NewObserved(1, observer)
-			assert.Equal(t, processruntime.CampaignRegistered, runtime.RegisterCampaign(42).Decision())
-			assert.Equal(t, processruntime.CampaignRegistered, runtime.RegisterCampaign(43).Decision())
-		})
-	}
+func TestRuntimeObserverPanicDoesNotChangeRuntimePolicy(t *testing.T) {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(processruntime.Event) {
+		panic("observer failed")
+	}))
+	assert.Equal(t, processruntime.CampaignRegistered, runtime.RegisterCampaign(42).Decision())
+	assert.Equal(t, processruntime.CampaignRegistered, runtime.RegisterCampaign(43).Decision())
 }
 
 func TestRuntimeObserverMayReenterRuntime(t *testing.T) {
 	var runtime *processruntime.Runtime
 	reentered := make(chan processruntime.Registration, 1)
-	runtime = processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) error {
+	runtime = processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
 		registered, ok := event.(processruntime.CampaignRegistrationProcessed)
 		if ok && registered.Lineage() == 44 {
 			reentered <- runtime.RegisterCampaign(45)
 		}
-		return nil
 	}))
 
 	registered := make(chan processruntime.Registration, 1)
@@ -114,13 +105,12 @@ func TestRuntimeObserverMayReenterRuntime(t *testing.T) {
 func TestRuntimePublishesAcceptedEventBeforeCausalGrant(t *testing.T) {
 	observing := make(chan struct{})
 	release := make(chan struct{})
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) error {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
 		observed, ok := event.(processruntime.AttemptObservationProcessed)
 		if ok && observed.Observation().Kind() == processruntime.AttemptSettled {
 			close(observing)
 			<-release
 		}
-		return nil
 	}))
 	activeCampaign := runtime.RegisterCampaign(46).Campaign()
 	waitingCampaign := runtime.RegisterCampaign(47).Campaign()
@@ -160,11 +150,10 @@ func TestRuntimePublishesAcceptedEventBeforeCausalGrant(t *testing.T) {
 
 func TestReplayFoldsProductionEventsIntoCapabilityFreeProjections(t *testing.T) {
 	replay := processruntime.NewReplay(1)
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) error {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
 		var matches bool
 		replay, matches = replay.ApplyEvent(event)
 		require.True(t, matches)
-		return nil
 	}))
 
 	registration := runtime.RegisterCampaign(48)

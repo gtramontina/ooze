@@ -241,13 +241,13 @@ func (event runtimeClosureProcessed) Cause() string { return string(event.cause)
 func (event runtimeClosureProcessed) Result() Closure { return Closure{value: event.result} }
 
 // Observer receives immutable accepted process-runtime events.
-type Observer interface{ Observe(Event) error }
+type Observer interface{ Observe(Event) }
 
 // ObserverFunc adapts a function to Observer.
-type ObserverFunc func(Event) error
+type ObserverFunc func(Event)
 
 // Observe receives one accepted process-runtime event.
-func (observe ObserverFunc) Observe(event Event) error { return observe(event) }
+func (observe ObserverFunc) Observe(event Event) { observe(event) }
 
 func runtimeEventAdmission(authority admissionAuthority) admissionAuthority {
 	authority.delivery = nil
