@@ -15,28 +15,25 @@ func newSimulationRuntimeObserver(recorder *simulationRecorder, capacity int) *s
 	return &simulationRuntimeObserver{recorder: recorder, state: newProcessRuntime(capacity)}
 }
 
-func (observer *simulationRuntimeObserver) Begin() func(processruntime.Event) error {
+func (observer *simulationRuntimeObserver) Observe(event processruntime.Event) (err error) {
 	leave := observer.recorder.enter()
+	defer leave()
 	reservation := observer.recorder.reserve(simulationRuntimeAuthority)
-	return func(event processruntime.Event) error {
-		record := simulationRuntimeEventRecord(event)
-		state, err := simulationApplyRuntimeCut(observer.state, record, false)
-		if err != nil {
-			leave()
-			panic(fmt.Sprintf("process runtime event diverged: %v", err))
-		}
-		observer.state = state
-		observer.recorder.recordRuntime(reservation, record, state)
-		leave()
-
-		return nil
+	record := simulationRuntimeEventRecord(event)
+	state, err := simulationApplyRuntimeCut(observer.state, record, false)
+	if err != nil {
+		return fmt.Errorf("process runtime event diverged: %w", err)
 	}
+	observer.state = state
+	observer.recorder.recordRuntime(reservation, record, state)
+
+	return nil
 }
 
 func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 	record := simulationRecord{}
-	switch event := event.(type) {
-	case processruntime.CampaignRegistered:
+	switch event := event.Variant().(type) {
+	case processruntime.CampaignRegistrationProcessed:
 		result := event.Registration()
 		record.runtimeOperation = processRuntimeRegisterCampaign
 		record.runtimeProvenance = campaignProvenance{lineage: campaignLineage(event.Lineage())}
@@ -44,19 +41,19 @@ func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 			decision: campaignDecision(result.Decision),
 			token:    simulationRuntimeCampaign(result.Campaign),
 		}
-	case processruntime.AdmissionRequested:
+	case processruntime.AdmissionRequestProcessed:
 		record.runtimeOperation = processRuntimeRequestAdmission
 		record.runtimeAdmission = simulationRuntimeAdmission(event.Admission())
 		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(event.Result())
-	case processruntime.AdmissionCancelled:
+	case processruntime.AdmissionCancellationProcessed:
 		record.runtimeOperation = processRuntimeCancelAdmission
 		record.runtimeAdmissionToken = simulationRuntimeAdmission(event.Admission())
 		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(event.Result())
-	case processruntime.GrantReturnAcknowledged:
+	case processruntime.GrantReturnProcessed:
 		record.runtimeOperation = processRuntimeAcknowledgeGrantReturn
 		record.runtimeGrant = simulationRuntimeAdmission(event.Admission())
 		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(event.Result())
-	case processruntime.ConfirmationBarrierBound:
+	case processruntime.ConfirmationBarrierProcessed:
 		barrier := event.Barrier()
 		record.runtimeOperation = processRuntimeBindConfirmationBarrier
 		record.runtimeBarrier = simulationBarrierBinding{
@@ -65,14 +62,14 @@ func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 			deadline: simulationDuration(barrier.Deadline),
 		}
 		record.runtimeBarrierOut = simulationRuntimeBarrierResult(event.Result())
-	case processruntime.ConfirmationQueueFinished:
+	case processruntime.ConfirmationQueueProcessed:
 		result := event.Result()
 		record.runtimeOperation = processRuntimeCompleteConfirmationQueue
 		record.runtimeCampaign = simulationRuntimeCampaign(event.Campaign())
 		record.runtimeQueueOut = simulationConfirmationQueueResult{
 			decision: confirmationQueueDecision(result.Decision), deliveries: simulationRuntimeAdmissions(result.Deliveries),
 		}
-	case processruntime.AttemptStartCommitted:
+	case processruntime.StartCommitmentProcessed:
 		result := event.Result()
 		record.runtimeOperation = processRuntimeStartCommitted
 		record.runtimeGrant = simulationRuntimeAdmission(event.Grant())
@@ -80,7 +77,7 @@ func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 			decision: startCommittedDecision(result.Decision), generation: attemptGeneration(result.Generation),
 			settlementAcknowledged: result.SettlementAcknowledged, runtimeClosureInProgress: result.RuntimeClosureInProgress,
 		}
-	case processruntime.AttemptObserved:
+	case processruntime.AttemptObservationProcessed:
 		observation := event.Observation()
 		record.runtimeOperation = processRuntimeObserveAttempt
 		record.runtimeGeneration = attemptGeneration(event.Generation())
@@ -90,7 +87,7 @@ func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 			trip: attemptTripKind(observation.Trip), cause: observation.Cause,
 		}
 		record.runtimeObservationOut = simulationRuntimeObservationResult(event.Result())
-	case processruntime.EmergencySettled:
+	case processruntime.EmergencySettlementProcessed:
 		resolutions := make([]emergencyResolution, len(event.Resolutions()))
 		for index, resolution := range event.Resolutions() {
 			resolutions[index] = emergencyResolution{
@@ -101,18 +98,18 @@ func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
 		record.runtimeOperation = processRuntimeSettleEmergency
 		record.runtimeSweep = simulationEmergencySweepRecord{resolutions: resolutions}
 		record.runtimeEmergencyOut = simulationRuntimeEmergencyResult(event.Result())
-	case processruntime.TerminalCommitted:
+	case processruntime.TerminalCommitmentProcessed:
 		result := event.Result()
 		record.runtimeOperation = processRuntimeCommitTerminal
 		record.runtimeCampaign = simulationRuntimeCampaign(event.Campaign())
 		record.runtimeTerminal = terminalResult{decision: terminalDecision(result.Decision), epoch: fatalEpochID(result.Epoch)}
-	case processruntime.ForcedAbortAuthorized:
+	case processruntime.ForcedAbortProcessed:
 		result := event.Result()
 		record.runtimeOperation = processRuntimeAuthorizeForcedAbort
 		record.runtimeCampaign = simulationRuntimeCampaign(event.Campaign())
 		record.runtimeFatalEpoch = fatalEpochID(event.Epoch())
 		record.runtimeTerminal = terminalResult{decision: terminalDecision(result.Decision), epoch: fatalEpochID(result.Epoch)}
-	case processruntime.RuntimeClosed:
+	case processruntime.RuntimeClosureProcessed:
 		record.runtimeOperation = processRuntimeClose
 		record.runtimeFatalCause = runtimeFatalCause(event.Cause())
 		record.runtimeClosure = simulationRuntimeClosureResult(event.Result())

@@ -523,7 +523,7 @@ func (s *processRuntimeShell) observeRuntimeEvent(publication runtimePublication
 		return
 	}
 	defer func() { _ = recover() }()
-	_ = s.observer.Begin()(publication.event)
+	_ = s.observer.Observe(publication.event)
 }
 
 func applyCore[I, O any](
@@ -573,39 +573,39 @@ func processRuntimeEvent(transition runtimeEventData) processruntime.Event {
 	case 0:
 		return nil
 	case processRuntimeRegisterCampaign:
-		event, err := processruntime.NewCampaignRegistered(
+		event, err := processruntime.NewCampaignRegistrationProcessed(
 			uint64(transition.provenance.lineage), runtimeEventRegistration(transition.registration),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeRequestAdmission:
-		event, err := processruntime.NewAdmissionRequested(
+		event, err := processruntime.NewAdmissionRequestProcessed(
 			runtimeEventAdmission(transition.request), runtimeEventAdmissionResult(transition.admission),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeCancelAdmission:
-		event, err := processruntime.NewAdmissionCancelled(
+		event, err := processruntime.NewAdmissionCancellationProcessed(
 			runtimeEventAdmission(transition.requestToken), runtimeEventAdmissionResult(transition.admission),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeAcknowledgeGrantReturn:
-		event, err := processruntime.NewGrantReturnAcknowledged(
+		event, err := processruntime.NewGrantReturnProcessed(
 			runtimeEventAdmission(transition.grant), runtimeEventAdmissionResult(transition.admission),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeBindConfirmationBarrier:
-		event, err := processruntime.NewConfirmationBarrierBound(processruntime.Admission{
+		event, err := processruntime.NewConfirmationBarrierProcessed(processruntime.Admission{
 			Campaign: runtimeEventCampaign(transition.barrier.campaign), Attempt: string(transition.barrier.attempt),
 			Class: processruntime.AdmissionClass(confirmationBarrierAdmission), Profile: processruntime.Profile(transition.barrier.profile),
 			Deadline: int64(transition.barrier.deadline),
 		}, runtimeEventBarrierResult(transition.barrierResult))
 		return validRuntimeEvent(event, err)
 	case processRuntimeCompleteConfirmationQueue:
-		event, err := processruntime.NewConfirmationQueueFinished(
+		event, err := processruntime.NewConfirmationQueueProcessed(
 			runtimeEventCampaign(transition.campaign), runtimeEventQueueResult(transition.queue),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeStartCommitted:
-		event, err := processruntime.NewAttemptStartCommitted(
+		event, err := processruntime.NewStartCommitmentProcessed(
 			runtimeEventAdmission(transition.grant), processruntime.StartResult{
 				Decision: processruntime.StartDecision(transition.start.decision), Generation: uint64(transition.start.generation),
 				SettlementAcknowledged:   transition.start.settlementAcknowledged,
@@ -613,29 +613,29 @@ func processRuntimeEvent(transition runtimeEventData) processruntime.Event {
 			})
 		return validRuntimeEvent(event, err)
 	case processRuntimeObserveAttempt:
-		event, err := processruntime.NewAttemptObserved(
+		event, err := processruntime.NewAttemptObservationProcessed(
 			uint64(transition.generation), runtimeEventObservation(transition.observation),
 			runtimeEventObservationResult(transition.observed),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeSettleEmergency:
-		event, err := processruntime.NewEmergencySettled(
+		event, err := processruntime.NewEmergencySettlementProcessed(
 			runtimeEventResolutions(transition.sweep.resolutions), runtimeEventEmergency(transition.emergency),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeCommitTerminal:
-		event, err := processruntime.NewTerminalCommitted(
+		event, err := processruntime.NewTerminalCommitmentProcessed(
 			runtimeEventCampaign(transition.campaign), runtimeEventTerminal(transition.terminal),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeAuthorizeForcedAbort:
-		event, err := processruntime.NewForcedAbortAuthorized(
+		event, err := processruntime.NewForcedAbortProcessed(
 			runtimeEventCampaign(transition.campaign), uint64(transition.fatalEpoch),
 			runtimeEventTerminal(transition.terminal),
 		)
 		return validRuntimeEvent(event, err)
 	case processRuntimeClose:
-		event, err := processruntime.NewRuntimeClosed(
+		event, err := processruntime.NewRuntimeClosureProcessed(
 			string(transition.fatalCause), runtimeEventClosure(transition.runtimeClosure),
 		)
 		return validRuntimeEvent(event, err)

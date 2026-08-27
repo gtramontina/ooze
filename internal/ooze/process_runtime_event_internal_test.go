@@ -14,14 +14,12 @@ import (
 func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	var mutex sync.Mutex
 	var events []processruntime.Event
-	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
-		return func(event processruntime.Event) error {
-			mutex.Lock()
-			events = append(events, event)
-			mutex.Unlock()
+	observer := processruntime.ObserverFunc(func(event processruntime.Event) error {
+		mutex.Lock()
+		events = append(events, event)
+		mutex.Unlock()
 
-			return nil
-		}
+		return nil
 	})
 	runtime := newProcessRuntimeShellWithObserver(1, observer)
 
@@ -40,11 +38,11 @@ func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	assert.Equal(t, []string{
 		"campaign registered", "admission requested", "attempt start committed", "attempt observed", "terminal committed",
 	}, eventNames(events))
-	registered := events[0].(processruntime.CampaignRegistered)
-	requested := events[1].(processruntime.AdmissionRequested)
-	committed := events[2].(processruntime.AttemptStartCommitted)
-	observed := events[3].(processruntime.AttemptObserved)
-	committedTerminal := events[4].(processruntime.TerminalCommitted)
+	registered := events[0].Variant().(processruntime.CampaignRegistrationProcessed)
+	requested := events[1].Variant().(processruntime.AdmissionRequestProcessed)
+	committed := events[2].Variant().(processruntime.StartCommitmentProcessed)
+	observed := events[3].Variant().(processruntime.AttemptObservationProcessed)
+	committedTerminal := events[4].Variant().(processruntime.TerminalCommitmentProcessed)
 	assert.EqualValues(t, 41, registered.Lineage())
 	assert.EqualValues(t, registration.token.id, registered.Registration().Campaign.ID)
 	assert.Equal(t, "mutant-a", requested.Admission().Attempt)
@@ -55,15 +53,8 @@ func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 
 func TestProcessRuntimeObserverFailureDoesNotCloseRuntime(t *testing.T) {
 	tests := map[string]processruntime.Observer{
-		"reservation panic": processruntime.ObserverFunc(func() func(processruntime.Event) error {
-			panic("observer reservation failed")
-		}),
-		"delivery panic": processruntime.ObserverFunc(func() func(processruntime.Event) error {
-			return func(processruntime.Event) error { panic("observer delivery failed") }
-		}),
-		"delivery error": processruntime.ObserverFunc(func() func(processruntime.Event) error {
-			return func(processruntime.Event) error { return errors.New("observer delivery failed") }
-		}),
+		"panic": processruntime.ObserverFunc(func(processruntime.Event) error { panic("observer failed") }),
+		"error": processruntime.ObserverFunc(func(processruntime.Event) error { return errors.New("observer failed") }),
 	}
 	for name, observer := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -82,16 +73,14 @@ func TestProcessRuntimeObserverMayReenterRuntime(t *testing.T) {
 	var runtime *processRuntimeShell
 	reentered := make(chan campaignRegistration, 1)
 	var names []string
-	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
-		return func(event processruntime.Event) error {
-			names = append(names, eventName(event))
-			registered, ok := event.(processruntime.CampaignRegistered)
-			if ok && registered.Lineage() == 44 {
-				reentered <- runtime.registerCampaign(campaignProvenance{lineage: 45})
-			}
-
-			return nil
+	observer := processruntime.ObserverFunc(func(event processruntime.Event) error {
+		names = append(names, eventName(event))
+		registered, ok := event.Variant().(processruntime.CampaignRegistrationProcessed)
+		if ok && registered.Lineage() == 44 {
+			reentered <- runtime.registerCampaign(campaignProvenance{lineage: 45})
 		}
+
+		return nil
 	})
 	runtime = newProcessRuntimeShellWithObserver(1, observer)
 
@@ -118,16 +107,14 @@ func TestProcessRuntimeObserverMayReenterRuntime(t *testing.T) {
 func TestProcessRuntimePublishesAcceptedEventBeforeCausalNotification(t *testing.T) {
 	observing := make(chan struct{})
 	release := make(chan struct{})
-	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
-		return func(event processruntime.Event) error {
-			observed, ok := event.(processruntime.AttemptObserved)
-			if ok && observed.Observation().Kind == processruntime.AttemptSettled {
-				close(observing)
-				<-release
-			}
-
-			return nil
+	observer := processruntime.ObserverFunc(func(event processruntime.Event) error {
+		observed, ok := event.Variant().(processruntime.AttemptObservationProcessed)
+		if ok && observed.Observation().Kind == processruntime.AttemptSettled {
+			close(observing)
+			<-release
 		}
+
+		return nil
 	})
 	runtime := newProcessRuntimeShellWithObserver(1, observer)
 	activeCampaign := runtime.registerCampaign(campaignProvenance{lineage: 46})
@@ -158,6 +145,32 @@ func TestProcessRuntimePublishesAcceptedEventBeforeCausalNotification(t *testing
 	assert.EqualValues(t, "waiting", grant.attempt)
 }
 
+func TestSimulationRuntimeObserverReleasesRecorderGateAfterDivergence(t *testing.T) {
+	recorder := newSimulationRecorder()
+	observer := newSimulationRuntimeObserver(recorder, 1)
+	admission := processruntime.Admission{
+		Campaign: processruntime.Campaign{ID: 1, Lineage: 48}, Attempt: "unknown-campaign",
+		Class: processruntime.SharedAdmission, Profile: processruntime.UnspecifiedProfile,
+	}
+	event, err := processruntime.NewAdmissionRequestProcessed(admission, processruntime.AdmissionResult{
+		Decision: processruntime.AdmissionAccepted, Request: admission,
+	})
+	require.NoError(t, err)
+
+	assert.Error(t, observer.Observe(event))
+	acquired := make(chan struct{})
+	go func() {
+		recorder.gate.Lock()
+		close(acquired)
+		recorder.gate.Unlock()
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("simulation observer leaked its recorder gate after divergence")
+	}
+}
+
 func eventNames(events []processruntime.Event) []string {
 	names := make([]string, len(events))
 	for index, event := range events {
@@ -167,16 +180,16 @@ func eventNames(events []processruntime.Event) []string {
 }
 
 func eventName(event processruntime.Event) string {
-	switch event.(type) {
-	case processruntime.CampaignRegistered:
+	switch event.Variant().(type) {
+	case processruntime.CampaignRegistrationProcessed:
 		return "campaign registered"
-	case processruntime.AdmissionRequested:
+	case processruntime.AdmissionRequestProcessed:
 		return "admission requested"
-	case processruntime.AttemptStartCommitted:
+	case processruntime.StartCommitmentProcessed:
 		return "attempt start committed"
-	case processruntime.AttemptObserved:
+	case processruntime.AttemptObservationProcessed:
 		return "attempt observed"
-	case processruntime.TerminalCommitted:
+	case processruntime.TerminalCommitmentProcessed:
 		return "terminal committed"
 	default:
 		return "unknown"

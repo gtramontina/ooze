@@ -41,8 +41,8 @@ const (
 	AdmissionRejectedExclusiveOutstanding
 	AdmissionRejectedSharedLimit
 	AdmissionRejectedAlreadyCommitted
-	AdmissionCancelledWaiting
-	AdmissionCancelledGranted
+	AdmissionCancellationProcessedWaiting
+	AdmissionCancellationProcessedGranted
 	AdmissionReturnedAfterClosure
 	AdmissionReturnedAfterGateClosure
 )
@@ -256,290 +256,306 @@ type ClosureResult struct {
 }
 
 // Event is an immutable accepted process-runtime command and result.
-type Event interface{ processRuntimeEvent() }
+type Event interface {
+	Variant() any
+	processRuntimeEvent()
+}
 
-// CampaignRegistered reports accepted campaign registration.
-type CampaignRegistered struct {
+type acceptedEvent struct{ variant any }
+
+func (acceptedEvent) processRuntimeEvent() {}
+func (event acceptedEvent) Variant() any   { return event.variant }
+
+// CampaignRegistrationProcessed reports accepted campaign registration.
+type CampaignRegistrationProcessed struct {
 	lineage      uint64
 	registration Registration
 }
 
-// NewCampaignRegistered validates and creates a campaign registration event.
-func NewCampaignRegistered(lineage uint64, registration Registration) (CampaignRegistered, error) {
+// NewCampaignRegistrationProcessed validates and creates a campaign registration event.
+func NewCampaignRegistrationProcessed(lineage uint64, registration Registration) (Event, error) {
 	if !registration.Decision.valid() {
-		return CampaignRegistered{}, fmt.Errorf("invalid registration decision %d", registration.Decision)
+		return nil, fmt.Errorf("invalid registration decision %d", registration.Decision)
 	}
-	return CampaignRegistered{lineage: lineage, registration: registration}, nil
+	return acceptedEvent{variant: CampaignRegistrationProcessed{lineage: lineage, registration: registration}}, nil
 }
 
-func (CampaignRegistered) processRuntimeEvent() {}
-
 // Lineage returns the requested campaign lineage.
-func (event CampaignRegistered) Lineage() uint64 { return event.lineage }
+func (event CampaignRegistrationProcessed) Lineage() uint64 { return event.lineage }
 
 // Registration returns the accepted registration result.
-func (event CampaignRegistered) Registration() Registration { return event.registration }
+func (event CampaignRegistrationProcessed) Registration() Registration { return event.registration }
 
-// AdmissionRequested reports an accepted admission request.
-type AdmissionRequested struct {
+// AdmissionRequestProcessed reports an accepted admission request.
+type AdmissionRequestProcessed struct {
 	admission Admission
 	result    AdmissionResult
 }
 
-// NewAdmissionRequested validates and creates an admission request event.
-func NewAdmissionRequested(admission Admission, result AdmissionResult) (AdmissionRequested, error) {
+// NewAdmissionRequestProcessed validates and creates an admission request event.
+func NewAdmissionRequestProcessed(admission Admission, result AdmissionResult) (Event, error) {
 	if err := validateAdmissionEvent(admission, result); err != nil {
-		return AdmissionRequested{}, err
+		return nil, err
 	}
-	return AdmissionRequested{admission: admission, result: cloneAdmissionResult(result)}, nil
+	if result.Decision > AdmissionRejectedAlreadyCommitted {
+		return nil, fmt.Errorf("invalid admission-request decision %d", result.Decision)
+	}
+	return acceptedEvent{variant: AdmissionRequestProcessed{admission: admission, result: cloneAdmissionResult(result)}}, nil
 }
-
-func (AdmissionRequested) processRuntimeEvent() {}
 
 // Admission returns the request without its delivery capability.
-func (event AdmissionRequested) Admission() Admission { return event.admission }
+func (event AdmissionRequestProcessed) Admission() Admission { return event.admission }
 
 // Result returns an independent copy of the admission result.
-func (event AdmissionRequested) Result() AdmissionResult { return cloneAdmissionResult(event.result) }
-
-// AdmissionCancelled reports an accepted admission cancellation.
-type AdmissionCancelled struct{ AdmissionRequested }
-
-// NewAdmissionCancelled validates and creates an admission cancellation event.
-func NewAdmissionCancelled(admission Admission, result AdmissionResult) (AdmissionCancelled, error) {
-	event, err := NewAdmissionRequested(admission, result)
-	return AdmissionCancelled{AdmissionRequested: event}, err
+func (event AdmissionRequestProcessed) Result() AdmissionResult {
+	return cloneAdmissionResult(event.result)
 }
 
-func (AdmissionCancelled) processRuntimeEvent() {}
+// AdmissionCancellationProcessed reports an accepted admission cancellation.
+type AdmissionCancellationProcessed struct{ AdmissionRequestProcessed }
 
-// GrantReturnAcknowledged reports an accepted grant-return acknowledgement.
-type GrantReturnAcknowledged struct{ AdmissionRequested }
-
-// NewGrantReturnAcknowledged validates and creates a grant-return event.
-func NewGrantReturnAcknowledged(admission Admission, result AdmissionResult) (GrantReturnAcknowledged, error) {
-	event, err := NewAdmissionRequested(admission, result)
-	return GrantReturnAcknowledged{AdmissionRequested: event}, err
+// NewAdmissionCancellationProcessed validates and creates an admission cancellation event.
+func NewAdmissionCancellationProcessed(admission Admission, result AdmissionResult) (Event, error) {
+	if err := validateAdmissionEvent(admission, result); err != nil {
+		return nil, err
+	}
+	if result.Decision != AdmissionRejectedClosed && result.Decision != AdmissionRejectedDuplicate &&
+		result.Decision != AdmissionRejectedAlreadyCommitted && result.Decision != AdmissionCancellationProcessedWaiting &&
+		result.Decision != AdmissionCancellationProcessedGranted {
+		return nil, fmt.Errorf("invalid admission-cancellation decision %d", result.Decision)
+	}
+	return acceptedEvent{variant: AdmissionCancellationProcessed{AdmissionRequestProcessed: AdmissionRequestProcessed{
+		admission: admission, result: cloneAdmissionResult(result),
+	}}}, nil
 }
 
-func (GrantReturnAcknowledged) processRuntimeEvent() {}
+// GrantReturnProcessed reports an accepted grant-return acknowledgement.
+type GrantReturnProcessed struct{ AdmissionRequestProcessed }
 
-// ConfirmationBarrierBound reports an accepted confirmation-barrier binding.
-type ConfirmationBarrierBound struct {
+// NewGrantReturnProcessed validates and creates a grant-return event.
+func NewGrantReturnProcessed(admission Admission, result AdmissionResult) (Event, error) {
+	if err := validateAdmissionEvent(admission, result); err != nil {
+		return nil, err
+	}
+	if result.Decision != AdmissionReturnedAfterClosure && result.Decision != AdmissionReturnedAfterGateClosure {
+		return nil, fmt.Errorf("invalid grant-return decision %d", result.Decision)
+	}
+	return acceptedEvent{variant: GrantReturnProcessed{AdmissionRequestProcessed: AdmissionRequestProcessed{
+		admission: admission, result: cloneAdmissionResult(result),
+	}}}, nil
+}
+
+// ConfirmationBarrierProcessed reports an accepted confirmation-barrier binding.
+type ConfirmationBarrierProcessed struct {
 	barrier Admission
 	result  BarrierResult
 }
 
-// NewConfirmationBarrierBound validates and creates a barrier-binding event.
-func NewConfirmationBarrierBound(barrier Admission, result BarrierResult) (ConfirmationBarrierBound, error) {
+// NewConfirmationBarrierProcessed validates and creates a barrier-binding event.
+func NewConfirmationBarrierProcessed(barrier Admission, result BarrierResult) (Event, error) {
 	if !barrier.valid() || !result.Decision.valid() || !admissionsValid(result.Deliveries) {
-		return ConfirmationBarrierBound{}, fmt.Errorf("invalid confirmation barrier event")
+		return nil, fmt.Errorf("invalid confirmation barrier event")
 	}
 	result.Deliveries = slices.Clone(result.Deliveries)
-	return ConfirmationBarrierBound{barrier: barrier, result: result}, nil
+	return acceptedEvent{variant: ConfirmationBarrierProcessed{barrier: barrier, result: result}}, nil
 }
 
-func (ConfirmationBarrierBound) processRuntimeEvent() {}
-
 // Barrier returns the bound barrier without its delivery capability.
-func (event ConfirmationBarrierBound) Barrier() Admission { return event.barrier }
+func (event ConfirmationBarrierProcessed) Barrier() Admission { return event.barrier }
 
 // Result returns an independent copy of the barrier result.
-func (event ConfirmationBarrierBound) Result() BarrierResult {
+func (event ConfirmationBarrierProcessed) Result() BarrierResult {
 	event.result.Deliveries = slices.Clone(event.result.Deliveries)
 	return event.result
 }
 
-// ConfirmationQueueFinished reports accepted confirmation-queue completion.
-type ConfirmationQueueFinished struct {
+// ConfirmationQueueProcessed reports accepted confirmation-queue completion.
+type ConfirmationQueueProcessed struct {
 	campaign Campaign
 	result   QueueResult
 }
 
-// NewConfirmationQueueFinished validates and creates a queue-completion event.
-func NewConfirmationQueueFinished(campaign Campaign, result QueueResult) (ConfirmationQueueFinished, error) {
+// NewConfirmationQueueProcessed validates and creates a queue-completion event.
+func NewConfirmationQueueProcessed(campaign Campaign, result QueueResult) (Event, error) {
 	if !result.Decision.valid() || !admissionsValid(result.Deliveries) {
-		return ConfirmationQueueFinished{}, fmt.Errorf("invalid confirmation queue event")
+		return nil, fmt.Errorf("invalid confirmation queue event")
 	}
 	result.Deliveries = slices.Clone(result.Deliveries)
-	return ConfirmationQueueFinished{campaign: campaign, result: result}, nil
+	return acceptedEvent{variant: ConfirmationQueueProcessed{campaign: campaign, result: result}}, nil
 }
 
-func (ConfirmationQueueFinished) processRuntimeEvent() {}
-
 // Campaign returns the campaign whose confirmation queue completed.
-func (event ConfirmationQueueFinished) Campaign() Campaign { return event.campaign }
+func (event ConfirmationQueueProcessed) Campaign() Campaign { return event.campaign }
 
 // Result returns an independent copy of the queue result.
-func (event ConfirmationQueueFinished) Result() QueueResult {
+func (event ConfirmationQueueProcessed) Result() QueueResult {
 	event.result.Deliveries = slices.Clone(event.result.Deliveries)
 	return event.result
 }
 
-// AttemptStartCommitted reports an accepted attempt start commitment.
-type AttemptStartCommitted struct {
+// StartCommitmentProcessed reports an accepted attempt start commitment.
+type StartCommitmentProcessed struct {
 	grant  Admission
 	result StartResult
 }
 
-// NewAttemptStartCommitted validates and creates a start-commitment event.
-func NewAttemptStartCommitted(grant Admission, result StartResult) (AttemptStartCommitted, error) {
+// NewStartCommitmentProcessed validates and creates a start-commitment event.
+func NewStartCommitmentProcessed(grant Admission, result StartResult) (Event, error) {
 	if !grant.valid() || !result.Decision.valid() {
-		return AttemptStartCommitted{}, fmt.Errorf("invalid start commitment event")
+		return nil, fmt.Errorf("invalid start commitment event")
 	}
-	return AttemptStartCommitted{grant: grant, result: result}, nil
+	return acceptedEvent{variant: StartCommitmentProcessed{grant: grant, result: result}}, nil
 }
 
-func (AttemptStartCommitted) processRuntimeEvent() {}
-
 // Grant returns the committed grant without its delivery capability.
-func (event AttemptStartCommitted) Grant() Admission { return event.grant }
+func (event StartCommitmentProcessed) Grant() Admission { return event.grant }
 
 // Result returns the start-commitment result.
-func (event AttemptStartCommitted) Result() StartResult { return event.result }
+func (event StartCommitmentProcessed) Result() StartResult { return event.result }
 
-// AttemptObserved reports accepted evidence for one attempt generation.
-type AttemptObserved struct {
+// AttemptObservationProcessed reports accepted evidence for one attempt generation.
+type AttemptObservationProcessed struct {
 	generation  uint64
 	observation Observation
 	result      ObservationResult
 }
 
-// NewAttemptObserved validates and creates an attempt-observation event.
-func NewAttemptObserved(generation uint64, observation Observation, result ObservationResult) (AttemptObserved, error) {
+// NewAttemptObservationProcessed validates and creates an attempt-observation event.
+func NewAttemptObservationProcessed(generation uint64, observation Observation, result ObservationResult) (Event, error) {
 	if !observation.valid() || !admissionsValid(result.Deliveries) ||
 		!admissionsValid(result.CancelledWaiting) || !admissionsValid(result.CompensatedGrants) {
-		return AttemptObserved{}, fmt.Errorf("invalid attempt observation event")
+		return nil, fmt.Errorf("invalid attempt observation event")
 	}
-	return AttemptObserved{generation: generation, observation: observation, result: cloneObservationResult(result)}, nil
+	return acceptedEvent{variant: AttemptObservationProcessed{
+		generation: generation, observation: observation, result: cloneObservationResult(result),
+	}}, nil
 }
 
-func (AttemptObserved) processRuntimeEvent() {}
-
 // Generation returns the observed attempt generation.
-func (event AttemptObserved) Generation() uint64 { return event.generation }
+func (event AttemptObservationProcessed) Generation() uint64 { return event.generation }
 
 // Observation returns the accepted attempt evidence.
-func (event AttemptObserved) Observation() Observation { return event.observation }
+func (event AttemptObservationProcessed) Observation() Observation { return event.observation }
 
 // Result returns an independent copy of the observation result.
-func (event AttemptObserved) Result() ObservationResult { return cloneObservationResult(event.result) }
+func (event AttemptObservationProcessed) Result() ObservationResult {
+	return cloneObservationResult(event.result)
+}
 
-// EmergencySettled reports accepted runtime-wide emergency settlement.
-type EmergencySettled struct {
+// EmergencySettlementProcessed reports accepted runtime-wide emergency settlement.
+type EmergencySettlementProcessed struct {
 	resolutions []Resolution
 	result      EmergencyResult
 }
 
-// NewEmergencySettled validates and creates an emergency-settlement event.
-func NewEmergencySettled(resolutions []Resolution, result EmergencyResult) (EmergencySettled, error) {
+// NewEmergencySettlementProcessed validates and creates an emergency-settlement event.
+func NewEmergencySettlementProcessed(resolutions []Resolution, result EmergencyResult) (Event, error) {
 	for _, resolution := range resolutions {
 		if !resolution.Disposition.valid() {
-			return EmergencySettled{}, fmt.Errorf("invalid emergency disposition %d", resolution.Disposition)
+			return nil, fmt.Errorf("invalid emergency disposition %d", resolution.Disposition)
 		}
 	}
 	for _, residual := range result.Residual {
 		if !residual.Stage.valid() {
-			return EmergencySettled{}, fmt.Errorf("invalid residual stage %d", residual.Stage)
+			return nil, fmt.Errorf("invalid residual stage %d", residual.Stage)
 		}
 	}
-	return EmergencySettled{resolutions: slices.Clone(resolutions), result: cloneEmergencyResult(result)}, nil
+	return acceptedEvent{variant: EmergencySettlementProcessed{
+		resolutions: slices.Clone(resolutions), result: cloneEmergencyResult(result),
+	}}, nil
 }
 
-func (EmergencySettled) processRuntimeEvent() {}
-
 // Resolutions returns an independent copy of the submitted resolutions.
-func (event EmergencySettled) Resolutions() []Resolution { return slices.Clone(event.resolutions) }
+func (event EmergencySettlementProcessed) Resolutions() []Resolution {
+	return slices.Clone(event.resolutions)
+}
 
 // Result returns an independent copy of the emergency result.
-func (event EmergencySettled) Result() EmergencyResult { return cloneEmergencyResult(event.result) }
+func (event EmergencySettlementProcessed) Result() EmergencyResult {
+	return cloneEmergencyResult(event.result)
+}
 
-// TerminalCommitted reports accepted campaign terminal commitment.
-type TerminalCommitted struct {
+// TerminalCommitmentProcessed reports accepted campaign terminal commitment.
+type TerminalCommitmentProcessed struct {
 	campaign Campaign
 	result   TerminalResult
 }
 
-// NewTerminalCommitted validates and creates a terminal-commitment event.
-func NewTerminalCommitted(campaign Campaign, result TerminalResult) (TerminalCommitted, error) {
+// NewTerminalCommitmentProcessed validates and creates a terminal-commitment event.
+func NewTerminalCommitmentProcessed(campaign Campaign, result TerminalResult) (Event, error) {
 	if !result.Decision.valid() {
-		return TerminalCommitted{}, fmt.Errorf("invalid terminal decision %d", result.Decision)
+		return nil, fmt.Errorf("invalid terminal decision %d", result.Decision)
 	}
-	return TerminalCommitted{campaign: campaign, result: result}, nil
+	return acceptedEvent{variant: TerminalCommitmentProcessed{campaign: campaign, result: result}}, nil
 }
 
-func (TerminalCommitted) processRuntimeEvent() {}
-
 // Campaign returns the campaign requesting terminal commitment.
-func (event TerminalCommitted) Campaign() Campaign { return event.campaign }
+func (event TerminalCommitmentProcessed) Campaign() Campaign { return event.campaign }
 
 // Result returns the terminal-commitment result.
-func (event TerminalCommitted) Result() TerminalResult { return event.result }
+func (event TerminalCommitmentProcessed) Result() TerminalResult { return event.result }
 
-// ForcedAbortAuthorized reports accepted forced-abort authorization.
-type ForcedAbortAuthorized struct {
+// ForcedAbortProcessed reports accepted forced-abort authorization.
+type ForcedAbortProcessed struct {
 	campaign Campaign
 	epoch    uint64
 	result   TerminalResult
 }
 
-// NewForcedAbortAuthorized validates and creates a forced-abort event.
-func NewForcedAbortAuthorized(campaign Campaign, epoch uint64, result TerminalResult) (ForcedAbortAuthorized, error) {
+// NewForcedAbortProcessed validates and creates a forced-abort event.
+func NewForcedAbortProcessed(campaign Campaign, epoch uint64, result TerminalResult) (Event, error) {
 	if !result.Decision.valid() {
-		return ForcedAbortAuthorized{}, fmt.Errorf("invalid terminal decision %d", result.Decision)
+		return nil, fmt.Errorf("invalid terminal decision %d", result.Decision)
 	}
-	return ForcedAbortAuthorized{campaign: campaign, epoch: epoch, result: result}, nil
+	return acceptedEvent{variant: ForcedAbortProcessed{campaign: campaign, epoch: epoch, result: result}}, nil
 }
 
-func (ForcedAbortAuthorized) processRuntimeEvent() {}
-
 // Campaign returns the campaign requesting forced abort.
-func (event ForcedAbortAuthorized) Campaign() Campaign { return event.campaign }
+func (event ForcedAbortProcessed) Campaign() Campaign { return event.campaign }
 
 // Epoch returns the fatal epoch authorizing forced abort.
-func (event ForcedAbortAuthorized) Epoch() uint64 { return event.epoch }
+func (event ForcedAbortProcessed) Epoch() uint64 { return event.epoch }
 
 // Result returns the terminal result.
-func (event ForcedAbortAuthorized) Result() TerminalResult { return event.result }
+func (event ForcedAbortProcessed) Result() TerminalResult { return event.result }
 
-// RuntimeClosed reports accepted process-runtime closure.
-type RuntimeClosed struct {
+// RuntimeClosureProcessed reports accepted process-runtime closure.
+type RuntimeClosureProcessed struct {
 	cause  string
 	result ClosureResult
 }
 
-// NewRuntimeClosed validates and creates a runtime-closure event.
-func NewRuntimeClosed(cause string, result ClosureResult) (RuntimeClosed, error) {
+// NewRuntimeClosureProcessed validates and creates a runtime-closure event.
+func NewRuntimeClosureProcessed(cause string, result ClosureResult) (Event, error) {
 	for _, residual := range result.Residual {
 		if !residual.Stage.valid() {
-			return RuntimeClosed{}, fmt.Errorf("invalid residual stage %d", residual.Stage)
+			return nil, fmt.Errorf("invalid residual stage %d", residual.Stage)
 		}
 	}
 	if !admissionsValid(result.CancelledWaiting) || !admissionsValid(result.CompensatedGrants) {
-		return RuntimeClosed{}, fmt.Errorf("invalid runtime closure event")
+		return nil, fmt.Errorf("invalid runtime closure event")
 	}
-	return RuntimeClosed{cause: cause, result: cloneClosureResult(result)}, nil
+	return acceptedEvent{variant: RuntimeClosureProcessed{cause: cause, result: cloneClosureResult(result)}}, nil
 }
 
-func (RuntimeClosed) processRuntimeEvent() {}
-
 // Cause returns the fatal cause that closed the runtime.
-func (event RuntimeClosed) Cause() string { return event.cause }
+func (event RuntimeClosureProcessed) Cause() string { return event.cause }
 
 // Result returns an independent copy of the closure result.
-func (event RuntimeClosed) Result() ClosureResult { return cloneClosureResult(event.result) }
+func (event RuntimeClosureProcessed) Result() ClosureResult { return cloneClosureResult(event.result) }
 
-// Observer reserves an accepted owner cut before receiving its event.
-type Observer interface{ Begin() func(Event) error }
+// Observer receives accepted process-runtime events.
+type Observer interface{ Observe(Event) error }
 
-// ObserverFunc adapts a reservation function to Observer.
-type ObserverFunc func() func(Event) error
+// ObserverFunc adapts a function to Observer.
+type ObserverFunc func(Event) error
 
-// Begin reserves an accepted owner cut and returns its event recipient.
-func (observe ObserverFunc) Begin() func(Event) error { return observe() }
+// Observe receives one accepted process-runtime event.
+func (observe ObserverFunc) Observe(event Event) error { return observe(event) }
 
 func validateAdmissionEvent(admission Admission, result AdmissionResult) error {
-	if !admission.valid() || !result.Decision.valid() || !admissionsValid(result.Deliveries) {
+	if !admission.valid() || !result.Decision.valid() || result.Request != admission ||
+		!admissionsValid(result.Deliveries) {
 		return fmt.Errorf("invalid admission event")
 	}
 	return nil
