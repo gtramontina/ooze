@@ -1,9 +1,6 @@
 package processruntime
 
-import (
-	"slices"
-	"time"
-)
+import "time"
 
 // Lineage identifies one campaign invocation across recursive registration attempts.
 type Lineage uint64
@@ -447,132 +444,6 @@ func (result QueueResult) Decision() QueueDecision { return QueueDecision(result
 func (result QueueResult) Deliveries() []Admission { return admissionValues(result.value.deliveries) }
 
 // Projection is an opaque immutable process-runtime state projection.
-type Projection struct {
-	capacity    int
-	nextID      uint64
-	mode        admissionMode
-	lifecycle   runtimeLifecycle
-	fatalCauses []runtimeFatalCause
-	fatalEpoch  fatalEpochID
-	fatalOwner  campaignToken
-	campaigns   []registeredCampaign
-	admissions  []imageAdmission
-}
-
-type imageAdmission struct {
-	authority   imageAuthority
-	stage       admissionStage
-	generation  attemptGeneration
-	overlapped  bool
-	disposition admissionDisposition
-}
-
-type imageAuthority struct {
-	campaign campaignToken
-	attempt  attemptIdentity
-	class    admissionClass
-	profile  Profile
-	deadline time.Duration
-}
-
-// Capacity returns the admission capacity.
-func (image Projection) Capacity() int { return image.capacity }
-
-// Open reports whether the runtime accepts new work.
-func (image Projection) Open() bool { return image.lifecycle == runtimeOpen }
-
-// Closing reports whether the fatal epoch still requires settlement.
-func (image Projection) Closing() bool { return image.lifecycle == runtimeFatalClosing }
-
-// Drained reports proven empty terminal custody.
-func (image Projection) Drained() bool { return image.lifecycle == runtimeClosedDrained }
-
-// Unconfirmed reports terminal residual custody.
-func (image Projection) Unconfirmed() bool { return image.lifecycle == runtimeClosedUnconfirmed }
-
-// SingleAdmission reports irreversible single-admission fallback.
-func (image Projection) SingleAdmission() bool { return image.mode == singleAdmission }
-
-// FatalEpoch returns the current fatal epoch.
-func (image Projection) FatalEpoch() uint64 { return uint64(image.fatalEpoch) }
-
-// FatalCauseCount returns the retained fatal-cause count.
-func (image Projection) FatalCauseCount() int { return len(image.fatalCauses) }
-
-// CampaignCount returns the registered campaign count.
-func (image Projection) CampaignCount() int { return len(image.campaigns) }
-
-// AdmissionCount returns the retained admission count.
-func (image Projection) AdmissionCount() int { return len(image.admissions) }
-
-// Admission returns the immutable fact for one generation.
-func (image Projection) Admission(generation Generation) (Admission, bool) {
-	index := image.admissionIndex(attemptGeneration(generation))
-	if index < 0 {
-		return Admission{}, false
-	}
-	authority := image.admissions[index].authority
-	return Admission{
-		Campaign: Campaign{token: authority.campaign}, Attempt: string(authority.attempt),
-		Class: AdmissionClass(authority.class), Profile: authority.profile, Deadline: authority.deadline,
-	}, true
-}
-
-// Owned reports runtime ownership for one generation.
-func (image Projection) Owned(generation Generation) bool {
-	index := image.admissionIndex(attemptGeneration(generation))
-	return index >= 0 && image.admissions[index].stage == admissionOwned
-}
-
-// Prospective reports committed start custody before owned publication.
-func (image Projection) Prospective(generation Generation) bool {
-	index := image.admissionIndex(attemptGeneration(generation))
-	return index >= 0 && image.admissions[index].stage == admissionProspective
-}
-
-// CustodyTransferred reports local residual-custody transfer for one generation.
-func (image Projection) CustodyTransferred(generation Generation) bool {
-	index := image.admissionIndex(attemptGeneration(generation))
-	return index >= 0 && image.admissions[index].disposition == dispositionCustodyTransferred
-}
-
-// HasOverlappedPair reports whether at least two retained admissions overlapped.
-func (image Projection) HasOverlappedPair() bool {
-	count := 0
-	for _, admission := range image.admissions {
-		if admission.overlapped {
-			count++
-		}
-	}
-	return count >= 2
-}
-
-// Residual returns unresolved execution-domain custody in runtime order.
-func (image Projection) Residual() []Residual {
-	result := make([]Residual, 0, len(image.admissions))
-	for _, admission := range image.admissions {
-		if admission.stage != admissionProspective && admission.stage != admissionOwned {
-			continue
-		}
-		result = append(result, Residual{
-			generation: Generation(admission.generation), attempt: string(admission.authority.attempt),
-			prospective: admission.stage == admissionProspective,
-			transferred: admission.disposition == dispositionCustodyTransferred ||
-				admission.disposition == dispositionCustodySettled,
-		})
-	}
-	return result
-}
-
-func (image Projection) admissionIndex(generation attemptGeneration) int {
-	for index, admission := range image.admissions {
-		if generation != 0 && admission.generation == generation {
-			return index
-		}
-	}
-	return -1
-}
-
 // Resolution records exact emergency custody for one generation.
 type Resolution struct {
 	generation  Generation
@@ -831,23 +702,4 @@ func residualValues(values []residualCustody) []Residual {
 		}
 	}
 	return result
-}
-
-func projectState(state processRuntime) Projection {
-	image := Projection{
-		capacity: state.capacity, nextID: state.nextID, mode: state.mode, lifecycle: state.lifecycle,
-		fatalCauses: slices.Clone(state.fatalCauses), fatalEpoch: state.fatalEpoch, fatalOwner: state.fatalOwner,
-		campaigns: slices.Clone(state.campaigns), admissions: make([]imageAdmission, len(state.admissions)),
-	}
-	for index, admission := range state.admissions {
-		image.admissions[index] = imageAdmission{
-			authority: imageAuthority{
-				campaign: admission.grant.campaign, attempt: admission.grant.attempt,
-				class: admission.grant.class, profile: admission.grant.profile, deadline: admission.grant.deadline,
-			},
-			stage:      admission.stage,
-			generation: admission.generation, overlapped: admission.overlapped, disposition: admission.disposition,
-		}
-	}
-	return image
 }
