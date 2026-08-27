@@ -49,12 +49,18 @@ type Cut struct {
 // Operation returns the transition kind.
 func (cut Cut) Operation() Operation { return cut.operation }
 
-// SupportsViolationReplay reports whether this input belongs to the malformed-fact suite.
-func (cut Cut) SupportsViolationReplay() bool {
-	return cut.operation == RequestAdmissionOperation || cut.operation == ReturnGrantOperation ||
-		cut.operation == ObserveAttemptOperation || cut.operation == SettleEmergencyOperation ||
-		cut.operation == CloseOperation
+// Malformed returns a validated malformed-fact replay input.
+func (cut Cut) Malformed() (MalformedCut, bool) {
+	if cut.operation != RequestAdmissionOperation && cut.operation != ReturnGrantOperation &&
+		cut.operation != ObserveAttemptOperation && cut.operation != SettleEmergencyOperation &&
+		cut.operation != CloseOperation {
+		return MalformedCut{}, false
+	}
+	return MalformedCut{cut: cut}, true
 }
+
+// MalformedCut is a runtime-validated malformed-fact replay input.
+type MalformedCut struct{ cut Cut }
 
 // RegisterCampaignCut creates a campaign-registration input.
 func RegisterCampaignCut(lineage Lineage) Cut {
@@ -182,13 +188,18 @@ func (recorded RecordedCut) Observation() (Generation, Observation, bool) {
 	return recorded.cut.generation, recorded.cut.observation, true
 }
 
-// WithResultFrom returns this input paired with another cut's accepted result.
-func (recorded RecordedCut) WithResultFrom(other RecordedCut) (RecordedCut, bool) {
+// ExpectResultFrom returns a corrupted replay expectation without fabricating an accepted cut.
+func (recorded RecordedCut) ExpectResultFrom(other RecordedCut) (CorruptedCut, bool) {
 	if recorded.Operation() == 0 || recorded.Operation() != other.Operation() {
-		return RecordedCut{}, false
+		return CorruptedCut{}, false
 	}
-	recorded.result = other.result
-	return recorded, true
+	return CorruptedCut{cut: recorded.cut, result: other.result}, true
+}
+
+// CorruptedCut is an intentionally invalid replay expectation.
+type CorruptedCut struct {
+	cut    Cut
+	result recordedResult
 }
 
 // Complexity reports the number of repeated values retained by this cut.
@@ -308,6 +319,18 @@ func (replay Replay) Apply(cut Cut) (Replay, ReplayResult) {
 func (replay Replay) ApplyRecorded(recorded RecordedCut) (Replay, bool) {
 	next, result := replay.Apply(recorded.cut)
 	return next, reflect.DeepEqual(freezeReplayResult(recorded.cut.operation, result), recorded.result)
+}
+
+// ApplyCorrupted replays an intentionally invalid expectation.
+func (replay Replay) ApplyCorrupted(corrupted CorruptedCut) (Replay, bool) {
+	next, result := replay.Apply(corrupted.cut)
+	return next, reflect.DeepEqual(freezeReplayResult(corrupted.cut.operation, result), corrupted.result)
+}
+
+// ApplyMalformed reduces one validated malformed-fact input.
+func (replay Replay) ApplyMalformed(malformed MalformedCut) Replay {
+	next, _ := replay.Apply(malformed.cut)
+	return next
 }
 
 // Accepts reports whether the production reducer accepts a proposed cut.

@@ -100,8 +100,9 @@ type simulationRecord struct {
 	campaignState   simulationCampaignState
 	campaignEffects []campaignEffect
 
-	runtimeCut   processruntime.RecordedCut
-	runtimeState simulationRuntimeState
+	runtimeCut        processruntime.RecordedCut
+	runtimeCorruption *processruntime.CorruptedCut
+	runtimeState      simulationRuntimeState
 
 	supervisorEvent   simulationSupervisorEvent
 	supervisorState   simulationSupervisorState
@@ -285,7 +286,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				_ = registrationEffect
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationRegistrationDivergence,
 						"registration diverged at record %d", index)
@@ -307,7 +308,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationAdmissionDivergence,
 						"admission decision diverged at record %d", index)
@@ -343,7 +344,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationAdmissionDivergence,
 						"admission cancellation diverged at record %d", index)
@@ -368,7 +369,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationAdmissionDivergence,
 						"grant return diverged at record %d", index)
@@ -396,7 +397,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationBarrierDivergence,
 						"confirmation barrier diverged at record %d", index)
@@ -412,7 +413,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"confirmation queue input diverged at record %d", index)
 				}
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationConfirmationQueueDivergence,
 						"confirmation queue completion diverged at record %d", index)
@@ -449,7 +450,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationStartDivergence,
 						"start commitment diverged at record %d", index)
@@ -466,7 +467,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"attempt observation input is unavailable at record %d", index)
 				}
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationObservationDivergence,
 						"attempt observation diverged at record %d", index)
@@ -555,7 +556,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"terminal input diverged at record %d", index)
 				}
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationTerminalDivergence,
 						"terminal commitment diverged at record %d", index)
@@ -565,7 +566,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
 			case processruntime.SettleEmergencyOperation:
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationEmergencyDivergence,
 						"emergency settlement diverged at record %d", index)
@@ -589,7 +590,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationTerminalDivergence,
 						"forced abort diverged at record %d", index)
@@ -599,7 +600,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
 			case processruntime.CloseOperation:
 				var matches bool
-				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				runtime, matches = simulationReplayRuntimeCut(runtime, record)
 				if !matches {
 					return simulationReplayDivergenceFailure(trace, simulationRuntimeClosureDivergence,
 						"runtime closure diverged at record %d", index)
@@ -934,8 +935,7 @@ func simulationApplyRuntimeCut(state processruntime.Replay, record simulationRec
 	if record.runtimeCut.Operation() == 0 {
 		return processruntime.Replay{}, fmt.Errorf("runtime commutation operation is invalid")
 	}
-	var matches bool
-	state, matches = state.ApplyRecorded(record.runtimeCut)
+	state, matches := simulationReplayRuntimeCut(state, record)
 	if !matches {
 		return processruntime.Replay{}, fmt.Errorf("runtime owner cut diverged")
 	}
@@ -944,6 +944,13 @@ func simulationApplyRuntimeCut(state processruntime.Replay, record simulationRec
 	}
 
 	return state, nil
+}
+
+func simulationReplayRuntimeCut(state processruntime.Replay, record simulationRecord) (processruntime.Replay, bool) {
+	if record.runtimeCorruption != nil {
+		return state.ApplyCorrupted(*record.runtimeCorruption)
+	}
+	return state.ApplyRecorded(record.runtimeCut)
 }
 
 func simulationCausalCampaignPayload(recorded, derived campaignEventPayload) campaignEventPayload {
@@ -969,7 +976,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 		}
 	case simulationRuntimeAuthority:
-		if !malformed.runtimeCut.SupportsViolationReplay() {
+		if _, ok := malformed.runtimeCut.Malformed(); !ok {
 			return ViolationResult{failure: fmt.Errorf("malformed runtime operation is not implemented")}
 		}
 	case simulationSupervisorAuthority:
@@ -1014,9 +1021,9 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return simulationEmergencySweep(runtime, closure)
 		})
 	case simulationRuntimeAuthority:
+		violation, _ := malformed.runtimeCut.Malformed()
 		simulationAdvanceRuntimeGuarded(&runtime, "runtime violation replay", func(state processruntime.Replay) processruntime.Replay {
-			next, _ := state.Apply(malformed.runtimeCut)
-			return next
+			return state.ApplyMalformed(violation)
 		})
 	case simulationSupervisorAuthority:
 		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor.production())
@@ -1516,8 +1523,8 @@ func simulationRetainRecordedFailure(
 		case simulationRuntimeStateDivergence:
 			candidate.runtimeState = failing.runtimeState
 		default:
-			if corrupted, ok := candidate.runtimeCut.WithResultFrom(failing.runtimeCut); ok {
-				candidate.runtimeCut = corrupted
+			if corrupted, ok := candidate.runtimeCut.ExpectResultFrom(failing.runtimeCut); ok {
+				candidate.runtimeCorruption = &corrupted
 			}
 		}
 	case simulationSupervisorAuthority:
