@@ -1630,14 +1630,15 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		assert.Equal(t, uint64(index+1), record.sequence, "production sequence at %d=%d", index, record.sequence)
 	}
 
-	wantRuntime := newCampaignRuntimeFixture(1)
-	wantRuntime, wantRegistration := wantRuntime.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	wantRuntime := processruntime.NewReplay(1)
+	wantRuntime, registrationResult := wantRuntime.Apply(processruntime.RegisterCampaignCut(definition.lineage))
+	wantRegistration := campaignRegistrationEvidence(registrationResult.Registration())
 	wantCampaign, wantEffects := advanceCampaign(campaign, campaignEvent{
 		id: 1, payload: campaignRegisteredEvent{registration: wantRegistration},
 	})
 	wantSupervisor, wantActions := reduceSupervisor(supervisorState{}, event)
 	wantProjection := simulationWorld{
-		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime.Replay),
+		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime),
 		supervisor: simulationProjectSupervisorState(wantSupervisor),
 	}
 	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
@@ -2318,9 +2319,9 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 
 func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T) {
 	runtime, generation := simulationOwnedRuntime(t)
-	runtime, _ = runtime.observeAttempt(generation, drainUnconfirmed{})
+	runtime, _ = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.DrainUnconfirmed()))
 	engine := simulationEngine{
-		runtime: runtime.Replay,
+		runtime: runtime,
 		pending: []simulationEngineMove{{
 			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
 			action: supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9},
@@ -2333,23 +2334,27 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 	}
 }
 
-func simulationOwnedRuntime(t *testing.T) (campaignRuntimeFixture, attemptGeneration) {
+func simulationOwnedRuntime(t *testing.T) (processruntime.Replay, attemptGeneration) {
 	t.Helper()
-	runtime := newCampaignRuntimeFixture(1)
-	runtime, registration := runtime.registerCampaign(campaignProvenance{lineage: 91})
-	runtime, admitted := runtime.requestAdmission(admissionRequest{
-		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
-	})
+	runtime := processruntime.NewReplay(1)
+	runtime, registered := runtime.Apply(processruntime.RegisterCampaignCut(91))
+	runtime, admission := runtime.Apply(processruntime.RequestAdmissionCut(processruntime.Admission{
+		Campaign: registered.Registration().Campaign(), Attempt: "attempt-a", Class: processruntime.SharedAdmission,
+	}))
+	admitted := runtimeAdmissionResult(admission.Admission())
 	require.Len(t, admitted.deliveries, 1)
-	runtime, started := runtime.startCommitted(admitted.deliveries[0])
-	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	runtime, start := runtime.Apply(processruntime.CommitStartCut(
+		processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])),
+	))
+	started := runtimeStartResult(start.Start())
+	runtime, _ = runtime.Apply(processruntime.ObserveAttemptCut(started.generation, processruntime.Owned()))
 	return runtime, started.generation
 }
 
 func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 	runtime, generation := simulationOwnedRuntime(t)
 	engine := simulationEngine{
-		runtime: runtime.Replay,
+		runtime: runtime,
 		pending: []simulationEngineMove{
 			{
 				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
