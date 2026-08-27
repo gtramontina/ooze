@@ -199,3 +199,16 @@ func TestReplayLegalityTracksReturnedGrantAndFatalCustodyPolicy(t *testing.T) {
 		})))
 	})
 }
+
+func TestReplayReturnsAnOpaqueRecordedCut(t *testing.T) {
+	replay := processruntime.NewReplay(1)
+	cut := processruntime.RegisterCampaignCut(71)
+	next, result := replay.Apply(cut)
+	recorded := result.RecordedCut()
+
+	assert.True(t, recorded.Matches(cut))
+	assert.Equal(t, processruntime.RegisterCampaignOperation, recorded.Operation())
+	replayed, matches := replay.ApplyRecorded(recorded)
+	assert.True(t, matches)
+	assert.Equal(t, next.Projection(), replayed.Projection())
+}

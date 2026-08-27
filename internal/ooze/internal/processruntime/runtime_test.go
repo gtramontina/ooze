@@ -40,8 +40,8 @@ func TestRuntimeOwnsAnAttemptLifecycle(t *testing.T) {
 
 func TestRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	var mutex sync.Mutex
-	var events []processruntime.Event
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
+	var events []processruntime.RecordedCut
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
 		mutex.Lock()
 		events = append(events, event)
 		mutex.Unlock()
@@ -61,15 +61,15 @@ func TestRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	runtime.CommitTerminal(registration.Campaign())
 
 	require.Len(t, events, 5)
-	assert.IsType(t, processruntime.CampaignRegistrationProcessed{}, events[0])
-	assert.IsType(t, processruntime.AdmissionRequestProcessed{}, events[1])
-	assert.IsType(t, processruntime.StartCommitmentProcessed{}, events[2])
-	assert.IsType(t, processruntime.AttemptObservationProcessed{}, events[3])
-	assert.IsType(t, processruntime.TerminalCommitmentProcessed{}, events[4])
+	assert.Equal(t, processruntime.RegisterCampaignOperation, events[0].Operation())
+	assert.Equal(t, processruntime.RequestAdmissionOperation, events[1].Operation())
+	assert.Equal(t, processruntime.CommitStartOperation, events[2].Operation())
+	assert.Equal(t, processruntime.ObserveAttemptOperation, events[3].Operation())
+	assert.Equal(t, processruntime.CommitTerminalOperation, events[4].Operation())
 }
 
 func TestRuntimeObserverPanicDoesNotChangeRuntimePolicy(t *testing.T) {
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(processruntime.Event) {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(processruntime.RecordedCut) {
 		panic("observer failed")
 	}))
 	assert.Equal(t, processruntime.CampaignRegistered, runtime.RegisterCampaign(42).Decision())
@@ -79,9 +79,8 @@ func TestRuntimeObserverPanicDoesNotChangeRuntimePolicy(t *testing.T) {
 func TestRuntimeObserverMayReenterRuntime(t *testing.T) {
 	var runtime *processruntime.Runtime
 	reentered := make(chan processruntime.Registration, 1)
-	runtime = processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
-		registered, ok := event.(processruntime.CampaignRegistrationProcessed)
-		if ok && registered.Lineage() == 44 {
+	runtime = processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+		if event.Matches(processruntime.RegisterCampaignCut(44)) {
 			reentered <- runtime.RegisterCampaign(45)
 		}
 	}))
@@ -105,9 +104,9 @@ func TestRuntimeObserverMayReenterRuntime(t *testing.T) {
 func TestRuntimePublishesAcceptedEventBeforeCausalGrant(t *testing.T) {
 	observing := make(chan struct{})
 	release := make(chan struct{})
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
-		observed, ok := event.(processruntime.AttemptObservationProcessed)
-		if ok && observed.Observation().Kind() == processruntime.AttemptSettled {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+		if event.Operation() == processruntime.ObserveAttemptOperation &&
+			event.Result().Receipt().SettlementAcknowledged() {
 			close(observing)
 			<-release
 		}
@@ -150,9 +149,9 @@ func TestRuntimePublishesAcceptedEventBeforeCausalGrant(t *testing.T) {
 
 func TestReplayFoldsProductionEventsIntoCapabilityFreeProjections(t *testing.T) {
 	replay := processruntime.NewReplay(1)
-	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.Event) {
+	runtime := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
 		var matches bool
-		replay, matches = replay.ApplyEvent(event)
+		replay, matches = replay.ApplyRecorded(event)
 		require.True(t, matches)
 	}))
 

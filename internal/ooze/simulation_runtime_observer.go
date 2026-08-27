@@ -17,78 +17,18 @@ func newSimulationRuntimeObserver(recorder *simulationRecorder, capacity int) *s
 	return &simulationRuntimeObserver{recorder: recorder, state: state}
 }
 
-func (observer *simulationRuntimeObserver) Observe(event processruntime.Event) {
+func (observer *simulationRuntimeObserver) Observe(event processruntime.RecordedCut) {
 	leave := observer.recorder.enter()
 	defer leave()
 	reservation := observer.recorder.reserve(simulationRuntimeAuthority)
-	record := simulationRuntimeEventRecord(event)
-	state, matches := observer.state.ApplyEvent(event)
+	record := simulationRecord{runtimeCut: event}
+	state, matches := observer.state.ApplyRecorded(event)
 	if !matches {
 		observer.recorder.recordRuntimeError(fmt.Errorf("process runtime event diverged"))
 		return
 	}
 	observer.state = state
 	observer.recorder.recordRuntime(reservation, record, state)
-
-}
-
-func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
-	record := simulationRecord{}
-	switch event := event.(type) {
-	case processruntime.CampaignRegistrationProcessed:
-		record.runtimeOperation = processruntime.RegisterCampaignOperation
-		record.runtimeProvenance = event.Lineage()
-		record.runtimeRegistration = campaignRegistrationEvidence(event.Registration())
-	case processruntime.AdmissionRequestProcessed:
-		record.runtimeOperation = processruntime.RequestAdmissionOperation
-		record.runtimeAdmission = simulationTraceAdmission(runtimeAdmissionValue(event.Admission()))
-		record.runtimeAdmissionOut = simulationTraceAdmissionResult(runtimeAdmissionResult(event.Result()))
-	case processruntime.AdmissionCancellationProcessed:
-		record.runtimeOperation = processruntime.CancelAdmissionOperation
-		record.runtimeAdmissionToken = simulationTraceAdmission(runtimeAdmissionValue(event.Admission()))
-		record.runtimeAdmissionOut = simulationTraceAdmissionResult(runtimeAdmissionResult(event.Result()))
-	case processruntime.GrantReturnProcessed:
-		record.runtimeOperation = processruntime.ReturnGrantOperation
-		record.runtimeGrant = simulationTraceAdmission(runtimeAdmissionValue(event.Admission()))
-		record.runtimeAdmissionOut = simulationTraceAdmissionResult(runtimeAdmissionResult(event.Result()))
-	case processruntime.ConfirmationBarrierProcessed:
-		record.runtimeOperation = processruntime.BindConfirmationBarrierOperation
-		record.runtimeBarrier = simulationTraceBarrierBinding(runtimeBarrier(event.Barrier()))
-		record.runtimeBarrierOut = simulationTraceBarrierResult(runtimeBarrierResult(event.Result()))
-	case processruntime.ConfirmationQueueProcessed:
-		record.runtimeOperation = processruntime.CompleteConfirmationQueueOperation
-		record.runtimeCampaign = event.Campaign()
-		record.runtimeQueueOut = simulationTraceConfirmationQueueResult(runtimeQueueResult(event.Result()))
-	case processruntime.StartCommitmentProcessed:
-		record.runtimeOperation = processruntime.CommitStartOperation
-		record.runtimeGrant = simulationTraceAdmission(runtimeAdmissionValue(event.Grant()))
-		record.runtimeStart = runtimeStartResult(event.Result())
-	case processruntime.AttemptObservationProcessed:
-		record.runtimeOperation = processruntime.ObserveAttemptOperation
-		record.runtimeGeneration = event.Generation()
-		record.runtimeObservation = simulationTraceObservation(runtimeObservation(event.Observation()))
-		record.runtimeObservationOut = simulationTraceObservationResult(runtimeReceipt(event.Result()))
-	case processruntime.EmergencySettlementProcessed:
-		record.runtimeOperation = processruntime.SettleEmergencyOperation
-		record.runtimeSweep = simulationTraceEmergencySweep(runtimeSweep(event.Resolutions()))
-		record.runtimeEmergencyOut = simulationTraceEmergencySettlement(runtimeEmergencySettlement(event.Result()))
-	case processruntime.TerminalCommitmentProcessed:
-		record.runtimeOperation = processruntime.CommitTerminalOperation
-		record.runtimeCampaign = event.Campaign()
-		record.runtimeTerminal = terminalResult{decision: event.Result().Decision()}
-	case processruntime.ForcedAbortProcessed:
-		record.runtimeOperation = processruntime.AuthorizeForcedAbortOperation
-		record.runtimeCampaign = event.Campaign()
-		record.runtimeFatalEpoch = fatalEpochID(event.Epoch())
-		record.runtimeTerminal = terminalResult{decision: event.Result().Decision()}
-	case processruntime.RuntimeClosureProcessed:
-		record.runtimeOperation = processruntime.CloseOperation
-		record.runtimeFatalCause = runtimeFatalCause(event.Cause())
-		record.runtimeClosure = simulationTraceRuntimeClosure(runtimeClosureValue(event.Result()))
-	default:
-		invariant("record runtime event", "runtime event variant is unknown")
-	}
-	return record
 }
 
 func runtimeAdmissionResult(result processruntime.AdmissionResult) admissionResult {

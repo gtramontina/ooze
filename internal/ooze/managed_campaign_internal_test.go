@@ -454,9 +454,9 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
 	waiting := make(chan struct{}, 1)
-	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.Event) {
-		requested, ok := event.(processruntime.AdmissionRequestProcessed)
-		if ok && requested.Admission().Attempt != "held" {
+	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+		if event.Operation() == processruntime.RequestAdmissionOperation &&
+			event.Result().Admission().Request().Attempt != "held" {
 			waiting <- struct{}{}
 		}
 	}))

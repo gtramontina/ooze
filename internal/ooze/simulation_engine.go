@@ -74,6 +74,7 @@ type simulationEngine struct {
 	launches     map[attemptGeneration]campaignEffect
 	receipts     map[attemptGeneration]observationResult
 	emergency    emergencySettlement
+	runtimeCut   processruntime.RecordedCut
 	attempts     int
 }
 
@@ -246,9 +247,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		engine.registration = registration
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation:  simulationRegisterCampaign,
-			runtimeProvenance: processruntime.Lineage(engine.definition.campaign.lineage),
-			runtimeState:      simulationTraceRuntimeState(engine.runtime), runtimeRegistration: registration,
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, campaignRegisteredEvent{registration: registration})
 	case campaignEffectEstablishSnapshot:
@@ -269,10 +268,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation:    simulationRequestAdmission,
-			runtimeAdmission:    simulationTraceAdmission(request),
-			runtimeState:        simulationTraceRuntimeState(engine.runtime),
-			runtimeAdmissionOut: simulationTraceAdmissionResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		if result.decision != processruntime.AdmissionAccepted {
 			engine.enqueueDelivery(sequence, admissionRejectedEvent{
@@ -292,10 +288,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation:      simulationCancelAdmission,
-			runtimeAdmissionToken: simulationTraceAdmission(request),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeAdmissionOut:   simulationTraceAdmissionResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, admissionCancelledEvent{
 			attempt: move.effect.attempt, request: move.effect.request,
@@ -307,9 +300,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		result := runtimeStartResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationStartCommitted,
-			runtimeGrant:     simulationTraceAdmission(grant),
-			runtimeState:     simulationTraceRuntimeState(engine.runtime), runtimeStart: result,
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, startCommittedEvent{
 			attempt: move.effect.attempt, grant: move.effect.grant, result: campaignStartEvidence(result),
@@ -324,10 +315,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		result := runtimeAdmissionResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation:    simulationAcknowledgeGrantReturn,
-			runtimeGrant:        simulationTraceAdmission(grant),
-			runtimeState:        simulationTraceRuntimeState(engine.runtime),
-			runtimeAdmissionOut: simulationTraceAdmissionResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, grantReturnAcknowledgedEvent{
 			grant: move.effect.grant, result: campaignAdmissionEvidence(result),
@@ -340,10 +328,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		result := runtimeBarrierResult(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation:  simulationBindConfirmationBarrier,
-			runtimeBarrier:    simulationTraceBarrierBinding(binding),
-			runtimeState:      simulationTraceRuntimeState(engine.runtime),
-			runtimeBarrierOut: simulationTraceBarrierResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, confirmationBarrierBoundEvent{
 			attempt: move.effect.attempt, result: campaignBarrierEvidence(result),
@@ -396,12 +381,10 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 	case campaignEffectProposeTerminal:
 		var terminal terminalResult
-		operation := simulationCommitTerminal
 		if move.effect.fatalEpoch == 0 {
 			processed := engine.applyRuntime(processruntime.CommitTerminalCut(engine.registration.token)).Terminal()
 			terminal = terminalResult{decision: processed.Decision()}
 		} else {
-			operation = simulationAuthorizeForcedAbort
 			processed := engine.applyRuntime(processruntime.AuthorizeForcedAbortCut(
 				engine.registration.token, uint64(move.effect.fatalEpoch),
 			)).Terminal()
@@ -409,9 +392,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		}
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: operation, runtimeCampaign: engine.registration.token,
-			runtimeFatalEpoch: move.effect.fatalEpoch,
-			runtimeState:      simulationTraceRuntimeState(engine.runtime), runtimeTerminal: terminal,
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
 	default:
@@ -424,6 +405,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 func (engine *simulationEngine) applyRuntime(cut processruntime.Cut) processruntime.ReplayResult {
 	next, result := engine.runtime.Apply(cut)
 	engine.runtime = next
+	engine.runtimeCut = result.RecordedCut()
 	return result
 }
 
@@ -465,13 +447,9 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorPublishOwned:
 		launch := engine.launches[action.generation]
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.Owned())).Receipt()
-		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
-			runtimeObservation:    simulationTraceObservation(launchOwned{}),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeObservationOut: simulationTraceObservationResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, attemptLaunchEvent{
 			attempt: launch.attempt, generation: launch.generation,
@@ -493,10 +471,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
-			runtimeObservation:    simulationTraceObservation(observation),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeObservationOut: simulationTraceObservationResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueDelivery(sequence, attemptLaunchEvent{
 			attempt: launch.attempt, generation: launch.generation,
@@ -515,10 +490,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
-			runtimeObservation:    simulationTraceObservation(observation),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeObservationOut: simulationTraceObservationResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, result.deliveries)
 		completion := supervisorRuntimeCompletion{
@@ -531,14 +503,10 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 	case supervisorAdoptOwned:
 		observation := attemptObservation(launchOwned{})
-		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
-		result := runtimeReceipt(processed)
+		engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation)))
 		engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
-			runtimeObservation:    simulationTraceObservation(observation),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeObservationOut: simulationTraceObservationResult(result),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 	case supervisorRevokeLaunchRelease:
 		return nil
@@ -606,17 +574,9 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.DrainUnconfirmed())).Receipt()
 		receipt := runtimeReceipt(processed)
 		engine.receipts[action.generation] = receipt
-		closure := runtimeClosure{
-			epoch: receipt.fatalEpoch, cancelledWaiting: receipt.cancelledWaiting,
-			compensatedGrants: receipt.compensatedGrants, residual: runtimeResiduals(engine.runtime.Projection().Residual()),
-		}
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
-			runtimeObservation:    simulationTraceObservation(drainUnconfirmed{}),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeObservationOut: simulationTraceObservationResult(receipt),
-			runtimeClosure:        simulationTraceRuntimeClosure(closure),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorRuntimeCompleted, generation: action.generation,
@@ -646,10 +606,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		engine.emergency = settlement
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation:    simulationSettleEmergency,
-			runtimeSweep:        simulationTraceEmergencySweep(emergencySweep{resolutions: resolutions}),
-			runtimeState:        simulationTraceRuntimeState(engine.runtime),
-			runtimeEmergencyOut: simulationTraceEmergencySettlement(settlement),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorEmergencySettlementCompleted,
@@ -669,10 +626,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		engine.receipts[action.generation] = receipt
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
-			runtimeOperation: simulationObserveAttempt, runtimeGeneration: action.generation,
-			runtimeObservation:    simulationTraceObservation(observation),
-			runtimeState:          simulationTraceRuntimeState(engine.runtime),
-			runtimeObservationOut: simulationTraceObservationResult(receipt),
+			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, receipt.deliveries)
 		completion := supervisorRuntimeCompletion{
@@ -701,10 +655,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			completed := runtimeQueueResult(processed)
 			sequence := engine.append(simulationRecord{
 				authority: simulationRuntimeAuthority, source: move.source,
-				runtimeOperation: simulationCompleteConfirmationQueue,
-				runtimeCampaign:  engine.registration.token,
-				runtimeState:     simulationTraceRuntimeState(engine.runtime),
-				runtimeQueueOut:  simulationTraceConfirmationQueueResult(completed),
+				runtimeState: simulationTraceRuntimeState(engine.runtime),
 			})
 			event.receipt.confirmationQueueDrained = completed.decision == processruntime.ConfirmationQueueCompleted
 			engine.enqueueAdmissionDeliveries(sequence, completed.deliveries)
@@ -892,6 +843,10 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 }
 
 func (engine *simulationEngine) append(record simulationRecord) uint64 {
+	if record.authority == simulationRuntimeAuthority {
+		record.runtimeCut = engine.runtimeCut
+		engine.runtimeCut = processruntime.RecordedCut{}
+	}
 	record.sequence = uint64(len(engine.trace.records) + 1)
 	engine.trace.records = append(engine.trace.records, record)
 

@@ -747,9 +747,9 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 	assert.True(t, selected, "custody-order exploration selected=%v failure=%v", selected, explored.failure)
 	var stages []admissionStage
 	for _, record := range explored.trace.records {
-		if record.authority != simulationRuntimeAuthority ||
-			record.runtimeOperation != simulationObserveAttempt ||
-			record.runtimeObservation.kind != simulationLaunchUnconfirmedObservation {
+		_, observation, observed := record.runtimeCut.Observation()
+		if record.authority != simulationRuntimeAuthority || !observed ||
+			observation.Kind() != processruntime.LaunchUnconfirmedKind {
 			continue
 		}
 		for _, residual := range record.runtimeState.Residual() {
@@ -815,17 +815,17 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 		if record.authority != simulationRuntimeAuthority {
 			continue
 		}
-		if record.runtimeOperation == simulationStartCommitted &&
-			record.runtimeStart.decision == processruntime.StartAccepted {
+		if record.runtimeCut.Operation() == simulationStartCommitted &&
+			record.runtimeCut.Result().Start().Decision() == processruntime.StartAccepted {
 			startAt = index
 		}
 		if closedAt < 0 && !record.runtimeState.Open() {
 			closedAt = index
 		}
-		if record.runtimeOperation == simulationAuthorizeForcedAbort {
+		if record.runtimeCut.Operation() == simulationAuthorizeForcedAbort {
 			forcedAbortAt = index
 		}
-		assert.False(t, closedAt >= 0 && index > closedAt && record.runtimeOperation == simulationCommitTerminal, "normal terminal commitment followed fatal closure at record %d", index)
+		assert.False(t, closedAt >= 0 && index > closedAt && record.runtimeCut.Operation() == simulationCommitTerminal, "normal terminal commitment followed fatal closure at record %d", index)
 	}
 	assert.False(t, startAt < 0, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
 	assert.False(t, closedAt <= startAt, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
@@ -1161,7 +1161,8 @@ func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCusto
 		records:    slices.Clone(explored.trace.records[:1]),
 	}
 	malformed := simulationMalformedFact{
-		authority: simulationRuntimeAuthority, runtimeOperation: simulationRequestAdmission,
+		authority:  simulationRuntimeAuthority,
+		runtimeCut: processruntime.RequestAdmissionCut(processruntime.Admission{}),
 	}
 
 	first := ReplayViolation(prefix, malformed)
@@ -1188,7 +1189,8 @@ func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *tes
 		records:    slices.Clone(explored.trace.records[:2]),
 	}
 	malformed := simulationMalformedFact{
-		authority: simulationRuntimeAuthority, runtimeOperation: simulationAcknowledgeGrantReturn,
+		authority:  simulationRuntimeAuthority,
+		runtimeCut: processruntime.ReturnGrantCut(processruntime.Admission{}),
 	}
 
 	first := ReplayViolation(prefix, malformed)
@@ -1219,23 +1221,24 @@ func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFam
 		{
 			name: "unknown generation observation",
 			malformed: simulationMalformedFact{
-				authority: simulationRuntimeAuthority, runtimeOperation: simulationObserveAttempt,
-				runtimeGeneration:  99,
-				runtimeObservation: simulationRuntimeObservation{kind: simulationLaunchOwnedObservation},
+				authority:  simulationRuntimeAuthority,
+				runtimeCut: processruntime.ObserveAttemptCut(99, processruntime.Owned()),
 			},
 			operation: observeOperation, reason: "generation is not live",
 		},
 		{
 			name: "emergency settlement while open",
 			malformed: simulationMalformedFact{
-				authority: simulationRuntimeAuthority, runtimeOperation: simulationSettleEmergency,
+				authority:  simulationRuntimeAuthority,
+				runtimeCut: processruntime.SettleEmergencyCut(nil),
 			},
 			operation: settleEmergencyOperation, reason: "resolution cardinality is invalid",
 		},
 		{
 			name: "empty fatal cause",
 			malformed: simulationMalformedFact{
-				authority: simulationRuntimeAuthority, runtimeOperation: simulationCloseRuntime,
+				authority:  simulationRuntimeAuthority,
+				runtimeCut: processruntime.CloseCut(""),
 			},
 			operation: "close runtime", reason: "fatal cause is empty",
 		},
@@ -1726,25 +1729,28 @@ func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) 
 
 func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T) {
 	recorder := newSimulationRecorder()
-	const generation = attemptGeneration(2)
+	runtime := processruntime.NewReplay(1)
+	var applied processruntime.ReplayResult
+	runtime, applied = runtime.Apply(processruntime.RegisterCampaignCut(1))
+	campaign := applied.Registration().Campaign()
+	runtime, applied = runtime.Apply(processruntime.RequestAdmissionCut(processruntime.Admission{
+		Campaign: campaign, Attempt: "attempt", Class: processruntime.SharedAdmission,
+	}))
+	grant := applied.Admission().Deliveries()[0]
+	runtime, applied = runtime.Apply(processruntime.CommitStartCut(grant))
+	generation := applied.Start().Generation()
 	publish := supervisorAction{kind: supervisorPublishOwned, token: 11, generation: generation}
 	recorder.recordSupervisorActions([]supervisorAction{publish})
 	launchReservation := recorder.reserve(simulationRuntimeAuthority)
-	recorder.recordRuntime(launchReservation, simulationRecord{
-		runtimeOperation:   simulationObserveAttempt,
-		runtimeGeneration:  generation,
-		runtimeObservation: simulationRuntimeObservation{kind: simulationLaunchOwnedObservation},
-	}, processruntime.Replay{})
+	runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Owned()))
+	recorder.recordRuntime(launchReservation, simulationRecord{runtimeCut: applied.RecordedCut()}, runtime)
 	recorder.recordSupervisorAction(publish)
 
 	settle := supervisorAction{kind: supervisorSettleRuntime, token: 12, generation: generation}
 	recorder.recordSupervisorActions([]supervisorAction{settle})
 	terminalReservation := recorder.reserve(simulationRuntimeAuthority)
-	recorder.recordRuntime(terminalReservation, simulationRecord{
-		runtimeOperation:   simulationObserveAttempt,
-		runtimeGeneration:  generation,
-		runtimeObservation: simulationRuntimeObservation{kind: simulationAttemptSettledObservation},
-	}, processruntime.Replay{})
+	runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Settled(processruntime.AutomaticProfile, 0)))
+	recorder.recordRuntime(terminalReservation, simulationRecord{runtimeCut: applied.RecordedCut()}, runtime)
 	receipt := supervisorRuntimeCompletion{
 		generation: generation,
 		action: supervisorPendingAction{
@@ -1966,7 +1972,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 func simulationExpectedProductionSourceKind(record simulationRecord) simulationCausalSourceKind {
 	switch record.authority {
 	case simulationRuntimeAuthority:
-		switch record.runtimeOperation {
+		switch record.runtimeCut.Operation() {
 		case simulationObserveAttempt, simulationCompleteConfirmationQueue, simulationSettleEmergency:
 			return simulationSupervisorActionSource
 		default:
@@ -2018,6 +2024,23 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 	mutants[0] = "caller-rewrite"
 	got := trace.records[len(trace.records)-1].campaignEvent.production().payload.(catalogueDiscoveredEvent).mutants
 	assert.Equal(t, []mutantIdentity{"mutant-a", "mutant-b"}, got, "recorded catalogue changed with caller input: %v", got)
+}
+
+func TestSimulationTraceStoresRuntimeOwnedRecordedCuts(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-runtime-cuts", lineage: 91, command: []string{"test"},
+			profile: SerialProfile, peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, simulationChoiceBytes{})
+	require.NoError(t, explored.failure)
+
+	for _, record := range explored.trace.records {
+		if record.authority == simulationRuntimeAuthority {
+			assert.NotZero(t, record.runtimeCut.Operation())
+		}
+	}
 }
 
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
@@ -2563,7 +2586,8 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 			switch source[0] % 3 {
 			case 1:
 				malformed = simulationMalformedFact{
-					authority: simulationRuntimeAuthority, runtimeOperation: simulationRequestAdmission,
+					authority:  simulationRuntimeAuthority,
+					runtimeCut: processruntime.RequestAdmissionCut(processruntime.Admission{}),
 				}
 			case 2:
 				malformed = simulationMalformedFact{

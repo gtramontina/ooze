@@ -163,7 +163,7 @@ type runtimePublicationQueue struct {
 }
 
 type runtimePublication struct {
-	event         Event
+	event         RecordedCut
 	observed      bool
 	notifications []runtimeNotification
 	emergency     bool
@@ -552,58 +552,64 @@ func runtimeEventDataFor[I, O any](
 	return transition
 }
 
-func buildProcessRuntimeEvent(data runtimeEventData) Event {
+func buildProcessRuntimeEvent(data runtimeEventData) RecordedCut {
+	var cut Cut
+	var result ReplayResult
 	switch data.operation {
 	case RegisterCampaignOperation:
-		return runtimeCampaignRegistrationProcessed{provenance: data.provenance, result: data.registration}
+		cut = RegisterCampaignCut(Lineage(data.provenance.lineage))
+		result.registration = Registration{value: data.registration}
 	case RequestAdmissionOperation:
-		return runtimeAdmissionRequestProcessed{
-			request: runtimeEventAdmission(data.request), result: runtimeEventAdmissionResult(data.admission),
-		}
+		cut = RequestAdmissionCut(admissionValue(data.request))
+		result.admission = AdmissionResult{value: runtimeEventAdmissionResult(data.admission)}
 	case CancelAdmissionOperation:
-		return runtimeAdmissionCancellationProcessed{
-			request: runtimeEventAdmission(data.requestToken), result: runtimeEventAdmissionResult(data.admission),
-		}
+		cut = CancelAdmissionCut(admissionValue(data.requestToken))
+		result.admission = AdmissionResult{value: runtimeEventAdmissionResult(data.admission)}
 	case ReturnGrantOperation:
-		return runtimeGrantReturnProcessed{
-			grant: runtimeEventAdmission(data.grant), result: runtimeEventAdmissionResult(data.admission),
-		}
+		cut = ReturnGrantCut(admissionValue(data.grant))
+		result.admission = AdmissionResult{value: runtimeEventAdmissionResult(data.admission)}
 	case BindConfirmationBarrierOperation:
 		barrier := data.barrier
-		barrier.delivery = nil
-		return runtimeConfirmationBarrierProcessed{
-			barrier: barrier, result: runtimeEventBarrierResult(data.barrierResult),
-		}
+		cut = BindConfirmationBarrierCut(Barrier{
+			Campaign: Campaign{token: barrier.campaign}, Attempt: string(barrier.attempt),
+			Profile: barrier.profile, Deadline: barrier.deadline,
+		})
+		result.barrier = BarrierResult{value: runtimeEventBarrierResult(data.barrierResult)}
 	case CompleteConfirmationQueueOperation:
 		result := data.queue
 		result.deliveries = runtimeEventAdmissions(result.deliveries)
-		return runtimeConfirmationQueueProcessed{campaign: data.campaign, result: result}
+		cut = CompleteConfirmationQueueCut(Campaign{token: data.campaign})
+		resultValue := QueueResult{value: result}
+		return recordedEvent(cut, ReplayResult{queue: resultValue})
 	case CommitStartOperation:
-		return runtimeStartCommitmentProcessed{
-			grant: runtimeEventAdmission(data.grant), result: data.start,
-		}
+		cut = CommitStartCut(admissionValue(data.grant))
+		result.start = StartResult{value: data.start}
 	case ObserveAttemptOperation:
-		return runtimeAttemptObservationProcessed{
-			generation: data.generation, observation: data.observation,
-			result: runtimeEventObservationResult(data.observed),
-		}
+		cut = ObserveAttemptCut(Generation(data.generation), Observation{value: data.observation})
+		result.receipt = Receipt{value: runtimeEventObservationResult(data.observed)}
 	case SettleEmergencyOperation:
-		return runtimeEmergencySettlementProcessed{
-			sweep:  emergencySweep{resolutions: append([]emergencyResolution(nil), data.sweep.resolutions...)},
-			result: runtimeEventEmergency(data.emergency),
+		resolutions := make([]Resolution, len(data.sweep.resolutions))
+		for index, resolution := range data.sweep.resolutions {
+			resolutions[index] = Resolution{
+				generation:  Generation(resolution.generation),
+				transferred: resolution.disposition == emergencyCustodyTransferred,
+			}
 		}
+		cut = SettleEmergencyCut(resolutions)
+		result.settlement = EmergencySettlement{value: runtimeEventEmergency(data.emergency)}
 	case CommitTerminalOperation:
-		return runtimeTerminalCommitmentProcessed{campaign: data.campaign, result: data.terminal}
+		cut = CommitTerminalCut(Campaign{token: data.campaign})
+		result.terminal = TerminalResult{value: data.terminal}
 	case AuthorizeForcedAbortOperation:
-		return runtimeForcedAbortProcessed{
-			campaign: data.campaign, epoch: data.fatalEpoch, result: data.terminal,
-		}
+		cut = AuthorizeForcedAbortCut(Campaign{token: data.campaign}, uint64(data.fatalEpoch))
+		result.terminal = TerminalResult{value: data.terminal}
 	case CloseOperation:
-		return runtimeClosureProcessed{cause: data.fatalCause, result: runtimeEventClosure(data.runtimeClosure)}
+		cut = CloseCut(string(data.fatalCause))
+		result.closure = Closure{value: runtimeEventClosure(data.runtimeClosure)}
 	default:
 		invariant("publish runtime event", "runtime operation has no domain event")
 	}
-	return nil
+	return recordedEvent(cut, result)
 }
 
 func (s *processRuntimeShell) deliver(deliveries []admissionGrant) {

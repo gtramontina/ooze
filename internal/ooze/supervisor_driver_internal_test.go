@@ -202,9 +202,9 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	observationStarted := make(chan struct{})
 	allowObservation := make(chan struct{})
 	blocked := false
-	shell := newProcessRuntimeShellWithObserver(2, processruntime.ObserverFunc(func(event processruntime.Event) {
-		observed, ok := event.(processruntime.AttemptObservationProcessed)
-		if !ok || observed.Observation().Kind() != processruntime.LaunchNotReleased || blocked {
+	shell := newProcessRuntimeShellWithObserver(2, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+		if event.Operation() != processruntime.ObserveAttemptOperation ||
+			!event.Result().Receipt().SettlementAcknowledged() || blocked {
 			return
 		}
 		blocked = true
@@ -756,10 +756,9 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	nativeDone := make(chan struct{})
 
 	lateSettlement := make(chan struct{}, 1)
-	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.Event) {
-		observed, ok := event.(processruntime.AttemptObservationProcessed)
-		if ok && observed.Observation().Kind() == processruntime.LaunchNotReleased &&
-			observed.Result().SettlementAcknowledged() {
+	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+		if event.Operation() == processruntime.ObserveAttemptOperation &&
+			event.Result().Receipt().SettlementAcknowledged() {
 			lateSettlement <- struct{}{}
 		}
 	}))
@@ -1112,10 +1111,10 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	nextAt := registeredAt.Add(-time.Nanosecond)
 
 	ownedAccepted := make(chan attemptGeneration, 1)
-	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.Event) {
-		observed, ok := event.(processruntime.AttemptObservationProcessed)
-		if ok && observed.Observation().Kind() == processruntime.LaunchOwned {
-			ownedAccepted <- observed.Generation()
+	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+		if event.Operation() == processruntime.ObserveAttemptOperation &&
+			!event.Result().Receipt().SettlementAcknowledged() {
+			ownedAccepted <- event.Result().Receipt().Generation()
 		}
 	}))
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 91})

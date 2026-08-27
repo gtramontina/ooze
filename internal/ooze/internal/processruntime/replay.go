@@ -49,6 +49,13 @@ type Cut struct {
 // Operation returns the transition kind.
 func (cut Cut) Operation() Operation { return cut.operation }
 
+// SupportsViolationReplay reports whether this input belongs to the malformed-fact suite.
+func (cut Cut) SupportsViolationReplay() bool {
+	return cut.operation == RequestAdmissionOperation || cut.operation == ReturnGrantOperation ||
+		cut.operation == ObserveAttemptOperation || cut.operation == SettleEmergencyOperation ||
+		cut.operation == CloseOperation
+}
+
 // RegisterCampaignCut creates a campaign-registration input.
 func RegisterCampaignCut(lineage Lineage) Cut {
 	return Cut{operation: RegisterCampaignOperation, lineage: lineage}
@@ -118,6 +125,78 @@ type ReplayResult struct {
 	terminal     TerminalResult
 	closure      Closure
 	settlement   EmergencySettlement
+	recorded     RecordedCut
+}
+
+// RecordedCut returns the capability-free accepted transition.
+func (result ReplayResult) RecordedCut() RecordedCut { return result.recorded }
+
+// RecordedCut is one capability-free accepted process-runtime transition.
+type RecordedCut struct {
+	cut    Cut
+	result recordedResult
+}
+
+type recordedResult struct {
+	registrationDecision                             CampaignDecision
+	campaign                                         Campaign
+	admissionDecision                                AdmissionDecision
+	request                                          Admission
+	deliveries                                       []Admission
+	fatalEpoch                                       uint64
+	barrierDecision                                  BarrierDecision
+	queueDecision                                    QueueDecision
+	startDecision                                    StartDecision
+	generation                                       Generation
+	settlementAcknowledged, runtimeClosureInProgress bool
+	confirmationProvisional, pressureTransitioned    bool
+	confirmationObserved, confirmationQueueDrained   bool
+	cancelledWaiting, compensatedGrants              []Admission
+	terminalDecision                                 TerminalDecision
+	epoch                                            uint64
+	closureResidual, settlementResidual              []Residual
+	owner                                            Campaign
+	acknowledged                                     []Generation
+}
+
+// Operation returns the accepted transition kind.
+func (recorded RecordedCut) Operation() Operation {
+	return recorded.cut.operation
+}
+
+// Matches reports whether the recorded transition accepted the proposed input.
+func (recorded RecordedCut) Matches(cut Cut) bool {
+	return reflect.DeepEqual(recorded.cut, cut)
+}
+
+// Result returns the capability-free accepted result.
+func (recorded RecordedCut) Result() ReplayResult {
+	return thawRecordedResult(recorded.cut.operation, recorded.result)
+}
+
+// Observation returns the accepted attempt-evidence input.
+func (recorded RecordedCut) Observation() (Generation, Observation, bool) {
+	if recorded.cut.operation != ObserveAttemptOperation {
+		return 0, Observation{}, false
+	}
+	return recorded.cut.generation, recorded.cut.observation, true
+}
+
+// WithResultFrom returns this input paired with another cut's accepted result.
+func (recorded RecordedCut) WithResultFrom(other RecordedCut) (RecordedCut, bool) {
+	if recorded.Operation() == 0 || recorded.Operation() != other.Operation() {
+		return RecordedCut{}, false
+	}
+	recorded.result = other.result
+	return recorded, true
+}
+
+// Complexity reports the number of repeated values retained by this cut.
+func (recorded RecordedCut) Complexity() int {
+	return len(recorded.cut.resolutions) + len(recorded.result.deliveries) +
+		len(recorded.result.cancelledWaiting) + len(recorded.result.compensatedGrants) +
+		len(recorded.result.acknowledged) + len(recorded.result.closureResidual) +
+		len(recorded.result.settlementResidual)
 }
 
 // Registration returns the campaign-registration result.
@@ -221,7 +300,14 @@ func (replay Replay) Apply(cut Cut) (Replay, ReplayResult) {
 	default:
 		panic(Violation{operation: "replay", reason: "unknown operation"})
 	}
+	result.recorded = recordedEvent(cut, result)
 	return replay, result
+}
+
+// ApplyRecorded replays one accepted transition and verifies its result.
+func (replay Replay) ApplyRecorded(recorded RecordedCut) (Replay, bool) {
+	next, result := replay.Apply(recorded.cut)
+	return next, reflect.DeepEqual(freezeReplayResult(recorded.cut.operation, result), recorded.result)
 }
 
 // Accepts reports whether the production reducer accepts a proposed cut.
@@ -241,83 +327,154 @@ func (replay Replay) Accepts(cut Cut) (accepted bool) {
 	return true
 }
 
-// ApplyEvent replays one accepted production event and verifies its result.
-func (replay Replay) ApplyEvent(event Event) (Replay, bool) {
-	cut, expected := replayEvent(event)
-	next, result := replay.Apply(cut)
-	result = canonicalReplayResult(cut.operation, result)
-	return next, reflect.DeepEqual(result, expected)
+func recordedEvent(cut Cut, result ReplayResult) RecordedCut {
+	return RecordedCut{cut: cut, result: freezeReplayResult(cut.operation, result)}
 }
 
-func canonicalReplayResult(operation Operation, result ReplayResult) ReplayResult {
+func freezeReplayResult(operation Operation, result ReplayResult) recordedResult {
+	frozen := recordedResult{}
 	switch operation {
+	case RegisterCampaignOperation:
+		frozen.registrationDecision = result.Registration().Decision()
+		frozen.campaign = result.Registration().Campaign()
 	case RequestAdmissionOperation, CancelAdmissionOperation, ReturnGrantOperation:
-		result.admission.value = runtimeEventAdmissionResult(result.admission.value)
+		frozen.admissionDecision = result.Admission().Decision()
+		frozen.request = result.Admission().Request()
+		frozen.deliveries = result.Admission().Deliveries()
+		frozen.fatalEpoch = result.Admission().FatalEpoch()
 	case BindConfirmationBarrierOperation:
-		result.barrier.value = runtimeEventBarrierResult(result.barrier.value)
+		frozen.barrierDecision = result.Barrier().Decision()
+		frozen.request = result.Barrier().Request()
+		frozen.deliveries = result.Barrier().Deliveries()
 	case CompleteConfirmationQueueOperation:
-		result.queue.value.deliveries = runtimeEventAdmissions(result.queue.value.deliveries)
+		frozen.queueDecision = result.Queue().Decision()
+		frozen.deliveries = result.Queue().Deliveries()
+	case CommitStartOperation:
+		frozen.startDecision = result.Start().Decision()
+		frozen.generation = result.Start().Generation()
+		frozen.settlementAcknowledged = result.Start().SettlementAcknowledged()
+		frozen.runtimeClosureInProgress = result.Start().RuntimeClosureInProgress()
 	case ObserveAttemptOperation:
-		result.receipt.value = runtimeEventObservationResult(result.receipt.value)
-	case CloseOperation:
-		result.closure.value = runtimeEventClosure(result.closure.value)
+		receipt := result.Receipt()
+		frozen.generation = receipt.Generation()
+		frozen.deliveries = receipt.Deliveries()
+		frozen.cancelledWaiting = receipt.CancelledWaiting()
+		frozen.compensatedGrants = receipt.CompensatedGrants()
+		frozen.settlementAcknowledged = receipt.SettlementAcknowledged()
+		frozen.runtimeClosureInProgress = receipt.RuntimeClosureInProgress()
+		frozen.confirmationProvisional = receipt.ConfirmationProvisional()
+		frozen.pressureTransitioned = receipt.PressureTransitioned()
+		frozen.confirmationObserved = receipt.ConfirmationObserved()
+		frozen.confirmationQueueDrained = receipt.ConfirmationQueueDrained()
+		frozen.fatalEpoch = receipt.FatalEpoch()
 	case SettleEmergencyOperation:
-		result.settlement.value = runtimeEventEmergency(result.settlement.value)
+		settlement := result.Settlement()
+		frozen.epoch = settlement.Epoch()
+		frozen.owner = settlement.Owner()
+		frozen.acknowledged = settlement.Acknowledged()
+		frozen.settlementResidual = settlement.Residual()
+	case CommitTerminalOperation, AuthorizeForcedAbortOperation:
+		frozen.terminalDecision = result.Terminal().Decision()
+		frozen.epoch = result.Terminal().Epoch()
+	case CloseOperation:
+		closure := result.Closure()
+		frozen.epoch = closure.Epoch()
+		frozen.cancelledWaiting = closure.CancelledWaiting()
+		frozen.compensatedGrants = closure.CompensatedGrants()
+		frozen.closureResidual = closure.Residual()
+	}
+	return frozen
+}
+
+func thawRecordedResult(operation Operation, frozen recordedResult) ReplayResult {
+	result := ReplayResult{}
+	switch operation {
+	case RegisterCampaignOperation:
+		result.registration = Registration{value: campaignRegistration{
+			decision: campaignDecision(frozen.registrationDecision), token: frozen.campaign.token,
+		}}
+	case RequestAdmissionOperation, CancelAdmissionOperation, ReturnGrantOperation:
+		result.admission = AdmissionResult{value: admissionResult{
+			decision: admissionDecision(frozen.admissionDecision), request: admissionAuthorityValue(frozen.request),
+			deliveries: admissionAuthorities(frozen.deliveries), fatalEpoch: fatalEpochID(frozen.fatalEpoch),
+		}}
+	case BindConfirmationBarrierOperation:
+		result.barrier = BarrierResult{value: barrierResult{
+			decision: barrierDecision(frozen.barrierDecision), request: admissionAuthorityValue(frozen.request),
+			deliveries: admissionAuthorities(frozen.deliveries),
+		}}
+	case CompleteConfirmationQueueOperation:
+		result.queue = QueueResult{value: confirmationQueueResult{
+			decision:   confirmationQueueDecision(frozen.queueDecision),
+			deliveries: admissionAuthorities(frozen.deliveries),
+		}}
+	case CommitStartOperation:
+		result.start = StartResult{value: startCommittedResult{
+			decision: startCommittedDecision(frozen.startDecision), generation: attemptGeneration(frozen.generation),
+			settlementAcknowledged:   frozen.settlementAcknowledged,
+			runtimeClosureInProgress: frozen.runtimeClosureInProgress,
+		}}
+	case ObserveAttemptOperation:
+		result.receipt = Receipt{value: observationResult{
+			generation: attemptGeneration(frozen.generation), deliveries: admissionAuthorities(frozen.deliveries),
+			cancelledWaiting:         admissionAuthorities(frozen.cancelledWaiting),
+			compensatedGrants:        admissionAuthorities(frozen.compensatedGrants),
+			settlementAcknowledged:   frozen.settlementAcknowledged,
+			runtimeClosureInProgress: frozen.runtimeClosureInProgress,
+			confirmationProvisional:  frozen.confirmationProvisional,
+			pressureTransitioned:     frozen.pressureTransitioned,
+			confirmationObserved:     frozen.confirmationObserved,
+			confirmationQueueDrained: frozen.confirmationQueueDrained,
+			fatalEpoch:               fatalEpochID(frozen.fatalEpoch),
+		}}
+	case SettleEmergencyOperation:
+		result.settlement = EmergencySettlement{value: emergencySettlement{
+			epoch: fatalEpochID(frozen.epoch), owner: frozen.owner.token,
+			acknowledged: attemptGenerations(frozen.acknowledged), residual: residualCustodies(frozen.settlementResidual),
+		}}
+	case CommitTerminalOperation, AuthorizeForcedAbortOperation:
+		result.terminal = TerminalResult{value: terminalResult{
+			decision: terminalDecision(frozen.terminalDecision), epoch: fatalEpochID(frozen.epoch),
+		}}
+	case CloseOperation:
+		result.closure = Closure{value: runtimeClosure{
+			epoch: fatalEpochID(frozen.epoch), cancelledWaiting: admissionAuthorities(frozen.cancelledWaiting),
+			compensatedGrants: admissionAuthorities(frozen.compensatedGrants),
+			residual:          residualCustodies(frozen.closureResidual),
+		}}
 	}
 	return result
 }
 
-func replayEvent(event Event) (Cut, ReplayResult) {
-	switch event := event.(type) {
-	case runtimeCampaignRegistrationProcessed:
-		return RegisterCampaignCut(Lineage(event.provenance.lineage)), ReplayResult{
-			registration: Registration{value: event.result},
-		}
-	case runtimeAdmissionRequestProcessed:
-		return RequestAdmissionCut(admissionValue(event.request)), ReplayResult{
-			admission: AdmissionResult{value: event.result},
-		}
-	case runtimeAdmissionCancellationProcessed:
-		return CancelAdmissionCut(admissionValue(event.request)), ReplayResult{
-			admission: AdmissionResult{value: event.result},
-		}
-	case runtimeGrantReturnProcessed:
-		return ReturnGrantCut(admissionValue(event.grant)), ReplayResult{
-			admission: AdmissionResult{value: event.result},
-		}
-	case runtimeConfirmationBarrierProcessed:
-		return BindConfirmationBarrierCut(event.Barrier()), ReplayResult{
-			barrier: BarrierResult{value: event.result},
-		}
-	case runtimeConfirmationQueueProcessed:
-		return CompleteConfirmationQueueCut(Campaign{token: event.campaign}), ReplayResult{
-			queue: QueueResult{value: event.result},
-		}
-	case runtimeStartCommitmentProcessed:
-		return CommitStartCut(admissionValue(event.grant)), ReplayResult{
-			start: StartResult{value: event.result},
-		}
-	case runtimeAttemptObservationProcessed:
-		return ObserveAttemptCut(Generation(event.generation), Observation{value: event.observation}), ReplayResult{
-			receipt: Receipt{value: event.result},
-		}
-	case runtimeEmergencySettlementProcessed:
-		return SettleEmergencyCut(event.Resolutions()), ReplayResult{
-			settlement: EmergencySettlement{value: event.result},
-		}
-	case runtimeTerminalCommitmentProcessed:
-		return CommitTerminalCut(Campaign{token: event.campaign}), ReplayResult{
-			terminal: TerminalResult{value: event.result},
-		}
-	case runtimeForcedAbortProcessed:
-		return AuthorizeForcedAbortCut(Campaign{token: event.campaign}, uint64(event.epoch)), ReplayResult{
-			terminal: TerminalResult{value: event.result},
-		}
-	case runtimeClosureProcessed:
-		return CloseCut(string(event.cause)), ReplayResult{closure: Closure{value: event.result}}
-	default:
-		panic(Violation{operation: "replay event", reason: "unknown event"})
+func admissionAuthorities(values []Admission) []admissionAuthority {
+	result := make([]admissionAuthority, len(values))
+	for index, value := range values {
+		result[index] = admissionAuthorityValue(value)
 	}
+	return result
+}
+
+func attemptGenerations(values []Generation) []attemptGeneration {
+	result := make([]attemptGeneration, len(values))
+	for index, value := range values {
+		result[index] = attemptGeneration(value)
+	}
+	return result
+}
+
+func residualCustodies(values []Residual) []residualCustody {
+	result := make([]residualCustody, len(values))
+	for index, value := range values {
+		stage := admissionOwned
+		if value.prospective {
+			stage = admissionProspective
+		}
+		result[index] = residualCustody{
+			generation: attemptGeneration(value.generation), attempt: attemptIdentity(value.attempt),
+			stage: stage, transferred: value.transferred,
+		}
+	}
+	return result
 }
 
 // Projection returns a capability-free immutable domain projection.

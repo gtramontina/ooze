@@ -115,28 +115,8 @@ type simulationRecord struct {
 	campaignState   simulationCampaignState
 	campaignEffects []campaignEffect
 
-	runtimeOperation      processruntime.Operation
-	runtimeProvenance     processruntime.Lineage
-	runtimeCampaign       campaignToken
-	runtimeAdmission      simulationAdmission
-	runtimeAdmissionToken simulationAdmission
-	runtimeGrant          simulationAdmission
-	runtimeBarrier        simulationBarrierBinding
-	runtimeSweep          simulationEmergencySweepRecord
-	runtimeFatalCause     runtimeFatalCause
-	runtimeFatalEpoch     fatalEpochID
-	runtimeGeneration     attemptGeneration
-	runtimeObservation    simulationRuntimeObservation
-	runtimeState          simulationRuntimeState
-	runtimeRegistration   campaignRegistration
-	runtimeAdmissionOut   simulationAdmissionResult
-	runtimeBarrierOut     simulationBarrierResult
-	runtimeQueueOut       simulationConfirmationQueueResult
-	runtimeStart          startCommittedResult
-	runtimeObservationOut simulationObservationResult
-	runtimeEmergencyOut   simulationEmergencySettlement
-	runtimeTerminal       terminalResult
-	runtimeClosure        simulationRuntimeClosure
+	runtimeCut   processruntime.RecordedCut
+	runtimeState simulationRuntimeState
 
 	supervisorEvent   simulationSupervisorEvent
 	supervisorState   simulationSupervisorState
@@ -158,15 +138,10 @@ type SimulationResult struct {
 }
 
 type simulationMalformedFact struct {
-	authority          simulationAuthority
-	campaign           simulationCampaignEvent
-	runtimeOperation   processruntime.Operation
-	runtimeAdmission   simulationAdmission
-	runtimeGeneration  attemptGeneration
-	runtimeObservation simulationRuntimeObservation
-	runtimeSweep       simulationEmergencySweepRecord
-	runtimeFatalCause  runtimeFatalCause
-	supervisor         simulationSupervisorEvent
+	authority  simulationAuthority
+	campaign   simulationCampaignEvent
+	runtimeCut processruntime.Cut
+	supervisor simulationSupervisorEvent
 }
 
 type simulationFailureKind uint8
@@ -307,7 +282,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		switch record.authority {
 		case simulationRuntimeAuthority:
 			delivered = nil
-			switch record.runtimeOperation {
+			switch record.runtimeCut.Operation() {
 			case simulationRegisterCampaign:
 				registrationEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectRegister
@@ -318,22 +293,25 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"registration is not enabled at record %d", index,
 					)
 				}
+				if !record.runtimeCut.Matches(processruntime.RegisterCampaignCut(trace.definition.campaign.lineage)) {
+					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
+						"registration input diverged at record %d", index)
+				}
 				_ = registrationEffect
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.RegisterCampaignCut(record.runtimeProvenance))
-				registered := applied.Registration()
-				registration := campaignRegistrationEvidence(registered)
-				if !reflect.DeepEqual(registration, record.runtimeRegistration) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationRegistrationDivergence, "registration diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationRegistrationDivergence,
+						"registration diverged at record %d", index)
 				}
+				registered := record.runtimeCut.Result().Registration()
+				registration := campaignRegistrationEvidence(registered)
 				delivered = campaignRegisteredEvent{registration: registration}
 			case simulationRequestAdmission:
 				requestEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectRequestAdmission && reflect.DeepEqual(
-						simulationTraceAdmission(runtimeAdmissionRequest(effect.request)), record.runtimeAdmission,
+					return effect.kind == campaignEffectRequestAdmission && record.runtimeCut.Matches(
+						processruntime.RequestAdmissionCut(processRuntimeAdmission(effect.request)),
 					)
 				})
 				if !ok {
@@ -343,15 +321,14 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeAdmission.production()))))
-				processed := applied.Admission()
-				admission := runtimeAdmissionResult(processed)
-				if !reflect.DeepEqual(simulationTraceAdmissionResult(admission), record.runtimeAdmissionOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationAdmissionDivergence, "admission decision diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationAdmissionDivergence,
+						"admission decision diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Admission()
+				admission := runtimeAdmissionResult(processed)
 				if admission.decision != processruntime.AdmissionAccepted {
 					delivered = admissionRejectedEvent{
 						attempt: requestEffect.attempt, result: campaignAdmissionEvidence(admission),
@@ -369,8 +346,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 			case simulationCancelAdmission:
 				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectCancelAdmission && reflect.DeepEqual(
-						record.runtimeAdmissionToken, simulationTraceAdmission(runtimeAdmissionRequest(effect.request)),
+					return effect.kind == campaignEffectCancelAdmission && record.runtimeCut.Matches(
+						processruntime.CancelAdmissionCut(processRuntimeAdmission(effect.request)),
 					)
 				})
 				if !ok {
@@ -380,23 +357,22 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.CancelAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeAdmissionToken.production()))))
-				processed := applied.Admission()
-				cancelled := runtimeAdmissionResult(processed)
-				if !reflect.DeepEqual(simulationTraceAdmissionResult(cancelled), record.runtimeAdmissionOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationAdmissionDivergence, "admission cancellation diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationAdmissionDivergence,
+						"admission cancellation diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Admission()
+				cancelled := runtimeAdmissionResult(processed)
 				delivered = admissionCancelledEvent{
 					attempt: cancelEffect.attempt, request: cancelEffect.request,
 					result: campaignAdmissionEvidence(cancelled),
 				}
 			case simulationAcknowledgeGrantReturn:
 				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectReturnAdmission && reflect.DeepEqual(
-						record.runtimeGrant, simulationTraceAdmission(runtimeAdmissionRequest(effect.grant)),
+					return effect.kind == campaignEffectReturnAdmission && record.runtimeCut.Matches(
+						processruntime.ReturnGrantCut(processRuntimeAdmission(effect.grant)),
 					)
 				})
 				if !ok {
@@ -406,22 +382,25 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeGrant.production()))))
-				processed := applied.Admission()
-				returned := runtimeAdmissionResult(processed)
-				if !reflect.DeepEqual(simulationTraceAdmissionResult(returned), record.runtimeAdmissionOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationAdmissionDivergence, "grant return diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationAdmissionDivergence,
+						"grant return diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Admission()
+				returned := runtimeAdmissionResult(processed)
 				delivered = grantReturnAcknowledgedEvent{
 					grant: returnEffect.grant, result: campaignAdmissionEvidence(returned),
 				}
 			case simulationBindConfirmationBarrier:
 				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectBindConfirmationBarrier && reflect.DeepEqual(
-						record.runtimeBarrier, simulationTraceBarrierBinding(runtimeBarrierBinding(effect.binding)),
+					binding := runtimeBarrierBinding(effect.binding)
+					return effect.kind == campaignEffectBindConfirmationBarrier && record.runtimeCut.Matches(
+						processruntime.BindConfirmationBarrierCut(processruntime.Barrier{
+							Campaign: binding.campaign, Attempt: string(binding.attempt),
+							Profile: binding.profile, Deadline: binding.deadline,
+						}),
 					)
 				})
 				if !ok {
@@ -431,32 +410,30 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				binding := record.runtimeBarrier.production()
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.BindConfirmationBarrierCut(processruntime.Barrier{
-					Campaign: binding.campaign, Attempt: string(binding.attempt), Profile: binding.profile, Deadline: binding.deadline,
-				}))
-				processed := applied.Barrier()
-				bound := runtimeBarrierResult(processed)
-				if !reflect.DeepEqual(simulationTraceBarrierResult(bound), record.runtimeBarrierOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationBarrierDivergence, "confirmation barrier diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationBarrierDivergence,
+						"confirmation barrier diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Barrier()
+				bound := runtimeBarrierResult(processed)
 				delivered = confirmationBarrierBoundEvent{
 					attempt: bindingEffect.attempt, result: campaignBarrierEvidence(bound),
 				}
 			case simulationCompleteConfirmationQueue:
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.CompleteConfirmationQueueCut(record.runtimeCampaign))
-				processed := applied.Queue()
-				completed := runtimeQueueResult(processed)
-				if !reflect.DeepEqual(simulationTraceConfirmationQueueResult(completed), record.runtimeQueueOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationConfirmationQueueDivergence,
-						"confirmation queue completion diverged at record %d", index,
-					)
+				if !record.runtimeCut.Matches(processruntime.CompleteConfirmationQueueCut(campaign.runtimeToken)) {
+					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
+						"confirmation queue input diverged at record %d", index)
 				}
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationConfirmationQueueDivergence,
+						"confirmation queue completion diverged at record %d", index)
+				}
+				processed := record.runtimeCut.Result().Queue()
+				completed := runtimeQueueResult(processed)
 				candidates := pendingDeliveries[record.source]
 				terminalAt := slices.IndexFunc(candidates, func(candidate campaignEventPayload) bool {
 					_, ok := candidate.(attemptTerminalEvent)
@@ -475,8 +452,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = terminal
 			case simulationStartCommitted:
 				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectRequestStartCommitment && reflect.DeepEqual(
-						record.runtimeGrant, simulationTraceAdmission(runtimeAdmissionRequest(effect.grant)),
+					return effect.kind == campaignEffectRequestStartCommitment && record.runtimeCut.Matches(
+						processruntime.CommitStartCut(processRuntimeAdmission(effect.grant)),
 					)
 				})
 				if !ok {
@@ -486,40 +463,41 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeGrant.production()))))
-				processed := applied.Start()
-				started := runtimeStartResult(processed)
-				if !reflect.DeepEqual(started, record.runtimeStart) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationStartDivergence, "start commitment diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationStartDivergence,
+						"start commitment diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Start()
+				started := runtimeStartResult(processed)
 				delivered = startCommittedEvent{
 					attempt: startEffect.attempt, grant: startEffect.grant, result: campaignStartEvidence(started),
 				}
 			case simulationObserveAttempt:
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(
-					record.runtimeGeneration, processRuntimeObservation(record.runtimeObservation.production()),
-				))
-				processed := applied.Receipt()
-				observation := runtimeReceipt(processed)
-				if !reflect.DeepEqual(simulationTraceObservationResult(observation), record.runtimeObservationOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationObservationDivergence, "attempt observation diverged at record %d", index,
-					)
+				generation, observed, ok := record.runtimeCut.Observation()
+				if !ok {
+					return simulationReplayFailure(trace, simulationReplayOperationFailure,
+						"attempt observation input is unavailable at record %d", index)
 				}
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationObservationDivergence,
+						"attempt observation diverged at record %d", index)
+				}
+				processed := record.runtimeCut.Result().Receipt()
+				observation := runtimeReceipt(processed)
 				actionKind := supervisorActionKind(0)
 				if record.source.kind == simulationSupervisorActionSource {
 					actionKind = actionKinds[supervisorActionToken(record.source.identity)]
 				}
-				switch record.runtimeObservation.kind {
-				case simulationLaunchOwnedObservation:
+				switch observed.Kind() {
+				case processruntime.LaunchOwned:
 					if actionKind != supervisorPublishOwned {
 						break
 					}
-					activeLaunch, found := activeLaunches[record.runtimeGeneration]
+					activeLaunch, found := activeLaunches[generation]
 					if !found {
 						return simulationReplayFailure(
 							trace, simulationReplayCausalityFailure,
@@ -531,11 +509,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						result:  campaignLaunchObservation{kind: campaignLaunchOwned},
 						receipt: campaignReceiptValue(observation),
 					}
-				case simulationLaunchNotReleasedObservation:
+				case processruntime.LaunchNotReleased:
 					if actionKind != supervisorPublishNotReleased {
 						break
 					}
-					activeLaunch, found := activeLaunches[record.runtimeGeneration]
+					activeLaunch, found := activeLaunches[generation]
 					if !found {
 						return simulationReplayFailure(
 							trace, simulationReplayCausalityFailure,
@@ -543,7 +521,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						)
 					}
 					failure := LaunchFailed
-					if record.runtimeObservation.reason == launchResourceExhausted {
+					if observed.ResourceExhausted() {
 						failure = LaunchResourceExhausted
 					}
 					delivered = attemptLaunchEvent{
@@ -553,11 +531,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						},
 						receipt: campaignReceiptValue(observation),
 					}
-				case simulationLaunchUnconfirmedObservation:
+				case processruntime.LaunchUnconfirmedKind:
 					if actionKind != supervisorPublishLaunchUnconfirmed {
 						break
 					}
-					activeLaunch, found := activeLaunches[record.runtimeGeneration]
+					activeLaunch, found := activeLaunches[generation]
 					if !found {
 						return simulationReplayFailure(
 							trace, simulationReplayCausalityFailure,
@@ -571,21 +549,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						},
 						receipt: campaignReceiptValue(observation),
 					}
-				case simulationDrainUnconfirmedObservation:
-					terminalReceipts[record.runtimeGeneration] = observation
-					closure := runtimeClosure{
-						epoch: observation.fatalEpoch, cancelledWaiting: observation.cancelledWaiting,
-						compensatedGrants: observation.compensatedGrants,
-						residual:          runtimeResiduals(runtime.Projection().Residual()),
-					}
-					if !reflect.DeepEqual(simulationTraceRuntimeClosure(closure), record.runtimeClosure) {
-						return simulationReplayDivergenceFailure(
-							trace, simulationRuntimeClosureDivergence,
-							"runtime emergency closure diverged at record %d", index,
-						)
-					}
+				case processruntime.DrainUnconfirmedKind:
+					terminalReceipts[generation] = observation
 				default:
-					terminalReceipts[record.runtimeGeneration] = observation
+					terminalReceipts[generation] = observation
 				}
 			case simulationCommitTerminal:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
@@ -598,32 +565,36 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.CommitTerminalCut(record.runtimeCampaign))
-				processed := applied.Terminal()
-				terminal := terminalResult{decision: processed.Decision()}
-				if !reflect.DeepEqual(terminal, record.runtimeTerminal) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationTerminalDivergence, "terminal commitment diverged at record %d", index,
-					)
+				if !record.runtimeCut.Matches(processruntime.CommitTerminalCut(campaign.runtimeToken)) {
+					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
+						"terminal input diverged at record %d", index)
 				}
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationTerminalDivergence,
+						"terminal commitment diverged at record %d", index)
+				}
+				processed := record.runtimeCut.Result().Terminal()
+				terminal := terminalResult{decision: processed.Decision()}
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
 			case simulationSettleEmergency:
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.SettleEmergencyCut(processRuntimeResolutions(record.runtimeSweep.production())))
-				processed := applied.Settlement()
-				settlement := runtimeEmergencySettlement(processed)
-				if !reflect.DeepEqual(simulationTraceEmergencySettlement(settlement), record.runtimeEmergencyOut) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationEmergencyDivergence, "emergency settlement diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationEmergencyDivergence,
+						"emergency settlement diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Settlement()
+				settlement := runtimeEmergencySettlement(processed)
 				delivered = runtimeEmergencySettledEvent{
 					epoch: settlement.epoch, settlement: campaignSettlementValue(settlement),
 				}
 			case simulationAuthorizeForcedAbort:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectProposeTerminal && effect.fatalEpoch == record.runtimeFatalEpoch
+					return effect.kind == campaignEffectProposeTerminal && record.runtimeCut.Matches(
+						processruntime.AuthorizeForcedAbortCut(campaign.runtimeToken, uint64(effect.fatalEpoch)),
+					)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -632,26 +603,24 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.AuthorizeForcedAbortCut(record.runtimeCampaign, uint64(record.runtimeFatalEpoch)))
-				processed := applied.Terminal()
-				terminal := terminalResult{decision: processed.Decision()}
-				if !reflect.DeepEqual(terminal, record.runtimeTerminal) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationTerminalDivergence, "forced abort diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationTerminalDivergence,
+						"forced abort diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Terminal()
+				terminal := terminalResult{decision: processed.Decision()}
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
 			case simulationCloseRuntime:
-				var applied processruntime.ReplayResult
-				runtime, applied = runtime.Apply(processruntime.CloseCut(string(record.runtimeFatalCause)))
-				processed := applied.Closure()
-				closure := runtimeClosureValue(processed)
-				if !reflect.DeepEqual(simulationTraceRuntimeClosure(closure), record.runtimeClosure) {
-					return simulationReplayDivergenceFailure(
-						trace, simulationRuntimeClosureDivergence, "runtime closure diverged at record %d", index,
-					)
+				var matches bool
+				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
+				if !matches {
+					return simulationReplayDivergenceFailure(trace, simulationRuntimeClosureDivergence,
+						"runtime closure diverged at record %d", index)
 				}
+				processed := record.runtimeCut.Result().Closure()
+				closure := runtimeClosureValue(processed)
 				delivered = runtimeEmergencyStartedEvent{closure: campaignClosureValue(closure)}
 			default:
 				return simulationReplayFailure(
@@ -977,113 +946,19 @@ func simulationApplyRecordedRuntimeCut(state processruntime.Replay, record simul
 }
 
 func simulationApplyRuntimeCut(state processruntime.Replay, record simulationRecord, compareState bool) (processruntime.Replay, error) {
-	var applied processruntime.ReplayResult
-	state, applied = state.Apply(simulationRuntimeCut(record))
-	var output any
-	switch record.runtimeOperation {
-	case simulationRegisterCampaign:
-		registration := campaignRegistrationEvidence(applied.Registration())
-		output = registration
-		if !reflect.DeepEqual(output, record.runtimeRegistration) {
-			return processruntime.Replay{}, fmt.Errorf("runtime registration cut diverged")
-		}
-	case simulationRequestAdmission:
-		result := runtimeAdmissionResult(applied.Admission())
-		if !reflect.DeepEqual(simulationTraceAdmissionResult(result), record.runtimeAdmissionOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime admission cut diverged")
-		}
-	case simulationCancelAdmission:
-		result := runtimeAdmissionResult(applied.Admission())
-		if !reflect.DeepEqual(simulationTraceAdmissionResult(result), record.runtimeAdmissionOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime cancellation cut diverged")
-		}
-	case simulationAcknowledgeGrantReturn:
-		result := runtimeAdmissionResult(applied.Admission())
-		if !reflect.DeepEqual(simulationTraceAdmissionResult(result), record.runtimeAdmissionOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime grant-return cut diverged")
-		}
-	case simulationBindConfirmationBarrier:
-		result := runtimeBarrierResult(applied.Barrier())
-		if !reflect.DeepEqual(simulationTraceBarrierResult(result), record.runtimeBarrierOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime barrier cut diverged")
-		}
-	case simulationCompleteConfirmationQueue:
-		result := runtimeQueueResult(applied.Queue())
-		if !reflect.DeepEqual(simulationTraceConfirmationQueueResult(result), record.runtimeQueueOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime queue cut diverged")
-		}
-	case simulationStartCommitted:
-		result := runtimeStartResult(applied.Start())
-		if !reflect.DeepEqual(result, record.runtimeStart) {
-			return processruntime.Replay{}, fmt.Errorf("runtime start cut diverged")
-		}
-	case simulationObserveAttempt:
-		result := runtimeReceipt(applied.Receipt())
-		if !reflect.DeepEqual(simulationTraceObservationResult(result), record.runtimeObservationOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime observation cut diverged")
-		}
-	case simulationCommitTerminal:
-		result := terminalResult{decision: applied.Terminal().Decision()}
-		if !reflect.DeepEqual(result, record.runtimeTerminal) {
-			return processruntime.Replay{}, fmt.Errorf("runtime terminal cut diverged")
-		}
-	case simulationSettleEmergency:
-		result := runtimeEmergencySettlement(applied.Settlement())
-		if !reflect.DeepEqual(simulationTraceEmergencySettlement(result), record.runtimeEmergencyOut) {
-			return processruntime.Replay{}, fmt.Errorf("runtime emergency cut diverged")
-		}
-	case simulationAuthorizeForcedAbort:
-		result := terminalResult{decision: applied.Terminal().Decision()}
-		if !reflect.DeepEqual(result, record.runtimeTerminal) {
-			return processruntime.Replay{}, fmt.Errorf("runtime forced-abort cut diverged")
-		}
-	case simulationCloseRuntime:
-		result := runtimeClosureValue(applied.Closure())
-		if !reflect.DeepEqual(simulationTraceRuntimeClosure(result), record.runtimeClosure) {
-			return processruntime.Replay{}, fmt.Errorf("runtime closure cut diverged")
-		}
-	default:
+	if record.runtimeCut.Operation() == 0 {
 		return processruntime.Replay{}, fmt.Errorf("runtime commutation operation is invalid")
+	}
+	var matches bool
+	state, matches = state.ApplyRecorded(record.runtimeCut)
+	if !matches {
+		return processruntime.Replay{}, fmt.Errorf("runtime owner cut diverged")
 	}
 	if compareState && !reflect.DeepEqual(simulationTraceRuntimeState(state), record.runtimeState) {
 		return processruntime.Replay{}, fmt.Errorf("runtime owner state diverged")
 	}
 
 	return state, nil
-}
-
-func simulationRuntimeCut(record simulationRecord) processruntime.Cut {
-	switch record.runtimeOperation {
-	case simulationRegisterCampaign:
-		return processruntime.RegisterCampaignCut(record.runtimeProvenance)
-	case simulationRequestAdmission:
-		return processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeAdmission.production())))
-	case simulationCancelAdmission:
-		return processruntime.CancelAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeAdmissionToken.production())))
-	case simulationAcknowledgeGrantReturn:
-		return processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeGrant.production())))
-	case simulationBindConfirmationBarrier:
-		binding := record.runtimeBarrier.production()
-		return processruntime.BindConfirmationBarrierCut(processruntime.Barrier{
-			Campaign: binding.campaign, Attempt: string(binding.attempt), Profile: binding.profile, Deadline: binding.deadline,
-		})
-	case simulationCompleteConfirmationQueue:
-		return processruntime.CompleteConfirmationQueueCut(record.runtimeCampaign)
-	case simulationStartCommitted:
-		return processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(record.runtimeGrant.production())))
-	case simulationObserveAttempt:
-		return processruntime.ObserveAttemptCut(record.runtimeGeneration, processRuntimeObservation(record.runtimeObservation.production()))
-	case simulationCommitTerminal:
-		return processruntime.CommitTerminalCut(record.runtimeCampaign)
-	case simulationSettleEmergency:
-		return processruntime.SettleEmergencyCut(processRuntimeResolutions(record.runtimeSweep.production()))
-	case simulationAuthorizeForcedAbort:
-		return processruntime.AuthorizeForcedAbortCut(record.runtimeCampaign, uint64(record.runtimeFatalEpoch))
-	case simulationCloseRuntime:
-		return processruntime.CloseCut(string(record.runtimeFatalCause))
-	default:
-		return processruntime.Cut{}
-	}
 }
 
 func simulationCausalCampaignPayload(recorded, derived campaignEventPayload) campaignEventPayload {
@@ -1109,11 +984,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 		}
 	case simulationRuntimeAuthority:
-		if malformed.runtimeOperation != simulationRequestAdmission &&
-			malformed.runtimeOperation != simulationAcknowledgeGrantReturn &&
-			malformed.runtimeOperation != simulationObserveAttempt &&
-			malformed.runtimeOperation != simulationSettleEmergency &&
-			malformed.runtimeOperation != simulationCloseRuntime {
+		if !malformed.runtimeCut.SupportsViolationReplay() {
 			return ViolationResult{failure: fmt.Errorf("malformed runtime operation is not implemented")}
 		}
 	case simulationSupervisorAuthority:
@@ -1158,40 +1029,10 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return simulationEmergencySweep(runtime, closure)
 		})
 	case simulationRuntimeAuthority:
-		switch malformed.runtimeOperation {
-		case simulationRequestAdmission:
-			simulationAdvanceRuntimeGuarded(&runtime, "request admission", func(state processruntime.Replay) processruntime.Replay {
-				next, _ := state.Apply(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(malformed.runtimeAdmission.production()))))
-
-				return next
-			})
-		case simulationAcknowledgeGrantReturn:
-			simulationAdvanceRuntimeGuarded(&runtime, "acknowledge grant return", func(state processruntime.Replay) processruntime.Replay {
-				next, _ := state.Apply(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(malformed.runtimeAdmission.production()))))
-
-				return next
-			})
-		case simulationObserveAttempt:
-			simulationAdvanceRuntimeGuarded(&runtime, observeOperation, func(state processruntime.Replay) processruntime.Replay {
-				next, _ := state.Apply(processruntime.ObserveAttemptCut(
-					malformed.runtimeGeneration, processRuntimeObservation(malformed.runtimeObservation.production()),
-				))
-
-				return next
-			})
-		case simulationSettleEmergency:
-			simulationAdvanceRuntimeGuarded(&runtime, settleEmergencyOperation, func(state processruntime.Replay) processruntime.Replay {
-				next, _ := state.Apply(processruntime.SettleEmergencyCut(processRuntimeResolutions(malformed.runtimeSweep.production())))
-
-				return next
-			})
-		case simulationCloseRuntime:
-			simulationAdvanceRuntimeGuarded(&runtime, "close runtime", func(state processruntime.Replay) processruntime.Replay {
-				next, _ := state.Apply(processruntime.CloseCut(string(malformed.runtimeFatalCause)))
-
-				return next
-			})
-		}
+		simulationAdvanceRuntimeGuarded(&runtime, "runtime violation replay", func(state processruntime.Replay) processruntime.Replay {
+			next, _ := state.Apply(malformed.runtimeCut)
+			return next
+		})
 	case simulationSupervisorAuthority:
 		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor.production())
 	}
@@ -1529,14 +1370,7 @@ func simulationRecordPayloadRank(record simulationRecord) int {
 		rank += len(record.campaignEvent.catalogueDiscovered.mutants)
 		rank += len(record.campaignEvent.workspaceMaterializationFailed.artifactResidue)
 	case simulationRuntimeAuthority:
-		rank += len(record.runtimeSweep.resolutions)
-		rank += len(record.runtimeAdmissionOut.deliveries)
-		rank += len(record.runtimeObservationOut.deliveries) +
-			len(record.runtimeObservationOut.cancelledWaiting) +
-			len(record.runtimeObservationOut.compensatedGrants)
-		rank += len(record.runtimeEmergencyOut.acknowledged) + len(record.runtimeEmergencyOut.residual)
-		rank += len(record.runtimeClosure.cancelledWaiting) +
-			len(record.runtimeClosure.compensatedGrants) + len(record.runtimeClosure.residual)
+		rank += record.runtimeCut.Complexity()
 	case simulationSupervisorAuthority:
 		event := record.supervisorEvent
 		rank += len(event.emergencySnapshots)
@@ -1696,24 +1530,10 @@ func simulationRetainRecordedFailure(
 		switch divergence {
 		case simulationRuntimeStateDivergence:
 			candidate.runtimeState = failing.runtimeState
-		case simulationRegistrationDivergence:
-			candidate.runtimeRegistration = failing.runtimeRegistration
-		case simulationAdmissionDivergence:
-			candidate.runtimeAdmissionOut = failing.runtimeAdmissionOut
-		case simulationBarrierDivergence:
-			candidate.runtimeBarrierOut = failing.runtimeBarrierOut
-		case simulationConfirmationQueueDivergence:
-			candidate.runtimeQueueOut = failing.runtimeQueueOut
-		case simulationStartDivergence:
-			candidate.runtimeStart = failing.runtimeStart
-		case simulationObservationDivergence:
-			candidate.runtimeObservationOut = failing.runtimeObservationOut
-		case simulationEmergencyDivergence:
-			candidate.runtimeEmergencyOut = failing.runtimeEmergencyOut
-		case simulationTerminalDivergence:
-			candidate.runtimeTerminal = failing.runtimeTerminal
-		case simulationRuntimeClosureDivergence:
-			candidate.runtimeClosure = failing.runtimeClosure
+		default:
+			if corrupted, ok := candidate.runtimeCut.WithResultFrom(failing.runtimeCut); ok {
+				candidate.runtimeCut = corrupted
+			}
 		}
 	case simulationSupervisorAuthority:
 		if divergence == simulationSupervisorDivergence {
@@ -1794,7 +1614,7 @@ func simulationSameRecordKind(left, right simulationRecord) bool {
 	case simulationCampaignAuthority:
 		return left.campaignEvent.kind == right.campaignEvent.kind
 	case simulationRuntimeAuthority:
-		return left.runtimeOperation == right.runtimeOperation
+		return left.runtimeCut.Operation() == right.runtimeCut.Operation()
 	case simulationSupervisorAuthority:
 		leftKind, rightKind := left.supervisorEvent.kind, right.supervisorEvent.kind
 		if (leftKind == supervisorLaunchCompleted || leftKind == supervisorLaunchBoundary) &&
