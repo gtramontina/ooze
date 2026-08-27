@@ -404,8 +404,8 @@ func newWindowsMatrixSupervisor(
 ) *Supervisor {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: lineage})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: attempt, class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -421,7 +421,7 @@ func newWindowsMatrixSupervisor(
 
 	return newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -527,15 +527,15 @@ func newWindowsNativeSupervisorForFixture(
 ) (*processRuntimeShell, *Supervisor) {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: lineage})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: attempt, class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)

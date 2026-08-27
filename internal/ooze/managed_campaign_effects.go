@@ -3,6 +3,8 @@ package ooze
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
 func (runner *managedCampaignRunner) execute(
@@ -11,7 +13,8 @@ func (runner *managedCampaignRunner) execute(
 ) []campaignEffect {
 	switch effect.kind {
 	case campaignEffectRegister:
-		registration := runner.runtime.registerCampaign(campaignProvenance{lineage: request.lineage})
+		registered := runner.runtime.RegisterCampaign(request.lineage)
+		registration := campaignRegistrationEvidence(registered)
 		runner.runtimeToken = registration.token
 
 		return runner.advance(campaignRegisteredEvent{registration: registration})
@@ -65,46 +68,45 @@ func (runner *managedCampaignRunner) execute(
 			attempt: effect.attempt, workspace: workspace.Root(), snapshot: effect.snapshot,
 		})
 	case campaignEffectRequestAdmission:
-		await := runner.runtime.requestAdmission(runtimeAdmissionRequest(effect.request))
-		runner.rememberAuthority(await.request)
-		if await.decision != admissionAccepted {
+		await := runner.runtime.RequestAdmission(processRuntimeAdmission(effect.request))
+		if await.Decision() != admissionAccepted {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
 				result: campaignAdmissionResult{
-					decision: await.decision, request: campaignAdmissionFact(await.request), fatalEpoch: await.fatal,
+					decision: await.Decision(), request: campaignAdmissionFact(await.Request()),
+					fatalEpoch: fatalEpochID(runner.runtime.FatalEpoch()),
 				},
 				cause: "managed admission rejected",
 			})
 		}
-		grant, ok := <-await.delivery
+		grant, ok := await.Receive()
 		if !ok {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
 				result: campaignAdmissionResult{
-					decision: admissionRejectedClosed, request: campaignAdmissionFact(await.request),
-					fatalEpoch: runner.runtime.fatalEpoch(),
+					decision: admissionRejectedClosed, request: campaignAdmissionFact(await.Request()),
+					fatalEpoch: fatalEpochID(runner.runtime.FatalEpoch()),
 				},
 				cause: "process runtime entered a fatal epoch while admission waited",
 			})
 		}
 		runner.rememberAuthority(grant)
 
-		return runner.advance(admissionGrantedEvent{attempt: effect.attempt, grant: campaignAdmissionFact(grant)})
+		return runner.advance(admissionGrantedEvent{attempt: effect.attempt, grant: campaignAdmissionFact(grant.Admission())})
 	case campaignEffectRequestStartCommitment:
 		grant := runner.authority(effect.grant)
-		cell := &pendingStartCell{}
+		cell := processruntime.NewStartCell()
 		runner.attempts.reserveLaunch(cell, effect.spec)
-		prepared := runner.runtime.startCommitted(grant, startInstallation{
-			grant: grant, cell: cell,
-		})
-		if prepared.result.decision == startCommittedAccepted {
-			runner.starts[prepared.result.generation] = prepared.start
+		prepared := runner.runtime.CommitStart(grant, cell)
+		result := campaignStartResult{decision: prepared.Decision(), generation: prepared.Generation()}
+		if prepared.Decision() == startCommittedAccepted {
+			runner.starts[prepared.Generation()] = prepared
 		} else {
 			runner.attempts.discardLaunch(cell)
 		}
 
 		return runner.advance(startCommittedEvent{
-			attempt: effect.attempt, grant: effect.grant, result: campaignStartEvidence(prepared.result),
+			attempt: effect.attempt, grant: effect.grant, result: result,
 		})
 	case campaignEffectLaunchAttempt:
 		runner.attemptFacts[effect.generation] = managedAttemptFacts{
@@ -120,16 +122,17 @@ func (runner *managedCampaignRunner) execute(
 
 		return nil
 	case campaignEffectCancelAdmission:
-		cancelled := runner.runtime.cancelAdmission(runner.authority(effect.request))
+		decision := runner.runtime.CancelAdmission(processRuntimeAdmission(effect.request))
 
 		return runner.advance(admissionCancelledEvent{
-			attempt: effect.attempt, request: effect.request, result: campaignAdmissionEvidence(cancelled),
+			attempt: effect.attempt, request: effect.request,
+			result: campaignAdmissionResult{decision: decision, request: effect.request},
 		})
 	case campaignEffectReturnAdmission:
-		returned := runner.runtime.acknowledgeGrantReturn(runner.authority(effect.grant))
+		decision := runner.runtime.ReturnGrant(runner.authority(effect.grant))
 
 		return runner.advance(grantReturnAcknowledgedEvent{
-			grant: effect.grant, result: campaignAdmissionEvidence(returned),
+			grant: effect.grant, result: campaignAdmissionResult{decision: decision, request: effect.grant},
 		})
 	case campaignEffectReleaseWorkspace:
 		workspace := runner.workspaces[effect.workspace]
@@ -149,22 +152,25 @@ func (runner *managedCampaignRunner) execute(
 			kind: campaignResourceWorkspace, identity: effect.workspace,
 		})
 	case campaignEffectBindConfirmationBarrier:
-		await := runner.runtime.sealAndBindConfirmationBarrier(runtimeBarrierBinding(effect.binding))
-		if await.decision != barrierBound {
+		await := runner.runtime.BindConfirmationBarrier(processruntime.Barrier{
+			Campaign: effect.binding.campaign, Attempt: string(effect.binding.attempt),
+			Profile: effect.binding.profile, Deadline: effect.binding.deadline,
+		})
+		if await.Decision() != barrierBound {
 			panic("managed confirmation barrier was rejected")
 		}
-		grant, ok := <-await.delivery
+		grant, ok := await.Receive()
 		if !ok {
 			panic("managed confirmation barrier closed without a grant")
 		}
-		runner.rememberAuthority(await.request)
 		runner.rememberAuthority(grant)
 
 		return runner.advance(confirmationBarrierBoundEvent{
 			attempt: effect.attempt,
-			result: campaignBarrierEvidence(barrierResult{
-				decision: await.decision, request: await.request, deliveries: []admissionGrant{grant},
-			}),
+			result: campaignBarrierResult{
+				decision: await.Decision(), request: campaignAdmissionFact(await.Request()),
+				deliveries: []campaignAdmission{campaignAdmissionFact(grant.Admission())},
+			},
 		})
 	case campaignEffectReleaseSnapshot:
 		_, cause := managedBoundary(func() struct{} { runner.snapshot.Remove(); return struct{}{} })
@@ -179,14 +185,14 @@ func (runner *managedCampaignRunner) execute(
 			kind: campaignResourceSnapshot, identity: string(effect.snapshot),
 		})
 	case campaignEffectProposeTerminal:
-		var committed terminalResult
+		var committed processruntime.TerminalResult
 		if effect.fatalEpoch != 0 {
-			committed = runner.runtime.authorizeForcedAbort(runner.runtimeToken, effect.fatalEpoch)
+			committed = runner.runtime.AuthorizeForcedAbort(runner.runtimeToken, uint64(effect.fatalEpoch))
 		} else {
-			committed = runner.runtime.commitTerminal(runner.runtimeToken)
+			committed = runner.runtime.CommitTerminal(runner.runtimeToken)
 		}
 
-		return runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(committed)})
+		return runner.advance(terminalCommittedEvent{result: campaignTerminalResult{decision: committed.Decision()}})
 	default:
 		panic("managed campaign effect is not implemented")
 	}
@@ -281,16 +287,17 @@ func (runner *managedCampaignRunner) settle(
 		panic("managed terminal attempt facts are missing")
 	}
 	observed := terminal.observed
+	receipt := campaignReceipt(observed.receipt)
 	if facts.completesConfirmationQueue {
-		completed := runner.runtime.completeConfirmationQueue(runner.runtimeToken)
-		if completed.decision != confirmationQueueCompleted {
+		completed := runner.runtime.CompleteConfirmationQueue(runner.runtimeToken)
+		if completed.Decision() != confirmationQueueCompleted {
 			panic("managed confirmation queue completion was rejected")
 		}
-		observed.receipt.confirmationQueueDrained = true
+		receipt.confirmationQueueDrained = true
 	}
 	terminalEvent := attemptTerminalEvent{
 		attempt: terminal.attempt, generation: terminal.generation,
-		terminal: observed.terminal, receipt: campaignReceipt(observed.receipt),
+		terminal: observed.terminal, receipt: receipt,
 	}
 	if facts.kind == campaignAttemptBaseline {
 		data := terminalExecutionData(observed.terminal)

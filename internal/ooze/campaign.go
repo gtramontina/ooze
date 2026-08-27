@@ -629,9 +629,12 @@ func advanceCampaignGuarded(
 			violation = runtimeInvariantViolation{operation: "campaign advance", reason: "unexpected panic"}
 		}
 		var closure runtimeClosure
-		*runtime, closure = runtime.closeRuntime(runtimeFatalCause(violation.reason))
+		nextRuntime, closed := runtime.Close(violation.reason)
+		*runtime = nextRuntime
+		closure = runtimeClosureValue(closed)
 		sweep := emergencyDrain(closure)
-		*runtime, _ = runtime.settleEmergency(sweep)
+		nextRuntime, _ = runtime.SettleEmergency(processRuntimeResolutions(sweep))
+		*runtime = nextRuntime
 		panic(violation)
 	}()
 
@@ -639,11 +642,11 @@ func advanceCampaignGuarded(
 }
 
 func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaignState, []campaignEffect) {
-	if state.phase != campaignPreparing || state.runtimeToken.id != 0 {
+	if state.phase != campaignPreparing || state.runtimeToken.ID() != 0 {
 		campaignInvariant("register", "registration is invalid")
 	}
 	if event.registration.decision == campaignRejectedRecursive || event.registration.decision == campaignRejectedClosed {
-		if event.registration.token.id != 0 || len(state.obligations) != 1 ||
+		if event.registration.token.ID() != 0 || len(state.obligations) != 1 ||
 			state.obligations[0].kind != campaignResourceRegistration {
 			campaignInvariant("register", "registration rejection is invalid")
 		}
@@ -653,8 +656,8 @@ func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaign
 
 		return state, nil
 	}
-	if event.registration.decision != campaignRegistered || event.registration.token.id == 0 ||
-		event.registration.token.lineage != state.definition.lineage {
+	if event.registration.decision != campaignRegistered || event.registration.token.ID() == 0 ||
+		event.registration.token.Lineage() != state.definition.lineage {
 		campaignInvariant("register", "registration is invalid")
 	}
 	state.runtimeToken = event.registration.token
@@ -668,7 +671,7 @@ func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaign
 func (state campaignState) onPreparationFailed(
 	event campaignPreparationFailedEvent,
 ) (campaignState, []campaignEffect) {
-	if state.phase != campaignPreparing || state.runtimeToken.id == 0 || event.cause == "" {
+	if state.phase != campaignPreparing || state.runtimeToken.ID() == 0 || event.cause == "" {
 		campaignInvariant("prepare", "preparation failure is invalid")
 	}
 	state.phase = campaignDraining
@@ -700,7 +703,7 @@ func (state campaignState) onPreparationFailed(
 }
 
 func (state campaignState) onSnapshotEstablished(event snapshotEstablishedEvent) (campaignState, []campaignEffect) {
-	if state.phase != campaignPreparing || state.runtimeToken.id == 0 || state.snapshot != "" || event.snapshot == "" {
+	if state.phase != campaignPreparing || state.runtimeToken.ID() == 0 || state.snapshot != "" || event.snapshot == "" {
 		campaignInvariant("establish snapshot", "snapshot observation is invalid")
 	}
 	state.snapshot = event.snapshot
@@ -1613,7 +1616,7 @@ func (state campaignState) onRuntimeEmergencySettled(
 ) (campaignState, []campaignEffect) {
 	if state.drain.kind != campaignDrainRuntimeEmergency || event.epoch == 0 ||
 		event.epoch != state.drain.epoch || event.settlement.epoch != event.epoch ||
-		(len(event.settlement.residual) == 0) != (event.settlement.owner.id == 0) {
+		(len(event.settlement.residual) == 0) != (event.settlement.owner.ID() == 0) {
 		campaignInvariant("settle runtime emergency", "emergency settlement is stale or wrong")
 	}
 	if len(event.settlement.residual) == 0 || event.settlement.owner != state.runtimeToken {

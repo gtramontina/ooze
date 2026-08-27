@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
@@ -122,7 +123,7 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	}
 	assert.Equal(t, wantSupervisorKinds, supervisorKinds, "supervisor lifecycle=%v, want %v", supervisorKinds, wantSupervisorKinds)
 	assert.EqualValues(t, 0, len(explored.world.supervisor.attempts), "terminal world is not quiescent: %#v", explored.world)
-	assert.EqualValues(t, 0, len(explored.world.runtime.campaigns), "terminal world is not quiescent: %#v", explored.world)
+	assert.EqualValues(t, 0, explored.world.runtime.CampaignCount(), "terminal world is not quiescent: %#v", explored.world)
 
 	replayed := ReplayLegal(explored.trace)
 	assert.Nil(t, replayed.failure, "replay failure=%v", replayed.failure)
@@ -242,7 +243,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			outcome: func(world simulationWorld) bool {
 				_, failed := world.campaign.failure.(cleanupUnconfirmedFault)
 
-				return failed && world.runtime.lifecycle == runtimeClosedUnconfirmed
+				return failed && world.runtime.Unconfirmed()
 			},
 			observe: func(trace simulationTrace) bool {
 				drainBy := make(map[supervisorActionToken]simulationInstant)
@@ -414,10 +415,10 @@ func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T)
 	assert.Nil(t, explored.failure, "overlap exploration failed: %v", explored.failure)
 	found := false
 	for _, record := range explored.trace.records {
-		if record.authority != simulationRuntimeAuthority || len(record.runtimeState.admissions) != 2 {
+		if record.authority != simulationRuntimeAuthority || record.runtimeState.AdmissionCount() != 2 {
 			continue
 		}
-		if record.runtimeState.admissions[0].overlapped && record.runtimeState.admissions[1].overlapped {
+		if record.runtimeState.HasOverlappedPair() {
 			found = true
 			break
 		}
@@ -506,8 +507,8 @@ func TestSimulationFocusedRepeatedIntrinsicDeadlinesDoNotChangeAdmission(t *test
 		assert.Equal(t, campaignEvidenceDeadline, mutant.primary.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
 		assert.Equal(t, campaignAttemptEvidenceKind(0), mutant.confirmation.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
 	}
-	assert.Equal(t, fullAutomatic, explored.world.runtime.mode, "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.mode, completed.singleAdmissionFallback)
-	assert.False(t, completed.singleAdmissionFallback, "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.mode, completed.singleAdmissionFallback)
+	assert.False(t, explored.world.runtime.SingleAdmission(), "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.SingleAdmission(), completed.singleAdmissionFallback)
+	assert.False(t, completed.singleAdmissionFallback, "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.SingleAdmission(), completed.singleAdmissionFallback)
 	{
 		replayed := ReplayLegal(explored.trace)
 		assert.Nil(t, replayed.failure, "repeated-deadline replay=%#v", replayed)
@@ -751,10 +752,8 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 			record.runtimeObservation.kind != simulationLaunchUnconfirmedObservation {
 			continue
 		}
-		for _, admission := range record.runtimeState.admissions {
-			if admission.stage == admissionProspective || admission.stage == admissionOwned {
-				stages = append(stages, admission.stage)
-			}
+		for _, residual := range record.runtimeState.Residual() {
+			stages = append(stages, admissionStage(residual.Stage))
 		}
 		break
 	}
@@ -805,7 +804,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	{
 		_, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault)
 		require.True(t, ok, "drain-expiry world=%#v", explored.world)
-		assert.Equal(t, runtimeClosedUnconfirmed, explored.world.runtime.lifecycle, "drain-expiry world=%#v", explored.world)
+		assert.True(t, explored.world.runtime.Unconfirmed(), "drain-expiry world=%#v", explored.world)
 	}
 	startAt, closedAt, forcedAbortAt := -1, -1, -1
 	for index, record := range explored.trace.records {
@@ -816,7 +815,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 			record.runtimeStart.decision == startCommittedAccepted {
 			startAt = index
 		}
-		if closedAt < 0 && record.runtimeState.lifecycle != runtimeOpen {
+		if closedAt < 0 && !record.runtimeState.Open() {
 			closedAt = index
 		}
 		if record.runtimeOperation == simulationAuthorizeForcedAbort {
@@ -969,9 +968,9 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 	assert.Equal(t, simulationCampaignAuthority, first.key.authority, "failure key=%#v, invariant=%#v", first.key, first.invariant)
 	assert.Equal(t, first.invariant.operation, first.key.operation, "failure key=%#v, invariant=%#v", first.key, first.invariant)
 	assert.Equal(t, first.invariant.reason, first.key.reason, "failure key=%#v, invariant=%#v", first.key, first.invariant)
-	assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "runtime cleanup=%#v", first.world.runtime)
-	assert.NotEqual(t, 0, first.world.runtime.fatalEpoch, "runtime cleanup=%#v", first.world.runtime)
-	assert.EqualValues(t, 1, len(first.world.runtime.fatalCauses), "runtime cleanup=%#v", first.world.runtime)
+	assert.True(t, first.world.runtime.Drained(), "runtime cleanup=%#v", first.world.runtime)
+	assert.NotEqual(t, 0, first.world.runtime.FatalEpoch(), "runtime cleanup=%#v", first.world.runtime)
+	assert.EqualValues(t, 1, first.world.runtime.FatalCauseCount(), "runtime cleanup=%#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t *testing.T) {
@@ -1014,11 +1013,11 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	assert.Equal(t, second, first, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, simulationSupervisorAuthority, first.key.authority, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.Equal(t, supervisorReducerOperation, first.invariant.operation, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
-	residual := first.world.runtime.residualCustody()
-	assert.Equal(t, runtimeClosedUnconfirmed, first.world.runtime.lifecycle, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	residual := first.world.runtime.Residual()
+	assert.True(t, first.world.runtime.Unconfirmed(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 	require.Len(t, residual, 1, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
-	assert.Equal(t, registered.generation, residual[0].generation, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
-	assert.True(t, residual[0].transferred, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.Equal(t, registered.generation, residual[0].Generation, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.True(t, residual[0].Transferred, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T) {
@@ -1168,8 +1167,8 @@ func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCusto
 	assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.EqualValues(t, "request admission", first.invariant.operation, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.EqualValues(t, "invalid request", first.invariant.reason, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "runtime violation cleanup retained custody: %#v", first.world.runtime)
-	assert.EqualValues(t, 0, len(first.world.runtime.admissions), "runtime violation cleanup retained custody: %#v", first.world.runtime)
+	assert.True(t, first.world.runtime.Drained(), "runtime violation cleanup retained custody: %#v", first.world.runtime)
+	assert.EqualValues(t, 0, first.world.runtime.AdmissionCount(), "runtime violation cleanup retained custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *testing.T) {
@@ -1195,8 +1194,8 @@ func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *tes
 	assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.EqualValues(t, "acknowledge grant return", first.invariant.operation, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.EqualValues(t, "grant return authority is stale or wrong", first.invariant.reason, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "stale return cleanup=%#v", first.world.runtime)
-	assert.EqualValues(t, 0, len(first.world.runtime.admissions), "stale return cleanup=%#v", first.world.runtime)
+	assert.True(t, first.world.runtime.Drained(), "stale return cleanup=%#v", first.world.runtime)
+	assert.EqualValues(t, 0, first.world.runtime.AdmissionCount(), "stale return cleanup=%#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFamilies(t *testing.T) {
@@ -1246,8 +1245,8 @@ func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFam
 			assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
 			assert.Equal(t, test.operation, first.invariant.operation, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
 			assert.Equal(t, test.reason, first.invariant.reason, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
-			assert.Equal(t, runtimeClosedDrained, first.world.runtime.lifecycle, "runtime violation cleanup=%#v", first.world.runtime)
-			assert.EqualValues(t, 0, len(first.world.runtime.admissions), "runtime violation cleanup=%#v", first.world.runtime)
+			assert.True(t, first.world.runtime.Drained(), "runtime violation cleanup=%#v", first.world.runtime)
+			assert.EqualValues(t, 0, first.world.runtime.AdmissionCount(), "runtime violation cleanup=%#v", first.world.runtime)
 		})
 	}
 }
@@ -1297,7 +1296,7 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 	}, nil)
 	assert.Nil(t, explored.failure, "positive shrink exploration failure=%v", explored.failure)
 	counterexample := simulationCloneTrace(explored.trace)
-	counterexample.records[0].runtimeState.capacity++
+	counterexample.records[0].runtimeState = processruntime.NewState(counterexample.records[0].runtimeState.Capacity() + 1).Image()
 	replayed := ReplayLegal(counterexample)
 	assert.NotNil(t, replayed.failure, "positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
 	assert.NotEqual(t, FailureKey{}, replayed.key, "positive replay failure/key=%v/%#v", replayed.failure, replayed.key)
@@ -1415,7 +1414,7 @@ func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *
 	candidate := simulationRecord{authority: simulationRuntimeAuthority}
 	failing := simulationRecord{
 		authority:    simulationRuntimeAuthority,
-		runtimeState: simulationRuntimeState{capacity: 3},
+		runtimeState: processruntime.NewState(3).Image(),
 	}
 	firstKey := simulationReplayDivergenceFailure(
 		simulationTrace{}, simulationRuntimeStateDivergence, "rewritten diagnostic",
@@ -1425,7 +1424,7 @@ func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *
 	).key
 	assert.Equal(t, secondKey, firstKey, "typed replay keys depend on diagnostics: %#v/%#v", firstKey, secondKey)
 	retained := simulationRetainRecordedFailure(candidate, failing, firstKey.divergence)
-	assert.EqualValues(t, 3, retained.runtimeState.capacity, "typed replay divergence retained state=%#v", retained.runtimeState)
+	assert.EqualValues(t, 3, retained.runtimeState.Capacity(), "typed replay divergence retained state=%#v", retained.runtimeState)
 }
 
 func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testing.T) {
@@ -1601,7 +1600,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	driver := &supervisorDriver{recorder: recorder}
 
-	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	event := supervisorEvent{
 		kind: supervisorProspectiveRegistered, generation: 1, attempt: "attempt-a",
@@ -1631,7 +1630,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	})
 	wantSupervisor, wantActions := reduceSupervisor(supervisorState{}, event)
 	wantProjection := simulationWorld{
-		campaign: wantCampaign, runtime: wantRuntime,
+		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime.processRuntime),
 		supervisor: simulationProjectSupervisorState(wantSupervisor),
 	}
 	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
@@ -1652,7 +1651,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 	trace.barriers = []simulationQuiescentBarrier{{
 		afterSequence: trace.records[len(trace.records)-1].sequence,
 		campaign:      simulationTraceCampaignState(explored.world.campaign),
-		runtime:       simulationTraceRuntimeState(explored.world.runtime),
+		runtime:       explored.world.runtime,
 		supervisor:    simulationTraceSupervisorState(explored.world.supervisor),
 	}}
 	independent, causal := 0, 0
@@ -1675,18 +1674,18 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	activeCampaign := shell.registerCampaign(campaignProvenance{lineage: 512})
-	waitingCampaign := shell.registerCampaign(campaignProvenance{lineage: 513})
-	active := shell.requestAdmission(admissionRequest{
-		campaign: activeCampaign.token, attempt: "active", class: sharedAdmission,
+	activeCampaign := shell.RegisterCampaign(512)
+	waitingCampaign := shell.RegisterCampaign(513)
+	active := shell.RequestAdmission(processruntime.Admission{
+		Campaign: activeCampaign.Campaign(), Attempt: "active", Class: processruntime.SharedAdmission,
 	})
-	waiting := shell.requestAdmission(admissionRequest{
-		campaign: waitingCampaign.token, attempt: "waiting", class: sharedAdmission,
+	waiting := shell.RequestAdmission(processruntime.Admission{
+		Campaign: waitingCampaign.Campaign(), Attempt: "waiting", Class: processruntime.SharedAdmission,
 	})
 
-	shell.cancelAdmission(<-active.delivery)
-	grant := <-waiting.delivery
-	event := admissionGrantedEvent{attempt: grant.attempt, grant: campaignAdmissionFact(grant)}
+	shell.CancelAdmission(active.Request())
+	grant, _ := waiting.Receive()
+	event := admissionGrantedEvent{attempt: "waiting", grant: campaignAdmissionFact(grant.Admission())}
 	recorder.mutex.Lock()
 	cancelSequence := recorder.records[len(recorder.records)-1].sequence
 	recorder.mutex.Unlock()
@@ -1782,7 +1781,7 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	driver := &supervisorDriver{recorder: recorder}
 	cut := func() { _, _ = recorder.quiescent(runner, shell, driver) }
 
-	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	cut()
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	cut()
@@ -1794,7 +1793,8 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 		kind: campaignResourceSnapshot, identity: "private-snapshot",
 	})
 	cut()
-	terminal := shell.commitTerminal(registration.token)
+	processedTerminal := shell.CommitTerminal(registration.token)
+	terminal := terminalResult{decision: processedTerminal.Decision()}
 	cut()
 	runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
 
@@ -1802,10 +1802,11 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	assert.EqualValues(t, 7, len(trace.barriers), "retained prefix barriers=%d, want 7", len(trace.barriers))
 	replayed := ReplayLegal(trace)
 	require.Nil(t, replayed.failure, "recorded production trace did not replay: %v", replayed.failure)
+	replayed.world.runtimeState = processRuntime{}
 	assert.Equal(t, production, replayed.world, "recorded production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 	corrupted := trace
 	corrupted.barriers = slices.Clone(trace.barriers)
-	corrupted.barriers[0].runtime.capacity++
+	corrupted.barriers[0].runtime = processruntime.NewState(corrupted.barriers[0].runtime.Capacity() + 1).Image()
 	{
 		failure := ReplayLegal(corrupted).failure
 		require.NotNil(t, failure, "corrupted barrier replay failure=%v", failure)
@@ -1930,6 +1931,7 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 	}
 	replayed := ReplayLegal(trace)
 	assert.Nil(t, replayed.failure, "non-empty production trace did not replay: %v", replayed.failure)
+	replayed.world.runtimeState = processRuntime{}
 	assert.Equal(t, production, replayed.world, "non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
 }
 
@@ -1978,7 +1980,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
 	driver := &supervisorDriver{recorder: recorder}
-	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
 	mutants := []mutantIdentity{"mutant-a", "mutant-b"}
@@ -1993,12 +1995,12 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
 	recorder := newSimulationRecorder()
 	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	registration := shell.registerCampaign(campaignProvenance{lineage: 71})
-	await := shell.requestAdmission(admissionRequest{
-		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
-		profile: AutomaticProfile,
+	registration := shell.RegisterCampaign(71)
+	await := shell.RequestAdmission(processruntime.Admission{
+		Campaign: registration.Campaign(), Attempt: "attempt-a", Class: processruntime.SharedAdmission,
+		Profile: AutomaticProfile,
 	})
-	assert.Equal(t, admissionAccepted, await.decision, "admission decision=%v", await.decision)
+	assert.Equal(t, admissionAccepted, await.Decision(), "admission decision=%v", await.Decision())
 	campaign, _ := beginCampaign(campaignDefinition{
 		identity: "campaign-projection", lineage: 71, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -2006,19 +2008,10 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	driver := &supervisorDriver{recorder: recorder}
 
-	trace, projection := recorder.quiescent(runner, shell, driver)
-	assert.NotNil(t, shell.core.admissions[0].grant.delivery, "fixture did not retain the shell-only delivery capability")
-	assert.Nil(t, projection.runtime.admissions[0].grant.delivery, "quiescent projection leaked a delivery channel")
+	trace, _ := recorder.quiescent(runner, shell, driver)
 	{
 		path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace")
 		assert.EqualValues(t, "", path, "runtime trace leaked a delivery capability at %s", path)
-	}
-}
-
-func TestSimulationTraceContainsOnlyCapabilityFreeDTOs(t *testing.T) {
-	{
-		path, found := executionCapabilityPath(reflect.TypeFor[simulationTrace](), nil)
-		assert.False(t, found, "simulation trace contains executable capability at %s", path)
 	}
 }
 
@@ -2121,7 +2114,7 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	driver := &supervisorDriver{recorder: recorder}
-	registration := shell.registerCampaign(campaignProvenance{lineage: definition.lineage})
+	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	runner.advance(snapshotEstablishedEvent{snapshot: "/private/repository/snapshot-937"})
 
@@ -2273,14 +2266,10 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 }
 
 func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T) {
+	runtime, generation := simulationOwnedRuntime(t)
+	runtime, _ = runtime.observeAttempt(generation, drainUnconfirmed{})
 	engine := simulationEngine{
-		runtime: processRuntime{
-			lifecycle: runtimeFatalClosing,
-			admissions: []admittedAttempt{{
-				grant: admissionGrant{attempt: "attempt-a"}, stage: admissionOwned,
-				generation: 2, disposition: dispositionCustodyTransferred,
-			}},
-		},
+		runtime: runtime.processRuntime,
 		pending: []simulationEngineMove{{
 			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
 			action: supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9},
@@ -2293,18 +2282,27 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 	}
 }
 
+func simulationOwnedRuntime(t *testing.T) (testProcessRuntime, attemptGeneration) {
+	t.Helper()
+	runtime := newProcessRuntime(1)
+	runtime, registration := runtime.registerCampaign(campaignProvenance{lineage: 91})
+	runtime, admitted := runtime.requestAdmission(admissionRequest{
+		campaign: registration.token, attempt: "attempt-a", class: sharedAdmission,
+	})
+	require.Len(t, admitted.deliveries, 1)
+	runtime, started := runtime.startCommitted(admitted.deliveries[0])
+	runtime, _ = runtime.observeAttempt(started.generation, launchOwned{})
+	return runtime, started.generation
+}
+
 func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
+	runtime, generation := simulationOwnedRuntime(t)
 	engine := simulationEngine{
-		runtime: processRuntime{
-			lifecycle: runtimeOpen,
-			admissions: []admittedAttempt{{
-				grant: admissionGrant{attempt: "attempt-a"}, stage: admissionOwned, generation: 2,
-			}},
-		},
+		runtime: runtime.processRuntime,
 		pending: []simulationEngineMove{
 			{
 				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
-				action: supervisorAction{kind: supervisorSettleRuntime, generation: 2, token: 10},
+				action: supervisorAction{kind: supervisorSettleRuntime, generation: generation, token: 10},
 			},
 			{
 				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 11},
@@ -2519,7 +2517,7 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Fuzz(func(t *testing.T, source []byte) {
 		definition, choices := simulationFuzzInput(source)
 		explored := Explore(definition, choices)
-		require.Nil(t, explored.failure, "legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure, simulationTraceRuntimeState(explored.world.runtime), simulationRecordedActionSummary(explored.trace))
+		require.Nil(t, explored.failure, "legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure, explored.world.runtime, simulationRecordedActionSummary(explored.trace))
 		replayed := ReplayLegal(explored.trace)
 		require.Nil(t, replayed.failure, "legal replay failed: %v", replayed.failure)
 		assert.Equal(t, replayed.world, explored.world, "legal replay world diverged:\nexplored=%#v\nreplayed=%#v", explored.world, replayed.world)

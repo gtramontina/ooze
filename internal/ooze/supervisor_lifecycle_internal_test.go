@@ -90,8 +90,8 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 		t.Run(test.name, func(t *testing.T) {
 			spec := validSupervisorSpec()
 			shell := newProcessRuntimeShell(1)
-			campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
-			requested := shell.requestAdmission(admissionRequest{
+			campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 11})
+			requested := requestAdmissionForTest(shell, admissionRequest{
 				campaign: campaign.token,
 				attempt:  attemptIdentity(spec.Attempt),
 				class:    sharedAdmission,
@@ -105,7 +105,7 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 					order = append(order, "start-committed")
 					assert.Equal(t, attemptIdentity(spec.Attempt), attempt, "start attempt = %q, want %q", attempt, spec.Attempt)
 					cell = pending
-					prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: pending})
+					prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: pending})
 					assert.Equal(t, startCommittedAccepted, prepared.result.decision, "start committed = %#v", prepared.result)
 					generation = prepared.result.generation
 
@@ -113,16 +113,15 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 				},
 				func(observed attemptGeneration, spec Spec) LaunchResult {
 					order = append(order, "native")
-					snapshot := shell.snapshot()
-					index := snapshot.admissionIndexByGeneration(observed)
+					snapshot := shell.Image()
+					_, admitted := runtimeAdmissionByGeneration(snapshot, observed)
 					assert.NotEqual(t, 0, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
 					assert.Equal(t, generation, observed, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
 					if assert.NotNil(t, cell, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot) {
-						assert.Equal(t, observed, cell.installedGeneration(), "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+						assert.Equal(t, observed, cell.InstalledGeneration(), "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
 					}
-					if assert.False(t, index < 0, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot) {
-						assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
-					}
+					assert.True(t, admitted, "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
+					assert.True(t, snapshot.Prospective(observed), "native observed generation/cell/runtime = %d/%v/%#v", observed, cell, snapshot)
 					assert.Equal(t, validSupervisorSpec().Attempt, spec.Attempt, "native spec attempt = %q", spec.Attempt)
 					spec.Command[0] = "mutated-by-native"
 					spec.Env[0] = "MUTATED=1"
@@ -142,7 +141,7 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 
 func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testing.T) {
 	shell := newProcessRuntimeShell(2)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 11})
 	first := validSupervisorSpec()
 	first.Attempt = "attempt-a"
 	second := validSupervisorSpec()
@@ -152,7 +151,7 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 
 	grants := make(map[attemptIdentity]admissionGrant, 2)
 	for _, spec := range []Spec{first, second} {
-		requested := shell.requestAdmission(admissionRequest{
+		requested := requestAdmissionForTest(shell, admissionRequest{
 			campaign: campaign.token,
 			attempt:  attemptIdentity(spec.Attempt),
 			class:    sharedAdmission,
@@ -173,7 +172,7 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			grant, ok := grants[attempt]
 			assert.True(t, ok, "start grant for %q = %#v", attempt, grant)
 			assert.Equal(t, attempt, grant.attempt, "start grant for %q = %#v", attempt, grant)
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 			assert.Equal(t, startCommittedAccepted, prepared.result.decision, "start committed for %q = %#v", attempt, prepared.result)
 			observedMu.Lock()
 			cells[attempt] = cell
@@ -189,17 +188,17 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			wantGeneration := generations[attempt]
 			nativeCalls[attempt]++
 			observedMu.Unlock()
-			snapshot := shell.snapshot()
-			index := snapshot.admissionIndexByGeneration(generation)
+			snapshot := shell.Image()
+			admission, admitted := runtimeAdmissionByGeneration(snapshot, generation)
 			cellPresent := assert.NotNil(t, cell, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			assert.NotEqual(t, 0, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			assert.Equal(t, wantGeneration, generation, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			if cellPresent {
-				assert.Equal(t, generation, cell.installedGeneration(), "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+				assert.Equal(t, generation, cell.InstalledGeneration(), "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			}
-			if assert.False(t, index < 0, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot) {
-				assert.Equal(t, attempt, snapshot.admissions[index].grant.attempt, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
-				assert.Equal(t, admissionProspective, snapshot.admissions[index].stage, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+			if assert.True(t, admitted, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot) {
+				assert.Equal(t, attempt, admission.attempt, "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
+				assert.True(t, snapshot.Prospective(generation), "native pairing for %q = generation %d, cell %p, state %#v", attempt, generation, cell, snapshot)
 			}
 			if attempt == attemptIdentity(first.Attempt) {
 				spec.Command[0] = "mutated-first-snapshot"
@@ -242,11 +241,11 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 	assert.EqualValues(t, "GOMAXPROCS=1", first.Env[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
 	assert.EqualValues(t, "go", second.Command[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
 	assert.EqualValues(t, "GOMAXPROCS=2", second.Env[0], "caller snapshots crossed: first=%v/%v second=%v/%v", first.Command, first.Env, second.Command, second.Env)
-	snapshot := shell.snapshot()
-	assert.Equal(t, runtimeOpen, snapshot.lifecycle, "concurrent launch runtime = %#v", snapshot)
-	require.Len(t, snapshot.admissions, 2, "concurrent launch runtime = %#v", snapshot)
-	assert.Equal(t, admissionOwned, snapshot.admissions[0].stage, "concurrent launch runtime = %#v", snapshot)
-	assert.Equal(t, admissionOwned, snapshot.admissions[1].stage, "concurrent launch runtime = %#v", snapshot)
+	snapshot := shell.Image()
+	assert.True(t, snapshot.Open(), "concurrent launch runtime = %#v", snapshot)
+	require.EqualValues(t, 2, snapshot.AdmissionCount(), "concurrent launch runtime = %#v", snapshot)
+	assert.True(t, snapshot.Owned(firstGeneration), "concurrent launch runtime = %#v", snapshot)
+	assert.True(t, snapshot.Owned(secondGeneration), "concurrent launch runtime = %#v", snapshot)
 }
 
 func TestSupervisorOwnedAttemptWaitIsIdempotentAndStopIsConcurrent(t *testing.T) {

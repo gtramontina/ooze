@@ -82,16 +82,16 @@ var ErrUnsupportedPlatform = errors.New("managed attempts are unsupported on thi
 
 type supervisorConstruction struct {
 	supported    bool
-	installStart func(attemptIdentity, *pendingStartCell) installedStart
+	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart
 	launchNative func(attemptGeneration, Spec) LaunchResult
 }
 
 type Supervisor struct {
-	installStart   func(attemptIdentity, *pendingStartCell) installedStart
+	installStart   func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart
 	launchNative   func(attemptGeneration, Spec) LaunchResult
-	reserveLaunch  func(*pendingStartCell, Spec)
-	discardLaunch  func(*pendingStartCell)
-	driveLaunch    func(installedStart, Spec) LaunchResult
+	reserveLaunch  func(*processruntime.StartCell, Spec)
+	discardLaunch  func(*processruntime.StartCell)
+	driveLaunch    func(processruntime.PreparedStart, Spec) LaunchResult
 	emergencyDrain func(EmergencyRequest) SweepResult
 }
 
@@ -110,7 +110,7 @@ func constructSupervisor(construction supervisorConstruction) (*Supervisor, erro
 }
 
 func newSupervisorForTest(
-	installStart func(attemptIdentity, *pendingStartCell) installedStart,
+	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart,
 	launchNative func(attemptGeneration, Spec) LaunchResult,
 ) *Supervisor {
 	supervisor, err := constructSupervisor(supervisorConstruction{
@@ -128,24 +128,24 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 		panic(err)
 	}
 	snapshot := spec.snapshot()
-	pendingStart := pendingStartCell{}
+	pendingStart := processruntime.NewStartCell()
 	if s.reserveLaunch != nil {
-		s.reserveLaunch(&pendingStart, snapshot)
+		s.reserveLaunch(pendingStart, snapshot)
 	}
-	start := s.installStart(attemptIdentity(snapshot.Attempt), &pendingStart)
-	if start.generation == 0 && s.discardLaunch != nil {
-		s.discardLaunch(&pendingStart)
+	start := s.installStart(attemptIdentity(snapshot.Attempt), pendingStart)
+	if start.Generation() == 0 && s.discardLaunch != nil {
+		s.discardLaunch(pendingStart)
 	}
 	if s.driveLaunch != nil {
 		return s.driveLaunch(start, snapshot)
 	}
 	var result LaunchResult
-	observed := start.launch(func(generation attemptGeneration) attemptObservation {
+	observed := start.Launch(func(generation processruntime.Generation) processruntime.Observation {
 		result = s.launchNative(generation, snapshot)
 
-		return brokerLaunchObservation(result)
+		return processRuntimeObservation(brokerLaunchObservation(result))
 	})
-	start.shell.observeAttempt(start.generation, observed)
+	start.Observe(observed)
 
 	return result
 }

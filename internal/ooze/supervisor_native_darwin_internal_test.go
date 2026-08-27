@@ -102,15 +102,15 @@ func TestDarwinNativeLaunchResourceExhaustionRequiresExactPreReleaseEvidence(t *
 func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) {
 	directory := t.TempDir()
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 107})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 107})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "darwin-not-released", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -124,8 +124,8 @@ func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) 
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want immutable NotReleased error", result)
 	assert.Error(t, notReleased.Err, "launch = %#v, want immutable NotReleased error", result)
 	{
-		snapshot := shell.snapshot()
-		assert.EqualValues(t, 0, len(snapshot.admissions), "proven no-release retained runtime custody: %#v", snapshot)
+		snapshot := shell.Image()
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "proven no-release retained runtime custody: %#v", snapshot)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T
 	pidPath := directory + "/escapee.pid"
 	markerPath := directory + "/escapee.marker"
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 106})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 106})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "darwin-escape-behind-member",
 		class:    serialPrimaryAdmission,
@@ -151,7 +151,7 @@ func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -262,8 +262,8 @@ func awaitDarwinEscapeFixtureFile(t *testing.T, path string) {
 
 func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 101})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 101})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "darwin-native",
 		class:    serialPrimaryAdmission,
@@ -273,7 +273,7 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			assert.Equal(t, grant.attempt, attempt, "start attempt = %q, want %q", attempt, grant.attempt)
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -299,16 +299,16 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 	assert.True(t, settled.Output.CompleteThroughCutoff, "settled native evidence = %#v", settled)
 	assert.True(t, settled.Output.Final, "settled native evidence = %#v", settled)
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeOpen, snapshot.lifecycle, "runtime after native settlement = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after native settlement = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Open(), "runtime after native settlement = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after native settlement = %#v", snapshot)
 	}
 }
 
 func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 102})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 102})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "darwin-deadline",
 		class:    serialPrimaryAdmission,
@@ -317,7 +317,7 @@ func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -351,8 +351,8 @@ func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T
 
 func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 103})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 103})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "darwin-fuse",
 		class:    sharedAdmission,
@@ -361,7 +361,7 @@ func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -389,8 +389,8 @@ func TestDarwinNativeSupervisorTripsAutomaticDescendantFuse(t *testing.T) {
 
 func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 104})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 104})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "darwin-emergency",
 		class:    serialPrimaryAdmission,
@@ -399,7 +399,7 @@ func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -414,7 +414,7 @@ func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 	require.True(t, ok, "launch = %#v, want Owned", launched)
 	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", launched)
 	emergencyAt := time.Now()
-	shell.closeRuntime(runtimeFatalCause("native emergency test"))
+	closeRuntimeForTest(shell, runtimeFatalCause("native emergency test"))
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
 	})
@@ -430,8 +430,8 @@ func TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter(t *testing.T) {
 
 func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 105})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 105})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "darwin-stop",
 		class:    serialPrimaryAdmission,
@@ -440,7 +440,7 @@ func TestDarwinNativeSupervisorStopsOwnedCommandBeforeWait(t *testing.T) {
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)

@@ -36,15 +36,15 @@ func TestNativeSupervisorDrainsWideFanout(t *testing.T) {
 
 	directory := t.TempDir()
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 503})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 503})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "native-wide-fanout", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)

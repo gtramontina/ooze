@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/viruses"
 )
 
@@ -13,30 +14,30 @@ type managedTemporaryDirectoryFactory interface{ New() string }
 
 type managedObservedLaunch struct {
 	result  LaunchResult
-	receipt observationResult
+	receipt processruntime.Receipt
 }
 
 type managedObservedTerminal struct {
 	terminal Terminal
-	receipt  observationResult
+	receipt  processruntime.Receipt
 }
 
 type managedObservedEmergency struct {
 	epoch      fatalEpochID
-	settlement emergencySettlement
+	settlement processruntime.EmergencySettlement
 }
 
 type managedAttemptSystem interface {
-	reserveLaunch(*pendingStartCell, Spec)
-	discardLaunch(*pendingStartCell)
-	launch(installedStart, Spec) managedObservedLaunch
+	reserveLaunch(*processruntime.StartCell, Spec)
+	discardLaunch(*processruntime.StartCell)
+	launch(processruntime.PreparedStart, Spec) managedObservedLaunch
 	wait(attemptGeneration, *OwnedAttempt) managedObservedTerminal
 	stop(*OwnedAttempt)
 	emergency(fatalEpochID) managedObservedEmergency
 }
 
 type managedCampaignConstruction struct {
-	runtime            *processRuntimeShell
+	runtime            *processruntime.Runtime
 	recorder           *simulationRecorder
 	repository         Repository
 	temporaryDirectory managedTemporaryDirectoryFactory
@@ -68,9 +69,9 @@ type managedCampaignRunner struct {
 	snapshot     TemporaryRepository
 	mutations    map[mutantIdentity]*gomutatedfile.GoMutatedFile
 	workspaces   map[string]TemporaryRepository
-	starts       map[attemptGeneration]installedStart
+	starts       map[attemptGeneration]processruntime.PreparedStart
 	owned        map[attemptGeneration]*OwnedAttempt
-	authorities  map[campaignAdmission]admissionAuthority
+	authorities  map[campaignAdmission]processruntime.Grant
 	attemptFacts map[attemptGeneration]managedAttemptFacts
 	runtimeToken campaignToken
 	terminals    chan managedTerminalObservation
@@ -100,19 +101,19 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		managedCampaignConstruction: construction,
 		mutations:                   make(map[mutantIdentity]*gomutatedfile.GoMutatedFile),
 		workspaces:                  make(map[string]TemporaryRepository),
-		starts:                      make(map[attemptGeneration]installedStart),
+		starts:                      make(map[attemptGeneration]processruntime.PreparedStart),
 		owned:                       make(map[attemptGeneration]*OwnedAttempt),
-		authorities:                 make(map[campaignAdmission]admissionAuthority),
+		authorities:                 make(map[campaignAdmission]processruntime.Grant),
 		attemptFacts:                make(map[attemptGeneration]managedAttemptFacts),
 		recorder:                    construction.recorder,
 	}
 }
 
-func (runner *managedCampaignRunner) rememberAuthority(authority admissionAuthority) {
-	runner.authorities[campaignAdmissionFact(authority)] = authority
+func (runner *managedCampaignRunner) rememberAuthority(authority processruntime.Grant) {
+	runner.authorities[campaignAdmissionFact(authority.Admission())] = authority
 }
 
-func (runner *managedCampaignRunner) authority(fact campaignAdmission) admissionAuthority {
+func (runner *managedCampaignRunner) authority(fact campaignAdmission) processruntime.Grant {
 	authority, ok := runner.authorities[fact]
 	if !ok {
 		panic("managed admission authority is missing")

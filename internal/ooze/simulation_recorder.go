@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
 type simulationRecorder struct {
@@ -223,18 +225,18 @@ func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campai
 			record.runtimeRegistration == event.registration
 	case admissionGrantedEvent:
 		return slices.ContainsFunc(simulationRuntimeDeliveries(record), func(delivery simulationAdmission) bool {
-			return campaignAdmissionFact(delivery.production()) == event.grant
+			return campaignAdmissionValue(delivery.production()) == event.grant
 		})
 	case admissionCancelledEvent:
 		return record.runtimeOperation == simulationCancelAdmission &&
-			campaignAdmissionFact(record.runtimeAdmissionToken.production()) == event.request &&
+			campaignAdmissionValue(record.runtimeAdmissionToken.production()) == event.request &&
 			record.runtimeAdmissionOut.decision == event.result.decision &&
-			campaignAdmissionFact(record.runtimeAdmissionOut.request.production()) == event.result.request &&
+			campaignAdmissionValue(record.runtimeAdmissionOut.request.production()) == event.result.request &&
 			record.runtimeAdmissionOut.fatalEpoch == event.result.fatalEpoch
 	case admissionRejectedEvent:
 		return record.runtimeOperation == simulationRequestAdmission &&
 			record.runtimeAdmissionOut.decision == event.result.decision &&
-			campaignAdmissionFact(record.runtimeAdmissionOut.request.production()) == event.result.request
+			campaignAdmissionValue(record.runtimeAdmissionOut.request.production()) == event.result.request
 	case startCommittedEvent:
 		return record.runtimeOperation == simulationStartCommitted && record.runtimeStart == startCommittedResult(event.result)
 	case attemptLaunchEvent:
@@ -244,10 +246,10 @@ func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campai
 	case confirmationBarrierBoundEvent:
 		return record.runtimeOperation == simulationBindConfirmationBarrier &&
 			record.runtimeBarrierOut.decision == event.result.decision &&
-			campaignAdmissionFact(record.runtimeBarrierOut.request.production()) == event.result.request &&
+			campaignAdmissionValue(record.runtimeBarrierOut.request.production()) == event.result.request &&
 			slices.EqualFunc(record.runtimeBarrierOut.deliveries, event.result.deliveries,
 				func(left simulationAdmission, right campaignAdmission) bool {
-					return campaignAdmissionFact(left.production()) == right
+					return campaignAdmissionValue(left.production()) == right
 				})
 	case grantReturnAcknowledgedEvent:
 		return record.runtimeOperation == simulationAcknowledgeGrantReturn &&
@@ -432,7 +434,7 @@ func (recorder *simulationRecorder) recordSupervisorDelivery(
 
 func (recorder *simulationRecorder) quiescent(
 	runner *managedCampaignRunner,
-	runtime *processRuntimeShell,
+	runtime *processruntime.Runtime,
 	driver *supervisorDriver,
 ) (simulationTrace, simulationWorld) {
 	for {
@@ -455,9 +457,7 @@ func (recorder *simulationRecorder) quiescent(
 		return records[left].sequence < records[right].sequence
 	})
 
-	runtime.mutex.Lock()
-	runtimeState := simulationProjectRuntime(runtime.core)
-	runtime.mutex.Unlock()
+	runtimeState := runtime.Image()
 	driver.mutex.Lock()
 	supervisorState := simulationProjectSupervisorState(driver.state)
 	driver.mutex.Unlock()
@@ -474,7 +474,7 @@ func (recorder *simulationRecorder) quiescent(
 	barrier := simulationQuiescentBarrier{
 		afterSequence: afterSequence,
 		campaign:      simulationTraceCampaignState(campaignState),
-		runtime:       simulationTraceRuntimeState(runtimeState),
+		runtime:       runtimeState,
 		supervisor:    simulationTraceSupervisorState(supervisorState),
 	}
 	recorder.mutex.Lock()
@@ -484,22 +484,13 @@ func (recorder *simulationRecorder) quiescent(
 
 	return simulationTrace{
 			definition: simulationDefinition{
-				campaign: definition, capacity: runtimeState.capacity,
+				campaign: definition, capacity: runtimeState.Capacity(),
 				catalogue: slices.Clone(campaignState.catalogue),
 			},
 			records: records, barriers: barriers,
 		}, simulationWorld{
 			campaign: campaignState, runtime: runtimeState, supervisor: supervisorState,
 		}
-}
-
-func simulationProjectRuntime(state processRuntime) processRuntime {
-	state = state.clone()
-	for index := range state.admissions {
-		state.admissions[index].grant.delivery = nil
-	}
-
-	return state
 }
 
 func simulationProjectCampaign(state campaignState) campaignState {

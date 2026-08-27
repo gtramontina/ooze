@@ -3,6 +3,8 @@ package ooze
 import (
 	"sync"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
 const (
@@ -16,7 +18,7 @@ type nativeManagedAttemptSystem struct {
 	emergencyResult managedObservedEmergency
 }
 
-func newNativeManagedAttemptSystem(runtime *processRuntimeShell) (*nativeManagedAttemptSystem, error) {
+func newNativeManagedAttemptSystem(runtime *processruntime.Runtime) (*nativeManagedAttemptSystem, error) {
 	driver, err := newNativeSupervisorDriver(runtime, managedLaunchProgress, managedDrainEpoch)
 	if err != nil {
 		return nil, err
@@ -26,17 +28,17 @@ func newNativeManagedAttemptSystem(runtime *processRuntimeShell) (*nativeManaged
 }
 
 func (system *nativeManagedAttemptSystem) launch(
-	start installedStart,
+	start processruntime.PreparedStart,
 	spec Spec,
 ) managedObservedLaunch {
 	return system.driver.launchManaged(start, spec)
 }
 
-func (system *nativeManagedAttemptSystem) reserveLaunch(cell *pendingStartCell, spec Spec) {
+func (system *nativeManagedAttemptSystem) reserveLaunch(cell *processruntime.StartCell, spec Spec) {
 	system.driver.reserveLaunch(cell, spec)
 }
 
-func (system *nativeManagedAttemptSystem) discardLaunch(cell *pendingStartCell) {
+func (system *nativeManagedAttemptSystem) discardLaunch(cell *processruntime.StartCell) {
 	system.driver.discardLaunch(cell)
 }
 
@@ -62,7 +64,7 @@ func (system *nativeManagedAttemptSystem) emergency(epoch fatalEpochID) managedO
 			invariant(supervisorDriverOperation, "managed emergency lacks exact runtime receipt")
 		}
 		system.emergencyResult = managedObservedEmergency{
-			epoch: system.driver.emergencyReceipt.epoch, settlement: system.driver.emergencyReceipt,
+			epoch: fatalEpochID(system.driver.emergencyReceipt.Epoch()), settlement: system.driver.emergencyReceipt,
 		}
 	})
 	if system.emergencyResult.epoch != epoch {

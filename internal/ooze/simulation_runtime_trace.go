@@ -1,6 +1,10 @@
 package ooze
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+)
 
 type simulationAdmission struct {
 	campaign campaignToken
@@ -201,46 +205,10 @@ func simulationTraceConfirmationQueueResult(value confirmationQueueResult) simul
 	}
 }
 
-type simulationRuntimeState struct {
-	capacity    int
-	nextID      uint64
-	mode        admissionMode
-	lifecycle   runtimeLifecycle
-	fatalCauses []runtimeFatalCause
-	fatalEpoch  fatalEpochID
-	fatalOwner  campaignToken
-	campaigns   []registeredCampaign
-	admissions  []struct {
-		grant       simulationAdmission
-		stage       admissionStage
-		generation  attemptGeneration
-		overlapped  bool
-		disposition admissionDisposition
-	}
-}
+type simulationRuntimeState = processruntime.Image
 
 func simulationTraceRuntimeState(value processRuntime) simulationRuntimeState {
-	state := simulationRuntimeState{
-		capacity: value.capacity, nextID: value.nextID, mode: value.mode, lifecycle: value.lifecycle,
-		fatalCauses: slices.Clone(value.fatalCauses), fatalEpoch: value.fatalEpoch,
-		fatalOwner: value.fatalOwner, campaigns: slices.Clone(value.campaigns),
-	}
-	state.admissions = make([]struct {
-		grant       simulationAdmission
-		stage       admissionStage
-		generation  attemptGeneration
-		overlapped  bool
-		disposition admissionDisposition
-	}, len(value.admissions))
-	for index, admission := range value.admissions {
-		state.admissions[index].grant = simulationTraceAdmission(admission.grant)
-		state.admissions[index].stage = admission.stage
-		state.admissions[index].generation = admission.generation
-		state.admissions[index].overlapped = admission.overlapped
-		state.admissions[index].disposition = admission.disposition
-	}
-
-	return state
+	return value.Image()
 }
 
 type simulationEmergencySweepRecord struct{ resolutions []emergencyResolution }

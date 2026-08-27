@@ -257,18 +257,18 @@ func TestSupervisorEmergencyExecutorRejectsCrossKindPayloadBeforeEffects(t *test
 
 func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrder(t *testing.T) {
 	shell := newProcessRuntimeShell(2)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 67})
-	admittedHigh := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 67})
+	admittedHigh := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "admitted-first", class: sharedAdmission,
 	})
-	admittedLow := shell.requestAdmission(admissionRequest{
+	admittedLow := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "admitted-second", class: sharedAdmission,
 	})
 	low := startOwned(shell, <-admittedLow.delivery)
 	high := startOwned(shell, <-admittedHigh.delivery)
 	assert.False(t, high.generation <= low.generation, "start generations = high %d low %d", high.generation, low.generation)
-	shell.observeAttempt(high.generation, drainUnconfirmed{})
-	shell.observeAttempt(low.generation, drainUnconfirmed{})
+	observeAttemptForTest(shell, high.generation, drainUnconfirmed{})
+	observeAttemptForTest(shell, low.generation, drainUnconfirmed{})
 	action := supervisorAction{
 		kind:  supervisorSettleEmergency,
 		token: 41,
@@ -284,7 +284,7 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 			pendingAction: supervisorPendingAction{kind: action.kind, token: action.token},
 		},
 	}
-	executor := supervisorEmergencyExecutor{settleEmergency: shell.settleEmergency}
+	executor := supervisorEmergencyExecutor{settleEmergency: func(sweep emergencySweep) emergencySettlement { return settleEmergencyForTest(shell, sweep) }}
 
 	event := executor.execute(state, action)
 	wantResiduals := []supervisorEmergencyResolution{
@@ -294,9 +294,9 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 	require.NotNil(t, event, "normalized runtime completion = %#v", event)
 	require.NotNil(t, event.emergencySettlement, "normalized runtime completion = %#v", event)
 	assert.Equal(t, wantResiduals, event.emergencySettlement.residuals, "normalized runtime completion = %#v", event)
-	runtime := shell.snapshot()
-	rawResidual := runtime.residualCustody()
-	assert.Equal(t, runtimeClosedUnconfirmed, runtime.lifecycle, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
+	runtime := shell.Image()
+	rawResidual := runtimeResiduals(shell.Residual())
+	assert.True(t, runtime.Unconfirmed(), "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
 	require.Len(t, rawResidual, 2, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
 	assert.Equal(t, high.generation, rawResidual[0].generation, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
 	assert.Equal(t, low.generation, rawResidual[1].generation, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
@@ -361,7 +361,7 @@ func TestSupervisorEmergencyExecutorRejectsWrongActionTokensBeforeEffects(t *tes
 
 func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	shell.closeRuntime(runtimeFatalCause("empty supervisor epoch"))
+	closeRuntimeForTest(shell, runtimeFatalCause("empty supervisor epoch"))
 	action := supervisorAction{kind: supervisorSettleEmergency, token: 41}
 	state := supervisorState{
 		nextAction: action.token,
@@ -370,7 +370,7 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 			pendingAction: supervisorPendingAction{kind: action.kind, token: action.token},
 		},
 	}
-	executor := supervisorEmergencyExecutor{settleEmergency: shell.settleEmergency}
+	executor := supervisorEmergencyExecutor{settleEmergency: func(sweep emergencySweep) emergencySettlement { return settleEmergencyForTest(shell, sweep) }}
 
 	event := executor.execute(state, action)
 	want := &supervisorEvent{
@@ -379,8 +379,8 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 			action: state.emergency.pendingAction,
 		},
 	}
-	assert.Equal(t, want, event, "empty executor event/runtime = %#v/%#v", event, shell.snapshot())
-	assert.Equal(t, runtimeClosedDrained, shell.snapshot().lifecycle, "empty executor event/runtime = %#v/%#v", event, shell.snapshot())
+	assert.Equal(t, want, event, "empty executor event/runtime = %#v/%#v", event, shell.Image())
+	assert.True(t, shell.Image().Drained(), "empty executor event/runtime = %#v/%#v", event, shell.Image())
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
 }
 

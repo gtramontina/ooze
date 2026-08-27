@@ -11,7 +11,7 @@ func (runner *managedCampaignRunner) settleEmergency() []campaignEffect {
 		panic("managed emergency settlement was not requested")
 	}
 	observed := runner.attempts.emergency(epoch)
-	if observed.epoch != epoch || observed.settlement.epoch != epoch {
+	if observed.epoch != epoch || observed.settlement.Epoch() != uint64(epoch) {
 		panic("managed emergency settlement has the wrong epoch")
 	}
 	runner.emergency = true

@@ -66,8 +66,8 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		}
 	})
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 502})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 502})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: attempt, class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -82,7 +82,7 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)

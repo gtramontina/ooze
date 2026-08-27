@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/viruses"
 )
 
@@ -146,7 +147,7 @@ type ManagedInvariantEvidence struct {
 
 type managedProcess struct {
 	capacity int
-	runtime  *processRuntimeShell
+	runtime  *processruntime.Runtime
 	attempts managedAttemptSystem
 	next     atomic.Uint64
 }
@@ -159,7 +160,7 @@ var defaultManagedProcess struct {
 func ProcessManagedRelease(configuration ManagedReleaseConfiguration) ManagedReleaseResult {
 	defaultManagedProcess.once.Do(func() {
 		capacity := runtime.GOMAXPROCS(0)
-		runtimeShell := newProcessRuntimeShell(capacity)
+		runtimeShell := processruntime.New(capacity)
 		attempts, err := newNativeManagedAttemptSystem(runtimeShell)
 		if err != nil {
 			panic(err)
@@ -182,14 +183,19 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 			return
 		}
 		violation, ok := recovered.(runtimeInvariantViolation)
-		if !ok {
+		runtimeViolation, runtimeFailed := recovered.(processruntime.Violation)
+		if !ok && !runtimeFailed {
 			panic(recovered)
 		}
-		closure := process.runtime.closeRuntime(runtimeFatalCause(violation.reason))
-		residual := campaignResiduals(closure.residual)
-		if process.runtime.emergencySettlementRequired() {
-			settled := process.attempts.emergency(closure.epoch)
-			residual = campaignResiduals(settled.settlement.residual)
+		if runtimeFailed {
+			violation.operation = runtimeViolation.Operation()
+			violation.reason = runtimeViolation.Reason()
+		}
+		closure := process.runtime.Close(violation.reason)
+		residual := campaignResiduals(closure.Residual())
+		if process.runtime.EmergencySettlementRequired() {
+			settled := process.attempts.emergency(fatalEpochID(closure.Epoch()))
+			residual = campaignResiduals(settled.settlement.Residual())
 		}
 		presented = ManagedReleaseResult{
 			Outcome: ManagedInvariantViolation,

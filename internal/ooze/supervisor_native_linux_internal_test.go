@@ -34,9 +34,9 @@ func TestLinuxNativeSupervisorSettlesTargetStatusThroughGuardian(t *testing.T) {
 	assert.Equal(t, (ExitStatus{Code: 17}), settled.Exit, "terminal = %#v, want exact target status and output", terminal)
 	assert.EqualValues(t, "linux-native-output", settled.Output.Bytes, "terminal = %#v, want exact target status and output", terminal)
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeOpen, snapshot.lifecycle, "runtime after Linux settlement = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after Linux settlement = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Open(), "runtime after Linux settlement = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after Linux settlement = %#v", snapshot)
 	}
 }
 
@@ -72,8 +72,8 @@ func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want proven typed target exec failure", result)
 	assert.Error(t, notReleased.Err, "launch = %#v, want proven typed target exec failure", result)
 	{
-		snapshot := shell.snapshot()
-		assert.EqualValues(t, 0, len(snapshot.admissions), "typed target exec failure retained custody: %#v", snapshot)
+		snapshot := shell.Image()
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "typed target exec failure retained custody: %#v", snapshot)
 	}
 }
 
@@ -158,15 +158,15 @@ func newLinuxNativeSupervisorForTest(
 ) (*processRuntimeShell, *Supervisor) {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: lineage})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: attemptIdentity(attempt), class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
 	driver := newNativeSupervisorDriverForTest(t, shell, time.Second, 5*time.Second)
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)

@@ -1,4 +1,4 @@
-package ooze
+package processruntime
 
 import (
 	"slices"
@@ -322,7 +322,8 @@ type confirmationQueueResult struct {
 	deliveries []admissionGrant
 }
 
-type runtimeInvariantViolation struct {
+// Violation reports a process-runtime invariant breach.
+type Violation struct {
 	operation, reason  string
 	phase              uint8
 	rejectedEvent      string
@@ -330,6 +331,14 @@ type runtimeInvariantViolation struct {
 	obligationSnapshot []string
 	traceTail          []string
 }
+
+type runtimeInvariantViolation = Violation
+
+// Operation returns the invariant operation.
+func (violation Violation) Operation() string { return violation.operation }
+
+// Reason returns the invariant reason.
+func (violation Violation) Reason() string { return violation.reason }
 
 func newProcessRuntime(capacity int) processRuntime {
 	if capacity <= 0 {

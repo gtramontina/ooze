@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,8 +20,8 @@ func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *te
 	drainBy := emergencyAt.Add(5 * time.Second)
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 87})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 87})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "committed-before-registration", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -41,10 +42,10 @@ func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *te
 		Attempt: "committed-before-registration", Command: []string{"blocked-start"}, Dir: "/tmp",
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	}
-	cell := pendingStartCell{}
-	driver.reserveLaunch(&cell, spec)
-	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
-	shell.closeRuntime(runtimeFatalCause("committed start registration race"))
+	cell := processruntime.NewStartCell()
+	driver.reserveLaunch(cell, spec)
+	prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
+	closeRuntimeForTest(shell, runtimeFatalCause("committed start registration race"))
 
 	settlement := driver.emergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
 	{
@@ -58,8 +59,8 @@ func TestSupervisorDriverEmergencyPreemptsCommittedStartBeforeRegistration(t *te
 
 func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 86})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 86})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "emergency-before-start", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -73,19 +74,19 @@ func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment
 		},
 		readOutput: func(supervisorOutputRef) string { return "" },
 	})
-	shell.closeRuntime(runtimeFatalCause("emergency before start commitment"))
+	closeRuntimeForTest(shell, runtimeFatalCause("emergency before start commitment"))
 	driver.emergencyStarted = true
-	cell := pendingStartCell{}
+	cell := processruntime.NewStartCell()
 	spec := Spec{
 		Attempt: "emergency-before-start", Command: []string{"never-start"}, Dir: "/tmp",
 		Profile: SerialProfile, Deadline: 10 * time.Second,
 	}
-	driver.reserveLaunch(&cell, spec)
-	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
+	driver.reserveLaunch(cell, spec)
+	prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 	assert.Equal(t, startCommittedRejectedClosed, prepared.result.decision, "start decision = %v, want closed rejection", prepared.result.decision)
-	driver.discardLaunch(&cell)
-	assert.EqualValues(t, 0, len(driver.reservations), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.installedGeneration())
-	assert.EqualValues(t, 0, cell.installedGeneration(), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.installedGeneration())
+	driver.discardLaunch(cell)
+	assert.EqualValues(t, 0, len(driver.reservations), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.InstalledGeneration())
+	assert.EqualValues(t, 0, cell.InstalledGeneration(), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.InstalledGeneration())
 }
 
 func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSettlesLateNoRelease(t *testing.T) {
@@ -98,8 +99,8 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 	boundary := make(chan time.Time)
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 88})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 88})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-prospective-emergency",
 		class:    serialPrimaryAdmission,
@@ -146,7 +147,7 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -161,7 +162,7 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 		})
 	}()
 	<-nativeStarted
-	closure := shell.closeRuntime(runtimeFatalCause("prospective launch emergency"))
+	closure := closeRuntimeForTest(shell, runtimeFatalCause("prospective launch emergency"))
 	require.Len(t, closure.residual, 1, "runtime closure = %#v, want exact prospective generation", closure)
 	assert.NotEqual(t, 0, closure.residual[0].generation, "runtime closure = %#v, want exact prospective generation", closure)
 	settled := make(chan SweepResult, 1)
@@ -187,9 +188,9 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 		require.FailNow(t, "late no-release did not complete emergency settlement")
 	}
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "prospective emergency final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "prospective emergency final runtime = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Drained(), "prospective emergency final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "prospective emergency final runtime = %#v", snapshot)
 	}
 }
 
@@ -203,11 +204,24 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 	}
 	started := make(chan pendingLaunch, 2)
 	boundary := make(chan time.Time)
-	shell := newProcessRuntimeShell(2)
+	observationStarted := make(chan struct{})
+	allowObservation := make(chan struct{})
+	blocked := false
+	shell := newProcessRuntimeShellWithObserver(2, processruntime.ObserverFunc(func(event processruntime.Event) error {
+		observed, ok := event.(processruntime.AttemptObservationProcessed)
+		if !ok || observed.Observation().Kind() != processruntime.LaunchNotReleased || blocked {
+			return nil
+		}
+		blocked = true
+		close(observationStarted)
+		<-allowObservation
+
+		return nil
+	}))
 	grants := make(map[attemptIdentity]admissionGrant)
 	for index, attempt := range []attemptIdentity{"multi-prospective-a", "multi-prospective-b"} {
-		campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(120 + index)})
-		requested := shell.requestAdmission(admissionRequest{
+		campaign := registerCampaignForTest(shell, campaignProvenance{lineage: campaignLineage(120 + index)})
+		requested := requestAdmissionForTest(shell, admissionRequest{
 			campaign: campaign.token, attempt: attempt, class: sharedAdmission,
 		})
 		grants[attempt] = <-requested.delivery
@@ -246,7 +260,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 			grant, ok := grants[attempt]
 			assert.True(t, ok, "unexpected attempt %q", attempt)
 
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -261,7 +275,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 		}()
 	}
 	pending := []pendingLaunch{<-started, <-started}
-	closure := shell.closeRuntime(runtimeFatalCause("multi prospective emergency"))
+	closure := closeRuntimeForTest(shell, runtimeFatalCause("multi prospective emergency"))
 	assert.EqualValues(t, 2, len(closure.residual), "runtime closure residuals = %#v, want two prospective generations", closure.residual)
 	settled := make(chan SweepResult, 1)
 	go func() {
@@ -275,15 +289,13 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 			require.FailNow(t, "multi-prospective emergency did not release every callback")
 		}
 	}
-	shell.mutex.Lock()
-	runtimeLocked := true
-	defer func() {
-		if runtimeLocked {
-			shell.mutex.Unlock()
-		}
-	}()
 	for _, launch := range pending {
 		close(launch.release)
+	}
+	select {
+	case <-observationStarted:
+	case <-time.After(time.Second):
+		require.FailNow(t, "prospective close did not reach runtime publication")
 	}
 	closuresPending := assert.Eventually(t, func() bool {
 		driver.mutex.Lock()
@@ -295,7 +307,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 			}
 		}
 
-		return closing == 2
+		return closing != 0
 	}, time.Second, time.Millisecond, "prospective closes did not wait for their runtime receipts")
 	settledEarly := false
 	select {
@@ -303,8 +315,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 		settledEarly = true
 	default:
 	}
-	shell.mutex.Unlock()
-	runtimeLocked = false
+	close(allowObservation)
 	require.True(t, closuresPending, "prospective close receipt boundary was not reached")
 	require.False(t, settledEarly, "emergency settled before prospective close receipts")
 	select {
@@ -317,9 +328,9 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 		require.FailNow(t, "equality no-release completions did not settle one emergency epoch")
 	}
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "multi-prospective final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "multi-prospective final runtime = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Drained(), "multi-prospective final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "multi-prospective final runtime = %#v", snapshot)
 	}
 }
 
@@ -336,8 +347,8 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 	registered := false
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 87})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 87})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-released-prospective-emergency",
 		class:    serialPrimaryAdmission,
@@ -438,7 +449,7 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -471,7 +482,7 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 			runtime.Gosched()
 		}
 	}
-	closure := shell.closeRuntime(runtimeFatalCause("released prospective emergency"))
+	closure := closeRuntimeForTest(shell, runtimeFatalCause("released prospective emergency"))
 	require.Len(t, closure.residual, 1, "runtime closure = %#v, want exact prospective generation", closure)
 	assert.NotEqual(t, 0, closure.residual[0].generation, "runtime closure = %#v, want exact prospective generation", closure)
 	settled := make(chan SweepResult, 1)
@@ -499,9 +510,9 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 		require.FailNow(t, "released pre-Owned emergency did not settle")
 	}
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "released prospective emergency final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "released prospective emergency final runtime = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Drained(), "released prospective emergency final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "released prospective emergency final runtime = %#v", snapshot)
 	}
 }
 
@@ -512,8 +523,8 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 	completionReturned := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 89})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 89})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-equality",
 		class:    serialPrimaryAdmission,
@@ -570,7 +581,7 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -586,8 +597,8 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want equality NotReleased", result)
 	assert.ErrorIs(t, notReleased.Err, launchErr, "launch = %#v, want equality NotReleased", result)
 	{
-		snapshot := shell.snapshot()
-		assert.EqualValues(t, 0, len(snapshot.admissions), "equality completion retained prospective custody: %#v", snapshot)
+		snapshot := shell.Image()
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "equality completion retained prospective custody: %#v", snapshot)
 	}
 }
 
@@ -613,8 +624,8 @@ func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
 	allowExit := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 101})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 101})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "driver-monitor-before-wait", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -693,7 +704,7 @@ func TestSupervisorDriverStartsOwnedMonitoringBeforeWait(t *testing.T) {
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -765,8 +776,8 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	nativeDone := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 90})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 90})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-unconfirmed",
 		class:    serialPrimaryAdmission,
@@ -812,7 +823,7 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -837,8 +848,8 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	close(nativeDone)
 	deadline := time.After(time.Second)
 	for {
-		snapshot := shell.snapshot()
-		if len(snapshot.admissions) == 0 {
+		snapshot := shell.Image()
+		if snapshot.AdmissionCount() == 0 {
 			break
 		}
 		select {
@@ -858,8 +869,8 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 	nextAt := releaseAt
 	registered := false
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 96})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 96})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "driver-release-unknown", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -934,7 +945,7 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -951,9 +962,9 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 		require.True(t, ok, "release-unknown settlement = %#v, want SweepDrained", settlement)
 	}
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "release-unknown final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "release-unknown final runtime = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Drained(), "release-unknown final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "release-unknown final runtime = %#v", snapshot)
 	}
 }
 
@@ -966,8 +977,8 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 	registered := false
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 94})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 94})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-late-release",
 		class:    serialPrimaryAdmission,
@@ -1075,7 +1086,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -1104,7 +1115,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 		}
 		select {
 		case <-deadline:
-			require.FailNowf(t, "late released attempt did not await emergency settlement", "phase=%d runtime=%#v", phase, shell.snapshot())
+			require.FailNowf(t, "late released attempt did not await emergency settlement", "phase=%d runtime=%#v", phase, shell.Image())
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -1118,9 +1129,9 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 		require.True(t, ok, "late adoption emergency settlement = %#v, want SweepDrained", settlement)
 	}
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "late adoption final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "late adoption final runtime = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Drained(), "late adoption final runtime = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "late adoption final runtime = %#v", snapshot)
 	}
 }
 
@@ -1132,8 +1143,8 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	nextAt := registeredAt.Add(-time.Nanosecond)
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 91})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 91})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-owned",
 		class:    serialPrimaryAdmission,
@@ -1247,10 +1258,12 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 		},
 		readOutput: func(supervisorOutputRef) string { return "bad" },
 	})
+	var generation attemptGeneration
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			assert.Equal(t, grant.attempt, attempt, "start attempt = %q, want %q", attempt, grant.attempt)
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
+			generation = prepared.result.generation
 
 			return prepared.start
 		},
@@ -1264,9 +1277,9 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	owned, ok := result.(Owned)
 	require.True(t, ok, "launch = %#v, want Owned", result)
 	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
-	launched := shell.snapshot()
-	require.Len(t, launched.admissions, 1, "Owned published before runtime ownership: %#v", launched)
-	assert.Equal(t, admissionOwned, launched.admissions[0].stage, "Owned published before runtime ownership: %#v", launched)
+	launched := shell.Image()
+	require.EqualValues(t, 1, launched.AdmissionCount(), "Owned published before runtime ownership: %#v", launched)
+	assert.True(t, launched.Owned(generation), "Owned published before runtime ownership: %#v", launched)
 	terminal := owned.Attempt.Wait()
 	settled, ok := terminal.(Settled)
 	require.True(t, ok, "terminal = %#v, want Settled", terminal)
@@ -1283,9 +1296,9 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	}
 	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
 	{
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeOpen, snapshot.lifecycle, "runtime after terminal delivery = %#v", snapshot)
-		assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after terminal delivery = %#v", snapshot)
+		snapshot := shell.Image()
+		assert.True(t, snapshot.Open(), "runtime after terminal delivery = %#v", snapshot)
+		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after terminal delivery = %#v", snapshot)
 	}
 }
 
@@ -1301,8 +1314,8 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	captureDone := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 95})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 95})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-residual",
 		class:    serialPrimaryAdmission,
@@ -1393,7 +1406,7 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -1408,7 +1421,7 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	terminalReady := make(chan Terminal, 1)
 	go func() { terminalReady <- owned.Attempt.Wait() }()
 	<-captureEntered
-	closure := shell.closeRuntime(runtimeFatalCause("emergency during residual output capture"))
+	closure := closeRuntimeForTest(shell, runtimeFatalCause("emergency during residual output capture"))
 	assert.EqualValues(t, 1, len(closure.residual), "runtime closure = %#v, want one owned residual", closure)
 	settlementReady := make(chan SweepResult, 1)
 	go func() {
@@ -1454,8 +1467,8 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 	nextAt := registeredAt.Add(-time.Nanosecond)
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 107})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 107})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "driver-local-residual", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -1533,7 +1546,7 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -1551,14 +1564,16 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 	assert.EqualValues(t, "partial", unconfirmed.Output.Bytes, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
 	assert.False(t, unconfirmed.Output.Final, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
 	select {
-	case <-shell.runtimeEmergency():
+	case <-shell.Emergency():
 	default:
 		require.FailNow(t, "local residual custody transfer did not broadcast runtime emergency")
 	}
-	snapshot := shell.snapshot()
-	require.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "runtime after local residual transfer = %#v", snapshot)
-	require.Len(t, snapshot.admissions, 1, "runtime after local residual transfer = %#v", snapshot)
-	assert.Equal(t, dispositionCustodyTransferred, snapshot.admissions[0].disposition, "runtime after local residual transfer = %#v", snapshot)
+	snapshot := shell.Image()
+	require.True(t, snapshot.Closing(), "runtime after local residual transfer = %#v", snapshot)
+	require.EqualValues(t, 1, snapshot.AdmissionCount(), "runtime after local residual transfer = %#v", snapshot)
+	residual := snapshot.Residual()
+	require.Len(t, residual, 1, "runtime after local residual transfer = %#v", snapshot)
+	assert.True(t, snapshot.CustodyTransferred(residual[0].Generation), "runtime after local residual transfer = %#v", snapshot)
 	emergencyAt := drainBy.Add(time.Second)
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
@@ -1580,8 +1595,8 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 	terminationErr := errors.New("terminate execution domain")
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 96})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 96})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "driver-wait-diagnostic", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -1690,7 +1705,7 @@ func TestSupervisorDriverPreservesIndependentWaitAndTerminationFailures(t *testi
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -1720,8 +1735,8 @@ func TestSupervisorDriverPromotesConfirmedDrainCensusFailureToInfrastructure(t *
 	observation := 0
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 98})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 98})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "driver-drain-census-diagnostic", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -1828,7 +1843,7 @@ func TestSupervisorDriverPromotesConfirmedDrainCensusFailureToInfrastructure(t *
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -1897,8 +1912,8 @@ func runSupervisorDriverLateWaitFailure(
 	}
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 97})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 97})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: "driver-independent-force-diagnostics", class: serialPrimaryAdmission,
 	})
 	grant := <-requested.delivery
@@ -1990,7 +2005,7 @@ func runSupervisorDriverLateWaitFailure(
 	})
 	supervisor := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	)
@@ -2085,9 +2100,9 @@ func automaticDeadlineTerminalWithReadyPeak(
 	sampleCount := 0
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(400 + iteration)})
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: campaignLineage(400 + iteration)})
 	attempt := attemptIdentity(fmt.Sprintf("driver-ready-deadline-peak-%d", iteration))
-	requested := shell.requestAdmission(admissionRequest{
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: attempt, class: sharedAdmission,
 	})
 	grant := <-requested.delivery
@@ -2222,7 +2237,7 @@ func automaticDeadlineTerminalWithReadyPeak(
 	})
 	result := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	).Launch(Spec{
@@ -2262,8 +2277,8 @@ func runDueAutomaticFuseWaitFailureRace(
 	samples <- sampleAt
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(200 + iteration)})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: campaignLineage(200 + iteration)})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token, attempt: attemptIdentity(fmt.Sprintf("driver-fuse-wait-race-%d", iteration)),
 		class: sharedAdmission,
 	})
@@ -2371,7 +2386,7 @@ func runDueAutomaticFuseWaitFailureRace(
 	attempt := fmt.Sprintf("driver-fuse-wait-race-%d", iteration)
 	result := newDrivenSupervisorForTest(
 		func(_ attemptIdentity, cell *pendingStartCell) installedStart {
-			return shell.startCommitted(grant, startInstallation{grant: grant, cell: cell}).start
+			return startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell}).start
 		},
 		driver,
 	).Launch(Spec{
@@ -2449,8 +2464,8 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	waitReleased := make(chan struct{})
 
 	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 92})
-	requested := shell.requestAdmission(admissionRequest{
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 92})
+	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
 		attempt:  "driver-emergency",
 		class:    serialPrimaryAdmission,
@@ -2560,7 +2575,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	supervisor := newDrivenSupervisorForTest(
 		func(attempt attemptIdentity, cell *pendingStartCell) installedStart {
 			assert.Equal(t, grant.attempt, attempt, "start attempt = %q, want %q", attempt, grant.attempt)
-			prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: cell})
+			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
 
 			return prepared.start
 		},
@@ -2575,7 +2590,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 	require.True(t, ok, "launch = %#v, want Owned", result)
 	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
 	<-waitEntered
-	closure := shell.closeRuntime(runtimeFatalCause("test emergency"))
+	closure := closeRuntimeForTest(shell, runtimeFatalCause("test emergency"))
 	require.Len(t, closure.residual, 1, "runtime closure = %#v", closure)
 	assert.NotEqual(t, 0, closure.residual[0].generation, "runtime closure = %#v", closure)
 
@@ -2602,7 +2617,7 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 		supervisorReleaseDomain,
 	}
 	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
-	snapshot := shell.snapshot()
-	assert.Equal(t, runtimeClosedDrained, snapshot.lifecycle, "runtime after emergency settlement = %#v", snapshot)
-	assert.EqualValues(t, 0, len(snapshot.admissions), "runtime after emergency settlement = %#v", snapshot)
+	snapshot := shell.Image()
+	assert.True(t, snapshot.Drained(), "runtime after emergency settlement = %#v", snapshot)
+	assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after emergency settlement = %#v", snapshot)
 }

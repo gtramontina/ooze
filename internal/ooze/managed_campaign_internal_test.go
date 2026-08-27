@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
@@ -218,8 +219,8 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	assert.Equal(t, mutantKilled, completed.mutants[1].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	assert.True(t, completed.singleAdmissionFallback, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.EqualValues(t, 4, attempts.launches, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
-	assert.Equal(t, singleAdmission, shell.snapshot().mode, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.snapshot().mode)
+	assert.EqualValues(t, 4, attempts.launches, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Image().SingleAdmission())
+	assert.True(t, shell.Image().SingleAdmission(), "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Image().SingleAdmission())
 }
 
 func TestManagedCampaignResumesWithSingleAdmissionAfterConfirmationPressure(t *testing.T) {
@@ -286,9 +287,9 @@ func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t 
 
 	{
 		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
-		assert.Equal(t, singleAdmission, shell.snapshot().mode, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
-		assert.EqualValues(t, 2, attempts.launches, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.snapshot().mode, attempts.launches)
+		require.True(t, ok, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Image().SingleAdmission(), attempts.launches)
+		assert.True(t, shell.Image().SingleAdmission(), "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Image().SingleAdmission(), attempts.launches)
+		assert.EqualValues(t, 2, attempts.launches, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Image().SingleAdmission(), attempts.launches)
 	}
 }
 
@@ -325,7 +326,8 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
-	attempts := &managedAttemptFixture{terminals: []Terminal{
+	shell := newProcessRuntimeShell(1)
+	attempts := &managedAttemptFixture{shell: shell, terminals: []Terminal{
 		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
 		DrainUnconfirmed{
 			Residual: OwnedUndrained,
@@ -337,7 +339,7 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 		},
 	}}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(1), repository: repository,
+		runtime: shell, repository: repository,
 		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
 	})
 
@@ -371,7 +373,7 @@ func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing
 	})
 	go func() {
 		<-started
-		shell.closeRuntime("peer fatal without custody")
+		shell.Close("peer fatal without custody")
 		close(release)
 	}()
 
@@ -455,30 +457,29 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	heldCampaign := shell.registerCampaign(campaignProvenance{lineage: 99})
-	held := shell.requestAdmission(admissionRequest{
-		campaign: heldCampaign.token, attempt: "held", class: exclusiveAdmission,
-		profile: AutomaticProfile, deadline: baselineBootstrapDeadline,
+	heldCampaign := shell.RegisterCampaign(99)
+	held := shell.RequestAdmission(processruntime.Admission{
+		Campaign: heldCampaign.Campaign(), Attempt: "held", Class: processruntime.ExclusiveAdmission,
+		Profile: AutomaticProfile, Deadline: baselineBootstrapDeadline,
 	})
-	heldGrant := <-held.delivery
-	prepared := shell.startCommitted(heldGrant, startInstallation{grant: heldGrant, cell: &pendingStartCell{}})
-	prepared.start.launch(func(attemptGeneration) attemptObservation { return launchOwned{} })
-	shell.observeAttempt(prepared.result.generation, launchOwned{})
+	heldGrant, _ := held.Receive()
+	prepared := shell.CommitStart(heldGrant, processruntime.NewStartCell())
+	prepared.Observe(prepared.Launch(func(processruntime.Generation) processruntime.Observation { return processruntime.Owned() }))
 
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
-	attempts := &managedAttemptFixture{shell: shell, emergencyGeneration: prepared.result.generation}
+	attempts := &managedAttemptFixture{shell: shell, emergencyGeneration: prepared.Generation()}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: shell, repository: repository,
 		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
 	})
 	go func() {
 		deadline := time.Now().Add(time.Second)
-		for len(shell.snapshot().admissions) < 2 && time.Now().Before(deadline) {
+		for shell.Image().AdmissionCount() < 2 && time.Now().Before(deadline) {
 			time.Sleep(time.Millisecond)
 		}
-		shell.observeAttempt(prepared.result.generation, drainUnconfirmed{})
+		shell.Observe(prepared.Generation(), processruntime.DrainUnconfirmed())
 	}()
 
 	result := runner.run(managedCampaignRequest{
@@ -621,6 +622,7 @@ type managedAttemptFixture struct {
 	shell               *processRuntimeShell
 	byGeneration        map[attemptGeneration]Spec
 	terminalByGen       map[attemptGeneration]Terminal
+	starts              map[attemptGeneration]processruntime.PreparedStart
 	waitStarted         chan Spec
 	releasePrimaries    <-chan struct{}
 	waitAll             <-chan struct{}
@@ -645,18 +647,15 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	f.mutex.Lock()
 	f.launches++
 	f.specs = append(f.specs, spec)
-	if f.shell == nil {
-		f.shell = start.shell
-	} else if f.shell != start.shell {
-		panic("managed attempt fixture changed process runtime")
-	}
 	if f.byGeneration == nil {
 		f.byGeneration = make(map[attemptGeneration]Spec)
 		f.terminalByGen = make(map[attemptGeneration]Terminal)
+		f.starts = make(map[attemptGeneration]processruntime.PreparedStart)
 	}
-	f.byGeneration[start.generation] = spec
+	f.byGeneration[start.Generation()] = spec
+	f.starts[start.Generation()] = start
 	if f.launches <= len(f.terminals) {
-		f.terminalByGen[start.generation] = f.terminals[f.launches-1]
+		f.terminalByGen[start.Generation()] = f.terminals[f.launches-1]
 	}
 	if f.waitForLaunches != 0 && f.launches >= f.waitForLaunches {
 		f.launchesReadyOnce.Do(func() { close(f.launchesReady) })
@@ -667,21 +666,21 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	}
 	var result LaunchResult
 	if f.notReleasedAt == f.launches {
-		observed := start.launch(func(attemptGeneration) attemptObservation {
+		observed := start.Launch(func(processruntime.Generation) processruntime.Observation {
 			result = NotReleased{Kind: LaunchResourceExhausted}
 
-			return launchNotReleased{reason: launchResourceExhausted}
+			return processruntime.NotReleased(true)
 		})
-		receipt := start.shell.observeAttempt(start.generation, observed)
+		receipt := start.Observe(observed)
 
 		return managedObservedLaunch{result: result, receipt: receipt}
 	}
-	observed := start.launch(func(attemptGeneration) attemptObservation {
+	observed := start.Launch(func(processruntime.Generation) processruntime.Observation {
 		result = Owned{Attempt: newOwnedAttempt(func(StopRequest) {}, func() Terminal { return nil })}
 
-		return launchOwned{}
+		return processruntime.Owned()
 	})
-	receipt := start.shell.observeAttempt(start.generation, observed)
+	receipt := start.Observe(observed)
 
 	return managedObservedLaunch{result: result, receipt: receipt}
 }
@@ -689,6 +688,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 	f.mutex.Lock()
 	terminal := f.terminalByGen[generation]
 	spec := f.byGeneration[generation]
+	start := f.starts[generation]
 	f.mutex.Unlock()
 	if f.waitAll != nil {
 		<-f.waitAll
@@ -708,14 +708,14 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 		terminal.ExecutionData = data
 		return managedObservedTerminal{
 			terminal: terminal,
-			receipt:  f.shell.observeAttempt(generation, attemptSettled{profile: spec.Profile, deadline: spec.Deadline}),
+			receipt:  start.Observe(processruntime.Settled(spec.Profile, spec.Deadline)),
 		}
 	case Infrastructure:
 		terminal.ExecutionData = data
 
 		return managedObservedTerminal{
 			terminal: terminal,
-			receipt:  f.shell.observeAttempt(generation, attemptInfrastructure{cause: terminal.Err.Error()}),
+			receipt:  start.Observe(processruntime.Infrastructure(terminal.Err.Error())),
 		}
 	case Tripped:
 		terminal.ExecutionData = data
@@ -723,9 +723,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 
 		return managedObservedTerminal{
 			terminal: terminal,
-			receipt: f.shell.observeAttempt(generation, attemptTripped{
-				kind: deadlineTrip, profile: spec.Profile, deadline: spec.Deadline,
-			}),
+			receipt:  start.Observe(processruntime.Tripped(false, spec.Profile, spec.Deadline)),
 		}
 	case Stopped:
 		if f.stopRelease != nil {
@@ -735,7 +733,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 
 		return managedObservedTerminal{
 			terminal: terminal,
-			receipt:  f.shell.observeAttempt(generation, attemptStopped{}),
+			receipt:  start.Observe(processruntime.Stopped()),
 		}
 	case DrainUnconfirmed:
 		terminal.ExecutionData = data
@@ -745,7 +743,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 
 		return managedObservedTerminal{
 			terminal: terminal,
-			receipt:  f.shell.observeAttempt(generation, drainUnconfirmed{}),
+			receipt:  start.Observe(processruntime.DrainUnconfirmed()),
 		}
 	default:
 		panic("unsupported fixture terminal")
@@ -766,13 +764,11 @@ func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEme
 	}
 	f.mutex.Unlock()
 	if f.emergencyEmpty {
-		settlement := f.shell.settleEmergency(emergencySweep{})
+		settlement := f.shell.SettleEmergency(nil)
 
 		return managedObservedEmergency{epoch: epoch, settlement: settlement}
 	}
-	settlement := f.shell.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
-		generation: generation, disposition: emergencyCustodyTransferred,
-	}}})
+	settlement := f.shell.SettleEmergency([]processruntime.Resolution{{Generation: generation, Transferred: true}})
 
 	return managedObservedEmergency{epoch: epoch, settlement: settlement}
 }

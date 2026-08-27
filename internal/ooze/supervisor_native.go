@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
 const supervisorNativeOperation = "execute native supervisor action"
@@ -82,7 +84,7 @@ type supervisorNativeExecutor struct {
 }
 
 func newNativeSupervisorDriver(
-	runtime *processRuntimeShell,
+	runtime *processruntime.Runtime,
 	launchProgress time.Duration,
 	drainEpoch time.Duration,
 ) (*supervisorDriver, error) {

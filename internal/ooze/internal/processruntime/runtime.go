@@ -1,4 +1,4 @@
-package ooze
+package processruntime
 
 import "sync"
 
@@ -251,7 +251,7 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 	}, func() (result admissionResult) {
 		if token.delivery == nil {
 			for _, admission := range s.core.admissions {
-				if sameAdmissionRequest(campaignAdmissionFact(admission.grant), campaignAdmissionFact(token)) {
+				if sameAdmission(admission.grant, token) {
 					token = admission.grant
 
 					break
@@ -268,6 +268,11 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 
 		return result
 	})
+}
+
+func sameAdmission(left, right admissionAuthority) bool {
+	return left.campaign == right.campaign && left.attempt == right.attempt && left.class == right.class &&
+		left.profile == right.profile && left.deadline == right.deadline
 }
 
 func (s *processRuntimeShell) acknowledgeGrantReturn(grant admissionGrant) admissionResult {

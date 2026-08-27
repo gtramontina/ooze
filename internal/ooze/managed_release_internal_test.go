@@ -17,6 +17,7 @@ func TestManagedProcessRejectsRecursiveReleaseWhileCallerOwnsWait(t *testing.T) 
 	release := make(chan struct{})
 	launched := make(chan Spec, 1)
 	attempts := &managedAttemptFixture{
+		shell: shell,
 		waitAll: release, launchStarted: launched,
 		terminals: []Terminal{
 			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
@@ -81,6 +82,7 @@ func TestManagedCleanupFailureRetainsOrderedResidualEvidence(t *testing.T) {
 func TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	attempts := &managedAttemptFixture{
+		shell:          shell,
 		emergencyEmpty: true,
 		terminals: []Terminal{
 			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
@@ -107,7 +109,7 @@ func TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement(t *t
 
 func TestManagedProcessSnapshotsCallerConfigurationBeforeFilesystemWork(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	attempts := &managedAttemptFixture{terminals: []Terminal{
+	attempts := &managedAttemptFixture{shell: shell, terminals: []Terminal{
 		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
 		Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
 	}}
