@@ -20,35 +20,17 @@ type (
 	campaignToken     = processruntime.Campaign
 )
 
-type admissionClass = processruntime.AdmissionClass
-
-const (
-	sharedAdmission                             = processruntime.SharedAdmission
-	exclusiveAdmission                          = processruntime.ExclusiveAdmission
-	serialPrimaryAdmission                      = processruntime.SerialPrimaryAdmission
-	confirmationAdmission                       = processruntime.ConfirmationAdmission
-	confirmationBarrierAdmission admissionClass = 5
-)
-
 type campaignProvenance struct{ lineage campaignLineage }
 
-type campaignDecision = processruntime.CampaignDecision
-
-const (
-	campaignRegistered        = processruntime.CampaignRegistered
-	campaignRejectedRecursive = processruntime.CampaignRejectedRecursive
-	campaignRejectedClosed    = processruntime.CampaignRejectedClosed
-)
-
 type campaignRegistration struct {
-	decision campaignDecision
+	decision processruntime.CampaignDecision
 	token    campaignToken
 }
 
 type admissionAuthority struct {
 	campaign campaignToken
 	attempt  attemptIdentity
-	class    admissionClass
+	class    processruntime.AdmissionClass
 	profile  Profile
 	deadline time.Duration
 	grant    processruntime.Grant
@@ -59,27 +41,27 @@ type admissionRequestToken = admissionAuthority
 type admissionGrant = admissionAuthority
 
 type admissionResult struct {
-	decision   admissionDecision
+	decision   processruntime.AdmissionDecision
 	request    admissionRequestToken
 	deliveries []admissionGrant
 	fatalEpoch fatalEpochID
 }
 
 type admissionAwait struct {
-	decision admissionDecision
+	decision processruntime.AdmissionDecision
 	request  admissionRequestToken
 	delivery <-chan admissionGrant
 	fatal    fatalEpochID
 }
 
 type startCommittedResult struct {
-	decision                                         startCommittedDecision
+	decision                                         processruntime.StartDecision
 	generation                                       attemptGeneration
 	settlementAcknowledged, runtimeClosureInProgress bool
 }
 
 type terminalResult struct {
-	decision terminalDecision
+	decision processruntime.TerminalDecision
 	epoch    fatalEpochID
 }
 
@@ -91,69 +73,15 @@ type barrierBinding struct {
 }
 
 type barrierResult struct {
-	decision   barrierDecision
+	decision   processruntime.BarrierDecision
 	request    admissionRequestToken
 	deliveries []admissionGrant
 }
 
 type confirmationQueueResult struct {
-	decision   confirmationQueueDecision
+	decision   processruntime.QueueDecision
 	deliveries []admissionGrant
 }
-
-type admissionDecision = processruntime.AdmissionDecision
-
-const (
-	admissionAccepted                     = processruntime.AdmissionAccepted
-	admissionRejectedClosed               = processruntime.AdmissionRejectedClosed
-	admissionRejectedUnknownCampaign      = processruntime.AdmissionRejectedUnknownCampaign
-	admissionRejectedGateClosed           = processruntime.AdmissionRejectedGateClosed
-	admissionRejectedGateOpen             = processruntime.AdmissionRejectedGateOpen
-	admissionRejectedDuplicate            = processruntime.AdmissionRejectedDuplicate
-	admissionRejectedExclusiveOutstanding = processruntime.AdmissionRejectedExclusiveOutstanding
-	admissionRejectedSharedLimit          = processruntime.AdmissionRejectedSharedLimit
-	admissionRejectedAlreadyCommitted     = processruntime.AdmissionRejectedAlreadyCommitted
-	admissionCancelledWaiting             = processruntime.AdmissionCancelledWaiting
-	admissionCancelledGranted             = processruntime.AdmissionCancelledGranted
-	admissionReturnedAfterClosure         = processruntime.AdmissionReturnedAfterClosure
-	admissionReturnedAfterGateClosure     = processruntime.AdmissionReturnedAfterGateClosure
-)
-
-type startCommittedDecision = processruntime.StartDecision
-
-const (
-	startCommittedAccepted       = processruntime.StartAccepted
-	startCommittedRejectedGrant  = processruntime.StartRejectedGrant
-	startCommittedRejectedGate   = processruntime.StartRejectedGate
-	startCommittedRejectedClosed = processruntime.StartRejectedClosed
-)
-
-type terminalDecision = processruntime.TerminalDecision
-
-const (
-	terminalCommitted           = processruntime.TerminalCommitted
-	terminalForcedAborted       = processruntime.TerminalForcedAborted
-	terminalRejectedUnknown     = processruntime.TerminalRejectedUnknown
-	terminalRejectedOutstanding = processruntime.TerminalRejectedOutstanding
-	terminalRejectedClosed      = processruntime.TerminalRejectedClosed
-)
-
-type barrierDecision = processruntime.BarrierDecision
-
-const (
-	barrierBound                      = processruntime.BarrierBound
-	barrierRejectedMissing            = processruntime.BarrierRejectedMissing
-	barrierRejectedClosureOutstanding = processruntime.BarrierRejectedClosureOutstanding
-	barrierRejectedExecutionMismatch  = processruntime.BarrierRejectedExecutionMismatch
-)
-
-type confirmationQueueDecision = processruntime.QueueDecision
-
-const (
-	confirmationQueueCompleted           = processruntime.ConfirmationQueueCompleted
-	confirmationQueueRejectedMissing     = processruntime.ConfirmationQueueRejectedMissing
-	confirmationQueueRejectedOutstanding = processruntime.ConfirmationQueueRejectedOutstanding
-)
 
 type launchNotReleasedReason uint8
 

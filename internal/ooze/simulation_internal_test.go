@@ -816,7 +816,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 			continue
 		}
 		if record.runtimeOperation == simulationStartCommitted &&
-			record.runtimeStart.decision == startCommittedAccepted {
+			record.runtimeStart.decision == processruntime.StartAccepted {
 			startAt = index
 		}
 		if closedAt < 0 && !record.runtimeState.Open() {
@@ -2004,7 +2004,7 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 		Campaign: registration.Campaign(), Attempt: "attempt-a", Class: processruntime.SharedAdmission,
 		Profile: AutomaticProfile,
 	})
-	assert.Equal(t, admissionAccepted, await.Decision(), "admission decision=%v", await.Decision())
+	assert.Equal(t, processruntime.AdmissionAccepted, await.Decision(), "admission decision=%v", await.Decision())
 	campaign, _ := beginCampaign(campaignDefinition{
 		identity: "campaign-projection", lineage: 71, command: []string{"test"},
 		profile: AutomaticProfile, peers: 1,
@@ -2398,7 +2398,7 @@ func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
 	emergency := supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)}
 	start := startCommittedEvent{
 		attempt: "attempt-b",
-		result:  campaignStartResult{decision: startCommittedAccepted, generation: 4},
+		result:  campaignStartResult{decision: processruntime.StartAccepted, generation: 4},
 	}
 	engine := simulationEngine{
 		campaign: campaignState{drain: campaignDrainIntent{kind: campaignDrainRuntimeEmergency, epoch: 1}},

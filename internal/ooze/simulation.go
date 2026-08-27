@@ -347,7 +347,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						trace, simulationAdmissionDivergence, "admission decision diverged at record %d", index,
 					)
 				}
-				if admission.decision != admissionAccepted {
+				if admission.decision != processruntime.AdmissionAccepted {
 					delivered = admissionRejectedEvent{
 						attempt: requestEffect.attempt, result: campaignAdmissionEvidence(admission),
 						cause: "simulation admission rejected",
@@ -465,7 +465,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				terminal := candidates[terminalAt].(attemptTerminalEvent)
-				terminal.receipt.confirmationQueueDrained = completed.decision == confirmationQueueCompleted
+				terminal.receipt.confirmationQueueDrained = completed.decision == processruntime.ConfirmationQueueCompleted
 				pendingDeliveries[record.source] = slices.Delete(candidates, terminalAt, terminalAt+1)
 				delivered = terminal
 			case simulationStartCommitted:

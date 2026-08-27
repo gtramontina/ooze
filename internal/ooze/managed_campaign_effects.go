@@ -69,7 +69,7 @@ func (runner *managedCampaignRunner) execute(
 		})
 	case campaignEffectRequestAdmission:
 		await := runner.runtime.RequestAdmission(processRuntimeAdmission(effect.request))
-		if await.Decision() != admissionAccepted {
+		if await.Decision() != processruntime.AdmissionAccepted {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
 				result: campaignAdmissionResult{
@@ -84,7 +84,7 @@ func (runner *managedCampaignRunner) execute(
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
 				result: campaignAdmissionResult{
-					decision: admissionRejectedClosed, request: campaignAdmissionFact(await.Request()),
+					decision: processruntime.AdmissionRejectedClosed, request: campaignAdmissionFact(await.Request()),
 					fatalEpoch: fatalEpochID(runner.runtime.FatalEpoch()),
 				},
 				cause: "process runtime entered a fatal epoch while admission waited",
@@ -99,7 +99,7 @@ func (runner *managedCampaignRunner) execute(
 		runner.attempts.reserveLaunch(cell, effect.spec)
 		prepared := runner.runtime.CommitStart(grant, cell)
 		result := campaignStartResult{decision: prepared.Decision(), generation: prepared.Generation()}
-		if prepared.Decision() == startCommittedAccepted {
+		if prepared.Decision() == processruntime.StartAccepted {
 			runner.starts[prepared.Generation()] = prepared
 		} else {
 			runner.attempts.discardLaunch(cell)
@@ -156,7 +156,7 @@ func (runner *managedCampaignRunner) execute(
 			Campaign: effect.binding.campaign, Attempt: string(effect.binding.attempt),
 			Profile: effect.binding.profile, Deadline: effect.binding.deadline,
 		})
-		if await.Decision() != barrierBound {
+		if await.Decision() != processruntime.BarrierBound {
 			panic("managed confirmation barrier was rejected")
 		}
 		grant, ok := await.Receive()
@@ -290,7 +290,7 @@ func (runner *managedCampaignRunner) settle(
 	receipt := campaignReceipt(observed.receipt)
 	if facts.completesConfirmationQueue {
 		completed := runner.runtime.CompleteConfirmationQueue(runner.runtimeToken)
-		if completed.Decision() != confirmationQueueCompleted {
+		if completed.Decision() != processruntime.ConfirmationQueueCompleted {
 			panic("managed confirmation queue completion was rejected")
 		}
 		receipt.confirmationQueueDrained = true

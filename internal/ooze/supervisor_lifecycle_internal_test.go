@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,7 +107,7 @@ func TestSupervisorLaunchRegistersExactGenerationBeforeNativeAndClassifiesBranch
 					assert.Equal(t, attemptIdentity(spec.Attempt), attempt, "start attempt = %q, want %q", attempt, spec.Attempt)
 					cell = pending
 					prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: pending})
-					assert.Equal(t, startCommittedAccepted, prepared.result.decision, "start committed = %#v", prepared.result)
+					assert.Equal(t, processruntime.StartAccepted, prepared.result.decision, "start committed = %#v", prepared.result)
 					generation = prepared.result.generation
 
 					return prepared.start
@@ -173,7 +174,7 @@ func TestSupervisorConcurrentLaunchesPairDistinctAttemptsAndGenerations(t *testi
 			assert.True(t, ok, "start grant for %q = %#v", attempt, grant)
 			assert.Equal(t, attempt, grant.attempt, "start grant for %q = %#v", attempt, grant)
 			prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
-			assert.Equal(t, startCommittedAccepted, prepared.result.decision, "start committed for %q = %#v", attempt, prepared.result)
+			assert.Equal(t, processruntime.StartAccepted, prepared.result.decision, "start committed for %q = %#v", attempt, prepared.result)
 			observedMu.Lock()
 			cells[attempt] = cell
 			generations[attempt] = prepared.result.generation

@@ -274,7 +274,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			runtimeState:        simulationTraceRuntimeState(engine.runtime),
 			runtimeAdmissionOut: simulationTraceAdmissionResult(result),
 		})
-		if result.decision != admissionAccepted {
+		if result.decision != processruntime.AdmissionAccepted {
 			engine.enqueueDelivery(sequence, admissionRejectedEvent{
 				attempt: move.effect.attempt, result: campaignAdmissionEvidence(result),
 				cause: "simulation admission rejected",
@@ -706,7 +706,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 				runtimeState:     simulationTraceRuntimeState(engine.runtime),
 				runtimeQueueOut:  simulationTraceConfirmationQueueResult(completed),
 			})
-			event.receipt.confirmationQueueDrained = completed.decision == confirmationQueueCompleted
+			event.receipt.confirmationQueueDrained = completed.decision == processruntime.ConfirmationQueueCompleted
 			engine.enqueueAdmissionDeliveries(sequence, completed.deliveries)
 			engine.enqueueDelivery(sequence, event)
 
@@ -1275,7 +1275,7 @@ func (engine simulationEngine) emergencyCampaignCutReady() bool {
 			return false
 		}
 		if committed, ok := move.delivery.(startCommittedEvent); ok &&
-			committed.result.decision == startCommittedAccepted {
+			committed.result.decision == processruntime.StartAccepted {
 			return false
 		}
 	}

@@ -83,7 +83,7 @@ func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment
 	}
 	driver.reserveLaunch(cell, spec)
 	prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
-	assert.Equal(t, startCommittedRejectedClosed, prepared.result.decision, "start decision = %v, want closed rejection", prepared.result.decision)
+	assert.Equal(t, processruntime.StartRejectedClosed, prepared.result.decision, "start decision = %v, want closed rejection", prepared.result.decision)
 	driver.discardLaunch(cell)
 	assert.EqualValues(t, 0, len(driver.reservations), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.InstalledGeneration())
 	assert.EqualValues(t, 0, cell.InstalledGeneration(), "rejected reservation/cell = %#v/%d, want empty/zero", driver.reservations, cell.InstalledGeneration())

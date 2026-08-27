@@ -217,19 +217,19 @@ type campaignPreparationFailedEvent struct {
 type campaignAdmission struct {
 	campaign campaignToken
 	attempt  attemptIdentity
-	class    admissionClass
+	class    processruntime.AdmissionClass
 	profile  Profile
 	deadline time.Duration
 }
 
 type campaignAdmissionResult struct {
-	decision   admissionDecision
+	decision   processruntime.AdmissionDecision
 	request    campaignAdmission
 	fatalEpoch fatalEpochID
 }
 
 type campaignStartResult struct {
-	decision                                         startCommittedDecision
+	decision                                         processruntime.StartDecision
 	generation                                       attemptGeneration
 	settlementAcknowledged, runtimeClosureInProgress bool
 }
@@ -251,13 +251,13 @@ type campaignBarrierBinding struct {
 }
 
 type campaignBarrierResult struct {
-	decision   barrierDecision
+	decision   processruntime.BarrierDecision
 	request    campaignAdmission
 	deliveries []campaignAdmission
 }
 
 type campaignTerminalResult struct {
-	decision terminalDecision
+	decision processruntime.TerminalDecision
 	epoch    fatalEpochID
 }
 
@@ -647,7 +647,8 @@ func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaign
 	if state.phase != campaignPreparing || state.runtimeToken.ID() != 0 {
 		campaignInvariant("register", "registration is invalid")
 	}
-	if event.registration.decision == campaignRejectedRecursive || event.registration.decision == campaignRejectedClosed {
+	if event.registration.decision == processruntime.CampaignRejectedRecursive ||
+		event.registration.decision == processruntime.CampaignRejectedClosed {
 		if event.registration.token.ID() != 0 || len(state.obligations) != 1 ||
 			state.obligations[0].kind != campaignResourceRegistration {
 			campaignInvariant("register", "registration rejection is invalid")
@@ -658,7 +659,7 @@ func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaign
 
 		return state, nil
 	}
-	if event.registration.decision != campaignRegistered || event.registration.token.ID() == 0 ||
+	if event.registration.decision != processruntime.CampaignRegistered || event.registration.token.ID() == 0 ||
 		event.registration.token.Lineage() != state.definition.lineage {
 		campaignInvariant("register", "registration is invalid")
 	}
@@ -866,7 +867,7 @@ func (state campaignState) onResourceSettlementFailed(
 }
 
 func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (campaignState, []campaignEffect) {
-	if event.result.decision == terminalRejectedClosed {
+	if event.result.decision == processruntime.TerminalRejectedClosed {
 		if state.candidate.kind == 0 || event.result.epoch == 0 || len(state.obligations) != 1 ||
 			state.obligations[0].kind != campaignResourceRegistration {
 			campaignInvariant("commit terminal", "fatal terminal rejection is invalid")
@@ -880,9 +881,9 @@ func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (ca
 
 		return state, nil
 	}
-	expected := terminalCommitted
+	expected := processruntime.TerminalCommitted
 	if state.drain.kind == campaignDrainRuntimeEmergency {
-		expected = terminalForcedAborted
+		expected = processruntime.TerminalForcedAborted
 	}
 	if state.candidate.kind == 0 || event.result.decision != expected || len(state.obligations) != 1 ||
 		state.obligations[0].kind != campaignResourceRegistration {
@@ -943,13 +944,13 @@ func (state campaignState) onWorkspaceMaterialized(event workspaceMaterializedEv
 		})
 	}
 	state.attempts[attemptAt].stage = campaignAttemptAdmissionWaiting
-	class := sharedAdmission
+	class := processruntime.SharedAdmission
 	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
-		class = exclusiveAdmission
+		class = processruntime.ExclusiveAdmission
 	} else if state.attempts[attemptAt].kind == campaignAttemptConfirmation {
-		class = confirmationAdmission
+		class = processruntime.ConfirmationAdmission
 	} else if state.definition.profile == SerialProfile {
-		class = serialPrimaryAdmission
+		class = processruntime.SerialPrimaryAdmission
 	}
 	deadline := state.mutationDeadline
 	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
@@ -1045,7 +1046,7 @@ func (state campaignState) onAdmissionCancelled(
 		!sameAdmissionRequest(event.result.request, event.request) {
 		campaignInvariant("cancel admission", "cancellation is stale or wrong")
 	}
-	if event.result.decision == admissionRejectedAlreadyCommitted {
+	if event.result.decision == processruntime.AdmissionRejectedAlreadyCommitted {
 		if state.attempts[attemptAt].stage != campaignAttemptGranted {
 			campaignInvariant("cancel admission", "commitment race has no granted attempt")
 		}
@@ -1054,8 +1055,9 @@ func (state campaignState) onAdmissionCancelled(
 	}
 	stage := state.attempts[attemptAt].stage
 	validWaiting := stage == campaignAttemptAdmissionWaiting &&
-		(event.result.decision == admissionCancelledWaiting || event.result.decision == admissionCancelledGranted)
-	validGranted := stage == campaignAttemptGranted && event.result.decision == admissionCancelledGranted
+		(event.result.decision == processruntime.AdmissionCancelledWaiting ||
+			event.result.decision == processruntime.AdmissionCancelledGranted)
+	validGranted := stage == campaignAttemptGranted && event.result.decision == processruntime.AdmissionCancelledGranted
 	if !validWaiting && !validGranted {
 		campaignInvariant("cancel admission", "cancellation result is invalid")
 	}
@@ -1081,10 +1083,11 @@ func (state campaignState) onAdmissionRejected(
 	attemptAt := state.attemptIndex(event.attempt)
 	if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
 		!sameAdmissionRequest(event.result.request, state.attempts[attemptAt].request) || event.cause == "" ||
-		event.result.decision == admissionAccepted {
+		event.result.decision == processruntime.AdmissionAccepted {
 		campaignInvariant("reject admission", "admission rejection is invalid")
 	}
-	if event.result.decision != admissionRejectedClosed && event.result.decision != admissionRejectedGateClosed {
+	if event.result.decision != processruntime.AdmissionRejectedClosed &&
+		event.result.decision != processruntime.AdmissionRejectedGateClosed {
 		campaignInvariant("reject admission", "admission rejection decision is invalid")
 	}
 	state.removeAttemptObligation(campaignResourceAdmission, event.attempt, 0)
@@ -1094,7 +1097,7 @@ func (state campaignState) onAdmissionRejected(
 		state.mutants[mutantAt].primaryStarted = false
 	}
 	var effects []campaignEffect
-	if event.result.decision == admissionRejectedClosed {
+	if event.result.decision == processruntime.AdmissionRejectedClosed {
 		if event.result.fatalEpoch == 0 {
 			campaignInvariant("reject admission", "closed rejection lacks fatal epoch")
 		}
@@ -1154,7 +1157,8 @@ func (state campaignState) onConfirmationBarrierBound(
 ) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
 	if attemptAt < 0 || state.confirmationBarrierBound || state.attempts[attemptAt].kind != campaignAttemptConfirmation ||
-		state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting || event.result.decision != barrierBound ||
+		state.attempts[attemptAt].stage != campaignAttemptAdmissionWaiting ||
+		event.result.decision != processruntime.BarrierBound ||
 		event.result.request.attempt != event.attempt || len(event.result.deliveries) != 1 ||
 		event.result.deliveries[0] != event.result.request {
 		campaignInvariant("bind confirmation barrier", "barrier binding is invalid")
@@ -1172,8 +1176,8 @@ func (state campaignState) onGrantReturnAcknowledged(
 	returnAt := slices.Index(state.pendingGrantReturns, event.grant)
 	if attemptAt < 0 || returnAt < 0 || state.attempts[attemptAt].stage != campaignAttemptReturningGrant ||
 		state.attempts[attemptAt].grant != event.grant ||
-		(event.result.decision != admissionReturnedAfterGateClosure &&
-			event.result.decision != admissionReturnedAfterClosure) {
+		(event.result.decision != processruntime.AdmissionReturnedAfterGateClosure &&
+			event.result.decision != processruntime.AdmissionReturnedAfterClosure) {
 		campaignInvariant("acknowledge grant return", "grant return acknowledgement is invalid")
 	}
 	state.pendingGrantReturns = slices.Delete(state.pendingGrantReturns, returnAt, returnAt+1)
@@ -1196,9 +1200,9 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 		return state, nil
 	}
 	attemptAt := state.attemptIndex(event.attempt)
-	rejected := event.result.decision == startCommittedRejectedGrant ||
-		event.result.decision == startCommittedRejectedGate ||
-		event.result.decision == startCommittedRejectedClosed
+	rejected := event.result.decision == processruntime.StartRejectedGrant ||
+		event.result.decision == processruntime.StartRejectedGate ||
+		event.result.decision == processruntime.StartRejectedClosed
 	if attemptAt < 0 || event.grant != state.attempts[attemptAt].grant {
 		campaignInvariant("start committed", "commitment is stale or unauthorized")
 	}
@@ -1220,7 +1224,7 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 		return state, nil
 	}
 	if state.attempts[attemptAt].stage != campaignAttemptGranted ||
-		event.result.decision != startCommittedAccepted || event.result.generation == 0 {
+		event.result.decision != processruntime.StartAccepted || event.result.generation == 0 {
 		campaignInvariant("start committed", "commitment is stale or unauthorized")
 	}
 	pendingAt := state.obligationIndex(campaignResourcePendingStart, string(event.attempt))
@@ -1251,12 +1255,13 @@ func (state campaignState) acknowledgedStartRejection(event startCommittedEvent)
 		event.attempt != event.grant.attempt || !slices.Contains(state.acknowledgedGrantReturns, event.grant) {
 		return false
 	}
-	if event.result.decision == startCommittedRejectedClosed {
+	if event.result.decision == processruntime.StartRejectedClosed {
 		return event.result.runtimeClosureInProgress
 	}
 
 	return !event.result.runtimeClosureInProgress &&
-		(event.result.decision == startCommittedRejectedGrant || event.result.decision == startCommittedRejectedGate)
+		(event.result.decision == processruntime.StartRejectedGrant ||
+			event.result.decision == processruntime.StartRejectedGate)
 }
 
 func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignState, []campaignEffect) {

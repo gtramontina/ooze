@@ -7,6 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	sharedAdmission        = processruntime.SharedAdmission
+	exclusiveAdmission     = processruntime.ExclusiveAdmission
+	serialPrimaryAdmission = processruntime.SerialPrimaryAdmission
+)
+
 type pendingStartCell = processruntime.StartCell
 type installedStart = processruntime.PreparedStart
 type processRuntimeShell = processruntime.Runtime
@@ -74,7 +80,7 @@ func settleEmergencyForTest(runtime *processruntime.Runtime, sweep emergencySwee
 func startOwned(runtime *processruntime.Runtime, grant admissionGrant) startCommittedResult {
 	cell := processruntime.NewStartCell()
 	prepared := startCommittedForTest(runtime, grant, startInstallation{grant: grant, cell: cell})
-	if prepared.result.decision == startCommittedAccepted {
+	if prepared.result.decision == processruntime.StartAccepted {
 		observeAttemptForTest(runtime, prepared.result.generation, launchOwned{})
 	}
 

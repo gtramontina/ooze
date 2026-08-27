@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +26,7 @@ func TestCampaignEmptyCatalogueRunsNoCommandAndCommitsNoMutants(t *testing.T) {
 
 	state, effects = advanceCampaign(state, campaignEvent{
 		id: 1, payload: campaignRegisteredEvent{registration: campaignRegistration{
-			decision: campaignRegistered,
+			decision: processruntime.CampaignRegistered,
 			token:    campaignTokenForTest(11),
 		}},
 	})
@@ -51,7 +52,7 @@ func TestCampaignEmptyCatalogueRunsNoCommandAndCommitsNoMutants(t *testing.T) {
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
 
 	state, effects = advanceCampaign(state, campaignEvent{
-		id: 5, payload: terminalCommittedEvent{result: campaignTerminalResult{decision: terminalCommitted}},
+		id: 5, payload: terminalCommittedEvent{result: campaignTerminalResult{decision: processruntime.TerminalCommitted}},
 	})
 	assert.EqualValues(t, 0, len(effects), "terminal state/effects=%#v/%#v", state, effects)
 	assert.Equal(t, noMutantsOutcome{}, state.outcome, "terminal state/effects=%#v/%#v", state, effects)
@@ -203,7 +204,7 @@ func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testin
 	effects = harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
 	harness.runtime, _ = harness.runtime.commitTerminal(harness.state.runtimeToken)
-	harness.advance(terminalCommittedEvent{result: campaignTerminalResult{decision: terminalCommitted}})
+	harness.advance(terminalCommittedEvent{result: campaignTerminalResult{decision: processruntime.TerminalCommitted}})
 
 	completed, ok := harness.state.outcome.(completedOutcome)
 	want := []mutantResult{{mutant: "mutant-a", kind: mutantSurvived}, {mutant: "mutant-b", kind: mutantKilled}}
@@ -346,7 +347,7 @@ func TestCampaignRejectedStartAfterConfirmationGateReturnsTheGrant(t *testing.T)
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission, campaignEffectReleaseWorkspace)
 	var rejected startCommittedResult
 	harness.runtime, rejected = harness.runtime.startCommitted(admitted.deliveries[0])
-	assert.Equal(t, startCommittedRejectedGrant, rejected.decision, "start decision=%v, want compensated-grant rejection", rejected.decision)
+	assert.Equal(t, processruntime.StartRejectedGrant, rejected.decision, "start decision=%v, want compensated-grant rejection", rejected.decision)
 	effects = harness.advance(startCommittedEvent{
 		attempt: primaryEffects[2].attempt, grant: grant, result: campaignStartEvidence(rejected),
 	})
@@ -379,7 +380,7 @@ func TestCampaignLateProvisionalReceiptDoesNotRepeatAcknowledgedGrantReturn(t *t
 
 	var rejected startCommittedResult
 	harness.runtime, rejected = harness.runtime.startCommitted(runtimeAdmissionRequest(grant))
-	assert.Equal(t, startCommittedRejectedGrant, rejected.decision, "start decision=%v, want compensated-grant rejection", rejected.decision)
+	assert.Equal(t, processruntime.StartRejectedGrant, rejected.decision, "start decision=%v, want compensated-grant rejection", rejected.decision)
 	effects = harness.advance(startCommittedEvent{
 		attempt: primaryEffects[2].attempt, grant: grant, result: campaignStartEvidence(rejected),
 	})
@@ -430,8 +431,8 @@ func TestCampaignLateRejectedStartDoesNotReopenAcknowledgedGrantReturn(t *testin
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
 	var rejected startCommittedResult
 	harness.runtime, rejected = harness.runtime.startCommitted(runtimeAdmissionRequest(grant))
-	assert.Equal(t, startCommittedRejectedClosed, rejected.decision, "start decision=%v, want closed-runtime rejection", rejected.decision)
-	returned := admissionResult{decision: admissionReturnedAfterGateClosure}
+	assert.Equal(t, processruntime.StartRejectedClosed, rejected.decision, "start decision=%v, want closed-runtime rejection", rejected.decision)
+	returned := admissionResult{decision: processruntime.AdmissionReturnedAfterGateClosure}
 	effects = harness.advance(grantReturnAcknowledgedEvent{
 		grant: grant, result: campaignAdmissionEvidence(returned),
 	})
@@ -467,7 +468,7 @@ func TestCampaignFailedCleanupAcceptsLateAcknowledgedStartRejection(t *testing.T
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
 	var rejected startCommittedResult
 	harness.runtime, rejected = harness.runtime.startCommitted(runtimeAdmissionRequest(grant))
-	assert.Equal(t, startCommittedRejectedClosed, rejected.decision, "start decision=%v, want closed-runtime rejection", rejected.decision)
+	assert.Equal(t, processruntime.StartRejectedClosed, rejected.decision, "start decision=%v, want closed-runtime rejection", rejected.decision)
 	var returned admissionResult
 	harness.runtime, returned = harness.runtime.acknowledgeGrantReturn(runtimeAdmissionRequest(grant))
 	effects = harness.advance(grantReturnAcknowledgedEvent{
@@ -575,8 +576,8 @@ func TestCampaignGateRejectedStartOwnsExactlyOneGrantReturn(t *testing.T) {
 		attempt: effect.attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
-	rejected := startCommittedResult{decision: startCommittedRejectedGate}
-	assert.Equal(t, startCommittedRejectedGate, rejected.decision, "start decision=%v, want gate rejection", rejected.decision)
+	rejected := startCommittedResult{decision: processruntime.StartRejectedGate}
+	assert.Equal(t, processruntime.StartRejectedGate, rejected.decision, "start decision=%v, want gate rejection", rejected.decision)
 	effects = harness.advance(startCommittedEvent{
 		attempt: effect.attempt, grant: grant, result: campaignStartEvidence(rejected),
 	})
@@ -584,7 +585,7 @@ func TestCampaignGateRejectedStartOwnsExactlyOneGrantReturn(t *testing.T) {
 	require.Len(t, harness.state.pendingGrantReturns, 1, "pending grant returns=%#v, want exactly %#v", harness.state.pendingGrantReturns, grant)
 	assert.Equal(t, grant, harness.state.pendingGrantReturns[0], "pending grant returns=%#v, want exactly %#v", harness.state.pendingGrantReturns, grant)
 
-	returned := admissionResult{decision: admissionReturnedAfterGateClosure}
+	returned := admissionResult{decision: processruntime.AdmissionReturnedAfterGateClosure}
 	effects = harness.advance(grantReturnAcknowledgedEvent{
 		grant: grant, result: campaignAdmissionEvidence(returned),
 	})
@@ -728,7 +729,7 @@ func TestCampaignPreparationFailuresAbortWithoutCommands(t *testing.T) {
 	}
 	state, _ := beginCampaign(definition)
 	state, effects := advanceCampaign(state, campaignEvent{id: 1, payload: campaignRegisteredEvent{
-		registration: campaignRegistration{decision: campaignRejectedRecursive},
+		registration: campaignRegistration{decision: processruntime.CampaignRejectedRecursive},
 	}})
 	assert.EqualValues(t, 0, len(effects), "registration rejection state/effects=%#v/%#v", state, effects)
 	assert.EqualValues(t, 0, state.commandCount(), "registration rejection state/effects=%#v/%#v", state, effects)
@@ -779,7 +780,7 @@ func TestCampaignAbortCancelsWaitingAdmissionBeforeTerminal(t *testing.T) {
 	request := effects[0].request
 	var waiting admissionResult
 	harness.runtime, waiting = harness.runtime.requestAdmission(runtimeAdmissionRequest(request))
-	assert.Equal(t, admissionAccepted, waiting.decision, "second request was not waiting: %#v", waiting)
+	assert.Equal(t, processruntime.AdmissionAccepted, waiting.decision, "second request was not waiting: %#v", waiting)
 	assert.EqualValues(t, 0, len(waiting.deliveries), "second request was not waiting: %#v", waiting)
 	effects = harness.settleAttempt(t, first, Infrastructure{
 		Cause: CensusFailed, Err: errors.New("census failed"),
@@ -788,7 +789,7 @@ func TestCampaignAbortCancelsWaitingAdmissionBeforeTerminal(t *testing.T) {
 	assertCampaignEffects(t, effects, campaignEffectCancelAdmission, campaignEffectReleaseWorkspace)
 	var cancelled admissionResult
 	harness.runtime, cancelled = harness.runtime.cancelAdmission(runtimeAdmissionRequest(request))
-	assert.False(t, cancelled.decision != admissionCancelledWaiting && cancelled.decision != admissionCancelledGranted, "unexpected cancellation=%#v", cancelled)
+	assert.False(t, cancelled.decision != processruntime.AdmissionCancelledWaiting && cancelled.decision != processruntime.AdmissionCancelledGranted, "unexpected cancellation=%#v", cancelled)
 	effects = harness.advance(admissionCancelledEvent{
 		attempt: primaryEffects[1].attempt, request: request, result: campaignAdmissionEvidence(cancelled),
 	})
@@ -964,7 +965,7 @@ func TestCampaignRejectsBrokerContradictionAsInvariant(t *testing.T) {
 	}()
 	harness.advance(admissionRejectedEvent{
 		attempt: harness.effects[0].attempt,
-		result:  campaignAdmissionResult{decision: admissionRejectedDuplicate, request: effects[0].request},
+		result:  campaignAdmissionResult{decision: processruntime.AdmissionRejectedDuplicate, request: effects[0].request},
 		cause:   "duplicate",
 	})
 }
@@ -1185,7 +1186,7 @@ func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *tes
 	})
 	var rejected admissionResult
 	harness.runtime, rejected = harness.runtime.requestAdmission(runtimeAdmissionRequest(effects[0].request))
-	assert.Equal(t, admissionRejectedGateClosed, rejected.decision, "pending primary admission=%#v", rejected)
+	assert.Equal(t, processruntime.AdmissionRejectedGateClosed, rejected.decision, "pending primary admission=%#v", rejected)
 	effects = harness.advance(admissionRejectedEvent{
 		attempt: primaryEffects[2].attempt,
 		result:  campaignAdmissionEvidence(rejected),
@@ -1889,7 +1890,7 @@ func (harness *campaignHarness) settleConfirmation(
 	if queueDrained {
 		var completed confirmationQueueResult
 		harness.runtime, completed = harness.runtime.completeConfirmationQueue(grant.campaign)
-		assert.Equal(t, confirmationQueueCompleted, completed.decision, "confirmation queue completion = %#v", completed)
+		assert.Equal(t, processruntime.ConfirmationQueueCompleted, completed.decision, "confirmation queue completion = %#v", completed)
 		receipt.confirmationQueueDrained = true
 		receipt.deliveries = append(receipt.deliveries, completed.deliveries...)
 	}

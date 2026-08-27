@@ -9,7 +9,7 @@ import (
 type simulationAdmission struct {
 	campaign campaignToken
 	attempt  attemptIdentity
-	class    admissionClass
+	class    processruntime.AdmissionClass
 	profile  Profile
 	deadline simulationDuration
 }
@@ -105,7 +105,7 @@ func (observation simulationRuntimeObservation) production() attemptObservation 
 }
 
 type simulationAdmissionResult struct {
-	decision   admissionDecision
+	decision   processruntime.AdmissionDecision
 	request    simulationAdmission
 	deliveries []simulationAdmission
 	fatalEpoch fatalEpochID
@@ -182,7 +182,7 @@ func (binding simulationBarrierBinding) production() barrierBinding {
 }
 
 type simulationBarrierResult struct {
-	decision   barrierDecision
+	decision   processruntime.BarrierDecision
 	request    simulationAdmission
 	deliveries []simulationAdmission
 }
@@ -195,7 +195,7 @@ func simulationTraceBarrierResult(value barrierResult) simulationBarrierResult {
 }
 
 type simulationConfirmationQueueResult struct {
-	decision   confirmationQueueDecision
+	decision   processruntime.QueueDecision
 	deliveries []simulationAdmission
 }
 
