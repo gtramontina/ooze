@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
-type Profile uint8
+type Profile = processruntime.Profile
 
 const (
-	AutomaticProfile Profile = iota + 1
-	SerialProfile
+	AutomaticProfile = processruntime.AutomaticProfile
+	SerialProfile    = processruntime.SerialProfile
 )
 
 type Spec struct {
