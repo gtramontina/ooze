@@ -1,10 +1,6 @@
 package ooze
 
-import (
-	"sync"
-
-	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
-)
+import "sync"
 
 const startInstallerOperation, startLaunchOperation = "start committed installer", "start committed launch"
 
@@ -161,7 +157,7 @@ type processRuntimeShell struct {
 	mutex         sync.Mutex
 	core          processRuntime
 	emergency     chan struct{}
-	observer      processruntime.Observer
+	observer      processRuntimeObserver
 	notifications runtimeNotificationQueue
 	publication   runtimePublicationQueue
 }
@@ -184,7 +180,7 @@ type runtimePublicationQueue struct {
 }
 
 type runtimePublication struct {
-	event         processruntime.Event
+	event         processRuntimeEvent
 	observed      bool
 	notifications []runtimeNotification
 	emergency     bool
@@ -194,7 +190,7 @@ func newProcessRuntimeShell(capacity int) *processRuntimeShell {
 	return &processRuntimeShell{core: newProcessRuntime(capacity), emergency: make(chan struct{})}
 }
 
-func newProcessRuntimeShellWithObserver(capacity int, observer processruntime.Observer) *processRuntimeShell {
+func newProcessRuntimeShellWithObserver(capacity int, observer processRuntimeObserver) *processRuntimeShell {
 	shell := newProcessRuntimeShell(capacity)
 	shell.observer = observer
 	return shell
@@ -477,7 +473,7 @@ func underRuntimeLock[T any](
 		emergency:     wasOpen && !shell.core.open(),
 	}
 	if record != nil {
-		publication.event = processRuntimeEvent(transition)
+		publication.event = buildProcessRuntimeEvent(transition)
 		publication.observed = true
 	}
 	shell.enqueueRuntimePublication(publication)
@@ -568,210 +564,58 @@ func runtimeEventDataFor[I, O any](
 	return transition
 }
 
-func processRuntimeEvent(transition runtimeEventData) processruntime.Event {
-	switch transition.operation {
-	case 0:
-		return nil
+func buildProcessRuntimeEvent(data runtimeEventData) processRuntimeEvent {
+	switch data.operation {
 	case processRuntimeRegisterCampaign:
-		event, err := processruntime.NewCampaignRegistrationProcessed(
-			uint64(transition.provenance.lineage), runtimeEventRegistration(transition.registration),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeCampaignRegistrationProcessed{provenance: data.provenance, result: data.registration}
 	case processRuntimeRequestAdmission:
-		event, err := processruntime.NewAdmissionRequestProcessed(
-			runtimeEventAdmission(transition.request), runtimeEventAdmissionResult(transition.admission),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeAdmissionRequestProcessed{
+			request: runtimeEventAdmission(data.request), result: runtimeEventAdmissionResult(data.admission),
+		}
 	case processRuntimeCancelAdmission:
-		event, err := processruntime.NewAdmissionCancellationProcessed(
-			runtimeEventAdmission(transition.requestToken), runtimeEventAdmissionResult(transition.admission),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeAdmissionCancellationProcessed{
+			request: runtimeEventAdmission(data.requestToken), result: runtimeEventAdmissionResult(data.admission),
+		}
 	case processRuntimeAcknowledgeGrantReturn:
-		event, err := processruntime.NewGrantReturnProcessed(
-			runtimeEventAdmission(transition.grant), runtimeEventAdmissionResult(transition.admission),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeGrantReturnProcessed{
+			grant: runtimeEventAdmission(data.grant), result: runtimeEventAdmissionResult(data.admission),
+		}
 	case processRuntimeBindConfirmationBarrier:
-		event, err := processruntime.NewConfirmationBarrierProcessed(processruntime.Admission{
-			Campaign: runtimeEventCampaign(transition.barrier.campaign), Attempt: string(transition.barrier.attempt),
-			Class: processruntime.AdmissionClass(confirmationBarrierAdmission), Profile: processruntime.Profile(transition.barrier.profile),
-			Deadline: int64(transition.barrier.deadline),
-		}, runtimeEventBarrierResult(transition.barrierResult))
-		return validRuntimeEvent(event, err)
+		barrier := data.barrier
+		barrier.delivery = nil
+		return runtimeConfirmationBarrierProcessed{
+			barrier: barrier, result: runtimeEventBarrierResult(data.barrierResult),
+		}
 	case processRuntimeCompleteConfirmationQueue:
-		event, err := processruntime.NewConfirmationQueueProcessed(
-			runtimeEventCampaign(transition.campaign), runtimeEventQueueResult(transition.queue),
-		)
-		return validRuntimeEvent(event, err)
+		result := data.queue
+		result.deliveries = runtimeEventAdmissions(result.deliveries)
+		return runtimeConfirmationQueueProcessed{campaign: data.campaign, result: result}
 	case processRuntimeStartCommitted:
-		event, err := processruntime.NewStartCommitmentProcessed(
-			runtimeEventAdmission(transition.grant), processruntime.StartResult{
-				Decision: processruntime.StartDecision(transition.start.decision), Generation: uint64(transition.start.generation),
-				SettlementAcknowledged:   transition.start.settlementAcknowledged,
-				RuntimeClosureInProgress: transition.start.runtimeClosureInProgress,
-			})
-		return validRuntimeEvent(event, err)
+		return runtimeStartCommitmentProcessed{
+			grant: runtimeEventAdmission(data.grant), result: data.start,
+		}
 	case processRuntimeObserveAttempt:
-		event, err := processruntime.NewAttemptObservationProcessed(
-			uint64(transition.generation), runtimeEventObservation(transition.observation),
-			runtimeEventObservationResult(transition.observed),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeAttemptObservationProcessed{
+			generation: data.generation, observation: data.observation,
+			result: runtimeEventObservationResult(data.observed),
+		}
 	case processRuntimeSettleEmergency:
-		event, err := processruntime.NewEmergencySettlementProcessed(
-			runtimeEventResolutions(transition.sweep.resolutions), runtimeEventEmergency(transition.emergency),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeEmergencySettlementProcessed{
+			sweep:  emergencySweep{resolutions: append([]emergencyResolution(nil), data.sweep.resolutions...)},
+			result: runtimeEventEmergency(data.emergency),
+		}
 	case processRuntimeCommitTerminal:
-		event, err := processruntime.NewTerminalCommitmentProcessed(
-			runtimeEventCampaign(transition.campaign), runtimeEventTerminal(transition.terminal),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeTerminalCommitmentProcessed{campaign: data.campaign, result: data.terminal}
 	case processRuntimeAuthorizeForcedAbort:
-		event, err := processruntime.NewForcedAbortProcessed(
-			runtimeEventCampaign(transition.campaign), uint64(transition.fatalEpoch),
-			runtimeEventTerminal(transition.terminal),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeForcedAbortProcessed{
+			campaign: data.campaign, epoch: data.fatalEpoch, result: data.terminal,
+		}
 	case processRuntimeClose:
-		event, err := processruntime.NewRuntimeClosureProcessed(
-			string(transition.fatalCause), runtimeEventClosure(transition.runtimeClosure),
-		)
-		return validRuntimeEvent(event, err)
+		return runtimeClosureProcessed{cause: data.fatalCause, result: runtimeEventClosure(data.runtimeClosure)}
 	default:
 		invariant("publish runtime event", "runtime operation has no domain event")
 	}
 	return nil
-}
-
-func validRuntimeEvent(event processruntime.Event, err error) processruntime.Event {
-	if err != nil {
-		invariant("publish runtime event", err.Error())
-	}
-	return event
-}
-
-func runtimeEventCampaign(campaign campaignToken) processruntime.Campaign {
-	return processruntime.Campaign{ID: uint64(campaign.id), Lineage: uint64(campaign.lineage)}
-}
-
-func runtimeEventAdmission(admission admissionAuthority) processruntime.Admission {
-	return processruntime.Admission{
-		Campaign: runtimeEventCampaign(admission.campaign), Attempt: string(admission.attempt),
-		Class: processruntime.AdmissionClass(admission.class), Profile: processruntime.Profile(admission.profile),
-		Deadline: int64(admission.deadline),
-	}
-}
-
-func runtimeEventAdmissions[Values ~[]admissionAuthority](values Values) []processruntime.Admission {
-	result := make([]processruntime.Admission, len(values))
-	for index, value := range values {
-		result[index] = runtimeEventAdmission(value)
-	}
-	return result
-}
-
-func runtimeEventRegistration(registration campaignRegistration) processruntime.Registration {
-	return processruntime.Registration{
-		Decision: processruntime.RegistrationDecision(registration.decision), Campaign: runtimeEventCampaign(registration.token),
-	}
-}
-
-func runtimeEventAdmissionResult(result admissionResult) processruntime.AdmissionResult {
-	return processruntime.AdmissionResult{
-		Decision: processruntime.AdmissionDecision(result.decision), Request: runtimeEventAdmission(result.request),
-		Deliveries: runtimeEventAdmissions(result.deliveries), FatalEpoch: uint64(result.fatalEpoch),
-	}
-}
-
-func runtimeEventBarrierResult(result barrierResult) processruntime.BarrierResult {
-	return processruntime.BarrierResult{
-		Decision: processruntime.BarrierDecision(result.decision), Request: runtimeEventAdmission(result.request),
-		Deliveries: runtimeEventAdmissions(result.deliveries),
-	}
-}
-
-func runtimeEventQueueResult(result confirmationQueueResult) processruntime.QueueResult {
-	return processruntime.QueueResult{
-		Decision: processruntime.QueueDecision(result.decision), Deliveries: runtimeEventAdmissions(result.deliveries),
-	}
-}
-
-func runtimeEventObservation(observation attemptObservation) processruntime.Observation {
-	switch observation := observation.(type) {
-	case launchOwned:
-		return processruntime.Observation{Kind: processruntime.LaunchOwned}
-	case launchNotReleased:
-		return processruntime.Observation{Kind: processruntime.LaunchNotReleased, Reason: processruntime.LaunchFailure(observation.reason)}
-	case attemptSettled:
-		return processruntime.Observation{Kind: processruntime.AttemptSettled, Profile: processruntime.Profile(observation.profile), Deadline: int64(observation.deadline)}
-	case attemptTripped:
-		return processruntime.Observation{Kind: processruntime.AttemptTripped, Trip: processruntime.TripKind(observation.kind), Profile: processruntime.Profile(observation.profile), Deadline: int64(observation.deadline)}
-	case launchUnconfirmed:
-		return processruntime.Observation{Kind: processruntime.LaunchUnconfirmed}
-	case drainUnconfirmed:
-		return processruntime.Observation{Kind: processruntime.DrainUnconfirmed}
-	case attemptStopped:
-		return processruntime.Observation{Kind: processruntime.AttemptStopped}
-	case attemptInfrastructure:
-		return processruntime.Observation{Kind: processruntime.AttemptInfrastructure, Cause: observation.cause}
-	default:
-		return processruntime.Observation{}
-	}
-}
-
-func runtimeEventObservationResult(result observationResult) processruntime.ObservationResult {
-	return processruntime.ObservationResult{
-		Generation: uint64(result.generation), Deliveries: runtimeEventAdmissions(result.deliveries),
-		CancelledWaiting: runtimeEventAdmissions(result.cancelledWaiting), CompensatedGrants: runtimeEventAdmissions(result.compensatedGrants),
-		SettlementAcknowledged: result.settlementAcknowledged, ConfirmationProvisional: result.confirmationProvisional,
-		PressureTransitioned: result.pressureTransitioned, RuntimeClosureInProgress: result.runtimeClosureInProgress,
-		ConfirmationObserved: result.confirmationObserved, ConfirmationQueueDrained: result.confirmationQueueDrained,
-		FatalEpoch: uint64(result.fatalEpoch),
-	}
-}
-
-func runtimeEventResolutions(values []emergencyResolution) []processruntime.Resolution {
-	result := make([]processruntime.Resolution, len(values))
-	for index, value := range values {
-		result[index] = processruntime.Resolution{Generation: uint64(value.generation), Disposition: processruntime.EmergencyDisposition(value.disposition)}
-	}
-	return result
-}
-
-func runtimeEventResiduals(values []residualCustody) []processruntime.Residual {
-	result := make([]processruntime.Residual, len(values))
-	for index, value := range values {
-		result[index] = processruntime.Residual{
-			Generation: uint64(value.generation), Attempt: string(value.attempt),
-			Stage: processruntime.AdmissionStage(value.stage), Transferred: value.transferred,
-		}
-	}
-	return result
-}
-
-func runtimeEventEmergency(result emergencySettlement) processruntime.EmergencyResult {
-	acknowledged := make([]uint64, len(result.acknowledged))
-	for index, generation := range result.acknowledged {
-		acknowledged[index] = uint64(generation)
-	}
-	return processruntime.EmergencyResult{
-		Epoch: uint64(result.epoch), Owner: runtimeEventCampaign(result.owner),
-		Acknowledged: acknowledged, Residual: runtimeEventResiduals(result.residual),
-	}
-}
-
-func runtimeEventTerminal(result terminalResult) processruntime.TerminalResult {
-	return processruntime.TerminalResult{Decision: processruntime.TerminalDecision(result.decision), Epoch: uint64(result.epoch)}
-}
-
-func runtimeEventClosure(result runtimeClosure) processruntime.ClosureResult {
-	return processruntime.ClosureResult{
-		Epoch: uint64(result.epoch), CancelledWaiting: runtimeEventAdmissions(result.cancelledWaiting),
-		CompensatedGrants: runtimeEventAdmissions(result.compensatedGrants),
-		Residual:          runtimeEventResiduals(result.residual),
-	}
 }
 
 func (s *processRuntimeShell) deliver(deliveries []admissionGrant) {

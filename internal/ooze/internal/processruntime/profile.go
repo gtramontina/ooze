@@ -5,7 +5,6 @@ type Profile uint8
 
 // Supported execution profiles.
 const (
-	UnspecifiedProfile Profile = iota
-	AutomaticProfile
+	AutomaticProfile Profile = iota + 1
 	SerialProfile
 )
