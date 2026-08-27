@@ -3,8 +3,6 @@ package processruntime
 // Event is an immutable accepted process-runtime transition.
 type Event interface{ processRuntimeEvent() }
 
-type processRuntimeEvent = Event
-
 type runtimeCampaignRegistrationProcessed struct {
 	provenance campaignProvenance
 	result     campaignRegistration
@@ -244,8 +242,6 @@ func (event runtimeClosureProcessed) Result() Closure { return Closure{value: ev
 
 // Observer receives immutable accepted process-runtime events.
 type Observer interface{ Observe(Event) error }
-
-type processRuntimeObserver = Observer
 
 // ObserverFunc adapts a function to Observer.
 type ObserverFunc func(Event) error

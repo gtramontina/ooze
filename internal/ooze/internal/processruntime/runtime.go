@@ -4,25 +4,8 @@ import "sync"
 
 const startInstallerOperation, startLaunchOperation = "start committed installer", "start committed launch"
 
-type processRuntimeOperation uint8
-
-const (
-	processRuntimeRegisterCampaign processRuntimeOperation = iota + 1
-	processRuntimeRequestAdmission
-	processRuntimeCancelAdmission
-	processRuntimeAcknowledgeGrantReturn
-	processRuntimeBindConfirmationBarrier
-	processRuntimeCompleteConfirmationQueue
-	processRuntimeStartCommitted
-	processRuntimeObserveAttempt
-	processRuntimeSettleEmergency
-	processRuntimeCommitTerminal
-	processRuntimeAuthorizeForcedAbort
-	processRuntimeClose
-)
-
 type runtimeEventData struct {
-	operation      processRuntimeOperation
+	operation      Operation
 	name           string
 	provenance     campaignProvenance
 	campaign       campaignToken
@@ -157,7 +140,7 @@ type processRuntimeShell struct {
 	mutex         sync.Mutex
 	core          processRuntime
 	emergency     chan struct{}
-	observer      processRuntimeObserver
+	observer      Observer
 	notifications runtimeNotificationQueue
 	publication   runtimePublicationQueue
 }
@@ -180,7 +163,7 @@ type runtimePublicationQueue struct {
 }
 
 type runtimePublication struct {
-	event         processRuntimeEvent
+	event         Event
 	observed      bool
 	notifications []runtimeNotification
 	emergency     bool
@@ -190,7 +173,7 @@ func newProcessRuntimeShell(capacity int) *processRuntimeShell {
 	return &processRuntimeShell{core: newProcessRuntime(capacity), emergency: make(chan struct{})}
 }
 
-func newProcessRuntimeShellWithObserver(capacity int, observer processRuntimeObserver) *processRuntimeShell {
+func newProcessRuntimeShellWithObserver(capacity int, observer Observer) *processRuntimeShell {
 	shell := newProcessRuntimeShell(capacity)
 	shell.observer = observer
 	return shell
@@ -199,7 +182,7 @@ func newProcessRuntimeShellWithObserver(capacity int, observer processRuntimeObs
 func (s *processRuntimeShell) runtimeEmergency() <-chan struct{} { return s.emergency }
 
 func (s *processRuntimeShell) registerCampaign(p campaignProvenance) campaignRegistration {
-	return applyCore(s, "register campaign", processRuntimeRegisterCampaign, p, processRuntime.registerCampaign)
+	return applyCore(s, "register campaign", RegisterCampaignOperation, p, processRuntime.registerCampaign)
 }
 
 func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissionAwait {
@@ -207,7 +190,7 @@ func (s *processRuntimeShell) requestAdmission(request admissionRequest) admissi
 
 	return underRuntimeLock(s, "request admission", func(admissionAwait, processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeRequestAdmission, request: request, admission: recorded,
+			operation: RequestAdmissionOperation, request: request, admission: recorded,
 		}
 	}, func() admissionAwait {
 		delivery := make(chan admissionGrant, 1)
@@ -246,7 +229,7 @@ func (s *processRuntimeShell) cancelAdmission(token admissionRequestToken) admis
 
 	return underRuntimeLock(s, "cancel admission", func(admissionResult, processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeCancelAdmission, requestToken: token, admission: recorded,
+			operation: CancelAdmissionOperation, requestToken: token, admission: recorded,
 		}
 	}, func() (result admissionResult) {
 		if token.delivery == nil {
@@ -277,7 +260,7 @@ func sameAdmission(left, right admissionAuthority) bool {
 
 func (s *processRuntimeShell) acknowledgeGrantReturn(grant admissionGrant) admissionResult {
 	return applyCore(
-		s, "acknowledge grant return", processRuntimeAcknowledgeGrantReturn,
+		s, "acknowledge grant return", ReturnGrantOperation,
 		grant, processRuntime.acknowledgeGrantReturn,
 	)
 }
@@ -287,7 +270,7 @@ func (s *processRuntimeShell) sealAndBindConfirmationBarrier(binding barrierBind
 
 	return underRuntimeLock(s, "bind confirmation barrier", func(barrierAwait, processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeBindConfirmationBarrier, barrier: binding, barrierResult: recorded,
+			operation: BindConfirmationBarrierOperation, barrier: binding, barrierResult: recorded,
 		}
 	}, func() barrierAwait {
 		delivery := make(chan admissionGrant, 1)
@@ -310,7 +293,7 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 
 	return underRuntimeLock(s, "complete confirmation queue", func(confirmationQueueResult, processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeCompleteConfirmationQueue, campaign: campaign, queue: recorded,
+			operation: CompleteConfirmationQueueOperation, campaign: campaign, queue: recorded,
 		}
 	}, func() (result confirmationQueueResult) {
 		s.core, result = s.core.completeConfirmationQueue(campaign)
@@ -325,7 +308,7 @@ func (s *processRuntimeShell) completeConfirmationQueue(campaign campaignToken) 
 func (s *processRuntimeShell) startCommitted(grant admissionGrant, installation startInstallation) preparedStart {
 	return underRuntimeLock(s, startInstallerOperation, func(result preparedStart, _ processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeStartCommitted, grant: grant, start: result.result,
+			operation: CommitStartOperation, grant: grant, start: result.result,
 		}
 	}, func() preparedStart {
 		if installation.grant != grant {
@@ -371,7 +354,7 @@ func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, obser
 
 	return underRuntimeLock(s, observeOperation, func(observationResult, processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeObserveAttempt, generation: generation,
+			operation: ObserveAttemptOperation, generation: generation,
 			observation: observed, observed: recorded,
 		}
 	}, func() (result observationResult) {
@@ -387,17 +370,17 @@ func (s *processRuntimeShell) observeAttempt(generation attemptGeneration, obser
 }
 
 func (s *processRuntimeShell) settleEmergency(sweep emergencySweep) emergencySettlement {
-	return applyCore(s, settleEmergencyOperation, processRuntimeSettleEmergency, sweep, processRuntime.settleEmergency)
+	return applyCore(s, settleEmergencyOperation, SettleEmergencyOperation, sweep, processRuntime.settleEmergency)
 }
 
 func (s *processRuntimeShell) commitTerminal(campaign campaignToken) terminalResult {
-	return applyCore(s, "commit terminal", processRuntimeCommitTerminal, campaign, processRuntime.commitTerminal)
+	return applyCore(s, "commit terminal", CommitTerminalOperation, campaign, processRuntime.commitTerminal)
 }
 
 func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) terminalResult {
 	return underRuntimeLock(s, "authorize forced abort", func(result terminalResult, _ processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeAuthorizeForcedAbort, campaign: campaign, fatalEpoch: epoch, terminal: result,
+			operation: AuthorizeForcedAbortOperation, campaign: campaign, fatalEpoch: epoch, terminal: result,
 		}
 	}, func() (result terminalResult) {
 		s.core, result = s.core.authorizeForcedAbort(campaign, epoch)
@@ -409,7 +392,7 @@ func (s *processRuntimeShell) authorizeForcedAbort(campaign campaignToken, epoch
 func (s *processRuntimeShell) closeRuntime(cause runtimeFatalCause) runtimeClosure {
 	return underRuntimeLock(s, "close runtime", func(result runtimeClosure, _ processRuntime) runtimeEventData {
 		return runtimeEventData{
-			operation: processRuntimeClose, fatalCause: cause, runtimeClosure: result,
+			operation: CloseOperation, fatalCause: cause, runtimeClosure: result,
 		}
 	}, func() runtimeClosure { return s.closeCore(cause) })
 }
@@ -530,7 +513,7 @@ func (s *processRuntimeShell) observeRuntimeEvent(publication runtimePublication
 func applyCore[I, O any](
 	s *processRuntimeShell,
 	operationName string,
-	operation processRuntimeOperation,
+	operation Operation,
 	input I,
 	reduce func(processRuntime, I) (processRuntime, O),
 ) O {
@@ -544,22 +527,22 @@ func applyCore[I, O any](
 }
 
 func runtimeEventDataFor[I, O any](
-	operation processRuntimeOperation,
+	operation Operation,
 	input I,
 	output O,
 ) runtimeEventData {
 	transition := runtimeEventData{operation: operation}
 	switch operation {
-	case processRuntimeRegisterCampaign:
+	case RegisterCampaignOperation:
 		transition.provenance = any(input).(campaignProvenance)
 		transition.registration = any(output).(campaignRegistration)
-	case processRuntimeAcknowledgeGrantReturn:
+	case ReturnGrantOperation:
 		transition.grant = any(input).(admissionGrant)
 		transition.admission = any(output).(admissionResult)
-	case processRuntimeSettleEmergency:
+	case SettleEmergencyOperation:
 		transition.sweep = any(input).(emergencySweep)
 		transition.emergency = any(output).(emergencySettlement)
-	case processRuntimeCommitTerminal:
+	case CommitTerminalOperation:
 		transition.campaign = any(input).(campaignToken)
 		transition.terminal = any(output).(terminalResult)
 	default:
@@ -569,53 +552,53 @@ func runtimeEventDataFor[I, O any](
 	return transition
 }
 
-func buildProcessRuntimeEvent(data runtimeEventData) processRuntimeEvent {
+func buildProcessRuntimeEvent(data runtimeEventData) Event {
 	switch data.operation {
-	case processRuntimeRegisterCampaign:
+	case RegisterCampaignOperation:
 		return runtimeCampaignRegistrationProcessed{provenance: data.provenance, result: data.registration}
-	case processRuntimeRequestAdmission:
+	case RequestAdmissionOperation:
 		return runtimeAdmissionRequestProcessed{
 			request: runtimeEventAdmission(data.request), result: runtimeEventAdmissionResult(data.admission),
 		}
-	case processRuntimeCancelAdmission:
+	case CancelAdmissionOperation:
 		return runtimeAdmissionCancellationProcessed{
 			request: runtimeEventAdmission(data.requestToken), result: runtimeEventAdmissionResult(data.admission),
 		}
-	case processRuntimeAcknowledgeGrantReturn:
+	case ReturnGrantOperation:
 		return runtimeGrantReturnProcessed{
 			grant: runtimeEventAdmission(data.grant), result: runtimeEventAdmissionResult(data.admission),
 		}
-	case processRuntimeBindConfirmationBarrier:
+	case BindConfirmationBarrierOperation:
 		barrier := data.barrier
 		barrier.delivery = nil
 		return runtimeConfirmationBarrierProcessed{
 			barrier: barrier, result: runtimeEventBarrierResult(data.barrierResult),
 		}
-	case processRuntimeCompleteConfirmationQueue:
+	case CompleteConfirmationQueueOperation:
 		result := data.queue
 		result.deliveries = runtimeEventAdmissions(result.deliveries)
 		return runtimeConfirmationQueueProcessed{campaign: data.campaign, result: result}
-	case processRuntimeStartCommitted:
+	case CommitStartOperation:
 		return runtimeStartCommitmentProcessed{
 			grant: runtimeEventAdmission(data.grant), result: data.start,
 		}
-	case processRuntimeObserveAttempt:
+	case ObserveAttemptOperation:
 		return runtimeAttemptObservationProcessed{
 			generation: data.generation, observation: data.observation,
 			result: runtimeEventObservationResult(data.observed),
 		}
-	case processRuntimeSettleEmergency:
+	case SettleEmergencyOperation:
 		return runtimeEmergencySettlementProcessed{
 			sweep:  emergencySweep{resolutions: append([]emergencyResolution(nil), data.sweep.resolutions...)},
 			result: runtimeEventEmergency(data.emergency),
 		}
-	case processRuntimeCommitTerminal:
+	case CommitTerminalOperation:
 		return runtimeTerminalCommitmentProcessed{campaign: data.campaign, result: data.terminal}
-	case processRuntimeAuthorizeForcedAbort:
+	case AuthorizeForcedAbortOperation:
 		return runtimeForcedAbortProcessed{
 			campaign: data.campaign, epoch: data.fatalEpoch, result: data.terminal,
 		}
-	case processRuntimeClose:
+	case CloseOperation:
 		return runtimeClosureProcessed{cause: data.fatalCause, result: runtimeEventClosure(data.runtimeClosure)}
 	default:
 		invariant("publish runtime event", "runtime operation has no domain event")
