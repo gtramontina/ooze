@@ -219,8 +219,7 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	assert.Equal(t, mutantKilled, completed.mutants[1].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	assert.True(t, completed.singleAdmissionFallback, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
 	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.EqualValues(t, 4, attempts.launches, "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Projection().SingleAdmission())
-	assert.True(t, shell.Projection().SingleAdmission(), "launches/mode = %d/%v, want one confirmation and single admission", attempts.launches, shell.Projection().SingleAdmission())
+	assert.EqualValues(t, 4, attempts.launches)
 }
 
 func TestManagedCampaignResumesWithSingleAdmissionAfterConfirmationPressure(t *testing.T) {
@@ -285,12 +284,10 @@ func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t 
 		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	{
-		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Projection().SingleAdmission(), attempts.launches)
-		assert.True(t, shell.Projection().SingleAdmission(), "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Projection().SingleAdmission(), attempts.launches)
-		assert.EqualValues(t, 2, attempts.launches, "outcome/mode/launches = %#v/%v/%d", result.outcome, shell.Projection().SingleAdmission(), attempts.launches)
-	}
+	outcome, ok := result.outcome.(abortedOutcome)
+	require.True(t, ok)
+	assert.True(t, outcome.singleAdmissionFallback)
+	assert.EqualValues(t, 2, attempts.launches)
 }
 
 func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testing.T) {
@@ -456,7 +453,13 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 }
 
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
-	shell := newProcessRuntimeShell(1)
+	waiting := make(chan struct{}, 1)
+	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.Event) {
+		requested, ok := event.(processruntime.AdmissionRequestProcessed)
+		if ok && requested.Admission().Attempt != "held" {
+			waiting <- struct{}{}
+		}
+	}))
 	heldCampaign := shell.RegisterCampaign(99)
 	held := shell.RequestAdmission(processruntime.Admission{
 		Campaign: heldCampaign.Campaign(), Attempt: "held", Class: processruntime.ExclusiveAdmission,
@@ -475,10 +478,7 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
 	})
 	go func() {
-		deadline := time.Now().Add(time.Second)
-		for shell.Projection().AdmissionCount() < 2 && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
+		<-waiting
 		shell.Observe(prepared.Generation(), processruntime.DrainUnconfirmed())
 	}()
 

@@ -800,20 +800,6 @@ func (runtime *Runtime) CommitTerminal(campaign Campaign) TerminalResult {
 	return TerminalResult{value: runtime.shell.commitTerminal(campaign.token)}
 }
 
-// Projection returns an opaque immutable synchronized runtime projection.
-func (runtime *Runtime) Projection() Projection {
-	runtime.shell.mutex.Lock()
-	defer runtime.shell.mutex.Unlock()
-	return projectState(runtime.shell.core)
-}
-
-// Residual returns unresolved execution-domain custody in runtime order.
-func (runtime *Runtime) Residual() []Residual {
-	runtime.shell.mutex.Lock()
-	defer runtime.shell.mutex.Unlock()
-	return residualValues(runtime.shell.core.residualCustody())
-}
-
 func admissionValue(authority admissionAuthority) Admission {
 	return Admission{
 		Campaign: Campaign{token: authority.campaign}, Attempt: string(authority.attempt),

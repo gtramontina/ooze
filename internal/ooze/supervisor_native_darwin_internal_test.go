@@ -123,10 +123,6 @@ func TestDarwinNativeSupervisorPublishesImmutableNotReleasedError(t *testing.T) 
 	require.True(t, ok, "launch = %#v, want immutable NotReleased error", result)
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want immutable NotReleased error", result)
 	assert.Error(t, notReleased.Err, "launch = %#v, want immutable NotReleased error", result)
-	{
-		snapshot := shell.Projection()
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "proven no-release retained runtime custody: %#v", snapshot)
-	}
 }
 
 func TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember(t *testing.T) {
@@ -298,11 +294,6 @@ func TestDarwinNativeSupervisorSettlesSerialCommandThroughPublicLifecycle(t *tes
 	assert.EqualValues(t, "native-output", settled.Output.Bytes, "settled native evidence = %#v", settled)
 	assert.True(t, settled.Output.CompleteThroughCutoff, "settled native evidence = %#v", settled)
 	assert.True(t, settled.Output.Final, "settled native evidence = %#v", settled)
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Open(), "runtime after native settlement = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after native settlement = %#v", snapshot)
-	}
 }
 
 func TestDarwinNativeSupervisorTripsSerialCommandAtResolvedDeadline(t *testing.T) {

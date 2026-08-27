@@ -23,6 +23,7 @@ type simulationRecorder struct {
 	activeEffect campaignEffect
 	runtimeCuts  []simulationRecordedRuntimeCut
 	runtimeError error
+	runtimeState processruntime.Replay
 }
 
 func (recorder *simulationRecorder) recordRuntimeError(err error) {
@@ -31,6 +32,12 @@ func (recorder *simulationRecorder) recordRuntimeError(err error) {
 	if recorder.runtimeError == nil {
 		recorder.runtimeError = err
 	}
+}
+
+func (recorder *simulationRecorder) beginRuntime(state processruntime.Replay) {
+	recorder.mutex.Lock()
+	recorder.runtimeState = state
+	recorder.mutex.Unlock()
 }
 
 type simulationRecordedRuntimeCut struct {
@@ -107,6 +114,9 @@ func (recorder *simulationRecorder) recordRuntime(
 	record.authority = reservation.authority
 	record.source = recorder.runtimeSource(record)
 	record.runtimeState = simulationTraceRuntimeState(state)
+	recorder.mutex.Lock()
+	recorder.runtimeState = state
+	recorder.mutex.Unlock()
 	recorder.append(record)
 	recorder.causalMutex.Lock()
 	recorder.runtimeCuts = append(recorder.runtimeCuts, simulationRecordedRuntimeCut{
@@ -471,7 +481,7 @@ func (recorder *simulationRecorder) quiescent(
 		return records[left].sequence < records[right].sequence
 	})
 
-	runtimeState := runtime.Projection()
+	runtimeState := simulationTraceRuntimeState(recorder.runtimeState)
 	driver.mutex.Lock()
 	supervisorState := simulationProjectSupervisorState(driver.state)
 	driver.mutex.Unlock()

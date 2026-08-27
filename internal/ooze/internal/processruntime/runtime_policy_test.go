@@ -142,5 +142,8 @@ func TestRuntimeMalformedEvidenceClosesWithoutReplacingTheViolation(t *testing.T
 	assert.Panics(t, func() {
 		runtime.Observe(start.Generation()+1, processruntime.Settled(processruntime.AutomaticProfile, 0))
 	})
-	assert.True(t, runtime.Projection().Closing())
+	closure := runtime.Close("joined fatal epoch")
+	assert.NotZero(t, closure.Epoch())
+	require.Len(t, closure.Residual(), 1)
+	assert.Equal(t, start.Generation(), closure.Residual()[0].Generation())
 }

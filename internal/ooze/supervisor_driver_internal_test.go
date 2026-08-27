@@ -187,11 +187,6 @@ func TestSupervisorDriverEmergencyDuringProspectiveLaunchReturnsUnconfirmedAndSe
 	case <-time.After(time.Second):
 		require.FailNow(t, "late no-release did not complete emergency settlement")
 	}
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Drained(), "prospective emergency final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "prospective emergency final runtime = %#v", snapshot)
-	}
 }
 
 func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompletions(t *testing.T) {
@@ -325,11 +320,6 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 		}
 	case <-time.After(time.Second):
 		require.FailNow(t, "equality no-release completions did not settle one emergency epoch")
-	}
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Drained(), "multi-prospective final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "multi-prospective final runtime = %#v", snapshot)
 	}
 }
 
@@ -508,11 +498,6 @@ func TestSupervisorDriverEmergencyAdoptsReleasedProspectiveWithRootSnapshot(t *t
 	case <-time.After(time.Second):
 		require.FailNow(t, "released pre-Owned emergency did not settle")
 	}
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Drained(), "released prospective emergency final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "released prospective emergency final runtime = %#v", snapshot)
-	}
 }
 
 func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityCompletion(t *testing.T) {
@@ -595,10 +580,6 @@ func TestSupervisorDriverBoundarySnapshotIncludesAlreadyPublishedEqualityComplet
 	require.True(t, ok, "launch = %#v, want equality NotReleased", result)
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want equality NotReleased", result)
 	assert.ErrorIs(t, notReleased.Err, launchErr, "launch = %#v, want equality NotReleased", result)
-	{
-		snapshot := shell.Projection()
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "equality completion retained prospective custody: %#v", snapshot)
-	}
 }
 
 func TestSupervisorLaunchBoundaryUsesTheAbsoluteLaunchBy(t *testing.T) {
@@ -774,7 +755,14 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	boundary := make(chan time.Time, 1)
 	nativeDone := make(chan struct{})
 
-	shell := newProcessRuntimeShell(1)
+	lateSettlement := make(chan struct{}, 1)
+	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.Event) {
+		observed, ok := event.(processruntime.AttemptObservationProcessed)
+		if ok && observed.Observation().Kind() == processruntime.LaunchNotReleased &&
+			observed.Result().SettlementAcknowledged() {
+			lateSettlement <- struct{}{}
+		}
+	}))
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 90})
 	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
@@ -845,18 +833,10 @@ func TestSupervisorDriverReportsUnconfirmedAtLaunchBoundaryAndClosesLateNotRelea
 	}
 
 	close(nativeDone)
-	deadline := time.After(time.Second)
-	for {
-		snapshot := shell.Projection()
-		if snapshot.AdmissionCount() == 0 {
-			break
-		}
-		select {
-		case <-deadline:
-			require.FailNowf(t, "late not-released completion retained custody", "snapshot: %#v", snapshot)
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	select {
+	case <-lateSettlement:
+	case <-time.After(time.Second):
+		require.FailNow(t, "late not-released completion did not settle runtime custody")
 	}
 }
 
@@ -959,11 +939,6 @@ func TestSupervisorDriverReleaseUnknownReturnsUnconfirmedAndDrainsAdoptedCustody
 	{
 		_, ok := settlement.(SweepDrained)
 		require.True(t, ok, "release-unknown settlement = %#v, want SweepDrained", settlement)
-	}
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Drained(), "release-unknown final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "release-unknown final runtime = %#v", snapshot)
 	}
 }
 
@@ -1114,7 +1089,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 		}
 		select {
 		case <-deadline:
-			require.FailNowf(t, "late released attempt did not await emergency settlement", "phase=%d runtime=%#v", phase, shell.Projection())
+			require.FailNowf(t, "late released attempt did not await emergency settlement", "phase=%d", phase)
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -1127,11 +1102,6 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 		_, ok := settlement.(SweepDrained)
 		require.True(t, ok, "late adoption emergency settlement = %#v, want SweepDrained", settlement)
 	}
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Drained(), "late adoption final runtime = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "late adoption final runtime = %#v", snapshot)
-	}
 }
 
 func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testing.T) {
@@ -1141,7 +1111,13 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	drainBy := exitedAt.Add(5 * time.Second)
 	nextAt := registeredAt.Add(-time.Nanosecond)
 
-	shell := newProcessRuntimeShell(1)
+	ownedAccepted := make(chan attemptGeneration, 1)
+	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.Event) {
+		observed, ok := event.(processruntime.AttemptObservationProcessed)
+		if ok && observed.Observation().Kind() == processruntime.LaunchOwned {
+			ownedAccepted <- observed.Generation()
+		}
+	}))
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 91})
 	requested := requestAdmissionForTest(shell, admissionRequest{
 		campaign: campaign.token,
@@ -1276,9 +1252,12 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	owned, ok := result.(Owned)
 	require.True(t, ok, "launch = %#v, want Owned", result)
 	require.NotNil(t, owned.Attempt, "launch = %#v, want Owned", result)
-	launched := shell.Projection()
-	require.EqualValues(t, 1, launched.AdmissionCount(), "Owned published before runtime ownership: %#v", launched)
-	assert.True(t, launched.Owned(generation), "Owned published before runtime ownership: %#v", launched)
+	select {
+	case observed := <-ownedAccepted:
+		assert.Equal(t, generation, observed)
+	default:
+		require.FailNow(t, "Owned published before runtime ownership")
+	}
 	terminal := owned.Attempt.Wait()
 	settled, ok := terminal.(Settled)
 	require.True(t, ok, "terminal = %#v, want Settled", terminal)
@@ -1294,11 +1273,6 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 		supervisorReleaseDomain,
 	}
 	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Open(), "runtime after terminal delivery = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after terminal delivery = %#v", snapshot)
-	}
 }
 
 func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing.T) {
@@ -1563,12 +1537,6 @@ func TestSupervisorDriverLocalResidualTransfersCustodyBeforeEmergencySweep(t *te
 	assert.EqualValues(t, "partial", unconfirmed.Output.Bytes, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
 	assert.False(t, unconfirmed.Output.Final, "terminal = %#v, want locally transferred DrainUnconfirmed", terminal)
 	require.NotZero(t, shell.FatalEpoch(), "local residual custody transfer did not start runtime emergency")
-	snapshot := shell.Projection()
-	require.True(t, snapshot.Closing(), "runtime after local residual transfer = %#v", snapshot)
-	require.EqualValues(t, 1, snapshot.AdmissionCount(), "runtime after local residual transfer = %#v", snapshot)
-	residual := snapshot.Residual()
-	require.Len(t, residual, 1, "runtime after local residual transfer = %#v", snapshot)
-	assert.True(t, snapshot.CustodyTransferred(residual[0].Generation()), "runtime after local residual transfer = %#v", snapshot)
 	emergencyAt := drainBy.Add(time.Second)
 	settlement := supervisor.EmergencyDrain(EmergencyRequest{
 		At: emergencyAt, DrainBy: emergencyAt.Add(5 * time.Second),
@@ -2612,7 +2580,4 @@ func TestSupervisorDriverDeliversEmergencyDrainWithoutOwnedWaiter(t *testing.T) 
 		supervisorReleaseDomain,
 	}
 	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
-	snapshot := shell.Projection()
-	assert.True(t, snapshot.Drained(), "runtime after emergency settlement = %#v", snapshot)
-	assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after emergency settlement = %#v", snapshot)
 }

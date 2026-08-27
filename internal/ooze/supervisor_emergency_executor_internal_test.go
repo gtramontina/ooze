@@ -284,7 +284,11 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 			pendingAction: supervisorPendingAction{kind: action.kind, token: action.token},
 		},
 	}
-	executor := supervisorEmergencyExecutor{settleEmergency: func(sweep emergencySweep) emergencySettlement { return settleEmergencyForTest(shell, sweep) }}
+	var settled emergencySettlement
+	executor := supervisorEmergencyExecutor{settleEmergency: func(sweep emergencySweep) emergencySettlement {
+		settled = settleEmergencyForTest(shell, sweep)
+		return settled
+	}}
 
 	event := executor.execute(state, action)
 	wantResiduals := []supervisorEmergencyResolution{
@@ -294,12 +298,10 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 	require.NotNil(t, event, "normalized runtime completion = %#v", event)
 	require.NotNil(t, event.emergencySettlement, "normalized runtime completion = %#v", event)
 	assert.Equal(t, wantResiduals, event.emergencySettlement.residuals, "normalized runtime completion = %#v", event)
-	runtime := shell.Projection()
-	rawResidual := runtimeResiduals(shell.Residual())
-	assert.True(t, runtime.Unconfirmed(), "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
-	require.Len(t, rawResidual, 2, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
-	assert.Equal(t, high.generation, rawResidual[0].generation, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
-	assert.Equal(t, low.generation, rawResidual[1].generation, "settled runtime/raw admission order = %#v/%#v", runtime, rawResidual)
+	rawResidual := settled.residual
+	require.Len(t, rawResidual, 2)
+	assert.Equal(t, high.generation, rawResidual[0].generation)
+	assert.Equal(t, low.generation, rawResidual[1].generation)
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
 }
 
@@ -379,8 +381,7 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 			action: state.emergency.pendingAction,
 		},
 	}
-	assert.Equal(t, want, event, "empty executor event/runtime = %#v/%#v", event, shell.Projection())
-	assert.True(t, shell.Projection().Drained(), "empty executor event/runtime = %#v/%#v", event, shell.Projection())
+	assert.Equal(t, want, event)
 	assertInvariantViolation(t, func() { executor.execute(state, action) })
 }
 

@@ -108,13 +108,12 @@ func TestRuntimeInstallsStartBeforeLaunchAndCorrelatesTerminalEvidence(t *testin
 
 	observed := start.Launch(func(generation processruntime.Generation) processruntime.Observation {
 		assert.Equal(t, generation, cell.InstalledGeneration())
-		assert.True(t, runtime.Projection().Prospective(generation))
 		return processruntime.NotReleased(false)
 	})
 	receipt := runtime.Observe(start.Generation(), observed)
 
 	assert.True(t, receipt.SettlementAcknowledged())
-	assert.Empty(t, runtime.Residual())
+	assert.Equal(t, processruntime.TerminalCommitted, runtime.CommitTerminal(campaign).Decision())
 	assert.Panics(t, func() {
 		runtime.Observe(start.Generation()+1, processruntime.Settled(processruntime.AutomaticProfile, 0))
 	})

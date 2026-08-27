@@ -12,7 +12,9 @@ type simulationRuntimeObserver struct {
 }
 
 func newSimulationRuntimeObserver(recorder *simulationRecorder, capacity int) *simulationRuntimeObserver {
-	return &simulationRuntimeObserver{recorder: recorder, state: processruntime.NewReplay(capacity)}
+	state := processruntime.NewReplay(capacity)
+	recorder.beginRuntime(state)
+	return &simulationRuntimeObserver{recorder: recorder, state: state}
 }
 
 func (observer *simulationRuntimeObserver) Observe(event processruntime.Event) {

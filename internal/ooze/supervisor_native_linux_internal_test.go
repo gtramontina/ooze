@@ -19,7 +19,7 @@ import (
 const linuxEscapeFixtureRole = "OOZE_LINUX_ESCAPE_FIXTURE_ROLE"
 
 func TestLinuxNativeSupervisorSettlesTargetStatusThroughGuardian(t *testing.T) {
-	shell, supervisor := newLinuxNativeSupervisorForTest(t, "linux-native-status", 201)
+	_, supervisor := newLinuxNativeSupervisorForTest(t, "linux-native-status", 201)
 	launched := supervisor.Launch(Spec{
 		Attempt: "linux-native-status",
 		Command: []string{"/bin/sh", "-c", "printf 'linux-native-output'; exit 17"},
@@ -33,11 +33,6 @@ func TestLinuxNativeSupervisorSettlesTargetStatusThroughGuardian(t *testing.T) {
 	require.True(t, ok, "terminal = %#v, want exact target status and output", terminal)
 	assert.Equal(t, (ExitStatus{Code: 17}), settled.Exit, "terminal = %#v, want exact target status and output", terminal)
 	assert.EqualValues(t, "linux-native-output", settled.Output.Bytes, "terminal = %#v, want exact target status and output", terminal)
-	{
-		snapshot := shell.Projection()
-		assert.True(t, snapshot.Open(), "runtime after Linux settlement = %#v", snapshot)
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "runtime after Linux settlement = %#v", snapshot)
-	}
 }
 
 func TestLinuxNativeSupervisorForcesGuardianDomainAtDeadline(t *testing.T) {
@@ -62,7 +57,7 @@ func TestLinuxNativeSupervisorForcesGuardianDomainAtDeadline(t *testing.T) {
 
 func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 	directory := t.TempDir()
-	shell, supervisor := newLinuxNativeSupervisorForTest(t, "linux-native-exec-failure", 204)
+	_, supervisor := newLinuxNativeSupervisorForTest(t, "linux-native-exec-failure", 204)
 	result := supervisor.Launch(Spec{
 		Attempt: "linux-native-exec-failure", Command: []string{directory + "/absent-target"},
 		Dir: directory, Env: os.Environ(), Profile: SerialProfile, Deadline: 10 * time.Second,
@@ -71,10 +66,6 @@ func TestLinuxNativeSupervisorProvesTypedTargetExecFailure(t *testing.T) {
 	require.True(t, ok, "launch = %#v, want proven typed target exec failure", result)
 	assert.Equal(t, LaunchFailed, notReleased.Kind, "launch = %#v, want proven typed target exec failure", result)
 	assert.Error(t, notReleased.Err, "launch = %#v, want proven typed target exec failure", result)
-	{
-		snapshot := shell.Projection()
-		assert.EqualValues(t, 0, snapshot.AdmissionCount(), "typed target exec failure retained custody: %#v", snapshot)
-	}
 }
 
 func TestLinuxRevokedPreReleaseGuardianCleanupIsBounded(t *testing.T) {
