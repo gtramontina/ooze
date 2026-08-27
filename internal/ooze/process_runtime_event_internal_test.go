@@ -37,19 +37,20 @@ func TestProcessRuntimePublishesAcceptedLifecycleEvents(t *testing.T) {
 	terminal := runtime.commitTerminal(registration.token)
 
 	require.EqualValues(t, 5, len(events))
-	assert.Equal(t, []processruntime.EventKind{
-		processruntime.RegisterCampaign,
-		processruntime.RequestAdmission,
-		processruntime.StartCommitted,
-		processruntime.ObserveAttempt,
-		processruntime.CommitTerminal,
-	}, eventKinds(events))
-	assert.EqualValues(t, 41, events[0].Command().Lineage)
-	assert.EqualValues(t, registration.token.id, events[0].Result().Registration.Campaign.ID)
-	assert.Equal(t, "mutant-a", events[1].Command().Admission.Attempt)
-	assert.EqualValues(t, start.result.generation, events[2].Result().Start.Generation)
-	assert.EqualValues(t, launchFailed, events[3].Command().Observation.Reason)
-	assert.EqualValues(t, terminal.decision, events[4].Result().Terminal.Decision)
+	assert.Equal(t, []string{
+		"campaign registered", "admission requested", "attempt start committed", "attempt observed", "terminal committed",
+	}, eventNames(events))
+	registered := events[0].(processruntime.CampaignRegistered)
+	requested := events[1].(processruntime.AdmissionRequested)
+	committed := events[2].(processruntime.AttemptStartCommitted)
+	observed := events[3].(processruntime.AttemptObserved)
+	committedTerminal := events[4].(processruntime.TerminalCommitted)
+	assert.EqualValues(t, 41, registered.Lineage())
+	assert.EqualValues(t, registration.token.id, registered.Registration().Campaign.ID)
+	assert.Equal(t, "mutant-a", requested.Admission().Attempt)
+	assert.EqualValues(t, start.result.generation, committed.Result().Generation)
+	assert.EqualValues(t, launchFailed, observed.Observation().Reason)
+	assert.EqualValues(t, terminal.decision, committedTerminal.Result().Decision)
 }
 
 func TestProcessRuntimeObserverFailureDoesNotCloseRuntime(t *testing.T) {
@@ -80,11 +81,12 @@ func TestProcessRuntimeObserverFailureDoesNotCloseRuntime(t *testing.T) {
 func TestProcessRuntimeObserverMayReenterRuntime(t *testing.T) {
 	var runtime *processRuntimeShell
 	reentered := make(chan campaignRegistration, 1)
-	var kinds []processruntime.EventKind
+	var names []string
 	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
 		return func(event processruntime.Event) error {
-			kinds = append(kinds, event.Kind())
-			if event.Kind() == processruntime.RegisterCampaign && event.Command().Lineage == 44 {
+			names = append(names, eventName(event))
+			registered, ok := event.(processruntime.CampaignRegistered)
+			if ok && registered.Lineage() == 44 {
 				reentered <- runtime.registerCampaign(campaignProvenance{lineage: 45})
 			}
 
@@ -110,10 +112,7 @@ func TestProcessRuntimeObserverMayReenterRuntime(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("reentrant runtime registration was not observed")
 	}
-	assert.Equal(t, []processruntime.EventKind{
-		processruntime.RegisterCampaign,
-		processruntime.RegisterCampaign,
-	}, kinds)
+	assert.Equal(t, []string{"campaign registered", "campaign registered"}, names)
 }
 
 func TestProcessRuntimePublishesAcceptedEventBeforeCausalNotification(t *testing.T) {
@@ -121,8 +120,8 @@ func TestProcessRuntimePublishesAcceptedEventBeforeCausalNotification(t *testing
 	release := make(chan struct{})
 	observer := processruntime.ObserverFunc(func() func(processruntime.Event) error {
 		return func(event processruntime.Event) error {
-			if event.Kind() == processruntime.ObserveAttempt &&
-				event.Command().Observation.Kind == processruntime.AttemptSettled {
+			observed, ok := event.(processruntime.AttemptObserved)
+			if ok && observed.Observation().Kind == processruntime.AttemptSettled {
 				close(observing)
 				<-release
 			}
@@ -159,10 +158,27 @@ func TestProcessRuntimePublishesAcceptedEventBeforeCausalNotification(t *testing
 	assert.EqualValues(t, "waiting", grant.attempt)
 }
 
-func eventKinds(events []processruntime.Event) []processruntime.EventKind {
-	kinds := make([]processruntime.EventKind, len(events))
+func eventNames(events []processruntime.Event) []string {
+	names := make([]string, len(events))
 	for index, event := range events {
-		kinds[index] = event.Kind()
+		names[index] = eventName(event)
 	}
-	return kinds
+	return names
+}
+
+func eventName(event processruntime.Event) string {
+	switch event.(type) {
+	case processruntime.CampaignRegistered:
+		return "campaign registered"
+	case processruntime.AdmissionRequested:
+		return "admission requested"
+	case processruntime.AttemptStartCommitted:
+		return "attempt start committed"
+	case processruntime.AttemptObserved:
+		return "attempt observed"
+	case processruntime.TerminalCommitted:
+		return "terminal committed"
+	default:
+		return "unknown"
+	}
 }

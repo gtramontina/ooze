@@ -8,22 +8,32 @@ import (
 )
 
 func TestEventRetainsImmutableAcceptedTransition(t *testing.T) {
-	command := processruntime.Command{
-		Admission: processruntime.Admission{Attempt: "mutant-a"},
+	admission := processruntime.Admission{
+		Attempt: "mutant-a", Class: processruntime.SharedAdmission, Profile: processruntime.AutomaticProfile,
 	}
-	result := processruntime.Result{
-		Admission: processruntime.AdmissionResult{
-			Deliveries: []processruntime.Admission{{Attempt: "mutant-a"}},
-		},
+	result := processruntime.AdmissionResult{
+		Decision: processruntime.AdmissionAccepted,
+		Deliveries: []processruntime.Admission{{
+			Attempt: "mutant-a", Class: processruntime.SharedAdmission, Profile: processruntime.AutomaticProfile,
+		}},
 	}
-	event := processruntime.Accepted(processruntime.RequestAdmission, command, result)
+	event, err := processruntime.NewAdmissionRequested(admission, result)
+	assert.NoError(t, err)
 
-	command.Admission.Attempt = "changed"
-	result.Admission.Deliveries[0].Attempt = "changed"
+	admission.Attempt = "changed"
+	result.Deliveries[0].Attempt = "changed"
 	observed := event.Result()
-	observed.Admission.Deliveries[0].Attempt = "changed-again"
+	observed.Deliveries[0].Attempt = "changed-again"
 
-	assert.Equal(t, processruntime.RequestAdmission, event.Kind())
-	assert.Equal(t, "mutant-a", event.Command().Admission.Attempt)
-	assert.Equal(t, "mutant-a", event.Result().Admission.Deliveries[0].Attempt)
+	assert.Equal(t, "mutant-a", event.Admission().Attempt)
+	assert.Equal(t, "mutant-a", event.Result().Deliveries[0].Attempt)
+}
+
+func TestEventRejectsMismatchedDomainValues(t *testing.T) {
+	_, err := processruntime.NewAdmissionRequested(
+		processruntime.Admission{Class: processruntime.AdmissionClass(255)},
+		processruntime.AdmissionResult{Decision: processruntime.AdmissionAccepted},
+	)
+
+	assert.Error(t, err)
 }

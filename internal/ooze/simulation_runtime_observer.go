@@ -34,74 +34,90 @@ func (observer *simulationRuntimeObserver) Begin() func(processruntime.Event) er
 }
 
 func simulationRuntimeEventRecord(event processruntime.Event) simulationRecord {
-	command, result := event.Command(), event.Result()
-	record := simulationRecord{runtimeOperation: processRuntimeOperation(event.Kind())}
-	switch event.Kind() {
-	case processruntime.RegisterCampaign:
-		record.runtimeProvenance = campaignProvenance{lineage: campaignLineage(command.Lineage)}
+	record := simulationRecord{}
+	switch event := event.(type) {
+	case processruntime.CampaignRegistered:
+		result := event.Registration()
+		record.runtimeOperation = processRuntimeRegisterCampaign
+		record.runtimeProvenance = campaignProvenance{lineage: campaignLineage(event.Lineage())}
 		record.runtimeRegistration = campaignRegistration{
-			decision: campaignDecision(result.Registration.Decision),
-			token:    simulationRuntimeCampaign(result.Registration.Campaign),
+			decision: campaignDecision(result.Decision),
+			token:    simulationRuntimeCampaign(result.Campaign),
 		}
-	case processruntime.RequestAdmission:
-		record.runtimeAdmission = simulationRuntimeAdmission(command.Admission)
-		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(result.Admission)
-	case processruntime.CancelAdmission:
-		record.runtimeAdmissionToken = simulationRuntimeAdmission(command.Admission)
-		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(result.Admission)
-	case processruntime.AcknowledgeGrantReturn:
-		record.runtimeGrant = simulationRuntimeAdmission(command.Admission)
-		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(result.Admission)
-	case processruntime.BindConfirmationBarrier:
+	case processruntime.AdmissionRequested:
+		record.runtimeOperation = processRuntimeRequestAdmission
+		record.runtimeAdmission = simulationRuntimeAdmission(event.Admission())
+		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(event.Result())
+	case processruntime.AdmissionCancelled:
+		record.runtimeOperation = processRuntimeCancelAdmission
+		record.runtimeAdmissionToken = simulationRuntimeAdmission(event.Admission())
+		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(event.Result())
+	case processruntime.GrantReturnAcknowledged:
+		record.runtimeOperation = processRuntimeAcknowledgeGrantReturn
+		record.runtimeGrant = simulationRuntimeAdmission(event.Admission())
+		record.runtimeAdmissionOut = simulationRuntimeAdmissionResult(event.Result())
+	case processruntime.ConfirmationBarrierBound:
+		barrier := event.Barrier()
+		record.runtimeOperation = processRuntimeBindConfirmationBarrier
 		record.runtimeBarrier = simulationBarrierBinding{
-			campaign: simulationRuntimeCampaign(command.Barrier.Campaign),
-			attempt:  attemptIdentity(command.Barrier.Attempt), profile: Profile(command.Barrier.Profile),
-			deadline: simulationDuration(command.Barrier.Deadline),
+			campaign: simulationRuntimeCampaign(barrier.Campaign),
+			attempt:  attemptIdentity(barrier.Attempt), profile: Profile(barrier.Profile),
+			deadline: simulationDuration(barrier.Deadline),
 		}
-		record.runtimeBarrierOut = simulationRuntimeBarrierResult(result.Barrier)
-	case processruntime.CompleteConfirmationQueue:
-		record.runtimeCampaign = simulationRuntimeCampaign(command.Campaign)
+		record.runtimeBarrierOut = simulationRuntimeBarrierResult(event.Result())
+	case processruntime.ConfirmationQueueFinished:
+		result := event.Result()
+		record.runtimeOperation = processRuntimeCompleteConfirmationQueue
+		record.runtimeCampaign = simulationRuntimeCampaign(event.Campaign())
 		record.runtimeQueueOut = simulationConfirmationQueueResult{
-			decision:   confirmationQueueDecision(result.Queue.Decision),
-			deliveries: simulationRuntimeAdmissions(result.Queue.Deliveries),
+			decision: confirmationQueueDecision(result.Decision), deliveries: simulationRuntimeAdmissions(result.Deliveries),
 		}
-	case processruntime.StartCommitted:
-		record.runtimeGrant = simulationRuntimeAdmission(command.Admission)
+	case processruntime.AttemptStartCommitted:
+		result := event.Result()
+		record.runtimeOperation = processRuntimeStartCommitted
+		record.runtimeGrant = simulationRuntimeAdmission(event.Grant())
 		record.runtimeStart = startCommittedResult{
-			decision:                 startCommittedDecision(result.Start.Decision),
-			generation:               attemptGeneration(result.Start.Generation),
-			settlementAcknowledged:   result.Start.SettlementAcknowledged,
-			runtimeClosureInProgress: result.Start.RuntimeClosureInProgress,
+			decision: startCommittedDecision(result.Decision), generation: attemptGeneration(result.Generation),
+			settlementAcknowledged: result.SettlementAcknowledged, runtimeClosureInProgress: result.RuntimeClosureInProgress,
 		}
-	case processruntime.ObserveAttempt:
-		record.runtimeGeneration = attemptGeneration(command.Generation)
+	case processruntime.AttemptObserved:
+		observation := event.Observation()
+		record.runtimeOperation = processRuntimeObserveAttempt
+		record.runtimeGeneration = attemptGeneration(event.Generation())
 		record.runtimeObservation = simulationRuntimeObservation{
-			kind:    simulationRuntimeObservationKind(command.Observation.Kind),
-			reason:  launchNotReleasedReason(command.Observation.Reason),
-			profile: Profile(command.Observation.Profile), deadline: simulationDuration(command.Observation.Deadline),
-			trip: attemptTripKind(command.Observation.Trip), cause: command.Observation.Cause,
+			kind: simulationRuntimeObservationKind(observation.Kind), reason: launchNotReleasedReason(observation.Reason),
+			profile: Profile(observation.Profile), deadline: simulationDuration(observation.Deadline),
+			trip: attemptTripKind(observation.Trip), cause: observation.Cause,
 		}
-		record.runtimeObservationOut = simulationRuntimeObservationResult(result.Observation)
-	case processruntime.SettleEmergency:
-		resolutions := make([]emergencyResolution, len(command.Resolutions))
-		for index, resolution := range command.Resolutions {
+		record.runtimeObservationOut = simulationRuntimeObservationResult(event.Result())
+	case processruntime.EmergencySettled:
+		resolutions := make([]emergencyResolution, len(event.Resolutions()))
+		for index, resolution := range event.Resolutions() {
 			resolutions[index] = emergencyResolution{
 				generation:  attemptGeneration(resolution.Generation),
 				disposition: emergencyDisposition(resolution.Disposition),
 			}
 		}
+		record.runtimeOperation = processRuntimeSettleEmergency
 		record.runtimeSweep = simulationEmergencySweepRecord{resolutions: resolutions}
-		record.runtimeEmergencyOut = simulationRuntimeEmergencyResult(result.Emergency)
-	case processruntime.CommitTerminal:
-		record.runtimeCampaign = simulationRuntimeCampaign(command.Campaign)
-		record.runtimeTerminal = terminalResult{decision: terminalDecision(result.Terminal.Decision), epoch: fatalEpochID(result.Terminal.Epoch)}
-	case processruntime.AuthorizeForcedAbort:
-		record.runtimeCampaign = simulationRuntimeCampaign(command.Campaign)
-		record.runtimeFatalEpoch = fatalEpochID(command.FatalEpoch)
-		record.runtimeTerminal = terminalResult{decision: terminalDecision(result.Terminal.Decision), epoch: fatalEpochID(result.Terminal.Epoch)}
-	case processruntime.Close:
-		record.runtimeFatalCause = runtimeFatalCause(command.FatalCause)
-		record.runtimeClosure = simulationRuntimeClosureResult(result.Closure)
+		record.runtimeEmergencyOut = simulationRuntimeEmergencyResult(event.Result())
+	case processruntime.TerminalCommitted:
+		result := event.Result()
+		record.runtimeOperation = processRuntimeCommitTerminal
+		record.runtimeCampaign = simulationRuntimeCampaign(event.Campaign())
+		record.runtimeTerminal = terminalResult{decision: terminalDecision(result.Decision), epoch: fatalEpochID(result.Epoch)}
+	case processruntime.ForcedAbortAuthorized:
+		result := event.Result()
+		record.runtimeOperation = processRuntimeAuthorizeForcedAbort
+		record.runtimeCampaign = simulationRuntimeCampaign(event.Campaign())
+		record.runtimeFatalEpoch = fatalEpochID(event.Epoch())
+		record.runtimeTerminal = terminalResult{decision: terminalDecision(result.Decision), epoch: fatalEpochID(result.Epoch)}
+	case processruntime.RuntimeClosed:
+		record.runtimeOperation = processRuntimeClose
+		record.runtimeFatalCause = runtimeFatalCause(event.Cause())
+		record.runtimeClosure = simulationRuntimeClosureResult(event.Result())
+	default:
+		invariant("record runtime event", "runtime event variant is unknown")
 	}
 	return record
 }
