@@ -214,7 +214,7 @@ func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testin
 	assert.Equal(t, campaignDrainComplete, harness.state.drain.kind, "completion drain=%#v", harness.state.drain)
 	effects = harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
-	_ = harness.commitTerminal(harness.state.runtimeToken)
+	_ = runtimeTerminalResult(harness.applyRuntime(processruntime.CommitTerminalCut(harness.state.runtimeToken)).Terminal())
 	harness.advance(terminalCommittedEvent{result: campaignTerminalResult{decision: processruntime.TerminalCommitted}})
 
 	completed, ok := harness.state.outcome.(completedOutcome)
@@ -306,16 +306,16 @@ func TestCampaignBaselineProvenNotReleasedAbortsWithoutASecondLaunch(t *testing.
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: effect.attempt, workspace: "workspace-baseline", snapshot: effect.snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: effect.attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
-	started := harness.startCommitted(admitted.deliveries[0])
+	started := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])))).Start())
 	harness.advance(startCommittedEvent{
 		attempt: effect.attempt, grant: grant, result: campaignStartEvidence(started),
 	})
-	receipt := harness.observeAttempt(started.generation, launchNotReleased{reason: launchFailed})
+	receipt := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(started.generation, processRuntimeObservation(launchNotReleased{reason: launchFailed}))).Receipt())
 	effects = harness.advance(attemptLaunchEvent{
 		attempt: effect.attempt, generation: started.generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
@@ -339,7 +339,7 @@ func TestCampaignRejectedStartAfterConfirmationGateReturnsTheGrant(t *testing.T)
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: primaryEffects[2].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
@@ -352,7 +352,7 @@ func TestCampaignRejectedStartAfterConfirmationGateReturnsTheGrant(t *testing.T)
 		},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission, campaignEffectReleaseWorkspace)
-	rejected := harness.startCommitted(admitted.deliveries[0])
+	rejected := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])))).Start())
 	assert.Equal(t, processruntime.StartRejectedGrant, rejected.decision, "start decision=%v, want compensated-grant rejection", rejected.decision)
 	effects = harness.advance(startCommittedEvent{
 		attempt: primaryEffects[2].attempt, grant: grant, result: campaignStartEvidence(rejected),
@@ -369,26 +369,27 @@ func TestCampaignLateProvisionalReceiptDoesNotRepeatAcknowledgedGrantReturn(t *t
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: primaryEffects[2].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
 
 	deadline := harness.state.mutationDeadline
-	receipt := harness.observeAttempt(first.generation, attemptTripped{
+	receipt := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(first.generation, processRuntimeObservation(attemptTripped{
 		kind: deadlineTrip, profile: AutomaticProfile, deadline: deadline,
-	})
+	}))).Receipt())
+
 	require.Len(t, receipt.compensatedGrants, 1, "provisional compensation=%#v, want exactly %#v", receipt.compensatedGrants, grant)
 	assert.Equal(t, grant, campaignAdmissionValue(receipt.compensatedGrants[0]), "provisional compensation=%#v, want exactly %#v", receipt.compensatedGrants, grant)
 
-	rejected := harness.startCommitted(runtimeAdmissionRequest(grant))
+	rejected := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(grant))))).Start())
 	assert.Equal(t, processruntime.StartRejectedGrant, rejected.decision, "start decision=%v, want compensated-grant rejection", rejected.decision)
 	effects = harness.advance(startCommittedEvent{
 		attempt: primaryEffects[2].attempt, grant: grant, result: campaignStartEvidence(rejected),
 	})
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
-	returned := harness.acknowledgeGrantReturn(runtimeAdmissionRequest(grant))
+	returned := runtimeAdmissionResult(harness.applyRuntime(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(grant))))).Admission())
 	effects = harness.advance(grantReturnAcknowledgedEvent{
 		grant: grant, result: campaignAdmissionEvidence(returned),
 	})
@@ -417,7 +418,7 @@ func TestCampaignLateRejectedStartDoesNotReopenAcknowledgedGrantReturn(t *testin
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: primaryEffects[2].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
@@ -430,7 +431,7 @@ func TestCampaignLateRejectedStartDoesNotReopenAcknowledgedGrantReturn(t *testin
 		},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
-	rejected := harness.startCommitted(runtimeAdmissionRequest(grant))
+	rejected := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(grant))))).Start())
 	assert.Equal(t, processruntime.StartRejectedClosed, rejected.decision, "start decision=%v, want closed-runtime rejection", rejected.decision)
 	returned := admissionResult{decision: processruntime.AdmissionReturnedAfterGateClosure}
 	effects = harness.advance(grantReturnAcknowledgedEvent{
@@ -453,7 +454,7 @@ func TestCampaignFailedCleanupAcceptsLateAcknowledgedStartRejection(t *testing.T
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: primaryEffects[1].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
@@ -465,16 +466,17 @@ func TestCampaignFailedCleanupAcceptsLateAcknowledgedStartRejection(t *testing.T
 		},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
-	rejected := harness.startCommitted(runtimeAdmissionRequest(grant))
+	rejected := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(grant))))).Start())
 	assert.Equal(t, processruntime.StartRejectedClosed, rejected.decision, "start decision=%v, want closed-runtime rejection", rejected.decision)
-	returned := harness.acknowledgeGrantReturn(runtimeAdmissionRequest(grant))
+	returned := runtimeAdmissionResult(harness.applyRuntime(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(grant))))).Admission())
 	effects = harness.advance(grantReturnAcknowledgedEvent{
 		grant: grant, result: campaignAdmissionEvidence(returned),
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
-	settlement := harness.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: []emergencyResolution{{
 		generation: first.generation, disposition: emergencyCustodyTransferred,
-	}}})
+	}}}))).Settlement())
+
 	harness.advance(runtimeEmergencySettledEvent{
 		epoch: harness.state.drain.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -495,7 +497,7 @@ func TestCampaignFailedCleanupAcceptsPendingGrantReturnAcknowledgement(t *testin
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: primaryEffects[1].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
@@ -507,10 +509,11 @@ func TestCampaignFailedCleanupAcceptsPendingGrantReturnAcknowledgement(t *testin
 		},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
-	returned := harness.acknowledgeGrantReturn(runtimeAdmissionRequest(grant))
-	settlement := harness.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+	returned := runtimeAdmissionResult(harness.applyRuntime(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(grant))))).Admission())
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: []emergencyResolution{{
 		generation: first.generation, disposition: emergencyCustodyTransferred,
-	}}})
+	}}}))).Settlement())
+
 	harness.advance(runtimeEmergencySettledEvent{
 		epoch: harness.state.drain.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -530,7 +533,7 @@ func TestCampaignFailedCleanupReturnsCompensatedGrantDeliveredAfterClosure(t *te
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	require.Len(t, admitted.deliveries, 1, "admission deliveries=%#v, want one delayed grant", admitted.deliveries)
 	grant := campaignAdmissionValue(admitted.deliveries[0])
 	effects = harness.settleAttempt(t, first, DrainUnconfirmed{
@@ -541,9 +544,10 @@ func TestCampaignFailedCleanupReturnsCompensatedGrantDeliveredAfterClosure(t *te
 	}, 0)
 	assert.EqualValues(t, 0, len(effects), "closure compensation state/effects=%#v/%#v", harness.state.pendingGrantReturns, effects)
 	assert.True(t, slices.Contains(harness.state.pendingGrantReturns, grant), "closure compensation state/effects=%#v/%#v", harness.state.pendingGrantReturns, effects)
-	settlement := harness.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: []emergencyResolution{{
 		generation: first.generation, disposition: emergencyCustodyTransferred,
-	}}})
+	}}}))).Settlement())
+
 	harness.advance(runtimeEmergencySettledEvent{
 		epoch: harness.state.drain.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -561,7 +565,7 @@ func TestCampaignGateRejectedStartOwnsExactlyOneGrantReturn(t *testing.T) {
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: effect.attempt, workspace: "workspace-a", snapshot: effect.snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: effect.attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
@@ -673,24 +677,25 @@ func TestCampaignConfirmedDrainedFatalEpochForcesAbort(t *testing.T) {
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: effect.attempt, workspace: "workspace-baseline", snapshot: effect.snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: effect.attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
-	started := harness.startCommitted(admitted.deliveries[0])
+	started := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])))).Start())
 	harness.advance(startCommittedEvent{
 		attempt: effect.attempt, grant: grant, result: campaignStartEvidence(started),
 	})
-	receipt := harness.observeAttempt(started.generation, launchUnconfirmed{})
+	receipt := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(started.generation, processRuntimeObservation(launchUnconfirmed{}))).Receipt())
 	harness.advance(attemptLaunchEvent{
 		attempt: effect.attempt, generation: started.generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
 		receipt: campaignReceiptValue(receipt),
 	})
-	settlement := harness.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: []emergencyResolution{{
 		generation: started.generation, disposition: emergencyConfirmedDrained,
-	}}})
+	}}}))).Settlement())
+
 	effects = harness.advance(runtimeEmergencySettledEvent{
 		epoch: receipt.fatalEpoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -699,7 +704,7 @@ func TestCampaignConfirmedDrainedFatalEpochForcesAbort(t *testing.T) {
 	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
 	effects = harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
-	forced := harness.authorizeForcedAbort(harness.state.runtimeToken, receipt.fatalEpoch)
+	forced := runtimeTerminalResult(harness.applyRuntime(processruntime.AuthorizeForcedAbortCut(harness.state.runtimeToken, uint64(receipt.fatalEpoch))).Terminal())
 	harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(forced)})
 	{
 		_, ok := harness.state.outcome.(abortedOutcome)
@@ -749,19 +754,19 @@ func TestCampaignAttemptWorkspaceFailureAbortsAndStopsCommittedPeers(t *testing.
 
 func TestCampaignAbortCancelsWaitingAdmissionBeforeTerminal(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
-	peerRegistration := harness.registerCampaign(campaignProvenance{lineage: 99})
+	peerRegistration := campaignRegistrationEvidence(harness.applyRuntime(processruntime.RegisterCampaignCut(campaignProvenance{lineage: 99}.lineage)).Registration())
 	peerRequest := admissionRequest{
 		campaign: peerRegistration.token, attempt: "peer:1", class: sharedAdmission,
 	}
-	peerAdmission := harness.requestAdmission(peerRequest)
-	peerStart := harness.startCommitted(peerAdmission.deliveries[0])
-	_ = harness.observeAttempt(peerStart.generation, launchOwned{})
+	peerAdmission := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(peerRequest)))).Admission())
+	peerStart := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(peerAdmission.deliveries[0])))).Start())
+	_ = runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(peerStart.generation, processRuntimeObservation(launchOwned{}))).Receipt())
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
 	})
 	request := effects[0].request
-	waiting := harness.requestAdmission(runtimeAdmissionRequest(request))
+	waiting := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(request))))).Admission())
 	assert.Equal(t, processruntime.AdmissionAccepted, waiting.decision, "second request was not waiting: %#v", waiting)
 	assert.EqualValues(t, 0, len(waiting.deliveries), "second request was not waiting: %#v", waiting)
 	effects = harness.settleAttempt(t, first, Infrastructure{
@@ -769,7 +774,7 @@ func TestCampaignAbortCancelsWaitingAdmissionBeforeTerminal(t *testing.T) {
 		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectCancelAdmission, campaignEffectReleaseWorkspace)
-	cancelled := harness.cancelAdmission(runtimeAdmissionRequest(request))
+	cancelled := runtimeAdmissionResult(harness.applyRuntime(processruntime.CancelAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(request))))).Admission())
 	assert.False(t, cancelled.decision != processruntime.AdmissionCancelledWaiting && cancelled.decision != processruntime.AdmissionCancelledGranted, "unexpected cancellation=%#v", cancelled)
 	effects = harness.advance(admissionCancelledEvent{
 		attempt: primaryEffects[1].attempt, request: request, result: campaignAdmissionEvidence(cancelled),
@@ -805,11 +810,11 @@ func TestCampaignWorkspaceReleaseFailureStopsOwnedPeer(t *testing.T) {
 
 func TestCampaignPeerFatalClosureDrainsUncommittedLocalResources(t *testing.T) {
 	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 1)
-	closure := harness.closeRuntime("peer fatal")
+	closure := runtimeClosureValue(harness.applyRuntime(processruntime.CloseCut(string("peer fatal"))).Closure())
 	effects := harness.advance(runtimeEmergencyStartedEvent{closure: campaignClosureValue(closure)})
 	require.EqualValues(t, 0, len(effects), "peer emergency state/effects=%#v/%#v", harness.state.drain, effects)
 	assert.Equal(t, campaignDrainRuntimeEmergency, harness.state.drain.kind, "peer emergency state/effects=%#v/%#v", harness.state.drain, effects)
-	settlement := harness.settleEmergency(emergencySweep{})
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{}))).Settlement())
 	harness.advance(runtimeEmergencySettledEvent{
 		epoch: closure.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -823,7 +828,7 @@ func TestCampaignPeerFatalClosureDrainsUncommittedLocalResources(t *testing.T) {
 
 func TestCampaignWithoutElectedResidualOwnershipForceAborts(t *testing.T) {
 	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 1)
-	closure := harness.closeRuntime("peer fatal")
+	closure := runtimeClosureValue(harness.applyRuntime(processruntime.CloseCut(string("peer fatal"))).Closure())
 	harness.advance(runtimeEmergencyStartedEvent{closure: campaignClosureValue(closure)})
 	effects := harness.advance(runtimeEmergencySettledEvent{
 		epoch: closure.epoch,
@@ -870,12 +875,12 @@ func TestCampaignTerminalRejectedByFatalClosureAwaitsForcedAbort(t *testing.T) {
 	harness := newCampaignHarness(t, nil, AutomaticProfile, 1)
 	effects := harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
-	closure := harness.closeRuntime("terminal race")
-	rejected := harness.commitTerminal(harness.state.runtimeToken)
+	closure := runtimeClosureValue(harness.applyRuntime(processruntime.CloseCut(string("terminal race"))).Closure())
+	rejected := runtimeTerminalResult(harness.applyRuntime(processruntime.CommitTerminalCut(harness.state.runtimeToken)).Terminal())
 	effects = harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(rejected)})
 	assert.EqualValues(t, 0, len(effects), "terminal race state/effects=%#v/%#v", harness.state.drain, effects)
 	assert.Equal(t, campaignDrainRuntimeEmergency, harness.state.drain.kind, "terminal race state/effects=%#v/%#v", harness.state.drain, effects)
-	settlement := harness.settleEmergency(emergencySweep{})
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{}))).Settlement())
 	effects = harness.advance(runtimeEmergencySettledEvent{
 		epoch: closure.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -888,8 +893,8 @@ func TestCampaignAdmissionClosedByFatalEpochDrainsWithoutLaunching(t *testing.T)
 		attempt: harness.effects[0].attempt, workspace: "workspace-baseline", snapshot: "snapshot-a",
 	})
 	request := effects[0].request
-	closure := harness.closeRuntime("admission race")
-	rejected := harness.requestAdmission(runtimeAdmissionRequest(request))
+	closure := runtimeClosureValue(harness.applyRuntime(processruntime.CloseCut(string("admission race"))).Closure())
+	rejected := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(request))))).Admission())
 	effects = harness.advance(admissionRejectedEvent{
 		attempt: harness.effects[0].attempt, result: campaignAdmissionEvidence(rejected), cause: "runtime closed",
 	})
@@ -993,7 +998,7 @@ func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testi
 	assert.True(t, image.SingleAdmission(), "command count/single admission=%d/%v", harness.state.commandCount(), image.SingleAdmission())
 
 	harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
-	committed := harness.commitTerminal(harness.state.runtimeToken)
+	committed := runtimeTerminalResult(harness.applyRuntime(processruntime.CommitTerminalCut(harness.state.runtimeToken)).Terminal())
 	harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(committed)})
 	completed := harness.state.outcome.(completedOutcome)
 	want := []mutantResult{{mutant: "mutant-a", kind: mutantSurvived}, {mutant: "mutant-b", kind: mutantTimedOut}}
@@ -1018,9 +1023,9 @@ func TestCampaignReturnsKnownGrantDeliveredAfterPrimaryClosure(t *testing.T) {
 	thirdRequestEffects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
 	})
-	thirdAdmission := harness.requestAdmission(
-		runtimeAdmissionRequest(thirdRequestEffects[0].request),
-	)
+	thirdAdmission := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(
+		runtimeAdmissionRequest(thirdRequestEffects[0].request))))).Admission())
+
 	assert.EqualValues(t, 1, len(thirdAdmission.deliveries), "third grant=%#v", thirdAdmission)
 
 	deadline := harness.state.mutationDeadline
@@ -1034,7 +1039,7 @@ func TestCampaignReturnsKnownGrantDeliveredAfterPrimaryClosure(t *testing.T) {
 	})
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission)
 	assert.Equal(t, campaignAdmissionValue(thirdAdmission.deliveries[0]), effects[0].grant, "late grant return=%#v, want %#v", effects[0].grant, thirdAdmission.deliveries[0])
-	returned := harness.acknowledgeGrantReturn(thirdAdmission.deliveries[0])
+	returned := runtimeAdmissionResult(harness.applyRuntime(processruntime.ReturnGrantCut(processRuntimeAdmission(campaignAdmissionValue(thirdAdmission.deliveries[0])))).Admission())
 	effects = harness.advance(grantReturnAcknowledgedEvent{
 		grant: effects[0].grant, result: campaignAdmissionEvidence(returned),
 	})
@@ -1145,15 +1150,16 @@ func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *tes
 	harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
 
 	deadline := harness.state.mutationDeadline
-	receipt := harness.observeAttempt(first.generation, attemptTripped{
+	receipt := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(first.generation, processRuntimeObservation(attemptTripped{
 		kind: deadlineTrip, profile: AutomaticProfile, deadline: deadline,
-	})
+	}))).Receipt())
+
 	assert.True(t, receipt.confirmationProvisional, "deadline receipt=%#v", receipt)
 
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[2].attempt, workspace: "workspace-c", snapshot: primaryEffects[2].snapshot,
 	})
-	rejected := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	rejected := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	assert.Equal(t, processruntime.AdmissionRejectedGateClosed, rejected.decision, "pending primary admission=%#v", rejected)
 	effects = harness.advance(admissionRejectedEvent{
 		attempt: primaryEffects[2].attempt,
@@ -1189,12 +1195,12 @@ func TestCampaignAdoptsStartCommittedBeforeClosureWhoseFactArrivesAfterClosure(t
 	effects := harness.advance(workspaceMaterializedEvent{
 		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
 	})
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(effects[0].request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(effects[0].request))))).Admission())
 	effects = harness.advance(admissionGrantedEvent{
 		attempt: primaryEffects[1].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
-	delayed := harness.startCommitted(admitted.deliveries[0])
+	delayed := runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])))).Start())
 
 	deadline := harness.state.mutationDeadline
 	harness.settleAttempt(t, first, Tripped{
@@ -1208,7 +1214,7 @@ func TestCampaignAdoptsStartCommittedBeforeClosureWhoseFactArrivesAfterClosure(t
 	})
 	assertCampaignEffects(t, effects, campaignEffectLaunchAttempt)
 	assert.Equal(t, delayed.generation, effects[0].generation, "adopted generation=%d, want %d", effects[0].generation, delayed.generation)
-	receipt := harness.observeAttempt(delayed.generation, launchOwned{})
+	receipt := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(delayed.generation, processRuntimeObservation(launchOwned{}))).Receipt())
 	effects = harness.advance(attemptLaunchEvent{
 		attempt: primaryEffects[1].attempt, generation: delayed.generation,
 		result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceiptValue(receipt),
@@ -1225,7 +1231,7 @@ func TestCampaignSettlesLateProvenNoReleaseDuringRuntimeEmergency(t *testing.T) 
 		))
 	}
 
-	unconfirmed := harness.observeAttempt(prospective[0].generation, launchUnconfirmed{})
+	unconfirmed := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(prospective[0].generation, processRuntimeObservation(launchUnconfirmed{}))).Receipt())
 	harness.advance(attemptLaunchEvent{
 		attempt: prospective[0].attempt, generation: prospective[0].generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
@@ -1233,9 +1239,10 @@ func TestCampaignSettlesLateProvenNoReleaseDuringRuntimeEmergency(t *testing.T) 
 	})
 	wantDrain := harness.state.drain
 
-	notReleased := harness.observeAttempt(
-		prospective[1].generation, launchNotReleased{reason: launchFailed},
-	)
+	notReleased := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(
+		prospective[1].generation, processRuntimeObservation(
+			launchNotReleased{reason: launchFailed}))).Receipt())
+
 	effects := harness.advance(attemptLaunchEvent{
 		attempt: prospective[1].attempt, generation: prospective[1].generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
@@ -1253,11 +1260,12 @@ func TestCampaignPreservesRuntimeEmergencyForPreClosureNoReleaseDeliveredLate(t 
 	first := harness.startProspective(t, primaryEffects[0], "workspace-a")
 	second := harness.startProspective(t, primaryEffects[1], "workspace-b")
 
-	notReleased := harness.observeAttempt(
-		second.generation, launchNotReleased{reason: launchFailed},
-	)
+	notReleased := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(
+		second.generation, processRuntimeObservation(
+			launchNotReleased{reason: launchFailed}))).Receipt())
+
 	assert.False(t, notReleased.runtimeClosureInProgress, "pre-closure no-release receipt=%#v", notReleased)
-	unconfirmed := harness.observeAttempt(first.generation, launchUnconfirmed{})
+	unconfirmed := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(first.generation, processRuntimeObservation(launchUnconfirmed{}))).Receipt())
 	harness.advance(attemptLaunchEvent{
 		attempt: first.attempt, generation: first.generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
@@ -1278,19 +1286,20 @@ func TestCampaignPreservesRuntimeEmergencyForPreClosureProvisionalDeliveredLate(
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
 	first := harness.startProspective(t, primaryEffects[0], "workspace-a")
 	second := harness.startProspective(t, primaryEffects[1], "workspace-b")
-	owned := harness.observeAttempt(first.generation, launchOwned{})
+	owned := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(first.generation, processRuntimeObservation(launchOwned{}))).Receipt())
 	harness.advance(attemptLaunchEvent{
 		attempt: first.attempt, generation: first.generation,
 		result: campaignLaunchObservation{kind: campaignLaunchOwned}, receipt: campaignReceiptValue(owned),
 	})
 
 	deadline := harness.state.mutationDeadline
-	terminal := harness.observeAttempt(first.generation, attemptTripped{
+	terminal := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(first.generation, processRuntimeObservation(attemptTripped{
 		kind: deadlineTrip, profile: AutomaticProfile, deadline: deadline,
-	})
+	}))).Receipt())
+
 	assert.True(t, terminal.confirmationProvisional, "pre-closure provisional receipt=%#v", terminal)
 	assert.False(t, terminal.runtimeClosureInProgress, "pre-closure provisional receipt=%#v", terminal)
-	unconfirmed := harness.observeAttempt(second.generation, launchUnconfirmed{})
+	unconfirmed := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(second.generation, processRuntimeObservation(launchUnconfirmed{}))).Receipt())
 	harness.advance(attemptLaunchEvent{
 		attempt: second.attempt, generation: second.generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
@@ -1317,9 +1326,10 @@ func TestCampaignAbortDrainSurvivesLateProvisionalTerminal(t *testing.T) {
 	owned := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	prospective := harness.startProspective(t, primaryEffects[1], "workspace-b")
 
-	notReleased := harness.observeAttempt(
-		prospective.generation, launchNotReleased{reason: launchFailed},
-	)
+	notReleased := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(
+		prospective.generation, processRuntimeObservation(
+			launchNotReleased{reason: launchFailed}))).Receipt())
+
 	effects := harness.advance(attemptLaunchEvent{
 		attempt: prospective.attempt, generation: prospective.generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
@@ -1346,12 +1356,13 @@ func TestCampaignLateGrantDuringAbortAwaitsQueuedCancellation(t *testing.T) {
 		attempt: primaryEffects[1].attempt, workspace: "workspace-b", snapshot: primaryEffects[1].snapshot,
 	})
 	request := effects[0].request
-	admitted := harness.requestAdmission(runtimeAdmissionRequest(request))
+	admitted := runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(campaignAdmissionValue(runtimeAdmissionRequest(request))))).Admission())
 	grant := campaignAdmissionValue(admitted.deliveries[0])
 
-	notReleased := harness.observeAttempt(
-		prospective.generation, launchNotReleased{reason: launchFailed},
-	)
+	notReleased := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(
+		prospective.generation, processRuntimeObservation(
+			launchNotReleased{reason: launchFailed}))).Receipt())
+
 	effects = harness.advance(attemptLaunchEvent{
 		attempt: prospective.attempt, generation: prospective.generation,
 		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
@@ -1380,9 +1391,10 @@ func TestCampaignCleanupUnconfirmedRequiresStaticNonEmptyResidual(t *testing.T) 
 	assert.Equal(t, campaignDrainRuntimeEmergency, harness.state.drain.kind, "runtime emergency state/effects=%#v/%#v", harness.state, effects)
 	assert.NotEqual(t, 0, harness.state.drain.epoch, "runtime emergency state/effects=%#v/%#v", harness.state, effects)
 
-	settlement := harness.settleEmergency(emergencySweep{resolutions: []emergencyResolution{{
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: []emergencyResolution{{
 		generation: primary.generation, disposition: emergencyCustodyTransferred,
-	}}})
+	}}}))).Settlement())
+
 	harness.advance(runtimeEmergencySettledEvent{
 		epoch: harness.state.drain.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -1522,9 +1534,9 @@ func runMaterializingPeerEmergency(t *testing.T, count int) campaignState {
 	}
 	harness := newCampaignHarness(t, mutants, AutomaticProfile, 2)
 	baseline := harness.effects[0]
-	closure := harness.closeRuntime("peer fatal")
+	closure := runtimeClosureValue(harness.applyRuntime(processruntime.CloseCut(string("peer fatal"))).Closure())
 	harness.advance(runtimeEmergencyStartedEvent{closure: campaignClosureValue(closure)})
-	settlement := harness.settleEmergency(emergencySweep{})
+	settlement := runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{}))).Settlement())
 	harness.advance(runtimeEmergencySettledEvent{
 		epoch: closure.epoch, settlement: campaignSettlementValue(settlement),
 	})
@@ -1538,7 +1550,7 @@ func runMaterializingPeerEmergency(t *testing.T, count int) campaignState {
 	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
 	effects = harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
-	forced := harness.authorizeForcedAbort(harness.state.runtimeToken, closure.epoch)
+	forced := runtimeTerminalResult(harness.applyRuntime(processruntime.AuthorizeForcedAbortCut(harness.state.runtimeToken, uint64(closure.epoch))).Terminal())
 	harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(forced)})
 
 	return harness.state
@@ -1618,7 +1630,7 @@ func runSerialCampaignChoices(t *testing.T, choices []byte) campaignState {
 	assertCampaignEffects(t, effects, campaignEffectReleaseSnapshot)
 	effects = harness.advance(resourceSettledEvent{kind: campaignResourceSnapshot, identity: "snapshot-a"})
 	assertCampaignEffects(t, effects, campaignEffectProposeTerminal)
-	committed := harness.commitTerminal(harness.state.runtimeToken)
+	committed := runtimeTerminalResult(harness.applyRuntime(processruntime.CommitTerminalCut(harness.state.runtimeToken)).Terminal())
 	harness.advance(terminalCommittedEvent{result: campaignTerminalEvidence(committed)})
 
 	return harness.state
@@ -1641,64 +1653,6 @@ func (harness *campaignHarness) applyRuntime(cut processruntime.Cut) processrunt
 	var result processruntime.ReplayResult
 	harness.runtime, result = harness.runtime.Apply(cut)
 	return result
-}
-
-func (harness *campaignHarness) registerCampaign(provenance campaignProvenance) campaignRegistration {
-	return campaignRegistrationEvidence(harness.applyRuntime(processruntime.RegisterCampaignCut(provenance.lineage)).Registration())
-}
-
-func (harness *campaignHarness) requestAdmission(request admissionRequest) admissionResult {
-	return runtimeAdmissionResult(harness.applyRuntime(processruntime.RequestAdmissionCut(
-		processRuntimeAdmission(campaignAdmissionValue(request)),
-	)).Admission())
-}
-
-func (harness *campaignHarness) cancelAdmission(request admissionRequest) admissionResult {
-	return runtimeAdmissionResult(harness.applyRuntime(processruntime.CancelAdmissionCut(
-		processRuntimeAdmission(campaignAdmissionValue(request)),
-	)).Admission())
-}
-
-func (harness *campaignHarness) acknowledgeGrantReturn(grant admissionGrant) admissionResult {
-	return runtimeAdmissionResult(harness.applyRuntime(processruntime.ReturnGrantCut(
-		processRuntimeAdmission(campaignAdmissionValue(grant)),
-	)).Admission())
-}
-
-func (harness *campaignHarness) startCommitted(grant admissionGrant) startCommittedResult {
-	return runtimeStartResult(harness.applyRuntime(processruntime.CommitStartCut(
-		processRuntimeAdmission(campaignAdmissionValue(grant)),
-	)).Start())
-}
-
-func (harness *campaignHarness) observeAttempt(generation attemptGeneration, observation attemptObservation) observationResult {
-	return runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(
-		generation, processRuntimeObservation(observation),
-	)).Receipt())
-}
-
-func (harness *campaignHarness) commitTerminal(campaign campaignToken) terminalResult {
-	result := harness.applyRuntime(processruntime.CommitTerminalCut(campaign)).Terminal()
-	return terminalResult{decision: result.Decision(), epoch: fatalEpochID(result.Epoch())}
-}
-
-func (harness *campaignHarness) authorizeForcedAbort(campaign campaignToken, epoch fatalEpochID) terminalResult {
-	result := harness.applyRuntime(processruntime.AuthorizeForcedAbortCut(campaign, uint64(epoch))).Terminal()
-	return terminalResult{decision: result.Decision(), epoch: fatalEpochID(result.Epoch())}
-}
-
-func (harness *campaignHarness) completeConfirmationQueue(campaign campaignToken) confirmationQueueResult {
-	return runtimeQueueResult(harness.applyRuntime(processruntime.CompleteConfirmationQueueCut(campaign)).Queue())
-}
-
-func (harness *campaignHarness) closeRuntime(cause runtimeFatalCause) runtimeClosure {
-	return runtimeClosureValue(harness.applyRuntime(processruntime.CloseCut(string(cause))).Closure())
-}
-
-func (harness *campaignHarness) settleEmergency(sweep emergencySweep) emergencySettlement {
-	return runtimeEmergencySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(
-		processRuntimeResolutions(sweep),
-	)).Settlement())
 }
 
 type launchedCampaignAttempt struct {
@@ -1910,9 +1864,9 @@ func (harness *campaignHarness) settleConfirmation(
 	default:
 		require.FailNow(t, "confirmation terminal is invalid")
 	}
-	receipt := harness.observeAttempt(attempt.generation, observation)
+	receipt := runtimeReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(attempt.generation, processRuntimeObservation(observation))).Receipt())
 	if queueDrained {
-		completed := harness.completeConfirmationQueue(grant.campaign)
+		completed := runtimeQueueResult(harness.applyRuntime(processruntime.CompleteConfirmationQueueCut(grant.campaign)).Queue())
 		assert.Equal(t, processruntime.ConfirmationQueueCompleted, completed.decision, "confirmation queue completion = %#v", completed)
 		receipt.confirmationQueueDrained = true
 		receipt.deliveries = append(receipt.deliveries, completed.deliveries...)

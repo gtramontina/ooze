@@ -196,14 +196,14 @@ func (recorder *simulationRecorder) runtimeActionSource(record simulationRecord)
 	for token, action := range recorder.actions {
 		matches := false
 		switch record.runtimeCut.Operation() {
-		case simulationObserveAttempt:
+		case processruntime.ObserveAttemptOperation:
 			matches = action.generation == record.runtimeCut.Result().Receipt().Generation() &&
 				(action.kind == supervisorPublishOwned || action.kind == supervisorCloseProspective ||
 					action.kind == supervisorSettleRuntime ||
 					action.kind == supervisorTransferResidualCustody)
-		case simulationCompleteConfirmationQueue:
+		case processruntime.CompleteConfirmationQueueOperation:
 			matches = action.kind == supervisorDeliverTerminal
-		case simulationSettleEmergency:
+		case processruntime.SettleEmergencyOperation:
 			matches = action.kind == supervisorSettleEmergency
 		}
 		if !matches {
@@ -241,7 +241,7 @@ func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campai
 	result := record.runtimeCut.Result()
 	switch event := payload.(type) {
 	case campaignRegisteredEvent:
-		return record.runtimeCut.Operation() == simulationRegisterCampaign &&
+		return record.runtimeCut.Operation() == processruntime.RegisterCampaignOperation &&
 			campaignRegistrationEvidence(result.Registration()) == event.registration
 	case admissionGrantedEvent:
 		return slices.ContainsFunc(simulationRuntimeDeliveries(record), func(delivery simulationAdmission) bool {
@@ -249,33 +249,33 @@ func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campai
 		})
 	case admissionCancelledEvent:
 		cancelled := runtimeAdmissionResult(result.Admission())
-		return record.runtimeCut.Operation() == simulationCancelAdmission &&
+		return record.runtimeCut.Operation() == processruntime.CancelAdmissionOperation &&
 			campaignAdmissionValue(cancelled.request) == event.request &&
 			cancelled.decision == event.result.decision &&
 			campaignAdmissionValue(cancelled.request) == event.result.request &&
 			cancelled.fatalEpoch == event.result.fatalEpoch
 	case admissionRejectedEvent:
 		rejected := runtimeAdmissionResult(result.Admission())
-		return record.runtimeCut.Operation() == simulationRequestAdmission &&
+		return record.runtimeCut.Operation() == processruntime.RequestAdmissionOperation &&
 			rejected.decision == event.result.decision && campaignAdmissionValue(rejected.request) == event.result.request
 	case startCommittedEvent:
-		return record.runtimeCut.Operation() == simulationStartCommitted &&
+		return record.runtimeCut.Operation() == processruntime.CommitStartOperation &&
 			runtimeStartResult(result.Start()) == startCommittedResult(event.result)
 	case attemptLaunchEvent:
 		return record.runtimeCut.Matches(processruntime.ObserveAttemptCut(event.generation, processruntime.Owned()))
 	case confirmationBarrierBoundEvent:
 		bound := runtimeBarrierResult(result.Barrier())
-		return record.runtimeCut.Operation() == simulationBindConfirmationBarrier &&
+		return record.runtimeCut.Operation() == processruntime.BindConfirmationBarrierOperation &&
 			bound.decision == event.result.decision && campaignAdmissionValue(bound.request) == event.result.request &&
 			slices.EqualFunc(bound.deliveries, event.result.deliveries,
 				func(left admissionAuthority, right campaignAdmission) bool {
 					return campaignAdmissionValue(left) == right
 				})
 	case grantReturnAcknowledgedEvent:
-		return record.runtimeCut.Operation() == simulationAcknowledgeGrantReturn &&
+		return record.runtimeCut.Operation() == processruntime.ReturnGrantOperation &&
 			result.Admission().Decision() == event.result.decision
 	case terminalCommittedEvent:
-		return record.runtimeCut.Operation() == simulationCommitTerminal &&
+		return record.runtimeCut.Operation() == processruntime.CommitTerminalOperation &&
 			terminalResult{decision: result.Terminal().Decision()} == terminalResult(event.result)
 	default:
 		return false
@@ -286,13 +286,13 @@ func simulationRuntimeDeliveries(record simulationRecord) []simulationAdmission 
 	result := record.runtimeCut.Result()
 	var deliveries []processruntime.Admission
 	switch record.runtimeCut.Operation() {
-	case simulationRequestAdmission, simulationCancelAdmission, simulationAcknowledgeGrantReturn:
+	case processruntime.RequestAdmissionOperation, processruntime.CancelAdmissionOperation, processruntime.ReturnGrantOperation:
 		deliveries = result.Admission().Deliveries()
-	case simulationBindConfirmationBarrier:
+	case processruntime.BindConfirmationBarrierOperation:
 		deliveries = result.Barrier().Deliveries()
-	case simulationCompleteConfirmationQueue:
+	case processruntime.CompleteConfirmationQueueOperation:
 		deliveries = result.Queue().Deliveries()
-	case simulationObserveAttempt:
+	case processruntime.ObserveAttemptOperation:
 		deliveries = result.Receipt().Deliveries()
 	}
 	return simulationTraceAdmissions(runtimeAdmissions(deliveries))
@@ -305,7 +305,7 @@ func (recorder *simulationRecorder) supervisorSource(event supervisorEvent) simu
 	if event.kind == supervisorRuntimeCompleted {
 		action := event.runtime.action
 		return recorder.takeRuntimeCut(func(record simulationRecord) bool {
-			return record.runtimeCut.Operation() == simulationObserveAttempt &&
+			return record.runtimeCut.Operation() == processruntime.ObserveAttemptOperation &&
 				record.runtimeCut.Result().Receipt().Generation() == event.generation &&
 				record.source.kind == simulationSupervisorActionSource &&
 				record.source.identity == uint64(action.token)

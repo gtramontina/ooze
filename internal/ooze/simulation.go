@@ -22,21 +22,6 @@ const (
 	simulationSupervisorAuthority
 )
 
-const (
-	simulationRegisterCampaign          = processruntime.RegisterCampaignOperation
-	simulationRequestAdmission          = processruntime.RequestAdmissionOperation
-	simulationCancelAdmission           = processruntime.CancelAdmissionOperation
-	simulationAcknowledgeGrantReturn    = processruntime.ReturnGrantOperation
-	simulationBindConfirmationBarrier   = processruntime.BindConfirmationBarrierOperation
-	simulationCompleteConfirmationQueue = processruntime.CompleteConfirmationQueueOperation
-	simulationStartCommitted            = processruntime.CommitStartOperation
-	simulationObserveAttempt            = processruntime.ObserveAttemptOperation
-	simulationSettleEmergency           = processruntime.SettleEmergencyOperation
-	simulationCommitTerminal            = processruntime.CommitTerminalOperation
-	simulationAuthorizeForcedAbort      = processruntime.AuthorizeForcedAbortOperation
-	simulationCloseRuntime              = processruntime.CloseOperation
-)
-
 const simulationChooseBaselineFailure byte = 1
 
 type simulationDefinition struct {
@@ -283,7 +268,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		case simulationRuntimeAuthority:
 			delivered = nil
 			switch record.runtimeCut.Operation() {
-			case simulationRegisterCampaign:
+			case processruntime.RegisterCampaignOperation:
 				registrationEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectRegister
 				})
@@ -308,7 +293,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				registered := record.runtimeCut.Result().Registration()
 				registration := campaignRegistrationEvidence(registered)
 				delivered = campaignRegisteredEvent{registration: registration}
-			case simulationRequestAdmission:
+			case processruntime.RequestAdmissionOperation:
 				requestEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectRequestAdmission && record.runtimeCut.Matches(
 						processruntime.RequestAdmissionCut(processRuntimeAdmission(effect.request)),
@@ -344,7 +329,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						attempt: grant.attempt, grant: campaignAdmissionValue(grant),
 					})
 				}
-			case simulationCancelAdmission:
+			case processruntime.CancelAdmissionOperation:
 				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectCancelAdmission && record.runtimeCut.Matches(
 						processruntime.CancelAdmissionCut(processRuntimeAdmission(effect.request)),
@@ -369,7 +354,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					attempt: cancelEffect.attempt, request: cancelEffect.request,
 					result: campaignAdmissionEvidence(cancelled),
 				}
-			case simulationAcknowledgeGrantReturn:
+			case processruntime.ReturnGrantOperation:
 				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectReturnAdmission && record.runtimeCut.Matches(
 						processruntime.ReturnGrantCut(processRuntimeAdmission(effect.grant)),
@@ -393,7 +378,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = grantReturnAcknowledgedEvent{
 					grant: returnEffect.grant, result: campaignAdmissionEvidence(returned),
 				}
-			case simulationBindConfirmationBarrier:
+			case processruntime.BindConfirmationBarrierOperation:
 				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					binding := runtimeBarrierBinding(effect.binding)
 					return effect.kind == campaignEffectBindConfirmationBarrier && record.runtimeCut.Matches(
@@ -421,7 +406,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = confirmationBarrierBoundEvent{
 					attempt: bindingEffect.attempt, result: campaignBarrierEvidence(bound),
 				}
-			case simulationCompleteConfirmationQueue:
+			case processruntime.CompleteConfirmationQueueOperation:
 				if !record.runtimeCut.Matches(processruntime.CompleteConfirmationQueueCut(campaign.runtimeToken)) {
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"confirmation queue input diverged at record %d", index)
@@ -450,7 +435,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				terminal.receipt.confirmationQueueDrained = completed.decision == processruntime.ConfirmationQueueCompleted
 				pendingDeliveries[record.source] = slices.Delete(candidates, terminalAt, terminalAt+1)
 				delivered = terminal
-			case simulationStartCommitted:
+			case processruntime.CommitStartOperation:
 				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectRequestStartCommitment && record.runtimeCut.Matches(
 						processruntime.CommitStartCut(processRuntimeAdmission(effect.grant)),
@@ -474,7 +459,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = startCommittedEvent{
 					attempt: startEffect.attempt, grant: startEffect.grant, result: campaignStartEvidence(started),
 				}
-			case simulationObserveAttempt:
+			case processruntime.ObserveAttemptOperation:
 				generation, observed, ok := record.runtimeCut.Observation()
 				if !ok {
 					return simulationReplayFailure(trace, simulationReplayOperationFailure,
@@ -554,7 +539,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				default:
 					terminalReceipts[generation] = observation
 				}
-			case simulationCommitTerminal:
+			case processruntime.CommitTerminalOperation:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectProposeTerminal
 				})
@@ -578,7 +563,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				processed := record.runtimeCut.Result().Terminal()
 				terminal := terminalResult{decision: processed.Decision()}
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
-			case simulationSettleEmergency:
+			case processruntime.SettleEmergencyOperation:
 				var matches bool
 				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
 				if !matches {
@@ -590,7 +575,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = runtimeEmergencySettledEvent{
 					epoch: settlement.epoch, settlement: campaignSettlementValue(settlement),
 				}
-			case simulationAuthorizeForcedAbort:
+			case processruntime.AuthorizeForcedAbortOperation:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectProposeTerminal && record.runtimeCut.Matches(
 						processruntime.AuthorizeForcedAbortCut(campaign.runtimeToken, uint64(effect.fatalEpoch)),
@@ -612,7 +597,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				processed := record.runtimeCut.Result().Terminal()
 				terminal := terminalResult{decision: processed.Decision()}
 				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
-			case simulationCloseRuntime:
+			case processruntime.CloseOperation:
 				var matches bool
 				runtime, matches = runtime.ApplyRecorded(record.runtimeCut)
 				if !matches {

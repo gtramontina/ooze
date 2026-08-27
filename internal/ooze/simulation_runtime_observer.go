@@ -65,6 +65,10 @@ func runtimeStartResult(result processruntime.StartResult) startCommittedResult 
 	}
 }
 
+func runtimeTerminalResult(result processruntime.TerminalResult) terminalResult {
+	return terminalResult{decision: result.Decision(), epoch: fatalEpochID(result.Epoch())}
+}
+
 func runtimeReceipt(receipt processruntime.Receipt) observationResult {
 	return observationResult{
 		generation: receipt.Generation(), deliveries: runtimeAdmissions(receipt.Deliveries()),

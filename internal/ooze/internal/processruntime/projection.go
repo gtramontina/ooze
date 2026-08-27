@@ -64,35 +64,10 @@ func (image Projection) CampaignCount() int { return len(image.campaigns) }
 // AdmissionCount returns the retained admission count.
 func (image Projection) AdmissionCount() int { return len(image.admissions) }
 
-// Admission returns the immutable fact for one generation.
-func (image Projection) Admission(generation Generation) (Admission, bool) {
-	index := image.admissionIndex(attemptGeneration(generation))
-	if index < 0 {
-		return Admission{}, false
-	}
-	authority := image.admissions[index].authority
-	return Admission{
-		Campaign: Campaign{token: authority.campaign}, Attempt: string(authority.attempt),
-		Class: AdmissionClass(authority.class), Profile: authority.profile, Deadline: authority.deadline,
-	}, true
-}
-
 // Owned reports runtime ownership for one generation.
 func (image Projection) Owned(generation Generation) bool {
 	index := image.admissionIndex(attemptGeneration(generation))
 	return index >= 0 && image.admissions[index].stage == admissionOwned
-}
-
-// Prospective reports committed start custody before owned publication.
-func (image Projection) Prospective(generation Generation) bool {
-	index := image.admissionIndex(attemptGeneration(generation))
-	return index >= 0 && image.admissions[index].stage == admissionProspective
-}
-
-// CustodyTransferred reports local residual-custody transfer for one generation.
-func (image Projection) CustodyTransferred(generation Generation) bool {
-	index := image.admissionIndex(attemptGeneration(generation))
-	return index >= 0 && image.admissions[index].disposition == dispositionCustodyTransferred
 }
 
 // HasOverlappedPair reports whether at least two retained admissions overlapped.

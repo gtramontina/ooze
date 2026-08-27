@@ -815,17 +815,17 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 		if record.authority != simulationRuntimeAuthority {
 			continue
 		}
-		if record.runtimeCut.Operation() == simulationStartCommitted &&
+		if record.runtimeCut.Operation() == processruntime.CommitStartOperation &&
 			record.runtimeCut.Result().Start().Decision() == processruntime.StartAccepted {
 			startAt = index
 		}
 		if closedAt < 0 && !record.runtimeState.Open() {
 			closedAt = index
 		}
-		if record.runtimeCut.Operation() == simulationAuthorizeForcedAbort {
+		if record.runtimeCut.Operation() == processruntime.AuthorizeForcedAbortOperation {
 			forcedAbortAt = index
 		}
-		assert.False(t, closedAt >= 0 && index > closedAt && record.runtimeCut.Operation() == simulationCommitTerminal, "normal terminal commitment followed fatal closure at record %d", index)
+		assert.False(t, closedAt >= 0 && index > closedAt && record.runtimeCut.Operation() == processruntime.CommitTerminalOperation, "normal terminal commitment followed fatal closure at record %d", index)
 	}
 	assert.False(t, startAt < 0, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
 	assert.False(t, closedAt <= startAt, "start/closure/forced-abort order=%d/%d/%d", startAt, closedAt, forcedAbortAt)
@@ -1974,7 +1974,7 @@ func simulationExpectedProductionSourceKind(record simulationRecord) simulationC
 	switch record.authority {
 	case simulationRuntimeAuthority:
 		switch record.runtimeCut.Operation() {
-		case simulationObserveAttempt, simulationCompleteConfirmationQueue, simulationSettleEmergency:
+		case processruntime.ObserveAttemptOperation, processruntime.CompleteConfirmationQueueOperation, processruntime.SettleEmergencyOperation:
 			return simulationSupervisorActionSource
 		default:
 			return simulationCampaignEffectSource
