@@ -547,16 +547,6 @@ func (image Projection) HasOverlappedPair() bool {
 	return count >= 2
 }
 
-// ContainsAttempt reports whether an attempt remains admitted.
-func (image Projection) ContainsAttempt(attempt string) bool {
-	for _, admission := range image.admissions {
-		if admission.authority.attempt == attemptIdentity(attempt) {
-			return true
-		}
-	}
-	return false
-}
-
 // Residual returns unresolved execution-domain custody in runtime order.
 func (image Projection) Residual() []Residual {
 	result := make([]Residual, 0, len(image.admissions))

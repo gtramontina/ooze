@@ -105,7 +105,7 @@ func TestReplayPreservesExactResidualCustodyThroughFatalClosure(t *testing.T) {
 
 	t.Run("settlement retains only transferred custody", func(t *testing.T) {
 		assert.Equal(t, []processruntime.Generation{generations[1], generations[0]}, settled.Settlement().Acknowledged())
-		residual := replay.Residual()
+		residual := replay.Projection().Residual()
 		require.Len(t, residual, 1)
 		assert.Equal(t, generations[1], residual[0].Generation())
 		assert.True(t, residual[0].Transferred())

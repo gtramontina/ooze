@@ -570,7 +570,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					terminalReceipts[record.runtimeGeneration] = observation
 					closure := runtimeClosure{
 						epoch: observation.fatalEpoch, cancelledWaiting: observation.cancelledWaiting,
-						compensatedGrants: observation.compensatedGrants, residual: runtimeResiduals(runtime.Residual()),
+						compensatedGrants: observation.compensatedGrants,
+						residual:          runtimeResiduals(runtime.Projection().Residual()),
 					}
 					if !reflect.DeepEqual(simulationTraceRuntimeClosure(closure), record.runtimeClosure) {
 						return simulationReplayDivergenceFailure(

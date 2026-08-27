@@ -316,9 +316,3 @@ func replayEvent(event Event) (Cut, ReplayResult) {
 
 // Projection returns a capability-free immutable domain projection.
 func (replay Replay) Projection() Projection { return projectState(replay.state) }
-
-// Open reports whether ordinary commands are accepted.
-func (replay Replay) Open() bool { return replay.state.open() }
-
-// Residual returns exact live execution-domain custody.
-func (replay Replay) Residual() []Residual { return residualValues(replay.state.residualCustody()) }

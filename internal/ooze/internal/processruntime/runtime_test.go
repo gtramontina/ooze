@@ -182,7 +182,7 @@ func TestReplayFoldsProductionEventsIntoCapabilityFreeProjections(t *testing.T) 
 
 	t.Run("terminal state", func(t *testing.T) {
 		assert.True(t, replay.Projection().Open())
-		assert.Empty(t, replay.Residual())
+		assert.Empty(t, replay.Projection().Residual())
 		assert.Zero(t, replay.Projection().CampaignCount())
 	})
 }

@@ -602,13 +602,13 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorReleaseCompleted, generation: action.generation, at: at, release: &completion,
 		})
 	case supervisorTransferResidualCustody:
-		wasOpen := engine.runtime.Open()
+		wasOpen := engine.runtime.Projection().Open()
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.DrainUnconfirmed())).Receipt()
 		receipt := runtimeReceipt(processed)
 		engine.receipts[action.generation] = receipt
 		closure := runtimeClosure{
 			epoch: receipt.fatalEpoch, cancelledWaiting: receipt.cancelledWaiting,
-			compensatedGrants: receipt.compensatedGrants, residual: runtimeResiduals(engine.runtime.Residual()),
+			compensatedGrants: receipt.compensatedGrants, residual: runtimeResiduals(engine.runtime.Projection().Residual()),
 		}
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -634,7 +634,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		}
 	case supervisorSettleEmergency:
 		resolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(action.resolutions)
-		if runtimeResiduals := engine.runtime.Residual(); len(resolutions) != len(runtimeResiduals) {
+		if runtimeResiduals := engine.runtime.Projection().Residual(); len(resolutions) != len(runtimeResiduals) {
 			return fmt.Errorf(
 				"simulation emergency action %d resolves generations %v with runtime residuals %v",
 				action.token, acknowledged, runtimeResiduals,
