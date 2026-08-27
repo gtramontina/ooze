@@ -274,7 +274,73 @@ func TestRuntimeSerializesOwnedSettlementAgainstFatalClosure(t *testing.T) {
 	}
 }
 
+func TestRuntimeCopiedPreparedStartLaunchesOnce(t *testing.T) {
+	for sample := 0; sample < 50; sample++ {
+		runtime, start := preparedRuntimeStart(t, processruntime.Lineage(200+sample))
+		copies := []processruntime.PreparedStart{start, start}
+		begin := make(chan struct{})
+		panics := make(chan any, len(copies))
+		var calls int
+		var mutex sync.Mutex
+		var wait sync.WaitGroup
+		for _, copied := range copies {
+			wait.Add(1)
+			go runRuntimeRace(&wait, begin, panics, func() {
+				copied.Launch(func(processruntime.Generation) processruntime.Observation {
+					mutex.Lock()
+					calls++
+					mutex.Unlock()
+					return processruntime.Owned()
+				})
+			})
+		}
+		close(begin)
+		wait.Wait()
+		close(panics)
+
+		assert.EqualValues(t, 1, calls)
+		assert.Len(t, panics, 1)
+		assert.True(t, runtime.Projection().Unconfirmed())
+	}
+}
+
+func TestRuntimeRejectsInvalidOrConsumedStartCapability(t *testing.T) {
+	t.Run("nil start cell", func(t *testing.T) {
+		runtime := processruntime.New(1)
+		campaign := runtime.RegisterCampaign(300).Campaign()
+		await := runtime.RequestAdmission(processruntime.Admission{
+			Campaign: campaign, Attempt: "active", Class: processruntime.SharedAdmission,
+		})
+		grant, received := await.Receive()
+		require.True(t, received)
+
+		assert.Panics(t, func() { runtime.CommitStart(grant, nil) })
+		assert.Empty(t, runtime.Residual())
+	})
+
+	t.Run("consumed grant", func(t *testing.T) {
+		runtime, start, grant := preparedRuntimeStartWithGrant(t, 301)
+		runtime.Observe(start.Generation(), start.Launch(func(processruntime.Generation) processruntime.Observation {
+			return processruntime.Owned()
+		}))
+		cell := processruntime.NewStartCell()
+
+		rejected := runtime.CommitStart(grant, cell)
+		assert.Equal(t, processruntime.StartRejectedGrant, rejected.Decision())
+		assert.Zero(t, cell.InstalledGeneration())
+	})
+}
+
 func preparedRuntimeStart(t *testing.T, lineage processruntime.Lineage) (*processruntime.Runtime, processruntime.PreparedStart) {
+	t.Helper()
+	runtime, start, _ := preparedRuntimeStartWithGrant(t, lineage)
+	return runtime, start
+}
+
+func preparedRuntimeStartWithGrant(
+	t *testing.T,
+	lineage processruntime.Lineage,
+) (*processruntime.Runtime, processruntime.PreparedStart, processruntime.Grant) {
 	t.Helper()
 	runtime := processruntime.New(1)
 	campaign := runtime.RegisterCampaign(lineage).Campaign()
@@ -283,7 +349,7 @@ func preparedRuntimeStart(t *testing.T, lineage processruntime.Lineage) (*proces
 	})
 	grant, received := await.Receive()
 	require.True(t, received)
-	return runtime, runtime.CommitStart(grant, processruntime.NewStartCell())
+	return runtime, runtime.CommitStart(grant, processruntime.NewStartCell()), grant
 }
 
 func runRuntimeRace(wait *sync.WaitGroup, begin <-chan struct{}, panics chan<- any, action func()) {

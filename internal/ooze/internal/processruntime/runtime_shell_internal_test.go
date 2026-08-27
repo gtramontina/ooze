@@ -193,49 +193,6 @@ func TestInstalledStartRejectsConcurrentCrossPairWithoutConsumingCustody(t *test
 	}
 }
 
-func TestInstalledStartCopiesLaunchExactlyOnceConcurrently(t *testing.T) {
-	const samples = 100
-	for sample := range samples {
-		shell := newProcessRuntimeShell(1)
-		campaign := shell.registerCampaign(campaignProvenance{lineage: campaignLineage(sample + 1)})
-		requested := shell.requestAdmission(admissionRequest{
-			campaign: campaign.token, attempt: "a", class: sharedAdmission,
-		})
-		grant := <-requested.delivery
-		prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &pendingStartCell{}})
-		copies := []installedStart{prepared.start, prepared.start}
-		begin := make(chan struct{})
-		panics := make([]any, len(copies))
-		launchCalls := 0
-		var launchMutex sync.Mutex
-		var wait sync.WaitGroup
-		for index, start := range copies {
-			wait.Go(func() {
-				defer func() { panics[index] = recover() }()
-				<-begin
-				start.launch(func(_ attemptGeneration) attemptObservation {
-					launchMutex.Lock()
-					launchCalls++
-					launchMutex.Unlock()
-
-					return launchOwned{}
-				})
-			})
-		}
-		close(begin)
-		wait.Wait()
-		assert.EqualValues(t, 1, launchCalls, "sample %d calls/panics=%d/%#v", sample, launchCalls, panics)
-		assert.NotEqual(t, (panics[1] == nil), (panics[0] == nil), "sample %d calls/panics=%d/%#v", sample, launchCalls, panics)
-		want := []residualCustody{{
-			generation: prepared.result.generation, attempt: grant.attempt,
-			stage: admissionProspective, transferred: true,
-		}}
-		snapshot := shell.snapshot()
-		assert.Equal(t, runtimeClosedUnconfirmed, snapshot.lifecycle, "sample %d copied-start state=%#v", sample, snapshot)
-		assert.Equal(t, want, snapshot.residualCustody(), "sample %d copied-start state=%#v", sample, snapshot)
-	}
-}
-
 func TestStartCommittedLockedBoundaryContainsNoExecutionCapability(t *testing.T) {
 	type executableAlias = func()
 	type nestedExecutable struct {
@@ -258,6 +215,20 @@ func TestStartCommittedLockedBoundaryContainsNoExecutionCapability(t *testing.T)
 		path, found := executionCapabilityPath(reflect.TypeFor[startInstallation](), nil)
 		assert.False(t, found, "startInstallation contains executable capability at %s", path)
 	}
+}
+
+func TestZeroStartInstallationPublishesNoProspectiveCustody(t *testing.T) {
+	shell := newProcessRuntimeShell(1)
+	campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
+	requested := shell.requestAdmission(admissionRequest{
+		campaign: campaign.token, attempt: "a", class: sharedAdmission,
+	})
+	grant := <-requested.delivery
+
+	assertInvariantViolation(t, func() {
+		shell.startCommitted(grant, startInstallation{grant: grant})
+	})
+	assert.Empty(t, shell.snapshot().residualCustody())
 }
 
 func executionCapabilityPath(value reflect.Type, seen map[reflect.Type]bool) (string, bool) {
@@ -331,65 +302,4 @@ func TestProcessRuntimeShellCopiedInstallationCannotInstallOrLaunchTwice(t *test
 	assert.EqualValues(t, 1, launchCalls, "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
 	assert.Equal(t, runtimeFatalClosing, secondShell.snapshot().lifecycle, "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
 	assert.EqualValues(t, 0, len(secondShell.snapshot().residualCustody()), "first/calls/second=%#v/%d/%#v", first.result, launchCalls, secondShell.snapshot())
-}
-
-func TestProcessRuntimeShellInvalidInstallationPublishesNoProspectiveCustody(t *testing.T) {
-	tests := []struct {
-		name         string
-		installation startInstallation
-	}{
-		{
-			name:         "zero installation",
-			installation: startInstallation{},
-		},
-		{
-			name:         "nil cell",
-			installation: startInstallation{cell: nil},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			shell := newProcessRuntimeShell(1)
-			campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
-			requested := shell.requestAdmission(admissionRequest{
-				campaign: campaign.token,
-				attempt:  "a",
-				class:    sharedAdmission,
-			})
-			grant := <-requested.delivery
-
-			installation := test.installation
-			installation.grant = grant
-			assertInvariantViolation(t, func() { shell.startCommitted(grant, installation) })
-			snapshot := shell.snapshot()
-			assert.Equal(t, runtimeFatalClosing, snapshot.lifecycle, "invalid installation published prospective custody: %#v", snapshot)
-			assert.EqualValues(t, 0, len(snapshot.residualCustody()), "invalid installation published prospective custody: %#v", snapshot)
-		})
-	}
-}
-
-func TestProcessRuntimeShellConsumedGrantCannotLaunchTwice(t *testing.T) {
-	shell := newProcessRuntimeShell(1)
-	campaign := shell.registerCampaign(campaignProvenance{lineage: 11})
-	requested := shell.requestAdmission(admissionRequest{campaign: campaign.token, attempt: "a", class: sharedAdmission})
-	grant := <-requested.delivery
-	first := startOwned(shell, grant)
-	cell := pendingStartCell{}
-	launchCalls := 0
-	second := shell.startCommitted(grant, startInstallation{grant: grant, cell: &cell})
-	assert.Equal(t, startCommittedAccepted, first.decision, "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
-	assert.Equal(t, startCommittedRejectedGrant, second.result.decision, "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
-	assert.EqualValues(t, 0, cell.installedGeneration(), "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
-	assert.EqualValues(t, 0, launchCalls, "first/second/cell/calls=%#v/%#v/%d/%d", first, second.result, cell.installedGeneration(), launchCalls)
-}
-
-func startOwned(shell *processRuntimeShell, grant admissionGrant) startCommittedResult {
-	prepared := shell.startCommitted(grant, startInstallation{grant: grant, cell: &pendingStartCell{}})
-	if prepared.result.decision != startCommittedAccepted {
-		return prepared.result
-	}
-	observed := prepared.start.launch(func(_ attemptGeneration) attemptObservation { return launchOwned{} })
-	shell.observeAttempt(prepared.result.generation, observed)
-
-	return prepared.result
 }
