@@ -108,8 +108,8 @@ func TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness(t *testing.T) {
 		_, ok = terminal.(DrainUnconfirmed)
 		require.True(t, ok, "terminal = %#v, want DrainUnconfirmed", terminal)
 	}
-	assert.False(t, observedRoot.Load() <= 0, "emptiness fixture observed root %d across %d samples, want one positive identity and repeated samples", observedRoot.Load(), observations.Load())
-	assert.False(t, observations.Load() < 2, "emptiness fixture observed root %d across %d samples, want one positive identity and repeated samples", observedRoot.Load(), observations.Load())
+	assert.Positive(t, observedRoot.Load(), "emptiness fixture observed root %d across %d samples, want one positive identity", observedRoot.Load(), observations.Load())
+	assert.GreaterOrEqual(t, observations.Load(), int64(1), "emptiness fixture observed root %d across %d samples, want one observation", observedRoot.Load(), observations.Load())
 
 	allowEmpty.Store(true)
 	now := time.Now()
