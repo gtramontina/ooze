@@ -156,7 +156,7 @@ func (recorder *simulationRecorder) recordCampaign(
 func (recorder *simulationRecorder) recordSupervisor(
 	reservation simulationReservation,
 	event supervisorEvent,
-	state simulationSupervisorState,
+	state supervisionProjection,
 	actions []supervisorAction,
 ) {
 	if recorder == nil {
@@ -166,9 +166,9 @@ func (recorder *simulationRecorder) recordSupervisor(
 	source := recorder.supervisorSource(event)
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority, source: source,
-		supervisorEvent:   simulationTraceSupervisorEvent(event),
+		supervisorEvent:   supervisionFactFromEvent(event),
 		supervisorState:   state,
-		supervisorActions: simulationTraceSupervisorActions(actions),
+		supervisorActions: supervisionEffectsFromActions(actions),
 	})
 }
 
@@ -218,7 +218,7 @@ func (recorder *simulationRecorder) runtimeActionSource(record simulationRecord)
 		return simulationCausalSource{}
 	}
 
-	return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(matched)}
+	return simulationCausalSource{kind: supervisionActionSource, identity: uint64(matched)}
 }
 
 func (recorder *simulationRecorder) campaignSource(payload campaignEventPayload) simulationCausalSource {
@@ -299,15 +299,15 @@ func simulationRuntimeDeliveries(record simulationRecord) []simulationAdmission 
 }
 
 func (recorder *simulationRecorder) supervisorSource(event supervisorEvent) simulationCausalSource {
-	if token := simulationSupervisorEventAction(event); token != 0 {
-		return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(token)}
+	if token := supervisionFactAction(event); token != 0 {
+		return simulationCausalSource{kind: supervisionActionSource, identity: uint64(token)}
 	}
 	if event.kind == supervisorRuntimeCompleted {
 		action := event.runtime.action
 		return recorder.takeRuntimeCut(func(record simulationRecord) bool {
 			return record.runtimeCut.Operation() == processruntime.ObserveAttemptOperation &&
 				record.runtimeCut.Result().Receipt().Generation() == event.generation &&
-				record.source.kind == simulationSupervisorActionSource &&
+				record.source.kind == supervisionActionSource &&
 				record.source.identity == uint64(action.token)
 		})
 	}
@@ -321,7 +321,7 @@ func (recorder *simulationRecorder) supervisorSource(event supervisorEvent) simu
 	return simulationCausalSource{}
 }
 
-func simulationSupervisorEventAction(event supervisorEvent) supervisorActionToken {
+func supervisionFactAction(event supervisorEvent) supervisorActionToken {
 	switch event.kind {
 	case supervisorLaunchCompleted, supervisorLaunchBoundary:
 		if event.completion != nil {
@@ -451,7 +451,7 @@ func (recorder *simulationRecorder) recordSupervisorDelivery(
 	default:
 	}
 
-	return simulationCausalSource{kind: simulationSupervisorActionSource, identity: uint64(matched)}
+	return simulationCausalSource{kind: supervisionActionSource, identity: uint64(matched)}
 }
 
 func (recorder *simulationRecorder) quiescent(

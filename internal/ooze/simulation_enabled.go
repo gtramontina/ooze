@@ -25,7 +25,7 @@ func simulationEnabledMoves(
 	}
 	for _, action := range actions {
 		moves = append(moves, simulationEnabledMove{
-			authority: simulationSupervisorAuthority, action: action,
+			authority: supervisionAuthority, action: action,
 		})
 	}
 	sort.SliceStable(moves, func(left, right int) bool {
@@ -85,7 +85,7 @@ func simulationEffectAuthority(kind campaignEffectKind) simulationAuthority {
 		campaignEffectProposeTerminal:
 		return simulationRuntimeAuthority
 	case campaignEffectLaunchAttempt, campaignEffectStopAttempt:
-		return simulationSupervisorAuthority
+		return supervisionAuthority
 	default:
 		panic("simulation campaign effect kind is invalid")
 	}

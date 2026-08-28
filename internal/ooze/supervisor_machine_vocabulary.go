@@ -18,7 +18,7 @@ type simulationStopRequest struct {
 	drainBy simulationInstant
 }
 
-type simulationSupervisorExitRecheck struct {
+type supervisionExitRecheck struct {
 	performed bool
 	observed  bool
 	at        simulationInstant
@@ -27,7 +27,7 @@ type simulationSupervisorExitRecheck struct {
 	action    supervisorActionToken
 }
 
-type simulationSupervisorRunningFact struct {
+type supervisionRunningFact struct {
 	generation   attemptGeneration
 	action       supervisorActionToken
 	kind         supervisorRunningFactKind
@@ -42,16 +42,16 @@ type simulationSupervisorRunningFact struct {
 	diagnostic   supervisorDiagnosticRef
 }
 
-type simulationSupervisorRunningBundle struct {
+type supervisionRunningBundle struct {
 	generation   attemptGeneration
 	sampleAction supervisorActionToken
 	waitAction   supervisorActionToken
-	facts        []simulationSupervisorRunningFact
-	exitRecheck  simulationSupervisorExitRecheck
+	facts        []supervisionRunningFact
+	exitRecheck  supervisionExitRecheck
 	drainBy      simulationInstant
 }
 
-type simulationSupervisorRunningIntent struct {
+type supervisionRunningIntent struct {
 	latched           bool
 	kind              supervisorRunningIntentKind
 	at                simulationInstant
@@ -65,7 +65,7 @@ type simulationSupervisorRunningIntent struct {
 	diagnostics       supervisorObservationDiagnostics
 }
 
-type simulationSupervisorLaunchCompletion struct {
+type supervisionLaunchCompletion struct {
 	generation attemptGeneration
 	action     supervisorActionToken
 	at         simulationInstant
@@ -74,7 +74,7 @@ type simulationSupervisorLaunchCompletion struct {
 	diagnostic supervisorDiagnosticRef
 }
 
-type simulationSupervisorDrainCompletion struct {
+type supervisionDrainCompletion struct {
 	generation     attemptGeneration
 	action         supervisorPendingAction
 	at             simulationInstant
@@ -83,7 +83,7 @@ type simulationSupervisorDrainCompletion struct {
 	diagnostic     supervisorDiagnosticRef
 }
 
-type simulationSupervisorOutputCompletion struct {
+type supervisionOutputCompletion struct {
 	generation     attemptGeneration
 	action         supervisorPendingAction
 	at             simulationInstant
@@ -94,20 +94,20 @@ type simulationSupervisorOutputCompletion struct {
 	diagnostic     supervisorDiagnosticRef
 }
 
-type simulationSupervisorStopSealCompletion struct {
+type supervisionStopSealCompletion struct {
 	generation attemptGeneration
 	action     supervisorPendingAction
 	at         simulationInstant
 }
 
-type simulationSupervisorReleaseCompletion struct {
+type supervisionReleaseCompletion struct {
 	generation attemptGeneration
 	action     supervisorPendingAction
 	at         simulationInstant
 	diagnostic supervisorDiagnosticRef
 }
 
-type simulationSupervisorDrainState struct {
+type supervisionDrainState struct {
 	effectiveDrainBy      simulationInstant
 	forced                bool
 	decision              supervisorDrainDecision
@@ -116,7 +116,7 @@ type simulationSupervisorDrainState struct {
 	observationDiagnostic supervisorDiagnosticRef
 }
 
-type simulationSupervisorTerminalEvidence struct {
+type supervisionTerminalEvidence struct {
 	kind            supervisorTerminalKind
 	profile         Profile
 	commandDeadline simulationDuration
@@ -130,7 +130,7 @@ type simulationSupervisorTerminalEvidence struct {
 	diagnostics     supervisorTerminalDiagnostics
 }
 
-type simulationSupervisorAttemptState struct {
+type supervisionAttemptState struct {
 	generation        attemptGeneration
 	attempt           attemptIdentity
 	profile           Profile
@@ -149,15 +149,15 @@ type simulationSupervisorAttemptState struct {
 	releaseRevoked    bool
 	releaseDiagnostic supervisorDiagnosticRef
 	runningPeak       supervisorObservedCount
-	intent            simulationSupervisorRunningIntent
-	drain             simulationSupervisorDrainState
+	intent            supervisionRunningIntent
+	drain             supervisionDrainState
 	output            supervisorOutputEvidence
-	terminal          simulationSupervisorTerminalEvidence
+	terminal          supervisionTerminalEvidence
 }
 
-type simulationSupervisorState struct {
+type supervisionProjection struct {
 	nextAction supervisorActionToken
-	attempts   []simulationSupervisorAttemptState
+	attempts   []supervisionAttemptState
 	emergency  struct {
 		active        bool
 		at            simulationInstant
@@ -166,33 +166,33 @@ type simulationSupervisorState struct {
 	}
 }
 
-type simulationSupervisorEmergencySnapshot struct {
+type supervisionEmergencySnapshot struct {
 	generation attemptGeneration
-	completion *simulationSupervisorLaunchCompletion
-	running    *simulationSupervisorRunningBundle
+	completion *supervisionLaunchCompletion
+	running    *supervisionRunningBundle
 }
 
-type simulationSupervisorEvent struct {
+type supervisionFact struct {
 	kind                supervisorEventKind
 	generation          attemptGeneration
 	attempt             attemptIdentity
 	at                  simulationInstant
 	launchBy            simulationInstant
 	drainBy             simulationInstant
-	completion          *simulationSupervisorLaunchCompletion
-	emergencySnapshots  []simulationSupervisorEmergencySnapshot
+	completion          *supervisionLaunchCompletion
+	emergencySnapshots  []supervisionEmergencySnapshot
 	profile             Profile
 	commandDeadline     simulationDuration
-	running             *simulationSupervisorRunningBundle
-	drain               *simulationSupervisorDrainCompletion
-	output              *simulationSupervisorOutputCompletion
-	seal                *simulationSupervisorStopSealCompletion
-	release             *simulationSupervisorReleaseCompletion
+	running             *supervisionRunningBundle
+	drain               *supervisionDrainCompletion
+	output              *supervisionOutputCompletion
+	seal                *supervisionStopSealCompletion
+	release             *supervisionReleaseCompletion
 	runtime             *supervisorRuntimeCompletion
 	emergencySettlement *supervisorEmergencySettlementCompletion
 }
 
-type simulationSupervisorActionRecord struct {
+type supervisionEffect struct {
 	kind             supervisorActionKind
 	generation       attemptGeneration
 	token            supervisorActionToken
@@ -202,8 +202,8 @@ type simulationSupervisorActionRecord struct {
 	launchFailure    LaunchFailure
 	launchDiagnostic supervisorDiagnosticRef
 	launchDuration   simulationDuration
-	intent           simulationSupervisorRunningIntent
-	terminal         simulationSupervisorTerminalEvidence
+	intent           supervisionRunningIntent
+	terminal         supervisionTerminalEvidence
 	runtimeKind      supervisorRuntimeReceiptKind
 	resolutions      []supervisorEmergencyResolution
 	residuals        []supervisorEmergencyResidual
@@ -243,8 +243,8 @@ func (stop simulationStopRequest) production() StopRequest {
 	return StopRequest{At: stop.at.production(), DrainBy: stop.drainBy.production()}
 }
 
-func simulationTraceRunningIntent(value supervisorRunningIntent) simulationSupervisorRunningIntent {
-	return simulationSupervisorRunningIntent{
+func simulationTraceRunningIntent(value supervisorRunningIntent) supervisionRunningIntent {
+	return supervisionRunningIntent{
 		latched: value.latched, kind: value.kind,
 		at: simulationTraceInstant(value.at), drainBy: simulationTraceInstant(value.drainBy),
 		duration: simulationTraceDuration(value.duration), count: value.count,
@@ -253,13 +253,13 @@ func simulationTraceRunningIntent(value supervisorRunningIntent) simulationSuper
 	}
 }
 
-func simulationTraceRunningBundle(value *supervisorRunningBundle) *simulationSupervisorRunningBundle {
+func simulationTraceRunningBundle(value *supervisorRunningBundle) *supervisionRunningBundle {
 	if value == nil {
 		return nil
 	}
-	facts := make([]simulationSupervisorRunningFact, len(value.facts))
+	facts := make([]supervisionRunningFact, len(value.facts))
 	for index, fact := range value.facts {
-		facts[index] = simulationSupervisorRunningFact{
+		facts[index] = supervisionRunningFact{
 			generation: fact.generation, action: fact.action, kind: fact.kind,
 			at: simulationTraceInstant(fact.at), stop: simulationTraceStop(fact.stop),
 			rootLive: fact.rootLive, live: fact.live, liveNegative: fact.liveNegative,
@@ -268,10 +268,10 @@ func simulationTraceRunningBundle(value *supervisorRunningBundle) *simulationSup
 		}
 	}
 
-	return &simulationSupervisorRunningBundle{
+	return &supervisionRunningBundle{
 		generation: value.generation, sampleAction: value.sampleAction, waitAction: value.waitAction,
 		facts: facts,
-		exitRecheck: simulationSupervisorExitRecheck{
+		exitRecheck: supervisionExitRecheck{
 			performed: value.exitRecheck.performed, observed: value.exitRecheck.observed,
 			at: simulationTraceInstant(value.exitRecheck.at), code: value.exitRecheck.code,
 			signal: value.exitRecheck.signal, action: value.exitRecheck.action,
@@ -280,7 +280,7 @@ func simulationTraceRunningBundle(value *supervisorRunningBundle) *simulationSup
 	}
 }
 
-func (bundle *simulationSupervisorRunningBundle) production() *supervisorRunningBundle {
+func (bundle *supervisionRunningBundle) production() *supervisorRunningBundle {
 	if bundle == nil {
 		return nil
 	}
@@ -307,18 +307,18 @@ func (bundle *simulationSupervisorRunningBundle) production() *supervisorRunning
 	}
 }
 
-func simulationTraceLaunchCompletion(value *supervisorLaunchCompletion) *simulationSupervisorLaunchCompletion {
+func simulationTraceLaunchCompletion(value *supervisorLaunchCompletion) *supervisionLaunchCompletion {
 	if value == nil {
 		return nil
 	}
 
-	return &simulationSupervisorLaunchCompletion{
+	return &supervisionLaunchCompletion{
 		generation: value.generation, action: value.action, at: simulationTraceInstant(value.at),
 		kind: value.kind, failure: value.failure, diagnostic: value.diagnostic,
 	}
 }
 
-func (completion *simulationSupervisorLaunchCompletion) production() *supervisorLaunchCompletion {
+func (completion *supervisionLaunchCompletion) production() *supervisorLaunchCompletion {
 	if completion == nil {
 		return nil
 	}
@@ -329,18 +329,18 @@ func (completion *simulationSupervisorLaunchCompletion) production() *supervisor
 	}
 }
 
-func simulationTraceDrainCompletion(value *supervisorDrainCompletion) *simulationSupervisorDrainCompletion {
+func simulationTraceDrainCompletion(value *supervisorDrainCompletion) *supervisionDrainCompletion {
 	if value == nil {
 		return nil
 	}
 
-	return &simulationSupervisorDrainCompletion{
+	return &supervisionDrainCompletion{
 		generation: value.generation, action: value.action, at: simulationTraceInstant(value.at),
 		kind: value.kind, waitDiagnostic: value.waitDiagnostic, diagnostic: value.diagnostic,
 	}
 }
 
-func (completion *simulationSupervisorDrainCompletion) production() *supervisorDrainCompletion {
+func (completion *supervisionDrainCompletion) production() *supervisorDrainCompletion {
 	if completion == nil {
 		return nil
 	}
@@ -351,19 +351,19 @@ func (completion *simulationSupervisorDrainCompletion) production() *supervisorD
 	}
 }
 
-func simulationTraceOutputCompletion(value *supervisorOutputCompletion) *simulationSupervisorOutputCompletion {
+func simulationTraceOutputCompletion(value *supervisorOutputCompletion) *supervisionOutputCompletion {
 	if value == nil {
 		return nil
 	}
 
-	return &simulationSupervisorOutputCompletion{
+	return &supervisionOutputCompletion{
 		generation: value.generation, action: value.action, at: simulationTraceInstant(value.at),
 		ref: value.ref, cutoff: value.cutoff, prefixLength: value.prefixLength,
 		waitDiagnostic: value.waitDiagnostic, diagnostic: value.diagnostic,
 	}
 }
 
-func (completion *simulationSupervisorOutputCompletion) production() *supervisorOutputCompletion {
+func (completion *supervisionOutputCompletion) production() *supervisorOutputCompletion {
 	if completion == nil {
 		return nil
 	}
@@ -375,8 +375,8 @@ func (completion *simulationSupervisorOutputCompletion) production() *supervisor
 	}
 }
 
-func simulationTraceSupervisorEvent(value supervisorEvent) simulationSupervisorEvent {
-	event := simulationSupervisorEvent{
+func supervisionFactFromEvent(value supervisorEvent) supervisionFact {
+	event := supervisionFact{
 		kind: value.kind, generation: value.generation, attempt: value.attempt,
 		at: simulationTraceInstant(value.at), launchBy: simulationTraceInstant(value.launchBy),
 		drainBy: simulationTraceInstant(value.drainBy), completion: simulationTraceLaunchCompletion(value.completion),
@@ -391,20 +391,20 @@ func simulationTraceSupervisorEvent(value supervisorEvent) simulationSupervisorE
 		event.output = simulationTraceOutputCompletion(value.output)
 	}
 	if value.seal != nil {
-		event.seal = &simulationSupervisorStopSealCompletion{
+		event.seal = &supervisionStopSealCompletion{
 			generation: value.seal.generation, action: value.seal.action,
 			at: simulationTraceInstant(value.seal.at),
 		}
 	}
 	if value.release != nil {
-		event.release = &simulationSupervisorReleaseCompletion{
+		event.release = &supervisionReleaseCompletion{
 			generation: value.release.generation, action: value.release.action,
 			at: simulationTraceInstant(value.release.at), diagnostic: value.release.diagnostic,
 		}
 	}
-	event.emergencySnapshots = make([]simulationSupervisorEmergencySnapshot, len(value.emergencySnapshots))
+	event.emergencySnapshots = make([]supervisionEmergencySnapshot, len(value.emergencySnapshots))
 	for index, snapshot := range value.emergencySnapshots {
-		event.emergencySnapshots[index] = simulationSupervisorEmergencySnapshot{
+		event.emergencySnapshots[index] = supervisionEmergencySnapshot{
 			generation: snapshot.generation, completion: simulationTraceLaunchCompletion(snapshot.completion),
 			running: simulationTraceRunningBundle(snapshot.running),
 		}
@@ -423,7 +423,7 @@ func simulationTraceSupervisorEvent(value supervisorEvent) simulationSupervisorE
 	return event
 }
 
-func (event simulationSupervisorEvent) production() supervisorEvent {
+func (event supervisionFact) production() supervisorEvent {
 	value := supervisorEvent{
 		kind: event.kind, generation: event.generation, attempt: event.attempt,
 		at: event.at.production(), launchBy: event.launchBy.production(), drainBy: event.drainBy.production(),
@@ -468,8 +468,8 @@ func (event simulationSupervisorEvent) production() supervisorEvent {
 	return value
 }
 
-func simulationTraceSupervisorTerminal(value supervisorTerminalEvidence) simulationSupervisorTerminalEvidence {
-	return simulationSupervisorTerminalEvidence{
+func supervisionTerminalFromEvidence(value supervisorTerminalEvidence) supervisionTerminalEvidence {
+	return supervisionTerminalEvidence{
 		kind: value.kind, profile: value.profile,
 		commandDeadline: simulationTraceDuration(value.commandDeadline),
 		launchDuration:  simulationTraceDuration(value.launchDuration),
@@ -479,15 +479,25 @@ func simulationTraceSupervisorTerminal(value supervisorTerminalEvidence) simulat
 	}
 }
 
-func simulationTraceSupervisorState(value supervisorState) simulationSupervisorState {
-	state := simulationSupervisorState{nextAction: value.nextAction}
+func (value supervisionTerminalEvidence) production() supervisorTerminalEvidence {
+	return supervisorTerminalEvidence{
+		kind: value.kind, profile: value.profile,
+		commandDeadline: value.commandDeadline.production(),
+		launchDuration:  value.launchDuration.production(), commandDuration: value.commandDuration.production(),
+		firedBound: value.firedBound, exitCode: value.exitCode, exitSignal: value.exitSignal,
+		count: value.count, output: value.output, diagnostics: value.diagnostics,
+	}
+}
+
+func supervisionProjectionFromState(value supervisorState) supervisionProjection {
+	state := supervisionProjection{nextAction: value.nextAction}
 	state.emergency.active = value.emergency.active
 	state.emergency.at = simulationTraceInstant(value.emergency.at)
 	state.emergency.drainBy = simulationTraceInstant(value.emergency.drainBy)
 	state.emergency.pendingAction = value.emergency.pendingAction
-	state.attempts = make([]simulationSupervisorAttemptState, len(value.attempts))
+	state.attempts = make([]supervisionAttemptState, len(value.attempts))
 	for index, attempt := range value.attempts {
-		state.attempts[index] = simulationSupervisorAttemptState{
+		state.attempts[index] = supervisionAttemptState{
 			generation: attempt.generation, attempt: attempt.attempt, profile: attempt.profile,
 			commandDeadline: simulationTraceDuration(attempt.commandDeadline),
 			registeredAt:    simulationTraceInstant(attempt.registeredAt), launchBy: simulationTraceInstant(attempt.launchBy),
@@ -498,34 +508,63 @@ func simulationTraceSupervisorState(value supervisorState) simulationSupervisorS
 			phase: attempt.phase, releaseRevoked: attempt.releaseRevoked,
 			releaseDiagnostic: attempt.releaseDiagnostic, runningPeak: attempt.runningPeak,
 			intent: simulationTraceRunningIntent(attempt.intent),
-			drain: simulationSupervisorDrainState{
+			drain: supervisionDrainState{
 				effectiveDrainBy: simulationTraceInstant(attempt.drain.effectiveDrainBy),
 				forced:           attempt.drain.forced, decision: attempt.drain.decision,
 				waitDiagnostic:        attempt.drain.waitDiagnostic,
 				controlDiagnostic:     attempt.drain.controlDiagnostic,
 				observationDiagnostic: attempt.drain.observationDiagnostic,
 			},
-			output: attempt.output, terminal: simulationTraceSupervisorTerminal(attempt.terminal),
+			output: attempt.output, terminal: supervisionTerminalFromEvidence(attempt.terminal),
 		}
 	}
 
 	return state
 }
 
-func simulationTraceSupervisorActions(values []supervisorAction) []simulationSupervisorActionRecord {
-	actions := make([]simulationSupervisorActionRecord, len(values))
+func supervisionEffectsFromActions(values []supervisorAction) []supervisionEffect {
+	actions := make([]supervisionEffect, len(values))
 	for index, value := range values {
-		actions[index] = simulationSupervisorActionRecord{
+		actions[index] = supervisionEffect{
 			kind: value.kind, generation: value.generation, token: value.token,
 			at: simulationTraceInstant(value.at), drainBy: simulationTraceInstant(value.drainBy),
 			launchKind: value.launchKind, launchFailure: value.launchFailure,
 			launchDiagnostic: value.launchDiagnostic,
 			launchDuration:   simulationTraceDuration(value.launchDuration),
 			intent:           simulationTraceRunningIntent(value.intent),
-			terminal:         simulationTraceSupervisorTerminal(value.terminal),
+			terminal:         supervisionTerminalFromEvidence(value.terminal),
 			runtimeKind:      value.runtimeKind,
 			resolutions:      slices.Clone(value.resolutions), residuals: slices.Clone(value.residuals),
 		}
+	}
+
+	return actions
+}
+
+func (value supervisionRunningIntent) production() supervisorRunningIntent {
+	return supervisorRunningIntent{
+		latched: value.latched, kind: value.kind,
+		at: value.at.production(), drainBy: value.drainBy.production(), duration: value.duration.production(),
+		count: value.count, stop: value.stop.production(), exitCode: value.exitCode, exitSignal: value.exitSignal,
+		observationSource: value.observationSource, diagnostics: value.diagnostics,
+	}
+}
+
+func (effect supervisionEffect) production() supervisorAction {
+	return supervisorAction{
+		kind: effect.kind, generation: effect.generation, token: effect.token,
+		at: effect.at.production(), drainBy: effect.drainBy.production(),
+		launchKind: effect.launchKind, launchFailure: effect.launchFailure,
+		launchDiagnostic: effect.launchDiagnostic, launchDuration: effect.launchDuration.production(),
+		intent: effect.intent.production(), terminal: effect.terminal.production(), runtimeKind: effect.runtimeKind,
+		resolutions: slices.Clone(effect.resolutions), residuals: slices.Clone(effect.residuals),
+	}
+}
+
+func supervisorActionsFromEffects(effects []supervisionEffect) []supervisorAction {
+	actions := make([]supervisorAction, len(effects))
+	for index, effect := range effects {
+		actions[index] = effect.production()
 	}
 
 	return actions

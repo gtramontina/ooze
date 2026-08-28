@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -17,9 +18,9 @@ func TestSupervisorMachinePublishesAcceptedFactsAndEffects(t *testing.T) {
 	}
 	machine := newSupervisorMachine()
 
-	_, transition := machine.Apply(fact)
+	_, transition := machine.Apply(supervisionFactFromEvent(fact))
 
-	assert.Equal(t, fact, transition.Event().Fact())
+	assert.Equal(t, supervisionFactFromEvent(fact), transition.Event().Fact())
 	require.Len(t, transition.Effects(), 1)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
 	assert.Equal(t, attemptGeneration(1), transition.Effects()[0].generation)
@@ -33,7 +34,7 @@ func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 		profile: AutomaticProfile, commandDeadline: time.Minute,
 	}
 	machine := newSupervisorMachine()
-	_, transition := machine.Apply(fact)
+	_, transition := machine.Apply(supervisionFactFromEvent(fact))
 
 	event := transition.Event()
 	effects := transition.Effects()
@@ -54,8 +55,8 @@ func TestSupervisorMachineCanForkWithoutSharingState(t *testing.T) {
 	}
 	machine := newSupervisorMachine()
 
-	left, leftTransition := machine.Apply(fact)
-	right, rightTransition := machine.Apply(fact)
+	left, leftTransition := machine.Apply(supervisionFactFromEvent(fact))
+	right, rightTransition := machine.Apply(supervisionFactFromEvent(fact))
 
 	assert.Equal(t, left.snapshot(), right.snapshot())
 	assert.Equal(t, leftTransition.Event().Fact(), rightTransition.Event().Fact())
@@ -70,10 +71,31 @@ func TestSupervisorMachineProjectionDoesNotExposeReducerState(t *testing.T) {
 		at: registeredAt, launchBy: registeredAt.Add(time.Second),
 		profile: AutomaticProfile, commandDeadline: time.Minute,
 	}
-	machine, _ := newSupervisorMachine().Apply(fact)
+	machine, _ := newSupervisorMachine().Apply(supervisionFactFromEvent(fact))
 
 	projection := machine.Projection()
 	projection.attempts[0].attempt = "corrupted"
 
 	assert.Equal(t, attemptIdentity("mutant-1"), machine.Projection().attempts[0].attempt)
+}
+
+func TestSupervisorMachineUsesCanonicalDomainVocabulary(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	fact := supervisionProspectiveRegistration(
+		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
+	)
+
+	machine, transition := newSupervisorMachine().Apply(fact)
+
+	assert.Equal(t, fact, transition.Event().Fact())
+	require.Len(t, transition.Effects(), 1)
+	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
+	assert.Equal(t, machine.Projection(), transition.Projection())
+	for name, value := range map[string]any{
+		"fact": fact, "effect": transition.Effects()[0], "projection": transition.Projection(),
+	} {
+		t.Run(name+" is capability free", func(t *testing.T) {
+			assert.Empty(t, simulationForbiddenValuePath(reflect.ValueOf(value), name))
+		})
+	}
 }

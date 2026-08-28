@@ -1,16 +1,19 @@
 package ooze
 
+import "time"
+
 type supervisorMachine struct {
 	state supervisorState
 }
 
 type supervisorTransition struct {
 	event   supervisorDomainEvent
-	effects []supervisorAction
+	effects []supervisionEffect
+	state   supervisionProjection
 }
 
 type supervisorDomainEvent struct {
-	fact supervisorEvent
+	fact supervisionFact
 }
 
 func newSupervisorMachine() *supervisorMachine {
@@ -21,13 +24,15 @@ func newSupervisorMachineFrom(state supervisorState) *supervisorMachine {
 	return &supervisorMachine{state: cloneSupervisorState(state)}
 }
 
-func (machine *supervisorMachine) Apply(fact supervisorEvent) (*supervisorMachine, supervisorTransition) {
-	fact = cloneSupervisorEvent(fact)
-	next, effects := reduceSupervisor(machine.state, fact)
+func (machine *supervisorMachine) Apply(fact supervisionFact) (*supervisorMachine, supervisorTransition) {
+	accepted := cloneSupervisionFact(fact)
+	next, actions := reduceSupervisor(machine.state, accepted.production())
+	projection := supervisionProjectionFromState(next)
 
 	return newSupervisorMachineFrom(next), supervisorTransition{
-		event:   supervisorDomainEvent{fact: fact},
-		effects: cloneSupervisorActions(effects),
+		event:   supervisorDomainEvent{fact: accepted},
+		effects: supervisionEffectsFromActions(actions),
+		state:   projection,
 	}
 }
 
@@ -35,24 +40,37 @@ func (machine *supervisorMachine) snapshot() supervisorState {
 	return cloneSupervisorState(machine.state)
 }
 
-func (machine *supervisorMachine) Projection() simulationSupervisorState {
+func (machine *supervisorMachine) Projection() supervisionProjection {
 	if machine == nil {
-		return simulationTraceSupervisorState(supervisorState{})
+		return supervisionProjectionFromState(supervisorState{})
 	}
 
-	return simulationTraceSupervisorState(machine.state)
+	return supervisionProjectionFromState(machine.state)
 }
 
 func (transition supervisorTransition) Event() supervisorDomainEvent {
-	return supervisorDomainEvent{fact: cloneSupervisorEvent(transition.event.fact)}
+	return supervisorDomainEvent{fact: cloneSupervisionFact(transition.event.fact)}
 }
 
-func (event supervisorDomainEvent) Fact() supervisorEvent {
-	return cloneSupervisorEvent(event.fact)
+func (event supervisorDomainEvent) Fact() supervisionFact {
+	return cloneSupervisionFact(event.fact)
 }
 
-func (transition supervisorTransition) Effects() []supervisorAction {
-	return cloneSupervisorActions(transition.effects)
+func (transition supervisorTransition) Effects() []supervisionEffect {
+	return cloneSupervisionEffects(transition.effects)
+}
+
+func (transition supervisorTransition) Projection() supervisionProjection {
+	return cloneSupervisionProjection(transition.state)
+}
+
+func (transition supervisorTransition) actions() []supervisorAction {
+	actions := make([]supervisorAction, len(transition.effects))
+	for index, effect := range transition.effects {
+		actions[index] = effect.production()
+	}
+
+	return actions
 }
 
 func cloneSupervisorEvent(event supervisorEvent) supervisorEvent {
@@ -118,4 +136,32 @@ func cloneSupervisorActions(actions []supervisorAction) []supervisorAction {
 	}
 
 	return cloned
+}
+
+func cloneSupervisionFact(fact supervisionFact) supervisionFact {
+	return supervisionFactFromEvent(fact.production())
+}
+
+func cloneSupervisionEffects(effects []supervisionEffect) []supervisionEffect {
+	return supervisionEffectsFromActions(supervisorActionsFromEffects(effects))
+}
+
+func cloneSupervisionProjection(projection supervisionProjection) supervisionProjection {
+	projection.attempts = append([]supervisionAttemptState(nil), projection.attempts...)
+
+	return projection
+}
+
+func supervisionProspectiveRegistration(
+	generation attemptGeneration,
+	attempt attemptIdentity,
+	registeredAt time.Time,
+	launchBy time.Time,
+	profile Profile,
+	commandDeadline time.Duration,
+) supervisionFact {
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: generation, attempt: attempt,
+		at: registeredAt, launchBy: launchBy, profile: profile, commandDeadline: commandDeadline,
+	})
 }

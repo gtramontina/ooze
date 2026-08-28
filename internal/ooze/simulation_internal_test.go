@@ -112,7 +112,7 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	}
 	var supervisorKinds []supervisorEventKind
 	for _, record := range explored.trace.records {
-		if record.authority == simulationSupervisorAuthority {
+		if record.authority == supervisionAuthority {
 			supervisorKinds = append(supervisorKinds, record.supervisorEvent.kind)
 		}
 	}
@@ -152,11 +152,11 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 			var launch supervisorEvent
 			var launchBy time.Time
 			for _, record := range explored.trace.records {
-				if record.authority == simulationSupervisorAuthority &&
+				if record.authority == supervisionAuthority &&
 					record.supervisorEvent.kind == supervisorProspectiveRegistered {
 					launchBy = record.supervisorEvent.launchBy.production()
 				}
-				if record.authority == simulationSupervisorAuthority &&
+				if record.authority == supervisionAuthority &&
 					(record.supervisorEvent.kind == supervisorLaunchCompleted ||
 						record.supervisorEvent.kind == supervisorLaunchBoundary) {
 					launch = record.supervisorEvent.production()
@@ -195,7 +195,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			observe: func(trace simulationTrace) bool {
 				var launchBy simulationInstant
 				for _, record := range trace.records {
-					if record.authority != simulationSupervisorAuthority {
+					if record.authority != supervisionAuthority {
 						continue
 					}
 					if record.supervisorEvent.kind == supervisorProspectiveRegistered {
@@ -221,7 +221,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			},
 			observe: func(trace simulationTrace) bool {
 				for _, record := range trace.records {
-					if record.authority != simulationSupervisorAuthority ||
+					if record.authority != supervisionAuthority ||
 						record.supervisorEvent.kind != supervisorRunningObserved ||
 						record.supervisorEvent.running == nil {
 						continue
@@ -253,7 +253,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 							drainBy[action.token] = action.drainBy
 						}
 					}
-					if record.authority == simulationSupervisorAuthority &&
+					if record.authority == supervisionAuthority &&
 						record.supervisorEvent.kind == supervisorDrainCompleted &&
 						record.supervisorEvent.at.production().After(
 							drainBy[supervisorActionToken(record.source.identity)].production(),
@@ -692,7 +692,7 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 		}
 		if record.supervisorEvent.running != nil && slices.ContainsFunc(
 			record.supervisorEvent.running.facts,
-			func(fact simulationSupervisorRunningFact) bool {
+			func(fact supervisionRunningFact) bool {
 				return fact.kind == supervisorRunningStopRequested
 			},
 		) {
@@ -834,10 +834,10 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	assert.Nil(t, replayed.failure, "drain-expiry replay failure=%v", replayed.failure)
 	assert.Equal(t, explored.world, replayed.world, "drain-expiry replay world diverged")
 
-	var repeatedEmergency simulationSupervisorEvent
+	var repeatedEmergency supervisionFact
 	var settledAt int
 	for index, record := range explored.trace.records {
-		if record.authority != simulationSupervisorAuthority {
+		if record.authority != supervisionAuthority {
 			continue
 		}
 		if record.supervisorEvent.kind == supervisorEmergencyStarted {
@@ -851,7 +851,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	assert.NotEqual(t, 0, settledAt, "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.kind, settledAt)
 
 	malformed := simulationMalformedFact{
-		authority:  simulationSupervisorAuthority,
+		authority:  supervisionAuthority,
 		supervisor: repeatedEmergency,
 	}
 	firstViolation := ReplayViolation(explored.trace, malformed)
@@ -988,7 +988,7 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	prefixLength := 0
 	var registered supervisorEvent
 	for index, record := range explored.trace.records {
-		if record.authority == simulationSupervisorAuthority &&
+		if record.authority == supervisionAuthority &&
 			record.supervisorEvent.kind == supervisorProspectiveRegistered {
 			prefixLength = index + 1
 			registered = record.supervisorEvent.production()
@@ -1001,8 +1001,8 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	}
 	completedAt := registered.launchBy.Add(-time.Nanosecond)
 	malformed := simulationMalformedFact{
-		authority: simulationSupervisorAuthority,
-		supervisor: simulationTraceSupervisorEvent(supervisorEvent{
+		authority: supervisionAuthority,
+		supervisor: supervisionFactFromEvent(supervisorEvent{
 			kind: supervisorLaunchCompleted, generation: registered.generation, at: completedAt,
 			completion: &supervisorLaunchCompletion{
 				generation: registered.generation, action: 999, at: completedAt,
@@ -1015,7 +1015,7 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	second := ReplayViolation(prefix, malformed)
 	assert.Nil(t, first.failure, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, second, first, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
-	assert.Equal(t, simulationSupervisorAuthority, first.key.authority, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.Equal(t, supervisionAuthority, first.key.authority, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.Equal(t, supervisorReducerOperation, first.invariant.operation, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	residual := first.world.runtime.Residual()
 	assert.True(t, first.world.runtime.Unconfirmed(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
@@ -1051,7 +1051,7 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 	registeredAt, boundaryAt := -1, -1
 	var registered simulationRecord
 	for index, record := range explored.trace.records {
-		if record.authority != simulationSupervisorAuthority {
+		if record.authority != supervisionAuthority {
 			continue
 		}
 		if registeredAt < 0 && record.supervisorEvent.kind == supervisorProspectiveRegistered {
@@ -1135,8 +1135,8 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			malformed := simulationMalformedFact{
-				authority:  simulationSupervisorAuthority,
-				supervisor: simulationTraceSupervisorEvent(test.malformed),
+				authority:  supervisionAuthority,
+				supervisor: supervisionFactFromEvent(test.malformed),
 			}
 			first := ReplayViolation(test.prefix, malformed)
 			second := ReplayViolation(test.prefix, malformed)
@@ -1349,7 +1349,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	counterexample := simulationCloneTrace(explored.trace)
 	cut := -1
 	for index, record := range counterexample.records {
-		if record.authority == simulationSupervisorAuthority &&
+		if record.authority == supervisionAuthority &&
 			record.supervisorEvent.kind == supervisorLaunchCompleted {
 			cut = index
 			break
@@ -1379,12 +1379,12 @@ func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
 	deadline := simulationTraceInstant(time.Unix(10, 0))
 	near := simulationTrace{
 		records: []simulationRecord{{
-			authority: simulationSupervisorAuthority,
-			supervisorEvent: simulationSupervisorEvent{
+			authority: supervisionAuthority,
+			supervisorEvent: supervisionFact{
 				kind: supervisorRunningObserved,
-				running: &simulationSupervisorRunningBundle{
-					exitRecheck: simulationSupervisorExitRecheck{performed: true, at: deadline},
-					facts: []simulationSupervisorRunningFact{{
+				running: &supervisionRunningBundle{
+					exitRecheck: supervisionExitRecheck{performed: true, at: deadline},
+					facts: []supervisionRunningFact{{
 						kind: supervisorRunningRootExited,
 						at:   simulationTraceInstant(time.Unix(10, 1)),
 					}},
@@ -1505,7 +1505,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	assert.Nil(t, explored.failure, "boundary shrink exploration failure=%v", explored.failure)
 	prefixLength := 0
 	for index, record := range explored.trace.records {
-		if record.authority != simulationSupervisorAuthority ||
+		if record.authority != supervisionAuthority ||
 			record.supervisorEvent.kind != supervisorLaunchCompleted {
 			continue
 		}
@@ -1541,11 +1541,11 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 func TestSimulationLivenessFailureKeyIgnoresRawOwnerIdentities(t *testing.T) {
 	first := simulationLivenessResult(simulationEngine{pending: []simulationEngineMove{
 		{source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 71}},
-		{source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 93}},
+		{source: simulationCausalSource{kind: supervisionActionSource, identity: 93}},
 	}}, simulationLivenessNoMove)
 	second := simulationLivenessResult(simulationEngine{pending: []simulationEngineMove{
 		{source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 4}},
-		{source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 5}},
+		{source: simulationCausalSource{kind: supervisionActionSource, identity: 5}},
 	}}, simulationLivenessNoMove)
 
 	assert.NotNil(t, first.failure, "liveness failures/keys diverged: first=%#v second=%#v", first, second)
@@ -1622,7 +1622,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	trace, projection := recorder.quiescent(runner, shell, driver)
 	{
 		got, want := simulationAuthorities(trace), []simulationAuthority{
-			simulationRuntimeAuthority, simulationCampaignAuthority, simulationSupervisorAuthority,
+			simulationRuntimeAuthority, simulationCampaignAuthority, supervisionAuthority,
 		}
 		assert.Equal(t, want, got, "production authority order=%v, want %v", got, want)
 	}
@@ -1643,7 +1643,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
 	assert.Equal(t, wantEffects, trace.records[1].campaignEffects, "recorded ordered outputs diverged: %#v", trace.records)
-	assert.Equal(t, simulationTraceSupervisorActions(wantActions), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
+	assert.Equal(t, supervisionEffectsFromActions(wantActions), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
 }
 
 func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
@@ -1684,7 +1684,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 		afterSequence: trace.records[len(trace.records)-1].sequence,
 		campaign:      simulationTraceCampaignState(explored.world.campaign),
 		runtime:       explored.world.runtime,
-		supervisor:    simulationTraceSupervisorState(explored.world.supervisor),
+		supervisor:    supervisionProjectionFromState(explored.world.supervisor),
 	}}
 	independent, causal := 0, 0
 	for index := 0; index+1 < len(trace.records); index++ {
@@ -1975,7 +1975,7 @@ func simulationExpectedProductionSourceKind(record simulationRecord) simulationC
 	case simulationRuntimeAuthority:
 		switch record.runtimeCut.Operation() {
 		case processruntime.ObserveAttemptOperation, processruntime.CompleteConfirmationQueueOperation, processruntime.SettleEmergencyOperation:
-			return simulationSupervisorActionSource
+			return supervisionActionSource
 		default:
 			return simulationCampaignEffectSource
 		}
@@ -1987,18 +1987,18 @@ func simulationExpectedProductionSourceKind(record simulationRecord) simulationC
 			simulationRuntimeEmergencyStarted, simulationTerminalCommitted:
 			return simulationOwnerDeliverySource
 		case simulationAttemptTerminal, simulationRuntimeEmergencySettled:
-			return simulationSupervisorActionSource
+			return supervisionActionSource
 		default:
 			return simulationCampaignEffectSource
 		}
-	case simulationSupervisorAuthority:
+	case supervisionAuthority:
 		switch record.supervisorEvent.kind {
 		case supervisorProspectiveRegistered:
 			return simulationCampaignEffectSource
 		case supervisorRuntimeCompleted, supervisorEmergencyStarted, supervisorEmergencySettlementCompleted:
 			return simulationOwnerDeliverySource
 		default:
-			return simulationSupervisorActionSource
+			return supervisionActionSource
 		}
 	default:
 		panic("simulation production record authority is invalid")
@@ -2096,9 +2096,9 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 	want := []simulationEnabledMove{
 		{authority: simulationCampaignAuthority, effect: effects[2]},
 		{authority: simulationCampaignAuthority, effect: effects[1]},
-		{authority: simulationSupervisorAuthority, effect: effects[0]},
-		{authority: simulationSupervisorAuthority, action: actions[1]},
-		{authority: simulationSupervisorAuthority, action: actions[0]},
+		{authority: supervisionAuthority, effect: effects[0]},
+		{authority: supervisionAuthority, action: actions[1]},
+		{authority: supervisionAuthority, action: actions[0]},
 	}
 	assert.Equal(t, want, got, "enabled moves=%#v, want %#v", got, want)
 }
@@ -2307,7 +2307,7 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 			delivery: launch,
 		},
 		{
-			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
+			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
 			action: supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10},
 		},
 	}}
@@ -2323,7 +2323,7 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 	engine := simulationEngine{
 		runtime: runtime,
 		pending: []simulationEngineMove{{
-			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
+			source: simulationCausalSource{kind: supervisionActionSource, identity: 9},
 			action: supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9},
 		}},
 	}
@@ -2357,11 +2357,11 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 		runtime: runtime,
 		pending: []simulationEngineMove{
 			{
-				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
+				source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
 				action: supervisorAction{kind: supervisorSettleRuntime, generation: generation, token: 10},
 			},
 			{
-				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 11},
+				source: simulationCausalSource{kind: supervisionActionSource, identity: 11},
 				action: supervisorAction{kind: supervisorSettleEmergency, token: 11},
 			},
 		},
@@ -2375,7 +2375,7 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
-			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 10},
+			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
 			action: supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10},
 		},
 		{
@@ -2394,7 +2394,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 	engine := simulationEngine{
 		trace: simulationTrace{records: []simulationRecord{{
 			sequence: 19,
-			source:   simulationCausalSource{kind: simulationSupervisorActionSource, identity: 9},
+			source:   simulationCausalSource{kind: supervisionActionSource, identity: 9},
 		}}},
 		pending: []simulationEngineMove{
 			{
@@ -2402,7 +2402,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 				supervisorDelivery: &completion,
 			},
 			{
-				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 11},
+				source: simulationCausalSource{kind: supervisionActionSource, identity: 11},
 				action: supervisorAction{kind: supervisorSettleEmergency, token: 11},
 			},
 		},
@@ -2415,7 +2415,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 
 func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{{
-		source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 12},
+		source: simulationCausalSource{kind: supervisionActionSource, identity: 12},
 		action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 12},
 	}}}
 
@@ -2435,7 +2435,7 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 				delivery: launch,
 			},
 			{
-				source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 20},
+				source: simulationCausalSource{kind: supervisionActionSource, identity: 20},
 				action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 20},
 			},
 		},
@@ -2482,7 +2482,7 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		effect: campaignEffect{id: 20, kind: campaignEffectStopAttempt, generation: generation},
 	}
 	launchAction := simulationEngineMove{
-		source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 21},
+		source: simulationCausalSource{kind: supervisionActionSource, identity: 21},
 		action: supervisorAction{kind: supervisorLaunchNative, generation: generation, token: 21},
 	}
 	tests := []struct {
@@ -2526,11 +2526,11 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
-			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 26},
+			source: simulationCausalSource{kind: supervisionActionSource, identity: 26},
 			action: supervisorAction{kind: supervisorSealStopAdmission, generation: 4, token: 26},
 		},
 		{
-			source: simulationCausalSource{kind: simulationSupervisorActionSource, identity: 27},
+			source: simulationCausalSource{kind: supervisionActionSource, identity: 27},
 			action: supervisorAction{kind: supervisorReleaseDomain, generation: 4, token: 27},
 		},
 	}}
@@ -2596,8 +2596,8 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 				}
 			case 2:
 				malformed = simulationMalformedFact{
-					authority: simulationSupervisorAuthority,
-					supervisor: simulationTraceSupervisorEvent(supervisorEvent{
+					authority: supervisionAuthority,
+					supervisor: supervisionFactFromEvent(supervisorEvent{
 						kind: supervisorProspectiveRegistered,
 					}),
 				}
