@@ -152,12 +152,9 @@ func (recorder *simulationRecorder) recordCampaign(
 ) {
 	fact := event.Fact()
 	var source simulationCausalSource
-	switch fact.Kind() {
-	case campaignmodule.AttemptTerminalFact:
-		source = recorder.recordSupervisorDelivery(supervision.DeliverTerminalEffect, fact.Generation())
-	case campaignmodule.RuntimeEmergencySettledFact:
-		source = recorder.recordSupervisorDelivery(supervision.DeliverEmergencySettlementEffect, 0)
-	default:
+	if kind, generation, delivered := fact.SupervisorDelivery(); delivered {
+		source = recorder.recordSupervisorDelivery(kind, generation)
+	} else {
 		source = recorder.campaignSource(fact)
 	}
 	canonical := projection.Canonical()

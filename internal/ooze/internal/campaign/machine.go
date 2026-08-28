@@ -25,39 +25,214 @@ type Machine struct{ state campaignState }
 // RuntimeBinding resolves inert campaign identities at the process-runtime boundary.
 type RuntimeBinding struct{ campaign processruntime.Campaign }
 
+// RuntimeRequest is one opaque process-runtime request emitted by a campaign.
+type RuntimeRequest struct {
+	effect Effect
+	cut    processruntime.Cut
+}
+
+// ArtifactRequest is one opaque repository-artifact request emitted by a campaign.
+type ArtifactRequest struct{ effect Effect }
+
+// SupervisionRequest is one opaque attempt-supervision request emitted by a campaign.
+type SupervisionRequest struct{ effect Effect }
+
 // BindRuntime retains the executable authority outside pure campaign state.
 func BindRuntime(registration processruntime.Registration) RuntimeBinding {
 	return RuntimeBinding{campaign: registration.Campaign()}
 }
 
+// RuntimeRequest returns the process-runtime request represented by an effect.
+func (binding RuntimeBinding) RuntimeRequest(effect Effect, definition Definition) (RuntimeRequest, bool) {
+	cut, ok := binding.Cut(effect, definition)
+	return RuntimeRequest{effect: effect, cut: cut}, ok
+}
+
+// RuntimeOperation returns the process-runtime operation represented by an effect.
+func (effect Effect) RuntimeOperation() (processruntime.Operation, bool) {
+	switch effect.value.kind {
+	case campaignEffectRegister:
+		return processruntime.RegisterCampaignOperation, true
+	case campaignEffectRequestAdmission:
+		return processruntime.RequestAdmissionOperation, true
+	case campaignEffectCancelAdmission:
+		return processruntime.CancelAdmissionOperation, true
+	case campaignEffectReturnAdmission:
+		return processruntime.ReturnGrantOperation, true
+	case campaignEffectBindConfirmationBarrier:
+		return processruntime.BindConfirmationBarrierOperation, true
+	case campaignEffectRequestStartCommitment:
+		return processruntime.CommitStartOperation, true
+	case campaignEffectProposeTerminal:
+		if effect.value.fatalEpoch != 0 {
+			return processruntime.AuthorizeForcedAbortOperation, true
+		}
+		return processruntime.CommitTerminalOperation, true
+	default:
+		return 0, false
+	}
+}
+
+// Cut returns the input for the process-runtime reducer.
+func (request RuntimeRequest) Cut() processruntime.Cut { return request.cut }
+
+// Matches reports whether a recorded runtime cut accepted this request.
+func (request RuntimeRequest) Matches(cut processruntime.RecordedCut) bool {
+	return cut.Matches(request.cut)
+}
+
+// Complete translates an accepted runtime cut into campaign facts.
+func (request RuntimeRequest) Complete(recorded processruntime.RecordedCut) []Fact {
+	if !request.Matches(recorded) {
+		panic("process runtime result does not match campaign request")
+	}
+	result := recorded.Result()
+	switch recorded.Operation() {
+	case processruntime.RegisterCampaignOperation:
+		return []Fact{Registered(result.Registration())}
+	case processruntime.RequestAdmissionOperation:
+		admission := result.Admission()
+		if admission.Decision() != processruntime.AdmissionAccepted {
+			return []Fact{AdmissionRejected(request.effect, admission, "process runtime rejected admission")}
+		}
+		return admissionDeliveryFacts(admission.Deliveries())
+	case processruntime.CancelAdmissionOperation:
+		admission := result.Admission()
+		return append([]Fact{AdmissionCancelled(request.effect, admission)}, admissionDeliveryFacts(admission.Deliveries())...)
+	case processruntime.ReturnGrantOperation:
+		admission := result.Admission()
+		return append([]Fact{GrantReturnAcknowledged(request.effect, admission)}, admissionDeliveryFacts(admission.Deliveries())...)
+	case processruntime.BindConfirmationBarrierOperation:
+		barrier := result.Barrier()
+		return append([]Fact{ConfirmationBarrierBound(request.effect, barrier)}, admissionDeliveryFacts(barrier.Deliveries())...)
+	case processruntime.CommitStartOperation:
+		return []Fact{StartCommitted(request.effect, result.Start())}
+	case processruntime.CommitTerminalOperation, processruntime.AuthorizeForcedAbortOperation:
+		return []Fact{TerminalCommitted(result.Terminal().Decision())}
+	default:
+		panic("campaign runtime request operation is invalid")
+	}
+}
+
+// ArtifactRequest returns the repository-artifact request represented by an effect.
+func (effect Effect) ArtifactRequest() (ArtifactRequest, bool) {
+	switch effect.value.kind {
+	case campaignEffectEstablishSnapshot, campaignEffectDiscoverCatalogue,
+		campaignEffectReleaseSnapshot, campaignEffectMaterializeWorkspace,
+		campaignEffectReleaseWorkspace:
+		return ArtifactRequest{effect: effect}, true
+	default:
+		return ArtifactRequest{}, false
+	}
+}
+
+// EstablishesSnapshot reports whether the request creates the campaign snapshot.
+func (request ArtifactRequest) EstablishesSnapshot() bool {
+	return request.effect.value.kind == campaignEffectEstablishSnapshot
+}
+
+// CatalogueSnapshot returns the snapshot whose catalogue is requested.
+func (request ArtifactRequest) CatalogueSnapshot() (string, bool) {
+	if request.effect.value.kind != campaignEffectDiscoverCatalogue {
+		return "", false
+	}
+	return string(request.effect.value.snapshot), true
+}
+
+// Workspace returns the attempt and snapshot for a workspace request.
+func (request ArtifactRequest) Workspace() (supervision.Identity, string, bool) {
+	if request.effect.value.kind != campaignEffectMaterializeWorkspace {
+		return "", "", false
+	}
+	return request.effect.value.attempt, string(request.effect.value.snapshot), true
+}
+
+// Settlement returns the resource released by the request.
+func (request ArtifactRequest) Settlement() (ResourceKind, string, bool) {
+	switch request.effect.value.kind {
+	case campaignEffectReleaseSnapshot:
+		return SnapshotResource, string(request.effect.value.snapshot), true
+	case campaignEffectReleaseWorkspace:
+		return WorkspaceResource, request.effect.value.workspace, true
+	default:
+		return 0, "", false
+	}
+}
+
+// EstablishedSnapshot completes snapshot establishment.
+func (request ArtifactRequest) EstablishedSnapshot(snapshot string) Fact {
+	if !request.EstablishesSnapshot() {
+		panic("campaign artifact request does not establish a snapshot")
+	}
+	return SnapshotEstablished(snapshot)
+}
+
+// DiscoveredCatalogue completes catalogue discovery.
+func (request ArtifactRequest) DiscoveredCatalogue(mutants []string) Fact {
+	snapshot, ok := request.CatalogueSnapshot()
+	if !ok {
+		panic("campaign artifact request does not discover a catalogue")
+	}
+	return CatalogueDiscovered(snapshot, mutants)
+}
+
+// MaterializedWorkspace completes workspace materialization.
+func (request ArtifactRequest) MaterializedWorkspace(workspace string) Fact {
+	if _, _, ok := request.Workspace(); !ok {
+		panic("campaign artifact request does not materialize a workspace")
+	}
+	return WorkspaceMaterialized(request.effect, workspace)
+}
+
+// Settled completes authoritative resource cleanup.
+func (request ArtifactRequest) Settled() Fact {
+	kind, identity, ok := request.Settlement()
+	if !ok {
+		panic("campaign artifact request does not settle a resource")
+	}
+	return ResourceSettled(kind, identity)
+}
+
+// SupervisionRequest returns the attempt-supervision request represented by an effect.
+func (effect Effect) SupervisionRequest() (SupervisionRequest, bool) {
+	switch effect.value.kind {
+	case campaignEffectLaunchAttempt, campaignEffectStopAttempt:
+		return SupervisionRequest{effect: effect}, true
+	default:
+		return SupervisionRequest{}, false
+	}
+}
+
+// Prospective returns the attempt launched by this request.
+func (request SupervisionRequest) Prospective(registeredAt, launchBy time.Time) (supervision.Fact, bool) {
+	if request.effect.value.kind != campaignEffectLaunchAttempt {
+		return supervision.Fact{}, false
+	}
+	spec := request.effect.Spec()
+	return supervision.ProspectiveRegistration(
+		request.effect.Generation(), request.effect.Attempt(), registeredAt, launchBy,
+		spec.Profile, spec.Deadline,
+	), true
+}
+
+// StopGeneration returns the generation stopped by this request.
+func (request SupervisionRequest) StopGeneration() (processruntime.Generation, bool) {
+	if request.effect.value.kind != campaignEffectStopAttempt {
+		return 0, false
+	}
+	return request.effect.Generation(), true
+}
+
+func admissionDeliveryFacts(deliveries []processruntime.Admission) []Fact {
+	facts := make([]Fact, len(deliveries))
+	for index, delivery := range deliveries {
+		facts[index] = AdmissionDelivered(delivery)
+	}
+	return facts
+}
+
 // Fact is an immutable campaign input.
 type Fact struct{ payload campaignEventPayload }
-
-// FactKind identifies one campaign-domain input.
-type FactKind uint8
-
-// Campaign fact kinds.
-const (
-	RegisteredFact FactKind = iota + 1
-	SnapshotEstablishedFact
-	CatalogueDiscoveredFact
-	PreparationFailedFact
-	ResourceSettledFact
-	ResourceSettlementFailedFact
-	TerminalCommittedFact
-	WorkspaceMaterializedFact
-	WorkspaceMaterializationFailedFact
-	AdmissionGrantedFact
-	AdmissionCancelledFact
-	AdmissionRejectedFact
-	StartCommittedFact
-	AttemptLaunchedFact
-	AttemptTerminalFact
-	ConfirmationBarrierBoundFact
-	GrantReturnAcknowledgedFact
-	RuntimeEmergencySettledFact
-	RuntimeEmergencyStartedFact
-)
 
 // Transition contains the normalized event, effects, and projection produced by one accepted fact.
 type Transition struct {
@@ -75,25 +250,14 @@ type Event struct {
 // Effect is an immutable normalized campaign effect.
 type Effect struct{ value campaignEffect }
 
-// EffectKind identifies a normalized campaign effect.
-type EffectKind uint8
+// Owner identifies the system boundary that interprets an effect.
+type Owner uint8
 
-// Campaign effect kinds.
+// Campaign effect owners.
 const (
-	RegisterEffect EffectKind = iota + 1
-	EstablishSnapshotEffect
-	DiscoverCatalogueEffect
-	ReleaseSnapshotEffect
-	MaterializeWorkspaceEffect
-	RequestAdmissionEffect
-	RequestStartCommitmentEffect
-	LaunchAttemptEffect
-	CancelAdmissionEffect
-	ReturnAdmissionEffect
-	StopAttemptEffect
-	ReleaseWorkspaceEffect
-	BindConfirmationBarrierEffect
-	ProposeTerminalEffect
+	ArtifactOwner Owner = iota + 1
+	RuntimeOwner
+	SupervisionOwner
 )
 
 // AttemptRole identifies one attempt's role in a campaign.
@@ -109,8 +273,55 @@ const (
 // ID returns the stable effect identity.
 func (effect Effect) ID() uint64 { return uint64(effect.value.id) }
 
-// Kind returns the effect kind.
-func (effect Effect) Kind() EffectKind { return EffectKind(effect.value.kind) }
+// IsZero reports whether the effect is absent.
+func (effect Effect) IsZero() bool { return effect.value.kind == 0 }
+
+// Less reports the canonical order of two campaign effects.
+func (effect Effect) Less(other Effect, catalogue []string) bool {
+	ranks := make(map[mutantIdentity]int, len(catalogue))
+	for rank, mutant := range catalogue {
+		ranks[mutantIdentity(mutant)] = rank + 1
+	}
+	firstRank, secondRank := ranks[effect.value.mutant], ranks[other.value.mutant]
+	if firstRank != secondRank {
+		if firstRank == 0 {
+			return false
+		}
+		if secondRank == 0 {
+			return true
+		}
+		return firstRank < secondRank
+	}
+	if effect.value.attempt != other.value.attempt {
+		return effect.value.attempt < other.value.attempt
+	}
+	if effect.value.generation != other.value.generation {
+		return effect.value.generation < other.value.generation
+	}
+	if effect.value.id != other.value.id {
+		return effect.value.id < other.value.id
+	}
+	return effect.value.kind < other.value.kind
+}
+
+// Owner returns the boundary that interprets the effect.
+func (effect Effect) Owner() Owner {
+	switch effect.value.kind {
+	case campaignEffectEstablishSnapshot, campaignEffectDiscoverCatalogue,
+		campaignEffectReleaseSnapshot, campaignEffectMaterializeWorkspace,
+		campaignEffectReleaseWorkspace:
+		return ArtifactOwner
+	case campaignEffectRegister, campaignEffectRequestAdmission,
+		campaignEffectRequestStartCommitment, campaignEffectCancelAdmission,
+		campaignEffectReturnAdmission, campaignEffectBindConfirmationBarrier,
+		campaignEffectProposeTerminal:
+		return RuntimeOwner
+	case campaignEffectLaunchAttempt, campaignEffectStopAttempt:
+		return SupervisionOwner
+	default:
+		panic("campaign effect owner is invalid")
+	}
+}
 
 // Attempt returns the affected attempt identity.
 func (effect Effect) Attempt() supervision.Identity { return effect.value.attempt }
@@ -487,52 +698,6 @@ func canonicalResourceIdentity(kind campaignResourceKind, identity string, state
 	}
 }
 
-// Kind returns the fact kind.
-func (fact Fact) Kind() FactKind {
-	switch fact.payload.(type) {
-	case campaignRegisteredEvent:
-		return RegisteredFact
-	case snapshotEstablishedEvent:
-		return SnapshotEstablishedFact
-	case catalogueDiscoveredEvent:
-		return CatalogueDiscoveredFact
-	case campaignPreparationFailedEvent:
-		return PreparationFailedFact
-	case resourceSettledEvent:
-		return ResourceSettledFact
-	case resourceSettlementFailedEvent:
-		return ResourceSettlementFailedFact
-	case terminalCommittedEvent:
-		return TerminalCommittedFact
-	case workspaceMaterializedEvent:
-		return WorkspaceMaterializedFact
-	case workspaceMaterializationFailedEvent:
-		return WorkspaceMaterializationFailedFact
-	case admissionGrantedEvent:
-		return AdmissionGrantedFact
-	case admissionCancelledEvent:
-		return AdmissionCancelledFact
-	case admissionRejectedEvent:
-		return AdmissionRejectedFact
-	case startCommittedEvent:
-		return StartCommittedFact
-	case attemptLaunchEvent:
-		return AttemptLaunchedFact
-	case attemptTerminalEvent:
-		return AttemptTerminalFact
-	case confirmationBarrierBoundEvent:
-		return ConfirmationBarrierBoundFact
-	case grantReturnAcknowledgedEvent:
-		return GrantReturnAcknowledgedFact
-	case runtimeEmergencySettledEvent:
-		return RuntimeEmergencySettledFact
-	case runtimeEmergencyStartedEvent:
-		return RuntimeEmergencyStartedFact
-	default:
-		return 0
-	}
-}
-
 // Name returns the stable domain name of the fact.
 func (fact Fact) Name() string {
 	if fact.payload == nil {
@@ -609,6 +774,85 @@ func (fact Fact) RuntimeClosureInProgress() bool {
 	default:
 		return false
 	}
+}
+
+// IsAttemptTerminal reports whether the fact carries terminal attempt evidence.
+func (fact Fact) IsAttemptTerminal() bool {
+	_, ok := fact.payload.(attemptTerminalEvent)
+	return ok
+}
+
+// IsAttemptLaunched reports whether the fact carries launch evidence.
+func (fact Fact) IsAttemptLaunched() bool {
+	_, ok := fact.payload.(attemptLaunchEvent)
+	return ok
+}
+
+// IsAdmissionGranted reports whether the fact delivers admission authority.
+func (fact Fact) IsAdmissionGranted() bool {
+	_, ok := fact.payload.(admissionGrantedEvent)
+	return ok
+}
+
+// IsStartCommitted reports whether the fact carries a start decision.
+func (fact Fact) IsStartCommitted() bool {
+	_, ok := fact.payload.(startCommittedEvent)
+	return ok
+}
+
+// IsResourceSettled reports whether the fact confirms authoritative cleanup.
+func (fact Fact) IsResourceSettled() bool {
+	_, ok := fact.payload.(resourceSettledEvent)
+	return ok
+}
+
+// SameKind reports whether two facts represent the same domain event kind.
+func (fact Fact) SameKind(other Fact) bool {
+	return reflect.TypeOf(fact.payload) == reflect.TypeOf(other.payload)
+}
+
+// CompletesEmergencySettlement reports whether the fact closes a runtime-wide emergency sweep.
+func (fact Fact) CompletesEmergencySettlement() bool {
+	_, ok := fact.payload.(runtimeEmergencySettledEvent)
+	return ok
+}
+
+// SupervisorDelivery returns the supervision delivery that caused the fact.
+func (fact Fact) SupervisorDelivery() (supervision.EffectKind, processruntime.Generation, bool) {
+	switch fact.payload.(type) {
+	case attemptTerminalEvent:
+		return supervision.DeliverTerminalEffect, fact.Generation(), true
+	case runtimeEmergencySettledEvent:
+		return supervision.DeliverEmergencySettlementEffect, 0, true
+	default:
+		return 0, 0, false
+	}
+}
+
+// SupersedesFact reports whether a pending fact became stale after the latest transition.
+func (machine Machine) SupersedesFact(fact Fact) bool {
+	switch fact.payload.(type) {
+	case admissionGrantedEvent, admissionCancelledEvent, admissionRejectedEvent,
+		startCommittedEvent, grantReturnAcknowledgedEvent:
+		return !machine.Accepts(fact)
+	default:
+		return false
+	}
+}
+
+// SupersedesEffect reports whether a pending asynchronous effect became stale.
+func (machine Machine) SupersedesEffect(effect Effect) bool {
+	switch effect.value.kind {
+	case campaignEffectCancelAdmission, campaignEffectRequestStartCommitment:
+		return !machine.EffectPending(effect)
+	default:
+		return false
+	}
+}
+
+// MayCommitTerminal reports whether the effect can complete campaign terminalization.
+func (effect Effect) MayCommitTerminal() bool {
+	return effect.value.kind == campaignEffectProposeTerminal
 }
 
 // ProvenNotReleased reports whether the fact is a proven pre-release launch failure.
@@ -748,15 +992,6 @@ func (machine Machine) Apply(fact Fact) (Machine, Transition) {
 	})
 	event := campaignEvent{id: campaignEventID(len(machine.state.trace) + 1), payload: fact.payload}
 	return Machine{state: state}, transitionFrom(machine.state, state, event, effects)
-}
-
-// EffectKinds returns the ordered normalized effect kinds.
-func (transition Transition) EffectKinds() []EffectKind {
-	result := make([]EffectKind, len(transition.effects))
-	for index, effect := range transition.effects {
-		result[index] = EffectKind(effect.kind)
-	}
-	return result
 }
 
 // Event returns the accepted campaign event.

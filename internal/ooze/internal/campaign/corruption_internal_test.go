@@ -73,13 +73,3 @@ func TestMachineAcceptsPropagatesUnexpectedReducerPanics(t *testing.T) {
 		machine.Accepts(Fact{payload: panickingCampaignFact{}})
 	})
 }
-
-func TestCanonicalProjectionOmitsRuntimeAuthority(t *testing.T) {
-	first := Projection{state: campaignState{runtimeToken: campaignToken{}}}
-	_, registered := processruntime.NewReplay(1).Apply(processruntime.RegisterCampaignCut(11))
-	second := Projection{state: campaignState{
-		runtimeToken: campaignTokenValue(registered.Registration().Campaign()),
-	}}
-
-	assert.True(t, first.Canonical().Equal(second.Canonical()))
-}

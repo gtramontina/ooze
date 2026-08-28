@@ -26,6 +26,25 @@ type launchedMachineAttempt struct {
 	generation processruntime.Generation
 }
 
+type testEffectKind string
+
+const (
+	registerEffect                testEffectKind = "register"
+	establishSnapshotEffect       testEffectKind = "establish snapshot"
+	discoverCatalogueEffect       testEffectKind = "discover catalogue"
+	releaseSnapshotEffect         testEffectKind = "release snapshot"
+	materializeWorkspaceEffect    testEffectKind = "materialize workspace"
+	requestAdmissionEffect        testEffectKind = "request admission"
+	requestStartCommitmentEffect  testEffectKind = "request start"
+	launchAttemptEffect           testEffectKind = "launch attempt"
+	cancelAdmissionEffect         testEffectKind = "cancel admission"
+	returnAdmissionEffect         testEffectKind = "return admission"
+	stopAttemptEffect             testEffectKind = "stop attempt"
+	releaseWorkspaceEffect        testEffectKind = "release workspace"
+	bindConfirmationBarrierEffect testEffectKind = "bind confirmation barrier"
+	proposeTerminalEffect         testEffectKind = "propose terminal"
+)
+
 func newCampaignMachineHarness(
 	t *testing.T,
 	mutants []string,
@@ -65,7 +84,7 @@ func newRunningCampaignMachineHarness(
 			Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second,
 		},
 	}, 20*time.Second)
-	require.Equal(t, []campaign.EffectKind{campaign.ReleaseWorkspaceEffect}, effectKinds(effects))
+	require.Equal(t, []testEffectKind{releaseWorkspaceEffect}, effectKinds(effects))
 	harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-baseline"))
 	return harness, harness.effects
 }
@@ -99,7 +118,7 @@ func (harness *campaignMachineHarness) start(effect campaign.Effect, workspace s
 	harness.t.Helper()
 	effects := harness.advance(campaign.WorkspaceMaterialized(effect, workspace))
 	require.Len(harness.t, effects, 1)
-	if effects[0].Kind() == campaign.BindConfirmationBarrierEffect {
+	if effectKind(effects[0]) == bindConfirmationBarrierEffect {
 		bound := harness.applyRuntime(effects[0]).Barrier()
 		effects = harness.advance(campaign.ConfirmationBarrierBound(effects[0], bound))
 	} else {
@@ -107,10 +126,10 @@ func (harness *campaignMachineHarness) start(effect campaign.Effect, workspace s
 		require.Len(harness.t, admitted.Deliveries(), 1)
 		effects = harness.advance(campaign.AdmissionGranted(effects[0], admitted.Deliveries()[0]))
 	}
-	require.Equal(harness.t, []campaign.EffectKind{campaign.RequestStartCommitmentEffect}, effectKinds(effects))
+	require.Equal(harness.t, []testEffectKind{requestStartCommitmentEffect}, effectKinds(effects))
 	started := harness.applyRuntime(effects[0]).Start()
 	effects = harness.advance(campaign.StartCommitted(effects[0], started))
-	require.Equal(harness.t, []campaign.EffectKind{campaign.LaunchAttemptEffect}, effectKinds(effects))
+	require.Equal(harness.t, []testEffectKind{launchAttemptEffect}, effectKinds(effects))
 	return launchedMachineAttempt{effect: effects[0], generation: started.Generation()}
 }
 
@@ -153,12 +172,59 @@ func (harness *campaignMachineHarness) applyCut(cut processruntime.Cut) processr
 	return result
 }
 
-func effectKinds(effects []campaign.Effect) []campaign.EffectKind {
-	kinds := make([]campaign.EffectKind, len(effects))
+func effectKinds(effects []campaign.Effect) []testEffectKind {
+	kinds := make([]testEffectKind, len(effects))
 	for index, effect := range effects {
-		kinds[index] = effect.Kind()
+		kinds[index] = effectKind(effect)
 	}
 	return kinds
+}
+
+func effectKind(effect campaign.Effect) testEffectKind {
+	if operation, ok := effect.RuntimeOperation(); ok {
+		switch operation {
+		case processruntime.RegisterCampaignOperation:
+			return registerEffect
+		case processruntime.RequestAdmissionOperation:
+			return requestAdmissionEffect
+		case processruntime.CancelAdmissionOperation:
+			return cancelAdmissionEffect
+		case processruntime.ReturnGrantOperation:
+			return returnAdmissionEffect
+		case processruntime.BindConfirmationBarrierOperation:
+			return bindConfirmationBarrierEffect
+		case processruntime.CommitStartOperation:
+			return requestStartCommitmentEffect
+		case processruntime.CommitTerminalOperation, processruntime.AuthorizeForcedAbortOperation:
+			return proposeTerminalEffect
+		}
+	}
+	if request, ok := effect.ArtifactRequest(); ok {
+		if request.EstablishesSnapshot() {
+			return establishSnapshotEffect
+		}
+		if _, ok := request.CatalogueSnapshot(); ok {
+			return discoverCatalogueEffect
+		}
+		if _, _, ok := request.Workspace(); ok {
+			return materializeWorkspaceEffect
+		}
+		if kind, _, ok := request.Settlement(); ok {
+			if kind == campaign.SnapshotResource {
+				return releaseSnapshotEffect
+			}
+			return releaseWorkspaceEffect
+		}
+	}
+	if request, ok := effect.SupervisionRequest(); ok {
+		if _, launches := request.Prospective(time.Time{}, time.Time{}); launches {
+			return launchAttemptEffect
+		}
+		if _, stops := request.StopGeneration(); stops {
+			return stopAttemptEffect
+		}
+	}
+	panic("campaign test effect is invalid")
 }
 
 func TestMachineRunsOneBaselineAndOnePrimaryPerMutant(t *testing.T) {
@@ -182,9 +248,9 @@ func TestMachineRunsOneBaselineAndOnePrimaryPerMutant(t *testing.T) {
 	}, 0)
 	harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-a"))
 	effects := harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-b"))
-	require.Equal(t, []campaign.EffectKind{campaign.ReleaseSnapshotEffect}, effectKinds(effects))
+	require.Equal(t, []testEffectKind{releaseSnapshotEffect}, effectKinds(effects))
 	effects = harness.advance(campaign.ResourceSettled(campaign.SnapshotResource, "snapshot-a"))
-	require.Equal(t, []campaign.EffectKind{campaign.ProposeTerminalEffect}, effectKinds(effects))
+	require.Equal(t, []testEffectKind{proposeTerminalEffect}, effectKinds(effects))
 	committed := harness.applyRuntime(effects[0]).Terminal()
 	harness.advance(campaign.TerminalCommitted(committed.Decision()))
 
@@ -211,10 +277,10 @@ func TestMachineAbortsWithoutInventingMoreWork(t *testing.T) {
 			baseline.effect, supervision.NotReleased{Kind: supervision.LaunchFailed}, receipt,
 		))
 
-		assert.Equal(t, []campaign.EffectKind{campaign.ReleaseWorkspaceEffect}, effectKinds(effects))
+		assert.Equal(t, []testEffectKind{releaseWorkspaceEffect}, effectKinds(effects))
 		assert.Equal(t, 1, harness.machine.CommandCount())
 		harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-baseline"))
-		assert.Equal(t, []campaign.EffectKind{campaign.ReleaseSnapshotEffect}, effectKinds(harness.effects))
+		assert.Equal(t, []testEffectKind{releaseSnapshotEffect}, effectKinds(harness.effects))
 	})
 
 	t.Run("an infrastructure failure stops an owned peer without retry", func(t *testing.T) {
@@ -226,7 +292,7 @@ func TestMachineAbortsWithoutInventingMoreWork(t *testing.T) {
 			ExecutionData: supervision.ExecutionData{Deadline: 20 * time.Second},
 		}, 0)
 
-		assert.Equal(t, []campaign.EffectKind{campaign.StopAttemptEffect, campaign.ReleaseWorkspaceEffect}, effectKinds(effects))
+		assert.Equal(t, []testEffectKind{stopAttemptEffect, releaseWorkspaceEffect}, effectKinds(effects))
 		assert.Equal(t, second.effect.Attempt(), effects[0].Attempt())
 		harness.settle(second, supervision.Stopped{
 			ExecutionData: supervision.ExecutionData{Deadline: 20 * time.Second},
@@ -241,7 +307,7 @@ func TestMachineAbortsWithoutInventingMoreWork(t *testing.T) {
 			primaries[1], "workspace copy failed", nil,
 		))
 
-		assert.Equal(t, []campaign.EffectKind{campaign.StopAttemptEffect}, effectKinds(effects))
+		assert.Equal(t, []testEffectKind{stopAttemptEffect}, effectKinds(effects))
 		assert.Equal(t, peer.effect.Attempt(), effects[0].Attempt())
 	})
 
@@ -256,7 +322,7 @@ func TestMachineAbortsWithoutInventingMoreWork(t *testing.T) {
 			campaign.WorkspaceResource, "workspace-a", "remove failed",
 		))
 
-		assert.Equal(t, []campaign.EffectKind{campaign.StopAttemptEffect}, effectKinds(effects))
+		assert.Equal(t, []testEffectKind{stopAttemptEffect}, effectKinds(effects))
 		assert.Equal(t, second.effect.Attempt(), effects[0].Attempt())
 	})
 }
@@ -314,7 +380,7 @@ func newConfirmationMachineHarness(
 	}, 0)
 	harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-a"))
 	effects := harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-b"))
-	require.Equal(t, []campaign.EffectKind{campaign.MaterializeWorkspaceEffect}, effectKinds(effects))
+	require.Equal(t, []testEffectKind{materializeWorkspaceEffect}, effectKinds(effects))
 	return harness, harness.launch(effects[0], "workspace-confirmation")
 }
 
@@ -326,7 +392,7 @@ func TestMachineConfirmsOnlyAttributableDeadlinePressure(t *testing.T) {
 			ExecutionData: supervision.ExecutionData{Deadline: 20 * time.Second},
 		}, 0)
 
-		assert.Equal(t, []campaign.EffectKind{campaign.ReleaseWorkspaceEffect}, effectKinds(effects))
+		assert.Equal(t, []testEffectKind{releaseWorkspaceEffect}, effectKinds(effects))
 	})
 
 	t.Run("confirmation fuse remains an attributable runaway", func(t *testing.T) {
@@ -335,9 +401,9 @@ func TestMachineConfirmsOnlyAttributableDeadlinePressure(t *testing.T) {
 			Trip:          supervision.FuseTrip{Live: 9},
 			ExecutionData: supervision.ExecutionData{Deadline: 20 * time.Second},
 		}, 0)
-		assert.Equal(t, []campaign.EffectKind{campaign.ReleaseWorkspaceEffect}, effectKinds(effects))
+		assert.Equal(t, []testEffectKind{releaseWorkspaceEffect}, effectKinds(effects))
 		harness.advance(campaign.ResourceSettled(campaign.WorkspaceResource, "workspace-confirmation"))
-		require.Equal(t, []campaign.EffectKind{campaign.ReleaseSnapshotEffect}, effectKinds(harness.effects))
+		require.Equal(t, []testEffectKind{releaseSnapshotEffect}, effectKinds(harness.effects))
 		harness.advance(campaign.ResourceSettled(campaign.SnapshotResource, "snapshot-a"))
 		committed := harness.applyRuntime(harness.effects[0]).Terminal()
 		harness.advance(campaign.TerminalCommitted(committed.Decision()))
@@ -363,4 +429,107 @@ func TestMachineConfirmsOnlyAttributableDeadlinePressure(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "campaign observe confirmation terminal", violation.Operation())
 	})
+}
+
+func TestMachineCompletesRuntimeCleanupThroughPublicFacts(t *testing.T) {
+	t.Run("cancels a waiting admission before releasing its workspace", func(t *testing.T) {
+		harness, primaries := newRunningCampaignMachineHarness(
+			t, []string{"mutant-a", "mutant-b"}, 2,
+		)
+		peer := harness.applyCut(processruntime.RegisterCampaignCut(99)).Registration()
+		peerAdmission := harness.applyCut(processruntime.RequestAdmissionCut(processruntime.Admission{
+			Campaign: peer.Campaign(), Attempt: "peer:1", Class: processruntime.SharedAdmission,
+		})).Admission()
+		require.Len(t, peerAdmission.Deliveries(), 1)
+		peerStart := harness.applyCut(processruntime.CommitStartCut(peerAdmission.Deliveries()[0])).Start()
+		harness.applyCut(processruntime.ObserveAttemptCut(peerStart.Generation(), processruntime.Owned()))
+		first := harness.launch(primaries[0], "workspace-a")
+		requestEffects := harness.advance(campaign.WorkspaceMaterialized(primaries[1], "workspace-b"))
+		request := runtimeRequestForOperation(t, harness, requestEffects, processruntime.RequestAdmissionOperation)
+		waiting := applyRuntimeRequest(t, harness, request)
+		assert.Empty(t, waiting.Admission().Deliveries())
+
+		cleanup := harness.settle(first, supervision.Infrastructure{
+			Cause: supervision.CensusFailed, Err: assert.AnError,
+			ExecutionData: supervision.ExecutionData{Deadline: 20 * time.Second},
+		}, 0)
+		cancel := runtimeRequestForOperation(t, harness, cleanup, processruntime.CancelAdmissionOperation)
+		cancelled := applyRuntimeRequest(t, harness, cancel)
+		facts := cancel.Complete(cancelled.RecordedCut())
+		require.Len(t, facts, 1)
+		effects := harness.advance(facts[0])
+
+		require.Len(t, effects, 1)
+		artifact, ok := effects[0].ArtifactRequest()
+		require.True(t, ok)
+		kind, identity, settles := artifact.Settlement()
+		assert.True(t, settles)
+		assert.Equal(t, campaign.WorkspaceResource, kind)
+		assert.Equal(t, "workspace-b", identity)
+	})
+
+	t.Run("acknowledges a grant returned after fatal closure", func(t *testing.T) {
+		harness, primaries := newRunningCampaignMachineHarness(t, []string{"mutant-a"}, 1)
+		effects := harness.advance(campaign.WorkspaceMaterialized(primaries[0], "workspace-a"))
+		request := runtimeRequestForOperation(t, harness, effects, processruntime.RequestAdmissionOperation)
+		admitted := applyRuntimeRequest(t, harness, request)
+		facts := request.Complete(admitted.RecordedCut())
+		require.Len(t, facts, 1)
+		effects = harness.advance(facts[0])
+		start := runtimeRequestForOperation(t, harness, effects, processruntime.CommitStartOperation)
+		harness.applyCut(processruntime.CloseCut("fixture closure"))
+		started := applyRuntimeRequest(t, harness, start)
+		effects = harness.advance(start.Complete(started.RecordedCut())[0])
+		returned := runtimeRequestForOperation(t, harness, effects, processruntime.ReturnGrantOperation)
+		acknowledged := applyRuntimeRequest(t, harness, returned)
+		facts = returned.Complete(acknowledged.RecordedCut())
+		require.Len(t, facts, 1)
+
+		assert.NotPanics(t, func() { harness.advance(facts[0]) })
+	})
+
+	t.Run("retains transferred custody after emergency settlement", func(t *testing.T) {
+		harness, primaries := newRunningCampaignMachineHarness(t, []string{"mutant-a"}, 1)
+		primary := harness.launch(primaries[0], "workspace-a")
+		harness.settle(primary, supervision.DrainUnconfirmed{
+			Residual: supervision.OwnedUndrained,
+			ExecutionData: supervision.ExecutionData{
+				Deadline: 20 * time.Second, CommandDuration: time.Second,
+			},
+		}, 0)
+		settled := harness.applyCut(processruntime.SettleEmergencyCut([]processruntime.Resolution{
+			processruntime.TransferCustody(primary.generation),
+		})).Settlement()
+
+		harness.advance(campaign.RuntimeEmergencySettled(settled))
+
+		assert.True(t, harness.machine.Projection().Failed())
+		assert.NotEmpty(t, harness.machine.Projection().Obligations())
+	})
+}
+
+func runtimeRequestForOperation(
+	t *testing.T,
+	harness *campaignMachineHarness,
+	effects []campaign.Effect,
+	operation processruntime.Operation,
+) campaign.RuntimeRequest {
+	t.Helper()
+	for _, effect := range effects {
+		request, ok := harness.runtimeBinding.RuntimeRequest(effect, harness.definition)
+		if ok && request.Cut().Operation() == operation {
+			return request
+		}
+	}
+	require.FailNowf(t, "runtime request not found", "operation=%d", operation)
+	return campaign.RuntimeRequest{}
+}
+
+func applyRuntimeRequest(
+	t *testing.T,
+	harness *campaignMachineHarness,
+	request campaign.RuntimeRequest,
+) processruntime.ReplayResult {
+	t.Helper()
+	return harness.applyCut(request.Cut())
 }

@@ -18,14 +18,14 @@ func simulationEnabledMoves(
 	actions []supervision.Effect,
 	catalogue []mutantIdentity,
 ) []simulationEnabledMove {
-	ranks := make(map[mutantIdentity]int, len(catalogue))
-	for rank, mutant := range catalogue {
-		ranks[mutant] = rank + 1
+	orderedCatalogue := make([]string, len(catalogue))
+	for index, mutant := range catalogue {
+		orderedCatalogue[index] = string(mutant)
 	}
 	moves := make([]simulationEnabledMove, 0, len(effects)+len(actions))
 	for _, effect := range effects {
 		moves = append(moves, simulationEnabledMove{
-			authority: simulationEffectAuthority(effect.Kind()), effect: effect,
+			authority: simulationEffectAuthority(effect.Owner()), effect: effect,
 		})
 	}
 	for _, action := range actions {
@@ -38,33 +38,14 @@ func simulationEnabledMoves(
 		if first.authority != second.authority {
 			return first.authority < second.authority
 		}
-		if first.effect.Kind() != 0 || second.effect.Kind() != 0 {
-			if first.effect.Kind() == 0 {
+		if !first.effect.IsZero() || !second.effect.IsZero() {
+			if first.effect.IsZero() {
 				return false
 			}
-			if second.effect.Kind() == 0 {
+			if second.effect.IsZero() {
 				return true
 			}
-			firstRank, secondRank := ranks[first.effect.Mutant()], ranks[second.effect.Mutant()]
-			if firstRank != secondRank {
-				if firstRank == 0 {
-					return false
-				}
-				if secondRank == 0 {
-					return true
-				}
-				return firstRank < secondRank
-			}
-			if first.effect.Attempt() != second.effect.Attempt() {
-				return first.effect.Attempt() < second.effect.Attempt()
-			}
-			if first.effect.Generation() != second.effect.Generation() {
-				return first.effect.Generation() < second.effect.Generation()
-			}
-			if first.effect.ID() != second.effect.ID() {
-				return first.effect.ID() < second.effect.ID()
-			}
-			return first.effect.Kind() < second.effect.Kind()
+			return first.effect.Less(second.effect, orderedCatalogue)
 		}
 		if first.action.Generation() != second.action.Generation() {
 			return first.action.Generation() < second.action.Generation()
@@ -78,20 +59,15 @@ func simulationEnabledMoves(
 	return moves
 }
 
-func simulationEffectAuthority(kind campaignmodule.EffectKind) simulationAuthority {
-	switch kind {
-	case campaignEffectEstablishSnapshot, campaignEffectDiscoverCatalogue,
-		campaignEffectReleaseSnapshot, campaignEffectMaterializeWorkspace,
-		campaignEffectReleaseWorkspace:
+func simulationEffectAuthority(owner campaignmodule.Owner) simulationAuthority {
+	switch owner {
+	case campaignmodule.ArtifactOwner:
 		return simulationCampaignAuthority
-	case campaignEffectRegister, campaignEffectRequestAdmission,
-		campaignEffectRequestStartCommitment, campaignEffectCancelAdmission,
-		campaignEffectReturnAdmission, campaignEffectBindConfirmationBarrier,
-		campaignEffectProposeTerminal:
+	case campaignmodule.RuntimeOwner:
 		return simulationRuntimeAuthority
-	case campaignEffectLaunchAttempt, campaignEffectStopAttempt:
+	case campaignmodule.SupervisionOwner:
 		return supervisionAuthority
 	default:
-		panic("simulation campaign effect kind is invalid")
+		panic("simulation campaign effect owner is invalid")
 	}
 }

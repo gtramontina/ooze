@@ -19,30 +19,30 @@ func TestMachineCommitsAnEmptyCatalogueWithoutLaunchingAnAttempt(t *testing.T) {
 		Profile:  processruntime.AutomaticProfile,
 		Peers:    4,
 	})
-	require.Equal(t, []campaign.EffectKind{campaign.RegisterEffect}, transition.EffectKinds())
+	require.Equal(t, []testEffectKind{registerEffect}, effectKinds(transition.Effects()))
 	runtime := processruntime.NewReplay(4)
 	runtime, registered := runtime.Apply(processruntime.RegisterCampaignCut(11))
 
 	t.Run("records the runtime registration", func(t *testing.T) {
 		machine, transition = machine.Apply(campaign.Registered(registered.Registration()))
-		assert.Equal(t, []campaign.EffectKind{campaign.EstablishSnapshotEffect}, transition.EffectKinds())
+		assert.Equal(t, []testEffectKind{establishSnapshotEffect}, effectKinds(transition.Effects()))
 	})
 	_ = runtime
 
 	t.Run("establishes and discovers the repository snapshot", func(t *testing.T) {
 		machine, transition = machine.Apply(campaign.SnapshotEstablished("snapshot-a"))
-		assert.Equal(t, []campaign.EffectKind{campaign.DiscoverCatalogueEffect}, transition.EffectKinds())
+		assert.Equal(t, []testEffectKind{discoverCatalogueEffect}, effectKinds(transition.Effects()))
 
 		machine, transition = machine.Apply(campaign.CatalogueDiscovered("snapshot-a", nil))
-		assert.Equal(t, []campaign.EffectKind{campaign.ReleaseSnapshotEffect}, transition.EffectKinds())
+		assert.Equal(t, []testEffectKind{releaseSnapshotEffect}, effectKinds(transition.Effects()))
 	})
 
 	t.Run("commits no mutants after releasing the snapshot", func(t *testing.T) {
 		machine, transition = machine.Apply(campaign.ResourceSettled(campaign.SnapshotResource, "snapshot-a"))
-		assert.Equal(t, []campaign.EffectKind{campaign.ProposeTerminalEffect}, transition.EffectKinds())
+		assert.Equal(t, []testEffectKind{proposeTerminalEffect}, effectKinds(transition.Effects()))
 
 		machine, transition = machine.Apply(campaign.TerminalCommitted(processruntime.TerminalCommitted))
-		assert.Empty(t, transition.EffectKinds())
+		assert.Empty(t, transition.Effects())
 		assert.Equal(t, campaign.NoMutantsOutcome, machine.Outcome().Kind())
 		assert.Empty(t, machine.Projection().Obligations())
 	})
@@ -86,7 +86,7 @@ func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *te
 
 	fork := machine.Projection().Canonical().Fork()
 	_, transition = fork.Apply(campaign.RuntimeEmergencyStarted(closed.Closure()).Canonical())
-	require.Equal(t, []campaign.EffectKind{campaign.ReturnAdmissionEffect}, transition.EffectKinds())
+	require.Equal(t, []testEffectKind{returnAdmissionEffect}, effectKinds(transition.Effects()))
 	_, ok = binding.Cut(transition.Effects()[0], definition)
 	assert.False(t, ok)
 	_ = runtime
@@ -107,23 +107,23 @@ func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 	machine, transition := machine.Apply(campaign.CatalogueDiscovered("snapshot-a", []string{"mutant-a"}))
 
 	t.Run("owns the fixed baseline deadline", func(t *testing.T) {
-		require.Equal(t, []campaign.EffectKind{campaign.MaterializeWorkspaceEffect}, transition.EffectKinds())
+		require.Equal(t, []testEffectKind{materializeWorkspaceEffect}, effectKinds(transition.Effects()))
 		materialize := transition.Effects()[0]
 		machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
-		require.Equal(t, []campaign.EffectKind{campaign.RequestAdmissionEffect}, transition.EffectKinds())
+		require.Equal(t, []testEffectKind{requestAdmissionEffect}, effectKinds(transition.Effects()))
 		request := transition.Effects()[0]
 		cut, ok := binding.Cut(request, definition)
 		require.True(t, ok)
 		runtime, admitted := runtime.Apply(cut)
 		require.Len(t, admitted.Admission().Deliveries(), 1)
 		machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
-		require.Equal(t, []campaign.EffectKind{campaign.RequestStartCommitmentEffect}, transition.EffectKinds())
+		require.Equal(t, []testEffectKind{requestStartCommitmentEffect}, effectKinds(transition.Effects()))
 		start := transition.Effects()[0]
 		cut, ok = binding.Cut(start, definition)
 		require.True(t, ok)
 		_, started := runtime.Apply(cut)
 		machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
-		require.Equal(t, []campaign.EffectKind{campaign.LaunchAttemptEffect}, transition.EffectKinds())
+		require.Equal(t, []testEffectKind{launchAttemptEffect}, effectKinds(transition.Effects()))
 		assert.Equal(t, 10*time.Minute, transition.Effects()[0].Spec().Deadline)
 		assert.Equal(t, []string{"go", "test"}, transition.Effects()[0].Spec().Command)
 		assert.Equal(t, []string{"A=1"}, transition.Effects()[0].Spec().Env)
@@ -150,7 +150,7 @@ func TestMachineRejectsPreparationWithoutStartingACommand(t *testing.T) {
 		_, rejected := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
 		machine, _ := campaign.NewMachine(definition)
 		machine, transition := machine.Apply(campaign.Registered(rejected.Registration()))
-		assert.Empty(t, transition.EffectKinds())
+		assert.Empty(t, transition.Effects())
 		assert.Equal(t, campaign.AbortedOutcome, machine.Outcome().Kind())
 		assert.Zero(t, machine.CommandCount())
 	})
@@ -161,7 +161,7 @@ func TestMachineRejectsPreparationWithoutStartingACommand(t *testing.T) {
 		machine, _ := campaign.NewMachine(definition)
 		machine, _ = machine.Apply(campaign.Registered(registered.Registration()))
 		machine, transition := machine.Apply(campaign.PreparationFailed(false, "snapshot failed"))
-		assert.Equal(t, []campaign.EffectKind{campaign.ProposeTerminalEffect}, transition.EffectKinds())
+		assert.Equal(t, []testEffectKind{proposeTerminalEffect}, effectKinds(transition.Effects()))
 		assert.Zero(t, machine.CommandCount())
 	})
 }
@@ -204,7 +204,7 @@ func TestMachineRetainsRecordedMutationDeadline(t *testing.T) {
 		started.Start().Generation(), processruntime.Settled(definition.Profile, 10*time.Minute),
 	))
 	machine, transition = machine.Apply(campaign.AttemptTerminal(launch, terminal, settled.Receipt(), time.Nanosecond))
-	assert.Equal(t, []campaign.EffectKind{campaign.ReleaseWorkspaceEffect}, transition.EffectKinds())
+	assert.Equal(t, []testEffectKind{releaseWorkspaceEffect}, effectKinds(transition.Effects()))
 	deadline, ok := transition.Event().Fact().ResolvedMutationDeadline()
 	require.True(t, ok)
 	assert.Equal(t, time.Nanosecond, deadline)
