@@ -17,6 +17,7 @@ type campaignMachineHarness struct {
 	machine         campaign.Machine
 	runtime         processruntime.Replay
 	runtimeCampaign processruntime.Campaign
+	runtimeBinding  campaign.RuntimeBinding
 	effects         []campaign.Effect
 }
 
@@ -43,6 +44,7 @@ func newCampaignMachineHarness(
 	}
 	registered := harness.applyRuntime(harness.effects[0]).Registration()
 	harness.runtimeCampaign = registered.Campaign()
+	harness.runtimeBinding = campaign.BindRuntime(registered)
 	harness.advance(campaign.Registered(registered))
 	harness.advance(campaign.SnapshotEstablished("snapshot-a"))
 	harness.advance(campaign.CatalogueDiscovered("snapshot-a", mutants))
@@ -78,7 +80,7 @@ func (harness *campaignMachineHarness) advance(fact campaign.Fact) []campaign.Ef
 
 func (harness *campaignMachineHarness) applyRuntime(effect campaign.Effect) processruntime.ReplayResult {
 	harness.t.Helper()
-	cut, ok := effect.RuntimeCut(harness.definition)
+	cut, ok := harness.runtimeBinding.Cut(effect, harness.definition)
 	require.True(harness.t, ok)
 	var result processruntime.ReplayResult
 	harness.runtime, result = harness.runtime.Apply(cut)

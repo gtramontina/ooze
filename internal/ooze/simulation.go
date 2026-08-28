@@ -301,6 +301,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 	terminalReceipts := make(map[attemptGeneration]observationResult)
 	actionKinds := make(map[supervision.ActionToken]supervision.EffectKind)
 	var runtimeCampaign processruntime.Campaign
+	var runtimeBinding campaignmodule.RuntimeBinding
 	barrierAt := 0
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
@@ -336,11 +337,12 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				registered := record.runtimeCut.Result().Registration()
 				runtimeCampaign = registered.Campaign()
+				runtimeBinding = campaignmodule.BindRuntime(registered)
 				delivered = campaignmodule.Registered(registered)
 			case processruntime.RequestAdmissionOperation:
 				requestEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectRequestAdmission &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, runtimeBinding, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -369,7 +371,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.CancelAdmissionOperation:
 				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectCancelAdmission &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, runtimeBinding, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -389,7 +391,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.ReturnGrantOperation:
 				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectReturnAdmission &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, runtimeBinding, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -409,7 +411,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.BindConfirmationBarrierOperation:
 				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectBindConfirmationBarrier &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, runtimeBinding, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -455,7 +457,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.CommitStartOperation:
 				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectRequestStartCommitment &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, runtimeBinding, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -570,7 +572,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.AuthorizeForcedAbortOperation:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectProposeTerminal &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, runtimeBinding, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -1605,10 +1607,11 @@ func simulationEffectEnablesExternalFact(effect campaignmodule.Effect, payload c
 
 func simulationEffectMatchesRuntimeCut(
 	effect campaignmodule.Effect,
+	binding campaignmodule.RuntimeBinding,
 	definition campaignmodule.Definition,
 	recorded processruntime.RecordedCut,
 ) bool {
-	cut, ok := effect.RuntimeCut(definition)
+	cut, ok := binding.Cut(effect, definition)
 	return ok && recorded.Matches(cut)
 }
 

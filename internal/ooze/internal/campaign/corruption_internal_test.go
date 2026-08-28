@@ -1,6 +1,7 @@
 package campaign
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -23,12 +24,16 @@ func TestCampaignRejectsInjectedBaselineDeadline(t *testing.T) {
 	assert.Panics(t, func() { _, _ = beginCampaign(definition) })
 }
 
+func TestCampaignStateUsesInertRuntimeIdentity(t *testing.T) {
+	assert.NotEqual(t, reflect.TypeOf(processruntime.Campaign{}), reflect.TypeOf(campaignToken{}))
+}
+
 func TestCampaignInvariantProjectionOmitsPrivateCustodyAndFilesystemFacts(t *testing.T) {
 	_, registration := processruntime.NewReplay(1).Apply(processruntime.RegisterCampaignCut(8888))
 	state := campaignState{
 		definition:   campaignDefinition{identity: "campaign-a"},
 		snapshot:     "/private/snapshot",
-		runtimeToken: registration.Registration().Campaign(),
+		runtimeToken: campaignTokenValue(registration.Registration().Campaign()),
 		drain:        campaignDrainIntent{epoch: 9999},
 		attempts: []campaignAttempt{{
 			identity: "campaign-a:2", generation: 7777, workspace: "/private/workspace",
@@ -72,7 +77,9 @@ func TestMachineAcceptsPropagatesUnexpectedReducerPanics(t *testing.T) {
 func TestCanonicalProjectionOmitsRuntimeAuthority(t *testing.T) {
 	first := Projection{state: campaignState{runtimeToken: campaignToken{}}}
 	_, registered := processruntime.NewReplay(1).Apply(processruntime.RegisterCampaignCut(11))
-	second := Projection{state: campaignState{runtimeToken: registered.Registration().Campaign()}}
+	second := Projection{state: campaignState{
+		runtimeToken: campaignTokenValue(registered.Registration().Campaign()),
+	}}
 
 	assert.True(t, first.Canonical().Equal(second.Canonical()))
 }

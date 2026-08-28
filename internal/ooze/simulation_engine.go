@@ -66,18 +66,19 @@ const (
 )
 
 type simulationEngine struct {
-	definition   simulationDefinition
-	campaign     campaignmodule.Machine
-	runtime      processruntime.Replay
-	machine      *supervision.Machine
-	trace        simulationTrace
-	pending      []simulationEngineMove
-	registration campaignRegistration
-	launches     map[attemptGeneration]campaignmodule.Effect
-	receipts     map[attemptGeneration]observationResult
-	emergency    emergencySettlement
-	runtimeCut   processruntime.RecordedCut
-	attempts     int
+	definition     simulationDefinition
+	campaign       campaignmodule.Machine
+	runtime        processruntime.Replay
+	machine        *supervision.Machine
+	trace          simulationTrace
+	pending        []simulationEngineMove
+	registration   campaignRegistration
+	runtimeBinding campaignmodule.RuntimeBinding
+	launches       map[attemptGeneration]campaignmodule.Effect
+	receipts       map[attemptGeneration]observationResult
+	emergency      emergencySettlement
+	runtimeCut     processruntime.RecordedCut
+	attempts       int
 }
 
 type simulationLivenessKind uint8
@@ -247,9 +248,10 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	}
 	switch move.effect.Kind() {
 	case campaignEffectRegister:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		registered := engine.applyRuntime(cut).Registration()
 		engine.registration = registered
+		engine.runtimeBinding = campaignmodule.BindRuntime(registered)
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
 			runtimeState: simulationTraceRuntimeState(engine.runtime),
@@ -267,7 +269,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			move.effect, fmt.Sprintf("workspace-%d", engine.attempts),
 		))
 	case campaignEffectRequestAdmission:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Admission()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -283,7 +285,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			engine.enqueueDelivery(sequence, campaignmodule.AdmissionGranted(move.effect, grant))
 		}
 	case campaignEffectCancelAdmission:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Admission()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -291,7 +293,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 		engine.enqueueDelivery(sequence, campaignmodule.AdmissionCancelled(move.effect, processed))
 	case campaignEffectRequestStartCommitment:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Start()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -299,7 +301,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 		engine.enqueueDelivery(sequence, campaignmodule.StartCommitted(move.effect, processed))
 	case campaignEffectReturnAdmission:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		if !engine.runtime.Accepts(cut) {
 			return fmt.Errorf("simulation grant return has no returnable runtime authority")
 		}
@@ -310,7 +312,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 		engine.enqueueDelivery(sequence, campaignmodule.GrantReturnAcknowledged(move.effect, processed))
 	case campaignEffectBindConfirmationBarrier:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Barrier()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -346,7 +348,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	case campaignEffectReleaseSnapshot:
 		return engine.applyCampaign(move.source, campaignmodule.ResourceSettled(campaignmodule.SnapshotResource, move.effect.Snapshot()))
 	case campaignEffectProposeTerminal:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
+		cut, _ := engine.runtimeBinding.Cut(move.effect, engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Terminal()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,

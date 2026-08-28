@@ -41,7 +41,7 @@ func runtimeClosureValue(value processruntime.Closure) runtimeClosure {
 
 func campaignAdmissionFact(authority processruntime.Admission) campaignAdmission {
 	return campaignAdmission{
-		campaign: authority.Campaign, attempt: attemptIdentity(authority.Attempt), class: authority.Class,
+		campaign: campaignTokenValue(authority.Campaign), attempt: attemptIdentity(authority.Attempt), class: authority.Class,
 		profile: authority.Profile, deadline: authority.Deadline,
 	}
 }
@@ -66,7 +66,7 @@ func campaignAdmissionValue(authority admissionAuthority) campaignAdmission {
 }
 
 func campaignRegistrationEvidence(result processruntime.Registration) campaignRegistration {
-	return campaignRegistration{decision: result.Decision(), token: result.Campaign()}
+	return campaignRegistration{decision: result.Decision(), token: campaignTokenValue(result.Campaign())}
 }
 
 func campaignStartEvidence(result startCommittedResult) campaignStartResult {
@@ -114,7 +114,7 @@ func campaignResiduals(residual []processruntime.Residual) []campaignResidualCus
 func campaignSettlement(result processruntime.EmergencySettlement) campaignEmergencySettlement {
 
 	return campaignEmergencySettlement{
-		epoch: fatalEpochID(result.Epoch()), owner: result.Owner(),
+		epoch: fatalEpochID(result.Epoch()), owner: campaignTokenValue(result.Owner()),
 		acknowledged: result.Acknowledged(),
 		residual:     campaignResiduals(result.Residual()),
 	}
@@ -153,24 +153,31 @@ func campaignBarrierEvidence(result barrierResult) campaignBarrierResult {
 	}
 }
 
-func processRuntimeAdmission(fact campaignAdmission) processruntime.Admission {
-	return processruntime.Admission{
-		Campaign: fact.campaign, Attempt: string(fact.attempt), Class: fact.class,
-		Profile: fact.profile, Deadline: fact.deadline,
+func processRuntimeAdmission(
+	fact campaignAdmission,
+	authority processruntime.Campaign,
+) (processruntime.Admission, bool) {
+	if fact.campaign != campaignTokenValue(authority) {
+		return processruntime.Admission{}, false
 	}
+	return processruntime.Admission{
+		Campaign: authority, Attempt: string(fact.attempt), Class: fact.class,
+		Profile: fact.profile, Deadline: fact.deadline,
+	}, true
 }
 
 func runtimeAdmissionValue(value processruntime.Admission) admissionAuthority {
 	return admissionAuthority{
-		campaign: value.Campaign, attempt: attemptIdentity(value.Attempt), class: value.Class,
+		campaign: campaignTokenValue(value.Campaign), attempt: attemptIdentity(value.Attempt), class: value.Class,
 		profile: value.Profile, deadline: value.Deadline,
 	}
 }
 
 func runtimeEmergencySettlement(settlement processruntime.EmergencySettlement) emergencySettlement {
 	return emergencySettlement{
-		epoch: fatalEpochID(settlement.Epoch()), owner: settlement.Owner(), acknowledged: settlement.Acknowledged(),
-		residual: runtimeResiduals(settlement.Residual()),
+		epoch: fatalEpochID(settlement.Epoch()), owner: campaignTokenValue(settlement.Owner()),
+		acknowledged: settlement.Acknowledged(),
+		residual:     runtimeResiduals(settlement.Residual()),
 	}
 }
 

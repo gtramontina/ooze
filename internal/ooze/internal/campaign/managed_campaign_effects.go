@@ -16,7 +16,7 @@ func (runner *managedCampaignRunner) execute(
 	case campaignEffectRegister:
 		registered := runner.runtime.RegisterCampaign(request.lineage)
 		registration := campaignRegistrationEvidence(registered)
-		runner.runtimeToken = registration.token
+		runner.runtimeAuthority = registered.Campaign()
 
 		return runner.advance(campaignRegisteredEvent{registration: registration})
 	case campaignEffectEstablishSnapshot:
@@ -69,7 +69,7 @@ func (runner *managedCampaignRunner) execute(
 			attempt: effect.attempt, workspace: workspace.Root(), snapshot: effect.snapshot,
 		})
 	case campaignEffectRequestAdmission:
-		await := runner.runtime.RequestAdmission(processRuntimeAdmission(effect.request))
+		await := runner.runtime.RequestAdmission(runner.runtimeAdmission(effect.request))
 		if await.Decision() != processruntime.AdmissionAccepted {
 			return runner.advance(admissionRejectedEvent{
 				attempt: effect.attempt,
@@ -123,7 +123,7 @@ func (runner *managedCampaignRunner) execute(
 
 		return nil
 	case campaignEffectCancelAdmission:
-		decision := runner.runtime.CancelAdmission(processRuntimeAdmission(effect.request))
+		decision := runner.runtime.CancelAdmission(runner.runtimeAdmission(effect.request))
 
 		return runner.advance(admissionCancelledEvent{
 			attempt: effect.attempt, request: effect.request,
@@ -153,8 +153,11 @@ func (runner *managedCampaignRunner) execute(
 			kind: campaignResourceWorkspace, identity: effect.workspace,
 		})
 	case campaignEffectBindConfirmationBarrier:
+		if effect.binding.campaign != campaignTokenValue(runner.runtimeAuthority) {
+			panic("campaign runtime authority does not match the inert campaign identity")
+		}
 		await := runner.runtime.BindConfirmationBarrier(processruntime.Barrier{
-			Campaign: effect.binding.campaign, Attempt: string(effect.binding.attempt),
+			Campaign: runner.runtimeAuthority, Attempt: string(effect.binding.attempt),
 			Profile: effect.binding.profile, Deadline: effect.binding.deadline,
 		})
 		if await.Decision() != processruntime.BarrierBound {
@@ -186,11 +189,14 @@ func (runner *managedCampaignRunner) execute(
 			kind: campaignResourceSnapshot, identity: string(effect.snapshot),
 		})
 	case campaignEffectProposeTerminal:
+		if effect.runtimeToken != campaignTokenValue(runner.runtimeAuthority) {
+			panic("campaign runtime authority does not match the inert campaign identity")
+		}
 		var committed processruntime.TerminalResult
 		if effect.fatalEpoch != 0 {
-			committed = runner.runtime.AuthorizeForcedAbort(runner.runtimeToken, uint64(effect.fatalEpoch))
+			committed = runner.runtime.AuthorizeForcedAbort(runner.runtimeAuthority, uint64(effect.fatalEpoch))
 		} else {
-			committed = runner.runtime.CommitTerminal(runner.runtimeToken)
+			committed = runner.runtime.CommitTerminal(runner.runtimeAuthority)
 		}
 
 		return runner.advance(terminalCommittedEvent{result: campaignTerminalResult{decision: committed.Decision()}})
@@ -290,7 +296,7 @@ func (runner *managedCampaignRunner) settle(
 	observed := terminal.observed
 	receipt := campaignReceipt(observed.receipt)
 	if facts.completesConfirmationQueue {
-		completed := runner.runtime.CompleteConfirmationQueue(runner.runtimeToken)
+		completed := runner.runtime.CompleteConfirmationQueue(runner.runtimeAuthority)
 		if completed.Decision() != processruntime.ConfirmationQueueCompleted {
 			panic("managed confirmation queue completion was rejected")
 		}

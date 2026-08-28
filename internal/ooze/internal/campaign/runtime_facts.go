@@ -12,8 +12,20 @@ type (
 	attemptIdentity   = supervision.Identity
 	attemptGeneration = processruntime.Generation
 	fatalEpochID      uint64
-	campaignToken     = processruntime.Campaign
 )
+
+type campaignToken struct {
+	id      uint64
+	lineage campaignLineage
+}
+
+func (token campaignToken) ID() uint64 { return token.id }
+
+func (token campaignToken) Lineage() campaignLineage { return token.lineage }
+
+func campaignTokenValue(value processruntime.Campaign) campaignToken {
+	return campaignToken{id: value.ID(), lineage: value.Lineage()}
+}
 
 // Profile selects automatic or serial campaign execution.
 type Profile = processruntime.Profile

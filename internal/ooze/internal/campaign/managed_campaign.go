@@ -65,20 +65,20 @@ type managedCampaignResult struct {
 
 type managedCampaignRunner struct {
 	managedCampaignConstruction
-	state        campaignState
-	nextEvent    campaignEventID
-	snapshot     TemporaryRepository
-	mutations    map[mutantIdentity]*gomutatedfile.GoMutatedFile
-	workspaces   map[string]TemporaryRepository
-	starts       map[attemptGeneration]processruntime.PreparedStart
-	owned        map[attemptGeneration]*supervision.OwnedAttempt
-	authorities  map[campaignAdmission]processruntime.Grant
-	attemptFacts map[attemptGeneration]managedAttemptFacts
-	runtimeToken campaignToken
-	terminals    chan managedTerminalObservation
-	pending      int
-	emergency    bool
-	recorder     Recorder
+	state            campaignState
+	nextEvent        campaignEventID
+	snapshot         TemporaryRepository
+	mutations        map[mutantIdentity]*gomutatedfile.GoMutatedFile
+	workspaces       map[string]TemporaryRepository
+	starts           map[attemptGeneration]processruntime.PreparedStart
+	owned            map[attemptGeneration]*supervision.OwnedAttempt
+	authorities      map[campaignAdmission]processruntime.Grant
+	attemptFacts     map[attemptGeneration]managedAttemptFacts
+	runtimeAuthority processruntime.Campaign
+	terminals        chan managedTerminalObservation
+	pending          int
+	emergency        bool
+	recorder         Recorder
 }
 
 type managedAttemptFacts struct {
@@ -120,6 +120,14 @@ func (runner *managedCampaignRunner) authority(fact campaignAdmission) processru
 		panic("managed admission authority is missing")
 	}
 
+	return authority
+}
+
+func (runner *managedCampaignRunner) runtimeAdmission(fact campaignAdmission) processruntime.Admission {
+	authority, ok := processRuntimeAdmission(fact, runner.runtimeAuthority)
+	if !ok {
+		panic("campaign runtime authority does not match the inert campaign identity")
+	}
 	return authority
 }
 

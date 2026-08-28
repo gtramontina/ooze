@@ -22,6 +22,14 @@ type Definition struct {
 // Machine applies campaign facts through the production reducer.
 type Machine struct{ state campaignState }
 
+// RuntimeBinding resolves inert campaign identities at the process-runtime boundary.
+type RuntimeBinding struct{ campaign processruntime.Campaign }
+
+// BindRuntime retains the executable authority outside pure campaign state.
+func BindRuntime(registration processruntime.Registration) RuntimeBinding {
+	return RuntimeBinding{campaign: registration.Campaign()}
+}
+
 // Fact is an immutable campaign input.
 type Fact struct{ payload campaignEventPayload }
 
@@ -160,32 +168,42 @@ func (effect Effect) CompletesConfirmationQueue() bool {
 	return effect.value.completesConfirmationQueue
 }
 
-// RuntimeCut returns the process-runtime input represented by the effect.
-func (effect Effect) RuntimeCut(definition Definition) (processruntime.Cut, bool) {
+// Cut returns the process-runtime input represented by a campaign effect.
+func (binding RuntimeBinding) Cut(effect Effect, definition Definition) (processruntime.Cut, bool) {
 	switch effect.value.kind {
 	case campaignEffectRegister:
 		return processruntime.RegisterCampaignCut(definition.Lineage), true
 	case campaignEffectRequestAdmission:
-		return processruntime.RequestAdmissionCut(processRuntimeAdmission(effect.value.request)), true
+		admission, ok := processRuntimeAdmission(effect.value.request, binding.campaign)
+		return processruntime.RequestAdmissionCut(admission), ok
 	case campaignEffectCancelAdmission:
-		return processruntime.CancelAdmissionCut(processRuntimeAdmission(effect.value.request)), true
+		admission, ok := processRuntimeAdmission(effect.value.request, binding.campaign)
+		return processruntime.CancelAdmissionCut(admission), ok
 	case campaignEffectReturnAdmission:
-		return processruntime.ReturnGrantCut(processRuntimeAdmission(effect.value.grant)), true
+		admission, ok := processRuntimeAdmission(effect.value.grant, binding.campaign)
+		return processruntime.ReturnGrantCut(admission), ok
 	case campaignEffectBindConfirmationBarrier:
-		binding := effect.value.binding
+		barrier := effect.value.binding
+		if barrier.campaign != campaignTokenValue(binding.campaign) {
+			panic("campaign runtime authority does not match the inert campaign identity")
+		}
 		return processruntime.BindConfirmationBarrierCut(processruntime.Barrier{
-			Campaign: binding.campaign, Attempt: string(binding.attempt),
-			Profile: binding.profile, Deadline: binding.deadline,
+			Campaign: binding.campaign, Attempt: string(barrier.attempt),
+			Profile: barrier.profile, Deadline: barrier.deadline,
 		}), true
 	case campaignEffectRequestStartCommitment:
-		return processruntime.CommitStartCut(processRuntimeAdmission(effect.value.grant)), true
+		admission, ok := processRuntimeAdmission(effect.value.grant, binding.campaign)
+		return processruntime.CommitStartCut(admission), ok
 	case campaignEffectProposeTerminal:
+		if effect.value.runtimeToken != campaignTokenValue(binding.campaign) {
+			panic("campaign runtime authority does not match the inert campaign identity")
+		}
 		if effect.value.fatalEpoch != 0 {
 			return processruntime.AuthorizeForcedAbortCut(
-				effect.value.runtimeToken, uint64(effect.value.fatalEpoch),
+				binding.campaign, uint64(effect.value.fatalEpoch),
 			), true
 		}
-		return processruntime.CommitTerminalCut(effect.value.runtimeToken), true
+		return processruntime.CommitTerminalCut(binding.campaign), true
 	default:
 		return processruntime.Cut{}, false
 	}
@@ -860,7 +878,7 @@ func (fact Fact) Event() Event { return Event{value: campaignEvent{payload: fact
 // Registered records process-runtime campaign registration.
 func Registered(registration processruntime.Registration) Fact {
 	return Fact{payload: campaignRegisteredEvent{registration: campaignRegistration{
-		decision: registration.Decision(), token: registration.Campaign(),
+		decision: registration.Decision(), token: campaignTokenValue(registration.Campaign()),
 	}}}
 }
 

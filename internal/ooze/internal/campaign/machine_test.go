@@ -70,13 +70,14 @@ func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *te
 	}
 	runtime := processruntime.NewReplay(1)
 	runtime, campaignRegistration := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
+	binding := campaign.BindRuntime(campaignRegistration.Registration())
 	machine, _ := campaign.NewMachine(definition)
 	machine, _ = machine.Apply(campaign.Registered(campaignRegistration.Registration()))
 	machine, _ = machine.Apply(campaign.SnapshotEstablished("snapshot-a"))
 	machine, transition := machine.Apply(campaign.CatalogueDiscovered("snapshot-a", []string{"mutant-a"}))
 	machine, transition = machine.Apply(campaign.WorkspaceMaterialized(transition.Effects()[0], "workspace-a"))
 	request := transition.Effects()[0]
-	requestCut, ok := request.RuntimeCut(definition)
+	requestCut, ok := binding.Cut(request, definition)
 	require.True(t, ok)
 	runtime, admitted := runtime.Apply(requestCut)
 	require.Len(t, admitted.Admission().Deliveries(), 1)
@@ -86,10 +87,9 @@ func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *te
 	fork := machine.Projection().Canonical().Fork()
 	_, transition = fork.Apply(campaign.RuntimeEmergencyStarted(closed.Closure()).Canonical())
 	require.Equal(t, []campaign.EffectKind{campaign.ReturnAdmissionEffect}, transition.EffectKinds())
-	returned, ok := transition.Effects()[0].RuntimeCut(definition)
-	require.True(t, ok)
-
-	assert.False(t, runtime.Accepts(returned))
+	_, ok = binding.Cut(transition.Effects()[0], definition)
+	assert.False(t, ok)
+	_ = runtime
 }
 
 func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
@@ -100,6 +100,7 @@ func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 	runtime := processruntime.NewReplay(2)
 	machine, _ := campaign.NewMachine(definition)
 	runtime, registered := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
+	binding := campaign.BindRuntime(registered.Registration())
 	machine, _ = machine.Apply(campaign.Registered(registered.Registration()))
 	machine, _ = machine.Apply(campaign.SnapshotEstablished("snapshot-a"))
 	beforeCatalogue := machine.Projection()
@@ -111,14 +112,14 @@ func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 		machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
 		require.Equal(t, []campaign.EffectKind{campaign.RequestAdmissionEffect}, transition.EffectKinds())
 		request := transition.Effects()[0]
-		cut, ok := request.RuntimeCut(definition)
+		cut, ok := binding.Cut(request, definition)
 		require.True(t, ok)
 		runtime, admitted := runtime.Apply(cut)
 		require.Len(t, admitted.Admission().Deliveries(), 1)
 		machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 		require.Equal(t, []campaign.EffectKind{campaign.RequestStartCommitmentEffect}, transition.EffectKinds())
 		start := transition.Effects()[0]
-		cut, ok = start.RuntimeCut(definition)
+		cut, ok = binding.Cut(start, definition)
 		require.True(t, ok)
 		_, started := runtime.Apply(cut)
 		machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
@@ -173,18 +174,19 @@ func TestMachineRetainsRecordedMutationDeadline(t *testing.T) {
 	runtime := processruntime.NewReplay(2)
 	machine, _ := campaign.NewMachine(definition)
 	runtime, registered := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
+	binding := campaign.BindRuntime(registered.Registration())
 	machine, _ = machine.Apply(campaign.Registered(registered.Registration()))
 	machine, _ = machine.Apply(campaign.SnapshotEstablished("snapshot-a"))
 	machine, transition := machine.Apply(campaign.CatalogueDiscovered("snapshot-a", []string{"mutant-a"}))
 	materialize := transition.Effects()[0]
 	machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
 	request := transition.Effects()[0]
-	cut, ok := request.RuntimeCut(definition)
+	cut, ok := binding.Cut(request, definition)
 	require.True(t, ok)
 	runtime, admitted := runtime.Apply(cut)
 	machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 	start := transition.Effects()[0]
-	cut, ok = start.RuntimeCut(definition)
+	cut, ok = binding.Cut(start, definition)
 	require.True(t, ok)
 	runtime, started := runtime.Apply(cut)
 	machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
