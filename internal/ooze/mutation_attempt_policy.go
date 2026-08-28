@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 var ErrInvalidMutationAttemptPlan = errors.New("invalid mutation attempt plan")
@@ -19,6 +21,30 @@ type MutationAttemptPlanInput struct {
 type MutationAttemptPlan struct {
 	deadline time.Duration
 	profile  Profile
+}
+
+type Spec struct {
+	Attempt  string
+	Command  []string
+	Dir      string
+	Env      []string
+	Profile  Profile
+	Deadline time.Duration
+}
+
+func (spec Spec) validate() error {
+	return supervision.Spec{
+		Attempt: spec.Attempt, Command: spec.Command, Dir: spec.Dir, Env: spec.Env,
+		Profile: spec.Profile, Deadline: spec.Deadline,
+	}.Validate()
+}
+
+func (spec Spec) snapshot() Spec {
+	cloned := spec
+	cloned.Command = append([]string(nil), spec.Command...)
+	cloned.Env = append([]string(nil), spec.Env...)
+
+	return cloned
 }
 
 func NewMutationAttemptPlan(input MutationAttemptPlanInput) (MutationAttemptPlan, error) {
@@ -83,17 +109,17 @@ func (plan MutationAttemptPlan) ConfirmationSpec(primary Spec, attempt, workspac
 	return confirmation, nil
 }
 
-func terminalExecutionData(terminal Terminal) ExecutionData {
+func terminalExecutionData(terminal supervision.Terminal) supervision.ExecutionData {
 	switch terminal := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		return terminal.ExecutionData
-	case Tripped:
+	case supervision.Tripped:
 		return terminal.ExecutionData
-	case Stopped:
+	case supervision.Stopped:
 		return terminal.ExecutionData
-	case Infrastructure:
+	case supervision.Infrastructure:
 		return terminal.ExecutionData
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		return terminal.ExecutionData
 	default:
 		panic("mutation terminal has no execution evidence")

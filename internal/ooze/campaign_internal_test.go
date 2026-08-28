@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"errors"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"strconv"
 	"strings"
@@ -130,7 +131,7 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 	assertCampaignEffects(t, effects, campaignEffectLaunchAttempt)
 	assert.EqualValues(t, "snapshot-a", effects[0].snapshot, "baseline launch=%#v", effects[0])
 	assert.EqualValues(t, "workspace-baseline", effects[0].workspace, "baseline launch=%#v", effects[0])
-	wantSpec := Spec{
+	wantSpec := supervision.Spec{
 		Attempt: string(baseline.attempt), Command: []string{"go", "test"}, Dir: "workspace-baseline",
 		Env: []string{"A=1"}, Profile: AutomaticProfile, Deadline: 10 * time.Minute,
 	}
@@ -145,9 +146,9 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 	})
 	assert.EqualValues(t, 0, len(effects), "owned baseline emitted effects=%#v", effects)
 
-	terminal := Settled{
-		Exit:          ExitStatus{},
-		ExecutionData: ExecutionData{Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second},
+	terminal := supervision.Settled{
+		Exit:          supervision.ExitStatus{},
+		ExecutionData: supervision.ExecutionData{Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second},
 	}
 	_, terminalResult := runtime.Apply(processruntime.ObserveAttemptCut(
 		started.generation, processRuntimeObservation(attemptSettled{}),
@@ -180,8 +181,8 @@ func TestCampaignNonEmptyCatalogueRunsOneSnapshotBoundBaselineBeforePrimaries(t 
 func TestCampaignReplayConsumesPositiveRecordedBaselineDeadlineWithoutRecomputation(t *testing.T) {
 	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 2)
 	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
-	effects := harness.settleAttempt(t, baseline, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{
+	effects := harness.settleAttempt(t, baseline, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{
 			Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second,
 		},
 	}, time.Nanosecond)
@@ -195,13 +196,13 @@ func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testin
 
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
-	firstEffects := harness.settleAttempt(t, first, Settled{
-		Exit:          ExitStatus{},
-		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	firstEffects := harness.settleAttempt(t, first, supervision.Settled{
+		Exit:          supervision.ExitStatus{},
+		ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
-	secondEffects := harness.settleAttempt(t, second, Settled{
-		Exit:          ExitStatus{Code: 1},
-		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	secondEffects := harness.settleAttempt(t, second, supervision.Settled{
+		Exit:          supervision.ExitStatus{Code: 1},
+		ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, firstEffects, campaignEffectReleaseWorkspace)
 	assertCampaignEffects(t, secondEffects, campaignEffectReleaseWorkspace)
@@ -234,11 +235,11 @@ func TestCampaignCompletedRunsExactlyOneBaselineAndOnePrimaryPerMutant(t *testin
 func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 	harness := newCampaignHarness(t, []mutantIdentity{"mutant-a"}, AutomaticProfile, 2)
 	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
-	effects := harness.settleAttempt(t, baseline, Settled{
-		Exit: ExitStatus{Code: 1},
-		ExecutionData: ExecutionData{
+	effects := harness.settleAttempt(t, baseline, supervision.Settled{
+		Exit: supervision.ExitStatus{Code: 1},
+		ExecutionData: supervision.ExecutionData{
 			Deadline: 10 * time.Minute, CommandDuration: time.Second,
-			Output: OutputSnapshot{
+			Output: supervision.OutputSnapshot{
 				Bytes: "full baseline failure\n", Cutoff: 22, CompleteThroughCutoff: true, Final: true,
 			},
 		},
@@ -262,14 +263,14 @@ func TestCampaignFailedBaselineAbortsUnscoredAfterSettlement(t *testing.T) {
 func TestCampaignBaselineAbortCauseDistinguishesCommandAndInfrastructureTerminals(t *testing.T) {
 	tests := []struct {
 		name     string
-		terminal Terminal
+		terminal supervision.Terminal
 		want     string
 	}{
-		{"nonzero_exit", Settled{Exit: ExitStatus{Code: 1}}, "baseline did not pass"},
-		{"automatic_deadline", Tripped{Trip: AutomaticDeadlineTrip{}}, "baseline command deadline fired"},
-		{"process_fuse", Tripped{Trip: FuseTrip{Live: 65}}, "baseline process fuse fired"},
-		{"stopped", Stopped{}, "baseline was stopped"},
-		{"infrastructure_census", Infrastructure{Cause: CensusFailed}, "baseline infrastructure uncertainty"},
+		{"nonzero_exit", supervision.Settled{Exit: supervision.ExitStatus{Code: 1}}, "baseline did not pass"},
+		{"automatic_deadline", supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}}, "baseline command deadline fired"},
+		{"process_fuse", supervision.Tripped{Trip: supervision.FuseTrip{Live: 65}}, "baseline process fuse fired"},
+		{"stopped", supervision.Stopped{}, "baseline was stopped"},
+		{"infrastructure_census", supervision.Infrastructure{Cause: supervision.CensusFailed}, "baseline infrastructure uncertainty"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -283,15 +284,15 @@ func TestCampaignPrimaryInfrastructureAbortStopsCommittedPeersWithoutRetry(t *te
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
-	effects := harness.settleAttempt(t, first, Infrastructure{
-		Cause: CensusFailed, Err: errors.New("census failed"),
-		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	effects := harness.settleAttempt(t, first, supervision.Infrastructure{
+		Cause: supervision.CensusFailed, Err: errors.New("census failed"),
+		ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectStopAttempt, campaignEffectReleaseWorkspace)
 	assert.Equal(t, second.attempt, effects[0].attempt, "abort stop/drain=%#v/%#v", effects[0], harness.state.drain)
 	assert.Equal(t, campaignDrainAbort, harness.state.drain.kind, "abort stop/drain=%#v/%#v", effects[0], harness.state.drain)
-	effects = harness.settleAttempt(t, second, Stopped{
-		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	effects = harness.settleAttempt(t, second, supervision.Stopped{
+		ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
@@ -318,7 +319,7 @@ func TestCampaignBaselineProvenNotReleasedAbortsWithoutASecondLaunch(t *testing.
 	receipt := runtimeReplayReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(started.generation, processRuntimeObservation(launchNotReleased{reason: launchFailed}))))
 	effects = harness.advance(attemptLaunchEvent{
 		attempt: effect.attempt, generation: started.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: supervision.LaunchFailed},
 		receipt: campaignReceiptValue(receipt),
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
@@ -346,9 +347,9 @@ func TestCampaignRejectedStartAfterConfirmationGateReturnsTheGrant(t *testing.T)
 	grant := effects[0].grant
 
 	deadline := harness.state.mutationDeadline
-	effects = harness.settleAttempt(t, first, Tripped{
-		Trip: AutomaticDeadlineTrip{}, ExecutionData: ExecutionData{
-			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+	effects = harness.settleAttempt(t, first, supervision.Tripped{
+		Trip: supervision.AutomaticDeadlineTrip{}, ExecutionData: supervision.ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 		},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReturnAdmission, campaignEffectReleaseWorkspace)
@@ -398,10 +399,10 @@ func TestCampaignLateProvisionalReceiptDoesNotRepeatAcknowledgedGrantReturn(t *t
 
 	effects = harness.advance(attemptTerminalEvent{
 		attempt: first.attempt, generation: first.generation,
-		terminal: Tripped{
-			Trip: AutomaticDeadlineTrip{},
-			ExecutionData: ExecutionData{
-				Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		terminal: supervision.Tripped{
+			Trip: supervision.AutomaticDeadlineTrip{},
+			ExecutionData: supervision.ExecutionData{
+				Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 			},
 		},
 		receipt: campaignReceiptValue(receipt),
@@ -424,9 +425,9 @@ func TestCampaignLateRejectedStartDoesNotReopenAcknowledgedGrantReturn(t *testin
 	})
 	grant := effects[0].grant
 
-	effects = harness.settleAttempt(t, first, DrainUnconfirmed{
-		Residual: OwnedUndrained,
-		ExecutionData: ExecutionData{
+	effects = harness.settleAttempt(t, first, supervision.DrainUnconfirmed{
+		Residual: supervision.OwnedUndrained,
+		ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	}, 0)
@@ -459,9 +460,9 @@ func TestCampaignFailedCleanupAcceptsLateAcknowledgedStartRejection(t *testing.T
 		attempt: primaryEffects[1].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
-	effects = harness.settleAttempt(t, first, DrainUnconfirmed{
-		Residual: OwnedUndrained,
-		ExecutionData: ExecutionData{
+	effects = harness.settleAttempt(t, first, supervision.DrainUnconfirmed{
+		Residual: supervision.OwnedUndrained,
+		ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	}, 0)
@@ -502,9 +503,9 @@ func TestCampaignFailedCleanupAcceptsPendingGrantReturnAcknowledgement(t *testin
 		attempt: primaryEffects[1].attempt, grant: campaignAdmissionValue(admitted.deliveries[0]),
 	})
 	grant := effects[0].grant
-	effects = harness.settleAttempt(t, first, DrainUnconfirmed{
-		Residual: OwnedUndrained,
-		ExecutionData: ExecutionData{
+	effects = harness.settleAttempt(t, first, supervision.DrainUnconfirmed{
+		Residual: supervision.OwnedUndrained,
+		ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	}, 0)
@@ -536,9 +537,9 @@ func TestCampaignFailedCleanupReturnsCompensatedGrantDeliveredAfterClosure(t *te
 	admitted := runtimeReplayAdmission(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(effects[0].request))))
 	require.Len(t, admitted.deliveries, 1, "admission deliveries=%#v, want one delayed grant", admitted.deliveries)
 	grant := campaignAdmissionValue(admitted.deliveries[0])
-	effects = harness.settleAttempt(t, first, DrainUnconfirmed{
-		Residual: OwnedUndrained,
-		ExecutionData: ExecutionData{
+	effects = harness.settleAttempt(t, first, supervision.DrainUnconfirmed{
+		Residual: supervision.OwnedUndrained,
+		ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	}, 0)
@@ -591,20 +592,20 @@ func TestCampaignConfirmationInfrastructureAbortsUnscored(t *testing.T) {
 	primary := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	peer := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
 	deadline := harness.state.mutationDeadline
-	harness.settleAttempt(t, primary, Tripped{
-		Trip: AutomaticDeadlineTrip{}, ExecutionData: ExecutionData{
-			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+	harness.settleAttempt(t, primary, supervision.Tripped{
+		Trip: supervision.AutomaticDeadlineTrip{}, ExecutionData: supervision.ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 		},
 	}, 0)
-	harness.settleAttempt(t, peer, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	harness.settleAttempt(t, peer, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	}, 0)
 	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
 	effects := harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-b"})
 	confirmation := harness.launchConfirmation(t, effects[0], "workspace-confirm")
-	effects = harness.settleAttempt(t, confirmation, Infrastructure{
-		Cause: CensusFailed, Err: errors.New("census failed"),
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	effects = harness.settleAttempt(t, confirmation, supervision.Infrastructure{
+		Cause: supervision.CensusFailed, Err: errors.New("census failed"),
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	assert.Equal(t, campaignDrainAbort, harness.state.drain.kind, "confirmation infrastructure drain=%#v", harness.state.drain)
@@ -612,8 +613,8 @@ func TestCampaignConfirmationInfrastructureAbortsUnscored(t *testing.T) {
 
 func TestCampaignConfirmationFuseIsAuthoritativeRunaway(t *testing.T) {
 	harness, confirmation, mutant := newCampaignConfirmationHarness(t)
-	effects := harness.settleConfirmation(t, confirmation, Tripped{
-		Trip: FuseTrip{Live: 9}, ExecutionData: ExecutionData{
+	effects := harness.settleConfirmation(t, confirmation, supervision.Tripped{
+		Trip: supervision.FuseTrip{Live: 9}, ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	})
@@ -628,8 +629,8 @@ func TestCampaignConfirmationRequiresConfirmationRuntimeReceipt(t *testing.T) {
 		require.True(t, ok, "recovered=%#v", violation)
 		assert.EqualValues(t, "campaign observe confirmation terminal", violation.operation, "recovered=%#v", violation)
 	}()
-	harness.settleAttempt(t, confirmation, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{
+	harness.settleAttempt(t, confirmation, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	}, 0)
@@ -643,13 +644,13 @@ func newCampaignConfirmationHarness(
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
 	deadline := harness.state.mutationDeadline
-	harness.settleAttempt(t, first, Tripped{
-		Trip: AutomaticDeadlineTrip{}, ExecutionData: ExecutionData{
-			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+	harness.settleAttempt(t, first, supervision.Tripped{
+		Trip: supervision.AutomaticDeadlineTrip{}, ExecutionData: supervision.ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 		},
 	}, 0)
-	harness.settleAttempt(t, second, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	harness.settleAttempt(t, second, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	}, 0)
 	harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-a"})
 	effects := harness.advance(resourceSettledEvent{kind: campaignResourceWorkspace, identity: "workspace-b"})
@@ -666,8 +667,8 @@ func TestCampaignRejectsMutationEvidenceWithWrongDeadline(t *testing.T) {
 		require.True(t, ok, "recovered=%#v", violation)
 		assert.EqualValues(t, "campaign observe terminal", violation.operation, "recovered=%#v", violation)
 	}()
-	harness.settleAttempt(t, primary, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{Deadline: time.Nanosecond, CommandDuration: time.Second},
+	harness.settleAttempt(t, primary, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{Deadline: time.Nanosecond, CommandDuration: time.Second},
 	}, 0)
 }
 
@@ -689,7 +690,7 @@ func TestCampaignConfirmedDrainedFatalEpochForcesAbort(t *testing.T) {
 	receipt := runtimeReplayReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(started.generation, processRuntimeObservation(launchUnconfirmed{}))))
 	harness.advance(attemptLaunchEvent{
 		attempt: effect.attempt, generation: started.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: supervision.ProspectiveUnresolved},
 		receipt: campaignReceiptValue(receipt),
 	})
 	settlement := runtimeReplaySettlement(harness.applyRuntime(processruntime.SettleEmergencyCut(processRuntimeResolutions(emergencySweep{resolutions: []emergencyResolution{{
@@ -769,9 +770,9 @@ func TestCampaignAbortCancelsWaitingAdmissionBeforeTerminal(t *testing.T) {
 	waiting := runtimeReplayAdmission(harness.applyRuntime(processruntime.RequestAdmissionCut(processRuntimeAdmission(request))))
 	assert.Equal(t, processruntime.AdmissionAccepted, waiting.decision, "second request was not waiting: %#v", waiting)
 	assert.EqualValues(t, 0, len(waiting.deliveries), "second request was not waiting: %#v", waiting)
-	effects = harness.settleAttempt(t, first, Infrastructure{
-		Cause: CensusFailed, Err: errors.New("census failed"),
-		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	effects = harness.settleAttempt(t, first, supervision.Infrastructure{
+		Cause: supervision.CensusFailed, Err: errors.New("census failed"),
+		ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectCancelAdmission, campaignEffectReleaseWorkspace)
 	cancelled := runtimeReplayAdmission(harness.applyRuntime(processruntime.CancelAdmissionCut(processRuntimeAdmission(request))))
@@ -796,8 +797,8 @@ func TestCampaignWorkspaceReleaseFailureStopsOwnedPeer(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a", "mutant-b"}, 2)
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
-	harness.settleAttempt(t, first, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{
+	harness.settleAttempt(t, first, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{
 			Deadline: harness.state.mutationDeadline, CommandDuration: time.Second,
 		},
 	}, 0)
@@ -905,12 +906,12 @@ func TestCampaignAdmissionClosedByFatalEpochDrainsWithoutLaunching(t *testing.T)
 }
 
 func TestCampaignTraceDistinguishesNormalizedTerminalEvidence(t *testing.T) {
-	base := attemptTerminalEvent{attempt: "attempt-a", generation: 7, terminal: Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{Deadline: time.Minute, CommandDuration: time.Second},
+	base := attemptTerminalEvent{attempt: "attempt-a", generation: 7, terminal: supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{Deadline: time.Minute, CommandDuration: time.Second},
 	}}
 	passing := campaignEventSummary(campaignEvent{id: 1, payload: base})
-	base.terminal = Settled{
-		Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{
+	base.terminal = supervision.Settled{
+		Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{
 			Deadline: time.Minute, CommandDuration: time.Second,
 		},
 	}
@@ -920,8 +921,8 @@ func TestCampaignTraceDistinguishesNormalizedTerminalEvidence(t *testing.T) {
 
 func TestCampaignTraceDistinguishesReceiptFactsThatChangeAttribution(t *testing.T) {
 	event := attemptTerminalEvent{
-		attempt: "attempt-a", generation: 7, terminal: Tripped{
-			Trip: AutomaticDeadlineTrip{}, ExecutionData: ExecutionData{Deadline: time.Minute},
+		attempt: "attempt-a", generation: 7, terminal: supervision.Tripped{
+			Trip: supervision.AutomaticDeadlineTrip{}, ExecutionData: supervision.ExecutionData{Deadline: time.Minute},
 		},
 		receipt: campaignRuntimeReceipt{generation: 7, settlementAcknowledged: true},
 	}
@@ -953,10 +954,10 @@ func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testi
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
 	second := harness.launchMaterialized(t, primaryEffects[1], "workspace-b")
 	deadline := harness.state.mutationDeadline
-	trip := func() Tripped {
-		return Tripped{
-			Trip:          AutomaticDeadlineTrip{},
-			ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired},
+	trip := func() supervision.Tripped {
+		return supervision.Tripped{
+			Trip:          supervision.AutomaticDeadlineTrip{},
+			ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired},
 		}
 	}
 	firstEffects := harness.settleAttempt(t, first, trip(), 0)
@@ -973,9 +974,9 @@ func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testi
 	assert.EqualValues(t, "mutant-a", effects[0].mutant, "first confirmation=%#v phase=%v", effects[0], harness.state.phase)
 	assert.Equal(t, campaignConfirming, harness.state.phase, "first confirmation=%#v phase=%v", effects[0], harness.state.phase)
 	confirmationA := harness.launchConfirmation(t, effects[0], "workspace-confirm-a")
-	effects = harness.settleConfirmation(t, confirmationA, Settled{
-		Exit:          ExitStatus{},
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	effects = harness.settleConfirmation(t, confirmationA, supervision.Settled{
+		Exit:          supervision.ExitStatus{},
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	effects = harness.advance(resourceSettledEvent{
@@ -984,9 +985,9 @@ func TestCampaignOverlapProvisionalsDrainInCatalogueOrderAndConfirmOnce(t *testi
 	assertCampaignEffects(t, effects, campaignEffectMaterializeWorkspace)
 	assert.EqualValues(t, "mutant-b", effects[0].mutant, "second confirmation=%#v", effects[0])
 	confirmationB := harness.launchConfirmation(t, effects[0], "workspace-confirm-b")
-	effects = harness.settleConfirmation(t, confirmationB, Tripped{
-		Trip:          AutomaticDeadlineTrip{},
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired},
+	effects = harness.settleConfirmation(t, confirmationB, supervision.Tripped{
+		Trip:          supervision.AutomaticDeadlineTrip{},
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired},
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	effects = harness.advance(resourceSettledEvent{
@@ -1029,9 +1030,9 @@ func TestCampaignReturnsKnownGrantDeliveredAfterPrimaryClosure(t *testing.T) {
 	assert.EqualValues(t, 1, len(thirdAdmission.deliveries), "third grant=%#v", thirdAdmission)
 
 	deadline := harness.state.mutationDeadline
-	effects := harness.settleAttempt(t, first, Tripped{
-		Trip:          AutomaticDeadlineTrip{},
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired},
+	effects := harness.settleAttempt(t, first, supervision.Tripped{
+		Trip:          supervision.AutomaticDeadlineTrip{},
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	effects = harness.advance(admissionGrantedEvent{
@@ -1047,8 +1048,8 @@ func TestCampaignReturnsKnownGrantDeliveredAfterPrimaryClosure(t *testing.T) {
 
 	assert.Equal(t, campaignDraining, harness.state.phase, "phase/drain=%v/%#v", harness.state.phase, harness.state.drain)
 	assert.Equal(t, campaignDrainConfirm, harness.state.drain.kind, "phase/drain=%v/%#v", harness.state.phase, harness.state.drain)
-	effects = harness.settleAttempt(t, second, Settled{
-		Exit: ExitStatus{}, ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	effects = harness.settleAttempt(t, second, supervision.Settled{
+		Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	}, 0)
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 }
@@ -1058,15 +1059,15 @@ func TestCampaignBindsFreshBarrierForEachConfirmationClosure(t *testing.T) {
 		t, []mutantIdentity{"mutant-a", "mutant-b", "mutant-c", "mutant-d"}, 2,
 	)
 	deadline := harness.state.mutationDeadline
-	trip := Tripped{
-		Trip: AutomaticDeadlineTrip{},
-		ExecutionData: ExecutionData{
-			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+	trip := supervision.Tripped{
+		Trip: supervision.AutomaticDeadlineTrip{},
+		ExecutionData: supervision.ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 		},
 	}
-	killed := Settled{
-		Exit:          ExitStatus{Code: 1},
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	killed := supervision.Settled{
+		Exit:          supervision.ExitStatus{Code: 1},
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	}
 
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
@@ -1105,15 +1106,15 @@ func TestCampaignClearsConfirmationClosureBeforeOrdinaryPrimariesResume(t *testi
 		t, []mutantIdentity{"mutant-a", "mutant-b", "mutant-c", "mutant-d", "mutant-e"}, 2,
 	)
 	deadline := harness.state.mutationDeadline
-	trip := Tripped{
-		Trip: AutomaticDeadlineTrip{},
-		ExecutionData: ExecutionData{
-			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+	trip := supervision.Tripped{
+		Trip: supervision.AutomaticDeadlineTrip{},
+		ExecutionData: supervision.ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 		},
 	}
-	killed := Settled{
-		Exit:          ExitStatus{Code: 1},
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: time.Second},
+	killed := supervision.Settled{
+		Exit:          supervision.ExitStatus{Code: 1},
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: time.Second},
 	}
 
 	first := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
@@ -1176,10 +1177,10 @@ func TestCampaignAdoptsConfirmationClosureBeforeCausativeTerminalDelivery(t *tes
 
 	effects = harness.advance(attemptTerminalEvent{
 		attempt: first.attempt, generation: first.generation,
-		terminal: Tripped{
-			Trip: AutomaticDeadlineTrip{},
-			ExecutionData: ExecutionData{
-				Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		terminal: supervision.Tripped{
+			Trip: supervision.AutomaticDeadlineTrip{},
+			ExecutionData: supervision.ExecutionData{
+				Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 			},
 		},
 		receipt: campaignReceiptValue(receipt),
@@ -1203,9 +1204,9 @@ func TestCampaignAdoptsStartCommittedBeforeClosureWhoseFactArrivesAfterClosure(t
 	delayed := runtimeReplayStart(harness.applyRuntime(processruntime.CommitStartCut(processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])))))
 
 	deadline := harness.state.mutationDeadline
-	harness.settleAttempt(t, first, Tripped{
-		Trip:          AutomaticDeadlineTrip{},
-		ExecutionData: ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired},
+	harness.settleAttempt(t, first, supervision.Tripped{
+		Trip:          supervision.AutomaticDeadlineTrip{},
+		ExecutionData: supervision.ExecutionData{Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired},
 	}, 0)
 	assert.Equal(t, campaignDraining, harness.state.phase, "phase=%v, want draining before delayed committed fact", harness.state.phase)
 
@@ -1234,7 +1235,7 @@ func TestCampaignSettlesLateProvenNoReleaseDuringRuntimeEmergency(t *testing.T) 
 	unconfirmed := runtimeReplayReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(prospective[0].generation, processRuntimeObservation(launchUnconfirmed{}))))
 	harness.advance(attemptLaunchEvent{
 		attempt: prospective[0].attempt, generation: prospective[0].generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: supervision.ProspectiveUnresolved},
 		receipt: campaignReceiptValue(unconfirmed),
 	})
 	wantDrain := harness.state.drain
@@ -1245,7 +1246,7 @@ func TestCampaignSettlesLateProvenNoReleaseDuringRuntimeEmergency(t *testing.T) 
 
 	effects := harness.advance(attemptLaunchEvent{
 		attempt: prospective[1].attempt, generation: prospective[1].generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: supervision.LaunchFailed},
 		receipt: campaignReceiptValue(notReleased),
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
@@ -1268,14 +1269,14 @@ func TestCampaignPreservesRuntimeEmergencyForPreClosureNoReleaseDeliveredLate(t 
 	unconfirmed := runtimeReplayReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(first.generation, processRuntimeObservation(launchUnconfirmed{}))))
 	harness.advance(attemptLaunchEvent{
 		attempt: first.attempt, generation: first.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: supervision.ProspectiveUnresolved},
 		receipt: campaignReceiptValue(unconfirmed),
 	})
 	wantDrain := harness.state.drain
 
 	effects := harness.advance(attemptLaunchEvent{
 		attempt: second.attempt, generation: second.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: supervision.LaunchFailed},
 		receipt: campaignReceiptValue(notReleased),
 	})
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
@@ -1302,17 +1303,17 @@ func TestCampaignPreservesRuntimeEmergencyForPreClosureProvisionalDeliveredLate(
 	unconfirmed := runtimeReplayReceipt(harness.applyRuntime(processruntime.ObserveAttemptCut(second.generation, processRuntimeObservation(launchUnconfirmed{}))))
 	harness.advance(attemptLaunchEvent{
 		attempt: second.attempt, generation: second.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved},
+		result:  campaignLaunchObservation{kind: campaignLaunchUnconfirmed, residual: supervision.ProspectiveUnresolved},
 		receipt: campaignReceiptValue(unconfirmed),
 	})
 	wantDrain := harness.state.drain
 
 	effects := harness.advance(attemptTerminalEvent{
 		attempt: first.attempt, generation: first.generation,
-		terminal: Tripped{
-			Trip: AutomaticDeadlineTrip{},
-			ExecutionData: ExecutionData{
-				Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+		terminal: supervision.Tripped{
+			Trip: supervision.AutomaticDeadlineTrip{},
+			ExecutionData: supervision.ExecutionData{
+				Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 			},
 		},
 		receipt: campaignReceiptValue(terminal),
@@ -1332,17 +1333,17 @@ func TestCampaignAbortDrainSurvivesLateProvisionalTerminal(t *testing.T) {
 
 	effects := harness.advance(attemptLaunchEvent{
 		attempt: prospective.attempt, generation: prospective.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: supervision.LaunchFailed},
 		receipt: campaignReceiptValue(notReleased),
 	})
 	assertCampaignEffects(t, effects, campaignEffectStopAttempt, campaignEffectReleaseWorkspace)
 	wantDrain := harness.state.drain
 
 	deadline := harness.state.mutationDeadline
-	harness.settleAttempt(t, owned, Tripped{
-		Trip: AutomaticDeadlineTrip{},
-		ExecutionData: ExecutionData{
-			Deadline: deadline, CommandDuration: deadline, BoundFired: CommandDeadlineFired,
+	harness.settleAttempt(t, owned, supervision.Tripped{
+		Trip: supervision.AutomaticDeadlineTrip{},
+		ExecutionData: supervision.ExecutionData{
+			Deadline: deadline, CommandDuration: deadline, BoundFired: supervision.CommandDeadlineFired,
 		},
 	}, 0)
 	assert.Equal(t, wantDrain, harness.state.drain, "late provisional terminal drain=%#v, want abort drain %#v", harness.state.drain, wantDrain)
@@ -1365,7 +1366,7 @@ func TestCampaignLateGrantDuringAbortAwaitsQueuedCancellation(t *testing.T) {
 
 	effects = harness.advance(attemptLaunchEvent{
 		attempt: prospective.attempt, generation: prospective.generation,
-		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: LaunchFailed},
+		result:  campaignLaunchObservation{kind: campaignLaunchNotReleased, failure: supervision.LaunchFailed},
 		receipt: campaignReceiptValue(notReleased),
 	})
 	assertCampaignEffects(t, effects, campaignEffectCancelAdmission, campaignEffectReleaseWorkspace)
@@ -1382,9 +1383,9 @@ func TestCampaignLateGrantDuringAbortAwaitsQueuedCancellation(t *testing.T) {
 func TestCampaignCleanupUnconfirmedRequiresStaticNonEmptyResidual(t *testing.T) {
 	harness, primaryEffects := newRunningCampaignHarness(t, []mutantIdentity{"mutant-a"}, 1)
 	primary := harness.launchMaterialized(t, primaryEffects[0], "workspace-a")
-	effects := harness.settleAttempt(t, primary, DrainUnconfirmed{
-		Residual:      OwnedUndrained,
-		ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+	effects := harness.settleAttempt(t, primary, supervision.DrainUnconfirmed{
+		Residual:      supervision.OwnedUndrained,
+		ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 	}, 0)
 	assert.EqualValues(t, 0, len(effects), "runtime emergency state/effects=%#v/%#v", harness.state, effects)
 	assert.Equal(t, campaignDraining, harness.state.phase, "runtime emergency state/effects=%#v/%#v", harness.state, effects)
@@ -1589,9 +1590,9 @@ func runSerialCampaignChoices(t *testing.T, choices []byte) campaignState {
 	}
 	harness := newCampaignHarness(t, mutants, SerialProfile, 3)
 	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
-	effects := harness.settleAttempt(t, baseline, Settled{
-		Exit:          ExitStatus{},
-		ExecutionData: ExecutionData{Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second},
+	effects := harness.settleAttempt(t, baseline, supervision.Settled{
+		Exit:          supervision.ExitStatus{},
+		ExecutionData: supervision.ExecutionData{Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second},
 	}, resolveMutationDeadline(2*time.Second, 3))
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 	effects = harness.advance(resourceSettledEvent{
@@ -1602,24 +1603,24 @@ func runSerialCampaignChoices(t *testing.T, choices []byte) campaignState {
 		assert.Equal(t, campaignEffectMaterializeWorkspace, effects[0].kind, "primary %d materialization=%#v", index, effects)
 		workspace := "workspace-" + strconv.Itoa(index+1)
 		attempt := harness.launchMaterialized(t, effects[0], workspace)
-		var terminal Terminal
+		var terminal supervision.Terminal
 		switch choice % 3 {
 		case 0:
-			terminal = Settled{
-				Exit:          ExitStatus{},
-				ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+			terminal = supervision.Settled{
+				Exit:          supervision.ExitStatus{},
+				ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 			}
 		case 1:
-			terminal = Settled{
-				Exit:          ExitStatus{Code: 1},
-				ExecutionData: ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
+			terminal = supervision.Settled{
+				Exit:          supervision.ExitStatus{Code: 1},
+				ExecutionData: supervision.ExecutionData{Deadline: harness.state.mutationDeadline, CommandDuration: time.Second},
 			}
 		default:
-			terminal = Tripped{
-				Trip: SerialDeadlineTrip{},
-				ExecutionData: ExecutionData{
+			terminal = supervision.Tripped{
+				Trip: supervision.SerialDeadlineTrip{},
+				ExecutionData: supervision.ExecutionData{
 					Deadline: harness.state.mutationDeadline, CommandDuration: harness.state.mutationDeadline,
-					BoundFired: CommandDeadlineFired,
+					BoundFired: supervision.CommandDeadlineFired,
 				},
 			}
 		}
@@ -1718,9 +1719,9 @@ func newRunningCampaignHarness(
 	t.Helper()
 	harness := newCampaignHarness(t, mutants, AutomaticProfile, peers)
 	baseline := harness.launchMaterialized(t, harness.effects[0], "workspace-baseline")
-	effects := harness.settleAttempt(t, baseline, Settled{
-		Exit:          ExitStatus{},
-		ExecutionData: ExecutionData{Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second},
+	effects := harness.settleAttempt(t, baseline, supervision.Settled{
+		Exit:          supervision.ExitStatus{},
+		ExecutionData: supervision.ExecutionData{Deadline: 10 * time.Minute, CommandDuration: 2 * time.Second},
 	}, resolveMutationDeadline(2*time.Second, peers))
 	assertCampaignEffects(t, effects, campaignEffectReleaseWorkspace)
 
@@ -1785,7 +1786,7 @@ func (harness *campaignHarness) startProspective(
 func (harness *campaignHarness) settleAttempt(
 	t *testing.T,
 	attempt launchedCampaignAttempt,
-	terminal Terminal,
+	terminal supervision.Terminal,
 	resolved time.Duration,
 ) []campaignEffect {
 	t.Helper()
@@ -1793,20 +1794,20 @@ func (harness *campaignHarness) settleAttempt(
 	require.True(t, found, "attempt generation is not live")
 	var observation attemptObservation
 	switch observed := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		observation = attemptSettled{profile: grant.profile, deadline: grant.deadline}
-	case Tripped:
+	case supervision.Tripped:
 		switch observed.Trip.(type) {
-		case FuseTrip:
+		case supervision.FuseTrip:
 			observation = attemptTripped{kind: fuseTrip}
 		default:
 			observation = attemptTripped{kind: deadlineTrip, profile: grant.profile, deadline: grant.deadline}
 		}
-	case Stopped:
+	case supervision.Stopped:
 		observation = attemptStopped{}
-	case Infrastructure:
+	case supervision.Infrastructure:
 		observation = attemptInfrastructure{cause: "campaign fixture"}
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		observation = drainUnconfirmed{}
 	default:
 		require.FailNowf(t, "unsupported fixture terminal", "terminal: %#v", terminal)
@@ -1875,7 +1876,7 @@ func (harness *campaignHarness) launchConfirmation(
 func (harness *campaignHarness) settleConfirmation(
 	t *testing.T,
 	attempt launchedCampaignAttempt,
-	terminal Terminal,
+	terminal supervision.Terminal,
 ) []campaignEffect {
 	t.Helper()
 	queueDrained := len(harness.state.drain.provisionals) == 1
@@ -1883,13 +1884,13 @@ func (harness *campaignHarness) settleConfirmation(
 	require.True(t, found, "confirmation generation is not live")
 	var observation attemptObservation
 	switch terminal := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		observation = attemptSettled{profile: grant.profile, deadline: grant.deadline}
-	case Tripped:
+	case supervision.Tripped:
 		switch terminal.Trip.(type) {
-		case FuseTrip:
+		case supervision.FuseTrip:
 			observation = attemptTripped{kind: fuseTrip}
-		case AutomaticDeadlineTrip, SerialDeadlineTrip:
+		case supervision.AutomaticDeadlineTrip, supervision.SerialDeadlineTrip:
 			observation = attemptTripped{kind: deadlineTrip, profile: grant.profile, deadline: grant.deadline}
 		default:
 			require.FailNow(t, "confirmation trip is invalid")

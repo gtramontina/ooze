@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"strconv"
 	"strings"
 	"time"
@@ -13,12 +14,12 @@ import (
 type managedTemporaryDirectoryFactory interface{ New() string }
 
 type managedObservedLaunch struct {
-	result  LaunchResult
+	result  supervision.LaunchResult
 	receipt processruntime.Receipt
 }
 
 type managedObservedTerminal struct {
-	terminal Terminal
+	terminal supervision.Terminal
 	receipt  processruntime.Receipt
 }
 
@@ -28,11 +29,11 @@ type managedObservedEmergency struct {
 }
 
 type managedAttemptSystem interface {
-	reserveLaunch(*processruntime.StartCell, Spec)
+	reserveLaunch(*processruntime.StartCell, supervision.Spec)
 	discardLaunch(*processruntime.StartCell)
-	launch(processruntime.PreparedStart, Spec) managedObservedLaunch
-	wait(attemptGeneration, *OwnedAttempt) managedObservedTerminal
-	stop(*OwnedAttempt)
+	launch(processruntime.PreparedStart, supervision.Spec) managedObservedLaunch
+	wait(attemptGeneration, *supervision.OwnedAttempt) managedObservedTerminal
+	stop(*supervision.OwnedAttempt)
 	emergency(fatalEpochID) managedObservedEmergency
 }
 
@@ -70,7 +71,7 @@ type managedCampaignRunner struct {
 	mutations    map[mutantIdentity]*gomutatedfile.GoMutatedFile
 	workspaces   map[string]TemporaryRepository
 	starts       map[attemptGeneration]processruntime.PreparedStart
-	owned        map[attemptGeneration]*OwnedAttempt
+	owned        map[attemptGeneration]*supervision.OwnedAttempt
 	authorities  map[campaignAdmission]processruntime.Grant
 	attemptFacts map[attemptGeneration]managedAttemptFacts
 	runtimeToken campaignToken
@@ -102,7 +103,7 @@ func newManagedCampaignRunner(construction managedCampaignConstruction) *managed
 		mutations:                   make(map[mutantIdentity]*gomutatedfile.GoMutatedFile),
 		workspaces:                  make(map[string]TemporaryRepository),
 		starts:                      make(map[attemptGeneration]processruntime.PreparedStart),
-		owned:                       make(map[attemptGeneration]*OwnedAttempt),
+		owned:                       make(map[attemptGeneration]*supervision.OwnedAttempt),
 		authorities:                 make(map[campaignAdmission]processruntime.Grant),
 		attemptFacts:                make(map[attemptGeneration]managedAttemptFacts),
 		recorder:                    construction.recorder,

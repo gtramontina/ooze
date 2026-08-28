@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"strconv"
 	"time"
@@ -90,7 +91,7 @@ type campaignEffect struct {
 	fatalEpoch                 fatalEpochID
 	attemptKind                campaignAttemptKind
 	completesConfirmationQueue bool
-	spec                       Spec
+	spec                       supervision.Spec
 }
 
 type campaignTraceRecord struct {
@@ -336,13 +337,13 @@ const (
 
 type campaignLaunchObservation struct {
 	kind     campaignLaunchKind
-	failure  LaunchFailure
-	residual Residual
+	failure  supervision.LaunchFailure
+	residual supervision.Residual
 }
 type attemptTerminalEvent struct {
 	attempt                  attemptIdentity
 	generation               attemptGeneration
-	terminal                 Terminal
+	terminal                 supervision.Terminal
 	receipt                  campaignRuntimeReceipt
 	resolvedMutationDeadline mutationDeadlineResolution
 }
@@ -469,10 +470,10 @@ type campaignAttemptEvidence struct {
 	deadline                time.Duration
 	launchDuration          time.Duration
 	commandDuration         time.Duration
-	boundFired              BoundFired
-	output                  OutputSnapshot
-	failures                FailureDiagnostics
-	count                   ObservedCount
+	boundFired              supervision.BoundFired
+	output                  supervision.OutputSnapshot
+	failures                supervision.FailureDiagnostics
+	count                   supervision.ObservedCount
 	confirmationProvisional bool
 }
 
@@ -1136,7 +1137,7 @@ func (state campaignState) acceptGrant(attemptAt int, grant campaignAdmission) (
 	})
 }
 
-func (state campaignState) attemptSpec(attemptAt int) Spec {
+func (state campaignState) attemptSpec(attemptAt int) supervision.Spec {
 	deadline := state.mutationDeadline
 	if state.attempts[attemptAt].kind == campaignAttemptBaseline {
 		deadline = state.definition.baselineDeadline
@@ -1145,7 +1146,7 @@ func (state campaignState) attemptSpec(attemptAt int) Spec {
 		campaignInvariant("prepare start commitment", "attempt deadline is unresolved")
 	}
 
-	return Spec{
+	return supervision.Spec{
 		Attempt: string(state.attempts[attemptAt].identity), Command: slices.Clone(state.definition.command),
 		Dir: state.attempts[attemptAt].workspace, Env: slices.Clone(state.definition.env),
 		Profile: state.definition.profile, Deadline: deadline,
@@ -1285,7 +1286,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 
 		return state, nil
 	case campaignLaunchNotReleased:
-		if (event.result.failure != LaunchFailed && event.result.failure != LaunchResourceExhausted) ||
+		if (event.result.failure != supervision.LaunchFailed && event.result.failure != supervision.LaunchResourceExhausted) ||
 			event.result.residual != 0 ||
 			!event.receipt.settlementAcknowledged {
 			campaignInvariant("observe launch", "proven no-release observation is invalid")
@@ -1313,7 +1314,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 
 		return state.emitAll(effects)
 	case campaignLaunchUnconfirmed:
-		if event.result.residual != ProspectiveUnresolved || event.result.failure != 0 ||
+		if event.result.residual != supervision.ProspectiveUnresolved || event.result.failure != 0 ||
 			!event.receipt.runtimeClosureInProgress ||
 			event.receipt.fatalEpoch == 0 {
 			campaignInvariant("observe launch", "unconfirmed launch observation is invalid")
@@ -1336,7 +1337,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 
 func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campaignState, []campaignEffect) {
 	attemptAt := state.attemptIndex(event.attempt)
-	_, drainFailed := event.terminal.(DrainUnconfirmed)
+	_, drainFailed := event.terminal.(supervision.DrainUnconfirmed)
 	if drainFailed {
 		if attemptAt < 0 || state.attempts[attemptAt].stage != campaignAttemptOwned ||
 			event.generation != state.attempts[attemptAt].generation || !event.receipt.runtimeClosureInProgress ||
@@ -1374,7 +1375,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	switch attempt.kind {
 	case campaignAttemptBaseline:
 		state.baselineEvidence = campaignAttemptEvidenceFromTerminal(event.terminal, false)
-		settled, passed := event.terminal.(Settled)
+		settled, passed := event.terminal.(supervision.Settled)
 		passed = passed && settled.Exit.Passed() && settled.Deadline == state.definition.baselineDeadline &&
 			settled.CommandDuration > 0
 		if passed && event.resolvedMutationDeadline.duration <= 0 {
@@ -1397,17 +1398,17 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			event.terminal, event.receipt.confirmationProvisional,
 		)
 		switch terminal := event.terminal.(type) {
-		case Settled:
+		case supervision.Settled:
 			if terminal.Exit.Passed() {
 				state.mutants[mutantAt].result = mutantSurvived
 			} else {
 				state.mutants[mutantAt].result = mutantKilled
 			}
-		case Tripped:
+		case supervision.Tripped:
 			switch terminal.Trip.(type) {
-			case FuseTrip:
+			case supervision.FuseTrip:
 				state.mutants[mutantAt].result = mutantRunaway
-			case AutomaticDeadlineTrip, SerialDeadlineTrip:
+			case supervision.AutomaticDeadlineTrip, supervision.SerialDeadlineTrip:
 				if event.receipt.confirmationProvisional && state.drain.kind != campaignDrainAbort &&
 					state.drain.kind != campaignDrainRuntimeEmergency {
 					state.phase = campaignDraining
@@ -1419,13 +1420,13 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 			default:
 				campaignInvariant("observe primary terminal", "trip kind is invalid")
 			}
-		case Stopped:
+		case supervision.Stopped:
 			if state.drain.kind != campaignDrainAbort && state.drain.kind != campaignDrainRuntimeEmergency {
 				state.phase = campaignDraining
 				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary stopped"}
 				transitionEffects = state.abortOutstandingAttempts(event.attempt)
 			}
-		case Infrastructure:
+		case supervision.Infrastructure:
 			if state.drain.kind != campaignDrainAbort && state.drain.kind != campaignDrainRuntimeEmergency {
 				state.phase = campaignDraining
 				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary infrastructure uncertainty"}
@@ -1442,30 +1443,30 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		}
 		state.mutants[mutantAt].confirmationEvidence = campaignAttemptEvidenceFromTerminal(event.terminal, false)
 		resolvedConfirmation := true
-		_, settledConfirmation := event.terminal.(Settled)
-		_, trippedConfirmation := event.terminal.(Tripped)
+		_, settledConfirmation := event.terminal.(supervision.Settled)
+		_, trippedConfirmation := event.terminal.(supervision.Tripped)
 		if (settledConfirmation || trippedConfirmation) &&
 			(!event.receipt.confirmationObserved ||
 				event.receipt.confirmationQueueDrained != (len(state.drain.provisionals) == 1)) {
 			campaignInvariant("observe confirmation terminal", "confirmation runtime authority is missing")
 		}
 		switch terminal := event.terminal.(type) {
-		case Settled:
+		case supervision.Settled:
 			if terminal.Exit.Passed() {
 				state.mutants[mutantAt].result = mutantSurvived
 			} else {
 				state.mutants[mutantAt].result = mutantKilled
 			}
-		case Tripped:
+		case supervision.Tripped:
 			switch terminal.Trip.(type) {
-			case FuseTrip:
+			case supervision.FuseTrip:
 				state.mutants[mutantAt].result = mutantRunaway
-			case AutomaticDeadlineTrip, SerialDeadlineTrip:
+			case supervision.AutomaticDeadlineTrip, supervision.SerialDeadlineTrip:
 				state.mutants[mutantAt].result = mutantTimedOut
 			default:
 				campaignInvariant("observe confirmation terminal", "confirmation trip is invalid")
 			}
-		case Infrastructure:
+		case supervision.Infrastructure:
 			resolvedConfirmation = false
 			state.phase = campaignDraining
 			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "confirmation infrastructure uncertainty"}
@@ -1495,22 +1496,22 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	return state.emitAll(effects)
 }
 
-func campaignBaselineAbortCause(terminal Terminal) string {
+func campaignBaselineAbortCause(terminal supervision.Terminal) string {
 	switch observed := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		return "baseline did not pass"
-	case Tripped:
+	case supervision.Tripped:
 		switch observed.Trip.(type) {
-		case AutomaticDeadlineTrip, SerialDeadlineTrip:
+		case supervision.AutomaticDeadlineTrip, supervision.SerialDeadlineTrip:
 			return "baseline command deadline fired"
-		case FuseTrip:
+		case supervision.FuseTrip:
 			return "baseline process fuse fired"
 		default:
 			campaignInvariant("observe baseline terminal", "baseline trip kind is invalid")
 		}
-	case Stopped:
+	case supervision.Stopped:
 		return "baseline was stopped"
-	case Infrastructure:
+	case supervision.Infrastructure:
 		return "baseline infrastructure uncertainty"
 	default:
 		campaignInvariant("observe baseline terminal", "baseline terminal kind is invalid")
@@ -1519,7 +1520,7 @@ func campaignBaselineAbortCause(terminal Terminal) string {
 	return ""
 }
 
-func campaignAttemptEvidenceFromTerminal(terminal Terminal, confirmationProvisional bool) campaignAttemptEvidence {
+func campaignAttemptEvidenceFromTerminal(terminal supervision.Terminal, confirmationProvisional bool) campaignAttemptEvidence {
 	data := terminalExecutionData(terminal)
 	evidence := campaignAttemptEvidence{
 		deadline: data.Deadline, launchDuration: data.LaunchDuration,
@@ -1528,27 +1529,27 @@ func campaignAttemptEvidenceFromTerminal(terminal Terminal, confirmationProvisio
 		confirmationProvisional: confirmationProvisional,
 	}
 	switch observed := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		evidence.kind = campaignEvidenceSettled
 		evidence.passed = observed.Exit.Passed()
-	case Tripped:
+	case supervision.Tripped:
 		switch trip := observed.Trip.(type) {
-		case FuseTrip:
+		case supervision.FuseTrip:
 			evidence.kind = campaignEvidenceFuse
-			evidence.count = ObservedCount{Value: trip.Live, Present: true}
-		case AutomaticDeadlineTrip:
+			evidence.count = supervision.ObservedCount{Value: trip.Live, Present: true}
+		case supervision.AutomaticDeadlineTrip:
 			evidence.kind = campaignEvidenceDeadline
 			evidence.count = trip.Peak
-		case SerialDeadlineTrip:
+		case supervision.SerialDeadlineTrip:
 			evidence.kind = campaignEvidenceDeadline
 		default:
 			campaignInvariant("present attempt", "trip kind is invalid")
 		}
-	case Stopped:
+	case supervision.Stopped:
 		evidence.kind = campaignEvidenceStopped
-	case Infrastructure:
+	case supervision.Infrastructure:
 		evidence.kind = campaignEvidenceInfrastructure
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		evidence.kind = campaignEvidenceDrainUnconfirmed
 	default:
 		campaignInvariant("present attempt", "terminal kind is invalid")
@@ -1580,17 +1581,17 @@ func (state campaignState) attemptDeadline(attempt campaignAttempt) time.Duratio
 	return state.mutationDeadline
 }
 
-func terminalDeadline(terminal Terminal) time.Duration {
+func terminalDeadline(terminal supervision.Terminal) time.Duration {
 	switch observed := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		return observed.Deadline
-	case Tripped:
+	case supervision.Tripped:
 		return observed.Deadline
-	case Stopped:
+	case supervision.Stopped:
 		return observed.Deadline
-	case Infrastructure:
+	case supervision.Infrastructure:
 		return observed.Deadline
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		return observed.Deadline
 	default:
 		return 0
@@ -1956,29 +1957,29 @@ func campaignEventSummary(event campaignEvent) string {
 	return summary
 }
 
-func campaignTerminalName(terminal Terminal) string {
+func campaignTerminalName(terminal supervision.Terminal) string {
 	switch observed := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		return "settled/passed=" + strconv.FormatBool(observed.Exit.Passed())
-	case Tripped:
+	case supervision.Tripped:
 		switch trip := observed.Trip.(type) {
-		case FuseTrip:
+		case supervision.FuseTrip:
 			return "fuse/live=" + strconv.Itoa(trip.Live)
-		case AutomaticDeadlineTrip:
+		case supervision.AutomaticDeadlineTrip:
 			if trip.Peak.Present {
 				return "automatic deadline/running-peak=" + strconv.Itoa(trip.Peak.Value)
 			}
 			return "automatic deadline/running-peak=absent"
-		case SerialDeadlineTrip:
+		case supervision.SerialDeadlineTrip:
 			return "serial deadline"
 		default:
 			return "unknown trip"
 		}
-	case Stopped:
+	case supervision.Stopped:
 		return "stopped"
-	case Infrastructure:
+	case supervision.Infrastructure:
 		return "infrastructure"
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		return "drain unconfirmed"
 	default:
 		return "unknown"

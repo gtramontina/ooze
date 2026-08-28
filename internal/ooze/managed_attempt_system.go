@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"sync"
 	"time"
 
@@ -13,13 +14,13 @@ const (
 )
 
 type nativeManagedAttemptSystem struct {
-	driver          *supervisorDriver
+	driver          *supervision.Driver
 	emergencyOnce   sync.Once
 	emergencyResult managedObservedEmergency
 }
 
 func newNativeManagedAttemptSystem(runtime *processruntime.Runtime) (*nativeManagedAttemptSystem, error) {
-	driver, err := newNativeSupervisorDriver(runtime, managedLaunchProgress, managedDrainEpoch)
+	driver, err := supervision.NewNativeDriver(runtime, managedLaunchProgress, managedDrainEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -29,46 +30,44 @@ func newNativeManagedAttemptSystem(runtime *processruntime.Runtime) (*nativeMana
 
 func (system *nativeManagedAttemptSystem) launch(
 	start processruntime.PreparedStart,
-	spec Spec,
+	spec supervision.Spec,
 ) managedObservedLaunch {
-	return system.driver.launchManaged(start, spec)
+	observed := system.driver.Launch(start, spec)
+	return managedObservedLaunch{result: observed.Result(), receipt: observed.Receipt()}
 }
 
-func (system *nativeManagedAttemptSystem) reserveLaunch(cell *processruntime.StartCell, spec Spec) {
-	system.driver.reserveLaunch(cell, spec)
+func (system *nativeManagedAttemptSystem) reserveLaunch(cell *processruntime.StartCell, spec supervision.Spec) {
+	system.driver.ReserveLaunch(cell, spec)
 }
 
 func (system *nativeManagedAttemptSystem) discardLaunch(cell *processruntime.StartCell) {
-	system.driver.discardLaunch(cell)
+	system.driver.DiscardLaunch(cell)
 }
 
 func (system *nativeManagedAttemptSystem) wait(
 	generation attemptGeneration,
-	owned *OwnedAttempt,
+	owned *supervision.OwnedAttempt,
 ) managedObservedTerminal {
-	return system.driver.waitManaged(generation, owned)
+	observed := system.driver.Wait(generation, owned)
+	return managedObservedTerminal{terminal: observed.Terminal(), receipt: observed.Receipt()}
 }
 
-func (system *nativeManagedAttemptSystem) stop(owned *OwnedAttempt) {
-	at := system.driver.now()
-	owned.Stop(StopRequest{At: at, DrainBy: at.Add(system.driver.drainEpoch)})
+func (system *nativeManagedAttemptSystem) stop(owned *supervision.OwnedAttempt) {
+	system.driver.Stop(owned)
 }
 
 func (system *nativeManagedAttemptSystem) emergency(epoch fatalEpochID) managedObservedEmergency {
 	system.emergencyOnce.Do(func() {
-		at := system.driver.now()
-		system.driver.emergencyDrain(EmergencyRequest{At: at, DrainBy: at.Add(system.driver.drainEpoch)})
-		system.driver.mutex.Lock()
-		defer system.driver.mutex.Unlock()
-		if !system.driver.emergencyReady {
-			invariant(supervisorDriverOperation, "managed emergency lacks exact runtime receipt")
-		}
+		at := time.Now()
+		_, settlement := system.driver.EmergencyDrain(supervision.EmergencyRequest{
+			At: at, DrainBy: at.Add(managedDrainEpoch),
+		})
 		system.emergencyResult = managedObservedEmergency{
-			epoch: fatalEpochID(system.driver.emergencyReceipt.Epoch()), settlement: system.driver.emergencyReceipt,
+			epoch: fatalEpochID(settlement.Epoch()), settlement: settlement,
 		}
 	})
 	if system.emergencyResult.epoch != epoch {
-		invariant(supervisorDriverOperation, "managed emergency epoch is stale or wrong")
+		invariant("manage attempts", "managed emergency epoch is stale or wrong")
 	}
 
 	return system.emergencyResult

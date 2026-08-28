@@ -64,6 +64,34 @@ const (
 	ManagedAttemptDrainUnconfirmed
 )
 
+type BoundFired uint8
+
+const (
+	NoBoundFired BoundFired = iota
+	CommandDeadlineFired
+)
+
+type OutputSnapshot struct {
+	Bytes                 string
+	Cutoff                uint64
+	CompleteThroughCutoff bool
+	Final                 bool
+}
+
+type FailureDiagnostics struct {
+	Wait          string
+	RunningCensus string
+	DrainCensus   string
+	Termination   string
+	Output        string
+	Release       string
+}
+
+type ObservedCount struct {
+	Value   int
+	Present bool
+}
+
 type ManagedAttemptEvidence struct {
 	Kind                    ManagedAttemptKind
 	Passed                  bool
@@ -387,8 +415,9 @@ func presentManagedAttempt(evidence campaignAttemptEvidence) ManagedAttemptEvide
 	return ManagedAttemptEvidence{
 		Kind: presentManagedAttemptKind(evidence.kind), Passed: evidence.passed,
 		Deadline: evidence.deadline, LaunchDuration: evidence.launchDuration,
-		CommandDuration: evidence.commandDuration, BoundFired: evidence.boundFired,
-		Output: evidence.output, Failures: evidence.failures, Count: evidence.count,
+		CommandDuration: evidence.commandDuration, BoundFired: BoundFired(evidence.boundFired),
+		Output: OutputSnapshot(evidence.output), Failures: FailureDiagnostics(evidence.failures),
+		Count:                   ObservedCount(evidence.count),
 		ConfirmationProvisional: evidence.confirmationProvisional,
 	}
 }

@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"errors"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 )
 
@@ -43,38 +44,38 @@ const (
 
 type simulationTerminal struct {
 	kind      simulationTerminalKind
-	exit      ExitStatus
-	data      ExecutionData
-	count     ObservedCount
-	cause     Cause
+	exit      supervision.ExitStatus
+	data      supervision.ExecutionData
+	count     supervision.ObservedCount
+	cause     supervision.Cause
 	errorText string
-	residual  Residual
+	residual  supervision.Residual
 }
 
-func simulationTraceTerminal(terminal Terminal) simulationTerminal {
+func simulationTraceTerminal(terminal supervision.Terminal) simulationTerminal {
 	trace := simulationTerminal{data: terminalExecutionData(terminal)}
 	switch value := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		trace.kind, trace.exit = simulationSettled, value.Exit
-	case Tripped:
+	case supervision.Tripped:
 		switch trip := value.Trip.(type) {
-		case FuseTrip:
-			trace.kind, trace.count = simulationFuseTrip, ObservedCount{Value: trip.Live, Present: true}
-		case AutomaticDeadlineTrip:
+		case supervision.FuseTrip:
+			trace.kind, trace.count = simulationFuseTrip, supervision.ObservedCount{Value: trip.Live, Present: true}
+		case supervision.AutomaticDeadlineTrip:
 			trace.kind, trace.count = simulationAutomaticDeadlineTrip, trip.Peak
-		case SerialDeadlineTrip:
+		case supervision.SerialDeadlineTrip:
 			trace.kind = simulationSerialDeadlineTrip
 		default:
 			panic("simulation terminal trip is invalid")
 		}
-	case Stopped:
+	case supervision.Stopped:
 		trace.kind = simulationStopped
-	case Infrastructure:
+	case supervision.Infrastructure:
 		trace.kind, trace.cause = simulationInfrastructure, value.Cause
 		if value.Err != nil {
 			trace.errorText = value.Err.Error()
 		}
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		trace.kind, trace.residual = simulationDrainUnconfirmed, value.Residual
 	default:
 		panic("simulation terminal is invalid")
@@ -82,26 +83,26 @@ func simulationTraceTerminal(terminal Terminal) simulationTerminal {
 	return trace
 }
 
-func (trace simulationTerminal) production() Terminal {
+func (trace simulationTerminal) production() supervision.Terminal {
 	switch trace.kind {
 	case simulationSettled:
-		return Settled{Exit: trace.exit, ExecutionData: trace.data}
+		return supervision.Settled{Exit: trace.exit, ExecutionData: trace.data}
 	case simulationFuseTrip:
-		return Tripped{Trip: FuseTrip{Live: trace.count.Value}, ExecutionData: trace.data}
+		return supervision.Tripped{Trip: supervision.FuseTrip{Live: trace.count.Value}, ExecutionData: trace.data}
 	case simulationAutomaticDeadlineTrip:
-		return Tripped{Trip: AutomaticDeadlineTrip{Peak: trace.count}, ExecutionData: trace.data}
+		return supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{Peak: trace.count}, ExecutionData: trace.data}
 	case simulationSerialDeadlineTrip:
-		return Tripped{Trip: SerialDeadlineTrip{}, ExecutionData: trace.data}
+		return supervision.Tripped{Trip: supervision.SerialDeadlineTrip{}, ExecutionData: trace.data}
 	case simulationStopped:
-		return Stopped{ExecutionData: trace.data}
+		return supervision.Stopped{ExecutionData: trace.data}
 	case simulationInfrastructure:
 		var cause error
 		if trace.errorText != "" {
 			cause = errors.New(trace.errorText)
 		}
-		return Infrastructure{Cause: trace.cause, Err: cause, ExecutionData: trace.data}
+		return supervision.Infrastructure{Cause: trace.cause, Err: cause, ExecutionData: trace.data}
 	case simulationDrainUnconfirmed:
-		return DrainUnconfirmed{Residual: trace.residual, ExecutionData: trace.data}
+		return supervision.DrainUnconfirmed{Residual: trace.residual, ExecutionData: trace.data}
 	default:
 		panic("simulation terminal kind is invalid")
 	}

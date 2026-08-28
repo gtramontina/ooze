@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"fmt"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"strconv"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
@@ -244,13 +245,13 @@ func (runner *managedCampaignRunner) launch(
 	launched := runner.attempts.launch(start, effect.spec)
 	observation := campaignLaunchObservation{}
 	switch result := launched.result.(type) {
-	case Owned:
+	case supervision.Owned:
 		observation.kind = campaignLaunchOwned
 		runner.owned[effect.generation] = result.Attempt
-	case NotReleased:
+	case supervision.NotReleased:
 		observation.kind = campaignLaunchNotReleased
 		observation.failure = result.Kind
-	case LaunchUnconfirmed:
+	case supervision.LaunchUnconfirmed:
 		observation.kind = campaignLaunchUnconfirmed
 		observation.residual = result.Residual
 	default:

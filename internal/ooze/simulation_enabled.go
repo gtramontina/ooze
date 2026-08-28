@@ -1,16 +1,20 @@
 package ooze
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
+)
 
 type simulationEnabledMove struct {
 	authority simulationAuthority
 	effect    campaignEffect
-	action    supervisionEffect
+	action    supervision.Effect
 }
 
 func simulationEnabledMoves(
 	effects []campaignEffect,
-	actions []supervisionEffect,
+	actions []supervision.Effect,
 	catalogue []mutantIdentity,
 ) []simulationEnabledMove {
 	ranks := make(map[mutantIdentity]int, len(catalogue))
@@ -61,13 +65,13 @@ func simulationEnabledMoves(
 			}
 			return first.effect.kind < second.effect.kind
 		}
-		if first.action.generation != second.action.generation {
-			return first.action.generation < second.action.generation
+		if first.action.Generation() != second.action.Generation() {
+			return first.action.Generation() < second.action.Generation()
 		}
-		if first.action.token != second.action.token {
-			return first.action.token < second.action.token
+		if first.action.Token() != second.action.Token() {
+			return first.action.Token() < second.action.Token()
 		}
-		return first.action.kind < second.action.kind
+		return first.action.Kind() < second.action.Kind()
 	})
 
 	return moves

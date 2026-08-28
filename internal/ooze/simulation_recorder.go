@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"sort"
 	"sync"
@@ -11,11 +12,11 @@ import (
 type simulationRecorder struct {
 	gate         sync.RWMutex
 	mutex        sync.Mutex
-	next         supervisionOwnerCutSequence
+	next         supervision.OwnerCutSequence
 	records      []simulationRecord
 	barriers     []simulationQuiescentBarrier
 	actionMutex  sync.Mutex
-	actions      map[supervisorActionToken]simulationInFlightAction
+	actions      map[supervision.ActionToken]simulationInFlightAction
 	actionWake   chan struct{}
 	causalMutex  sync.Mutex
 	activeEffect campaignEffect
@@ -44,7 +45,7 @@ type simulationRecordedRuntimeCut struct {
 }
 
 type simulationInFlightAction struct {
-	kind       supervisorActionKind
+	kind       supervision.EffectKind
 	generation attemptGeneration
 }
 
@@ -55,7 +56,7 @@ type simulationReservation struct {
 
 func newSimulationRecorder() *simulationRecorder {
 	return &simulationRecorder{
-		actions:    make(map[supervisorActionToken]simulationInFlightAction),
+		actions:    make(map[supervision.ActionToken]simulationInFlightAction),
 		actionWake: make(chan struct{}, 1),
 	}
 }
@@ -74,11 +75,11 @@ func (recorder *simulationRecorder) Enter() func() {
 }
 
 func (recorder *simulationRecorder) Publish(
-	reservation supervisionOwnerCutReservation,
-	fact supervisionFact,
-	event supervisorDomainEvent,
-	projection supervisionProjection,
-	effects []supervisionEffect,
+	reservation supervision.OwnerCutReservation,
+	fact supervision.Fact,
+	event supervision.Event,
+	projection supervision.Projection,
+	effects []supervision.Effect,
 ) {
 	recorder.recordSupervisor(
 		simulationReservation{sequence: uint64(reservation), authority: supervisionAuthority},
@@ -86,7 +87,7 @@ func (recorder *simulationRecorder) Publish(
 	)
 }
 
-func (recorder *simulationRecorder) Complete(effect supervisionEffect) {
+func (recorder *simulationRecorder) Complete(effect supervision.Effect) {
 	recorder.recordSupervisorEffect(effect)
 }
 
@@ -157,9 +158,9 @@ func (recorder *simulationRecorder) recordCampaign(
 	var source simulationCausalSource
 	switch payload := event.payload.(type) {
 	case attemptTerminalEvent:
-		source = recorder.recordSupervisorDelivery(supervisorDeliverTerminal, payload.generation)
+		source = recorder.recordSupervisorDelivery(supervision.DeliverTerminalEffect, payload.generation)
 	case runtimeEmergencySettledEvent:
-		source = recorder.recordSupervisorDelivery(supervisorDeliverEmergencySettlement, 0)
+		source = recorder.recordSupervisorDelivery(supervision.DeliverEmergencySettlementEffect, 0)
 	default:
 		source = recorder.campaignSource(payload)
 	}
@@ -174,10 +175,10 @@ func (recorder *simulationRecorder) recordCampaign(
 
 func (recorder *simulationRecorder) recordSupervisor(
 	reservation simulationReservation,
-	fact supervisionFact,
-	domainEvent supervisorDomainEvent,
-	state supervisionProjection,
-	effects []supervisionEffect,
+	fact supervision.Fact,
+	domainEvent supervision.Event,
+	state supervision.Projection,
+	effects []supervision.Effect,
 ) {
 	if recorder == nil {
 		return
@@ -213,19 +214,19 @@ func (recorder *simulationRecorder) runtimeSource(record simulationRecord) simul
 func (recorder *simulationRecorder) runtimeActionSource(record simulationRecord) simulationCausalSource {
 	recorder.actionMutex.Lock()
 	defer recorder.actionMutex.Unlock()
-	var matched supervisorActionToken
+	var matched supervision.ActionToken
 	for token, action := range recorder.actions {
 		matches := false
 		switch record.runtimeCut.Operation() {
 		case processruntime.ObserveAttemptOperation:
 			matches = action.generation == record.runtimeCut.Result().Receipt().Generation() &&
-				(action.kind == supervisorPublishOwned || action.kind == supervisorCloseProspective ||
-					action.kind == supervisorSettleRuntime ||
-					action.kind == supervisorTransferResidualCustody)
+				(action.kind == supervision.PublishOwnedEffect || action.kind == supervision.CloseProspectiveEffect ||
+					action.kind == supervision.SettleRuntimeEffect ||
+					action.kind == supervision.TransferResidualCustodyEffect)
 		case processruntime.CompleteConfirmationQueueOperation:
-			matches = action.kind == supervisorDeliverTerminal
+			matches = action.kind == supervision.DeliverTerminalEffect
 		case processruntime.SettleEmergencyOperation:
-			matches = action.kind == supervisorSettleEmergency
+			matches = action.kind == supervision.SettleEmergencyEffect
 		}
 		if !matches {
 			continue
@@ -319,14 +320,13 @@ func simulationRuntimeDeliveries(record simulationRecord) []simulationAdmission 
 	return simulationTraceAdmissions(runtimeAdmissions(deliveries))
 }
 
-func (recorder *simulationRecorder) supervisorSource(fact supervisionFact) simulationCausalSource {
-	if fact.kind == supervisorRuntimeCompleted && fact.runtime != nil {
-		action := fact.runtime.action
+func (recorder *simulationRecorder) supervisorSource(fact supervision.Fact) simulationCausalSource {
+	if generation, token, correlated := fact.RuntimeCorrelation(); correlated {
 		return recorder.takeRuntimeCut(func(record simulationRecord) bool {
 			return record.runtimeCut.Operation() == processruntime.ObserveAttemptOperation &&
-				record.runtimeCut.Result().Receipt().Generation() == fact.generation &&
+				record.runtimeCut.Result().Receipt().Generation() == generation &&
 				record.source.kind == supervisionActionSource &&
-				record.source.identity == uint64(action.token)
+				record.source.identity == uint64(token)
 		})
 	}
 	if token, found := fact.CausalEffect(); found {
@@ -335,7 +335,7 @@ func (recorder *simulationRecorder) supervisorSource(fact supervisionFact) simul
 	recorder.causalMutex.Lock()
 	effect := recorder.activeEffect
 	recorder.causalMutex.Unlock()
-	if fact.kind == supervisorProspectiveRegistered && effect.kind == campaignEffectLaunchAttempt {
+	if fact.Kind() == supervision.ProspectiveRegisteredFact && effect.kind == campaignEffectLaunchAttempt {
 		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
 	}
 
@@ -365,34 +365,34 @@ func (recorder *simulationRecorder) append(record simulationRecord) {
 	recorder.mutex.Unlock()
 }
 
-func (recorder *simulationRecorder) recordSupervisorEffects(effects []supervisionEffect) {
+func (recorder *simulationRecorder) recordSupervisorEffects(effects []supervision.Effect) {
 	if recorder == nil {
 		return
 	}
 	recorder.actionMutex.Lock()
 	defer recorder.actionMutex.Unlock()
 	for _, effect := range effects {
-		_, found := recorder.actions[effect.token]
-		if effect.token == 0 || found {
+		_, found := recorder.actions[effect.Token()]
+		if effect.Token() == 0 || found {
 			panic("simulation recorder action is zero or duplicated")
 		}
-		recorder.actions[effect.token] = simulationInFlightAction{
-			kind: effect.kind, generation: effect.generation,
+		recorder.actions[effect.Token()] = simulationInFlightAction{
+			kind: effect.Kind(), generation: effect.Generation(),
 		}
 	}
 }
 
-func (recorder *simulationRecorder) recordSupervisorCompletion(action supervisorPendingAction) {
+func (recorder *simulationRecorder) recordSupervisorCompletion(kind supervision.EffectKind, token supervision.ActionToken) {
 	if recorder == nil {
 		return
 	}
 	recorder.actionMutex.Lock()
-	pending, found := recorder.actions[action.token]
-	if !found || pending.kind != action.kind {
+	pending, found := recorder.actions[token]
+	if !found || pending.kind != kind {
 		recorder.actionMutex.Unlock()
 		panic("simulation recorder action completion is stale or wrong")
 	}
-	delete(recorder.actions, action.token)
+	delete(recorder.actions, token)
 	recorder.actionMutex.Unlock()
 	select {
 	case recorder.actionWake <- struct{}{}:
@@ -400,19 +400,19 @@ func (recorder *simulationRecorder) recordSupervisorCompletion(action supervisor
 	}
 }
 
-func (recorder *simulationRecorder) recordSupervisorEffect(effect supervisionEffect) {
-	recorder.recordSupervisorCompletion(supervisorPendingAction{kind: effect.kind, token: effect.token})
+func (recorder *simulationRecorder) recordSupervisorEffect(effect supervision.Effect) {
+	recorder.recordSupervisorCompletion(effect.Kind(), effect.Token())
 }
 
 func (recorder *simulationRecorder) recordSupervisorDelivery(
-	kind supervisorActionKind,
+	kind supervision.EffectKind,
 	generation attemptGeneration,
 ) simulationCausalSource {
 	if recorder == nil {
 		return simulationCausalSource{}
 	}
 	recorder.actionMutex.Lock()
-	var matched supervisorActionToken
+	var matched supervision.ActionToken
 	for token, action := range recorder.actions {
 		if action.kind != kind || action.generation != generation {
 			continue
@@ -440,7 +440,7 @@ func (recorder *simulationRecorder) recordSupervisorDelivery(
 func (recorder *simulationRecorder) quiescent(
 	runner *managedCampaignRunner,
 	runtime *processruntime.Runtime,
-	driver *supervisorDriver,
+	machine *supervision.Machine,
 ) (simulationTrace, simulationWorld) {
 	for {
 		recorder.gate.Lock()
@@ -468,10 +468,8 @@ func (recorder *simulationRecorder) quiescent(
 	})
 
 	runtimeState := simulationTraceRuntimeState(recorder.runtimeState)
-	driver.mutex.Lock()
-	supervisorState := driver.machine.Projection()
-	supervisorMachine := driver.machine.Fork()
-	driver.mutex.Unlock()
+	supervisionMachine := machine.Fork()
+	supervisorState := supervisionMachine.Projection()
 	campaignState := simulationProjectCampaign(runner.state)
 	definition := campaignState.definition
 	definition.baselineDeadline = 0
@@ -501,7 +499,7 @@ func (recorder *simulationRecorder) quiescent(
 			records: records, barriers: barriers,
 		}, simulationWorld{
 			campaign: campaignState, runtime: runtimeState,
-			supervisor: supervisorState, machine: supervisorMachine,
+			supervisor: supervisorState, machine: supervisionMachine,
 		}
 }
 

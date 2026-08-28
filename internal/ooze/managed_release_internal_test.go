@@ -1,6 +1,7 @@
 package ooze
 
 import (
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"testing"
 	"time"
 
@@ -15,13 +16,13 @@ import (
 func TestManagedProcessRejectsRecursiveReleaseWhileCallerOwnsWait(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
 	release := make(chan struct{})
-	launched := make(chan Spec, 1)
+	launched := make(chan supervision.Spec, 1)
 	attempts := &managedAttemptFixture{
-		shell: shell,
+		shell:   shell,
 		waitAll: release, launchStarted: launched,
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
 	process := &managedProcess{capacity: 1, runtime: shell, attempts: attempts}
@@ -84,9 +85,9 @@ func TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement(t *t
 	attempts := &managedAttemptFixture{
 		shell:          shell,
 		emergencyEmpty: true,
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Tripped{Trip: nil, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Tripped{Trip: nil, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
 	process := &managedProcess{capacity: 1, runtime: shell, attempts: attempts}
@@ -109,9 +110,9 @@ func TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement(t *t
 
 func TestManagedProcessSnapshotsCallerConfigurationBeforeFilesystemWork(t *testing.T) {
 	shell := newProcessRuntimeShell(1)
-	attempts := &managedAttemptFixture{shell: shell, terminals: []Terminal{
-		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-		Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+	attempts := &managedAttemptFixture{shell: shell, terminals: []supervision.Terminal{
+		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+		supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 	}}
 	process := &managedProcess{capacity: 1, runtime: shell, attempts: attempts}
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{

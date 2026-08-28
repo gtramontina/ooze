@@ -2,6 +2,7 @@ package ooze
 
 import (
 	"errors"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"strings"
 	"sync"
@@ -42,14 +43,14 @@ func TestManagedCampaignLazilyOverlapsAutomaticPrimariesUpToCapacity(t *testing.
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
 	}}
-	started := make(chan Spec, 2)
+	started := make(chan supervision.Spec, 2)
 	release := make(chan struct{})
 	attempts := &managedAttemptFixture{
 		waitStarted: started, releasePrimaries: release,
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
@@ -87,14 +88,14 @@ func TestManagedCampaignSerialPrimariesAreExclusiveWithDetectedCapacityProfile(t
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\n")),
 	}}
-	started := make(chan Spec, 2)
+	started := make(chan supervision.Spec, 2)
 	release := make(chan struct{})
 	attempts := &managedAttemptFixture{
 		waitStarted: started, releasePrimaries: release,
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
@@ -134,9 +135,9 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
-	attempts := &managedAttemptFixture{terminals: []Terminal{
-		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: 2 * time.Second}},
-		Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+	attempts := &managedAttemptFixture{terminals: []supervision.Terminal{
+		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: 2 * time.Second}},
+		supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 	}}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: newProcessRuntimeShell(2), repository: repository,
@@ -163,9 +164,9 @@ func TestManagedCampaignPropagatesAbsoluteTimeoutAndRetainsTimedOutResult(t *tes
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
-	attempts := &managedAttemptFixture{terminals: []Terminal{
-		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-		Tripped{Trip: AutomaticDeadlineTrip{}},
+	attempts := &managedAttemptFixture{terminals: []supervision.Terminal{
+		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+		supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}},
 	}}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: newProcessRuntimeShell(1), repository: repository,
@@ -193,11 +194,11 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 	launchesReady := make(chan struct{})
 	attempts := &managedAttemptFixture{
 		waitForLaunches: 3, launchesReady: launchesReady,
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Tripped{Trip: AutomaticDeadlineTrip{}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
 	shell := newProcessRuntimeShell(2)
@@ -226,13 +227,13 @@ func TestManagedCampaignResumesWithSingleAdmissionAfterConfirmationPressure(t *t
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar first = 0\nvar second = 0\nvar third = 0\nvar fourth = 0\n")),
 	}}
-	deadlineTrip := Tripped{Trip: AutomaticDeadlineTrip{}}
-	killed := Settled{Exit: ExitStatus{Code: 1}, ExecutionData: ExecutionData{CommandDuration: time.Second}}
+	deadlineTrip := supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}}
+	killed := supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}}
 	attempts := &managedAttemptFixture{
 		waitForLaunches: 3,
 		launchesReady:   make(chan struct{}),
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 			deadlineTrip, killed,
 			killed,
 			killed, killed,
@@ -269,8 +270,8 @@ func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t 
 	}}
 	attempts := &managedAttemptFixture{
 		notReleasedAt: 2,
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
 	shell := newProcessRuntimeShell(2)
@@ -296,10 +297,10 @@ func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testin
 	}}
 	attempts := &managedAttemptFixture{
 		stopRelease: make(chan struct{}),
-		terminals: []Terminal{
-			Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-			Infrastructure{Cause: CensusFailed, Err: errors.New("census failed")},
-			Stopped{},
+		terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+			supervision.Infrastructure{Cause: supervision.CensusFailed, Err: errors.New("census failed")},
+			supervision.Stopped{},
 		},
 	}
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
@@ -324,14 +325,14 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
 	shell := newProcessRuntimeShell(1)
-	attempts := &managedAttemptFixture{shell: shell, terminals: []Terminal{
-		Settled{Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second}},
-		DrainUnconfirmed{
-			Residual: OwnedUndrained,
-			ExecutionData: ExecutionData{
+	attempts := &managedAttemptFixture{shell: shell, terminals: []supervision.Terminal{
+		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+		supervision.DrainUnconfirmed{
+			Residual: supervision.OwnedUndrained,
+			ExecutionData: supervision.ExecutionData{
 				CommandDuration: time.Second,
-				Output:          OutputSnapshot{Bytes: "private", Cutoff: 7, CompleteThroughCutoff: true},
-				Failures:        FailureDiagnostics{DrainCensus: "census failed"},
+				Output:          supervision.OutputSnapshot{Bytes: "private", Cutoff: 7, CompleteThroughCutoff: true},
+				Failures:        supervision.FailureDiagnostics{DrainCensus: "census failed"},
 			},
 		},
 	}}
@@ -410,8 +411,8 @@ func TestManagedCampaignCleansWorkspaceAcquiredBeforeMutationPanic(t *testing.T)
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: newProcessRuntimeShell(1), repository: repository,
 		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{
-			terminals: []Terminal{Settled{
-				Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second},
+			terminals: []supervision.Terminal{supervision.Settled{
+				Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second},
 			}},
 		},
 	})
@@ -434,8 +435,8 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: newProcessRuntimeShell(1), repository: repository,
 		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{
-			terminals: []Terminal{Settled{
-				Exit: ExitStatus{}, ExecutionData: ExecutionData{CommandDuration: time.Second},
+			terminals: []supervision.Terminal{supervision.Settled{
+				Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second},
 			}},
 		},
 	})
@@ -617,16 +618,16 @@ func (d *blockingManagedTemporaryDirectory) New() string {
 type managedAttemptFixture struct {
 	mutex               sync.Mutex
 	launches            int
-	specs               []Spec
-	terminals           []Terminal
+	specs               []supervision.Spec
+	terminals           []supervision.Terminal
 	shell               *processRuntimeShell
-	byGeneration        map[attemptGeneration]Spec
-	terminalByGen       map[attemptGeneration]Terminal
+	byGeneration        map[attemptGeneration]supervision.Spec
+	terminalByGen       map[attemptGeneration]supervision.Terminal
 	starts              map[attemptGeneration]processruntime.PreparedStart
-	waitStarted         chan Spec
+	waitStarted         chan supervision.Spec
 	releasePrimaries    <-chan struct{}
 	waitAll             <-chan struct{}
-	launchStarted       chan Spec
+	launchStarted       chan supervision.Spec
 	waitForLaunches     int
 	launchesReady       chan struct{}
 	launchesReadyOnce   sync.Once
@@ -639,17 +640,17 @@ type managedAttemptFixture struct {
 	emergencyEmpty      bool
 }
 
-func (f *managedAttemptFixture) reserveLaunch(*pendingStartCell, Spec) {}
+func (f *managedAttemptFixture) reserveLaunch(*pendingStartCell, supervision.Spec) {}
 
 func (f *managedAttemptFixture) discardLaunch(*pendingStartCell) {}
 
-func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedObservedLaunch {
+func (f *managedAttemptFixture) launch(start installedStart, spec supervision.Spec) managedObservedLaunch {
 	f.mutex.Lock()
 	f.launches++
 	f.specs = append(f.specs, spec)
 	if f.byGeneration == nil {
-		f.byGeneration = make(map[attemptGeneration]Spec)
-		f.terminalByGen = make(map[attemptGeneration]Terminal)
+		f.byGeneration = make(map[attemptGeneration]supervision.Spec)
+		f.terminalByGen = make(map[attemptGeneration]supervision.Terminal)
 		f.starts = make(map[attemptGeneration]processruntime.PreparedStart)
 	}
 	f.byGeneration[start.Generation()] = spec
@@ -664,10 +665,10 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 	if f.launchStarted != nil {
 		f.launchStarted <- spec
 	}
-	var result LaunchResult
+	var result supervision.LaunchResult
 	if f.notReleasedAt == f.launches {
 		observed := start.Launch(func(processruntime.Generation) processruntime.Observation {
-			result = NotReleased{Kind: LaunchResourceExhausted}
+			result = supervision.NotReleased{Kind: supervision.LaunchResourceExhausted}
 
 			return processruntime.NotReleased(true)
 		})
@@ -676,7 +677,9 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 		return managedObservedLaunch{result: result, receipt: receipt}
 	}
 	observed := start.Launch(func(processruntime.Generation) processruntime.Observation {
-		result = Owned{Attempt: newOwnedAttempt(func(StopRequest) {}, func() Terminal { return nil })}
+		result = supervision.Owned{Attempt: supervision.NewOwnedAttempt(
+			func(supervision.StopRequest) {}, func() supervision.Terminal { return nil },
+		)}
 
 		return processruntime.Owned()
 	})
@@ -684,7 +687,7 @@ func (f *managedAttemptFixture) launch(start installedStart, spec Spec) managedO
 
 	return managedObservedLaunch{result: result, receipt: receipt}
 }
-func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttempt) managedObservedTerminal {
+func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *supervision.OwnedAttempt) managedObservedTerminal {
 	f.mutex.Lock()
 	terminal := f.terminalByGen[generation]
 	spec := f.byGeneration[generation]
@@ -702,30 +705,29 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 	}
 	data := terminalExecutionData(terminal)
 	data.Deadline = spec.Deadline
-	data.profile = spec.Profile
 	switch terminal := terminal.(type) {
-	case Settled:
+	case supervision.Settled:
 		terminal.ExecutionData = data
 		return managedObservedTerminal{
 			terminal: terminal,
 			receipt:  start.Observe(processruntime.Settled(spec.Profile, spec.Deadline)),
 		}
-	case Infrastructure:
+	case supervision.Infrastructure:
 		terminal.ExecutionData = data
 
 		return managedObservedTerminal{
 			terminal: terminal,
 			receipt:  start.Observe(processruntime.Infrastructure(terminal.Err.Error())),
 		}
-	case Tripped:
+	case supervision.Tripped:
 		terminal.ExecutionData = data
-		terminal.BoundFired = CommandDeadlineFired
+		terminal.BoundFired = supervision.CommandDeadlineFired
 
 		return managedObservedTerminal{
 			terminal: terminal,
 			receipt:  start.Observe(processruntime.Tripped(false, spec.Profile, spec.Deadline)),
 		}
-	case Stopped:
+	case supervision.Stopped:
 		if f.stopRelease != nil {
 			<-f.stopRelease
 		}
@@ -735,7 +737,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 			terminal: terminal,
 			receipt:  start.Observe(processruntime.Stopped()),
 		}
-	case DrainUnconfirmed:
+	case supervision.DrainUnconfirmed:
 		terminal.ExecutionData = data
 		f.mutex.Lock()
 		f.drainGeneration = generation
@@ -749,7 +751,7 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *OwnedAttem
 		panic("unsupported fixture terminal")
 	}
 }
-func (f *managedAttemptFixture) stop(*OwnedAttempt) {
+func (f *managedAttemptFixture) stop(*supervision.OwnedAttempt) {
 	f.mutex.Lock()
 	f.stops++
 	close(f.stopRelease)

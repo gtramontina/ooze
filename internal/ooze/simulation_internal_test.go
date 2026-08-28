@@ -4,14 +4,11 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
-	"github.com/gtramontina/ooze/viruses"
-	"github.com/gtramontina/ooze/viruses/integerincrement"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,30 +19,6 @@ func (simulationFocusedChoiceSource) choose(int) int { return 0 }
 
 func (source simulationFocusedChoiceSource) chooseMove(moves []simulationEngineMove) int {
 	return source(moves)
-}
-
-func TestSimulationStopEligibilityUsesExplicitSupervisorPhases(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		phase supervisorAttemptPhase
-		want  bool
-	}{
-		{name: "running", phase: supervisorRunning, want: true},
-		{name: "intent latched", phase: supervisorIntentLatched, want: true},
-		{name: "emergency draining", phase: supervisorEmergencyDraining, want: true},
-		{name: "releasing domain", phase: supervisorReleasingDomain, want: true},
-		{name: "transferring residual custody", phase: supervisorTransferringResidualCustody, want: true},
-		{name: "settling runtime", phase: supervisorSettlingRuntime, want: true},
-		{name: "awaiting emergency settlement", phase: supervisorAwaitingEmergencySettlement, want: true},
-		{name: "closing prospective", phase: supervisorClosingProspective, want: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			engine := simulationEngine{machine: newSupervisorMachineFrom(supervisorState{
-				attempts: []supervisorAttemptState{{generation: 1, phase: test.phase}},
-			})}
-			assert.Equal(t, test.want, engine.supervisorAcceptsStop(1), "stop eligibility for phase %d", test.phase)
-		})
-	}
 }
 
 func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *testing.T) {
@@ -109,16 +82,16 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 		_, ok := explored.world.campaign.outcome.(abortedOutcome)
 		require.True(t, ok, "explored outcome=%#v, want aborted baseline", explored.world.campaign.outcome)
 	}
-	var supervisorKinds []supervisorEventKind
+	var supervisorKinds []supervision.FactKind
 	for _, record := range explored.trace.records {
 		if record.authority == supervisionAuthority {
-			supervisorKinds = append(supervisorKinds, record.supervisorEvent.kind)
+			supervisorKinds = append(supervisorKinds, record.supervisorEvent.Kind())
 		}
 	}
-	wantSupervisorKinds := []supervisorEventKind{
-		supervisorProspectiveRegistered, supervisorLaunchCompleted, supervisorRunningObserved,
-		supervisorDrainCompleted, supervisorDrainCompleted, supervisorOutputCompleted,
-		supervisorStopAdmissionSealed, supervisorReleaseCompleted, supervisorRuntimeCompleted,
+	wantSupervisorKinds := []supervision.FactKind{
+		supervision.ProspectiveRegisteredFact, supervision.LaunchCompletedFact, supervision.RunningObservedFact,
+		supervision.DrainCompletedFact, supervision.DrainCompletedFact, supervision.OutputCompletedFact,
+		supervision.StopAdmissionSealedFact, supervision.ReleaseCompletedFact, supervision.RuntimeCompletedFact,
 	}
 	assert.Equal(t, wantSupervisorKinds, supervisorKinds, "supervisor lifecycle=%v, want %v", supervisorKinds, wantSupervisorKinds)
 	assert.True(t, explored.world.supervisor.Quiescent(), "terminal world is not quiescent: %#v", explored.world)
@@ -140,32 +113,33 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 	for _, test := range []struct {
 		name    string
 		choice  byte
-		kind    supervisorEventKind
+		kind    supervision.FactKind
 		equalAt bool
 	}{
-		{name: "completion before", choice: 0, kind: supervisorLaunchCompleted},
-		{name: "completion at equality", choice: 1, kind: supervisorLaunchBoundary, equalAt: true},
+		{name: "completion before", choice: 0, kind: supervision.LaunchCompletedFact},
+		{name: "completion at equality", choice: 1, kind: supervision.LaunchBoundaryFact, equalAt: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			explored := Explore(definition, simulationChoiceBytes{test.choice})
-			var launch supervisorEvent
+			var launch supervision.Fact
 			var launchBy time.Time
 			for _, record := range explored.trace.records {
 				if record.authority == supervisionAuthority &&
-					record.supervisorEvent.kind == supervisorProspectiveRegistered {
-					launchBy = record.supervisorEvent.launchBy.production()
+					record.supervisorEvent.Kind() == supervision.ProspectiveRegisteredFact {
+					launchBy, _, _ = record.supervisorEvent.LaunchEvidence()
 				}
 				if record.authority == supervisionAuthority &&
-					(record.supervisorEvent.kind == supervisorLaunchCompleted ||
-						record.supervisorEvent.kind == supervisorLaunchBoundary) {
-					launch = record.supervisorEvent.production()
+					(record.supervisorEvent.Kind() == supervision.LaunchCompletedFact ||
+						record.supervisorEvent.Kind() == supervision.LaunchBoundaryFact) {
+					launch = record.supervisorEvent
 					break
 				}
 			}
-			require.Equal(t, test.kind, launch.kind, "selected launch fact=%#v, want kind %v", launch, test.kind)
-			require.NotNil(t, launch.completion, "selected launch fact=%#v, want kind %v", launch, test.kind)
+			require.Equal(t, test.kind, launch.Kind(), "selected launch fact=%#v, want kind %v", launch, test.kind)
 			{
-				got := launch.completion.at.Equal(launchBy)
+				_, completionAt, present := launch.LaunchEvidence()
+				require.True(t, present)
+				got := completionAt.Equal(launchBy)
 				assert.Equal(t, test.equalAt, got, "completion/boundary equality=%v, want %v", got, test.equalAt)
 			}
 			replayed := ReplayLegal(explored.trace)
@@ -178,13 +152,13 @@ func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testi
 func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) {
 	tests := []struct {
 		name    string
-		action  supervisorActionKind
+		action  supervision.EffectKind
 		variant simulationMoveVariant
 		outcome func(simulationWorld) bool
 		observe func(simulationTrace) bool
 	}{
 		{
-			name: "launch after", action: supervisorLaunchNative,
+			name: "launch after", action: supervision.LaunchNativeEffect,
 			variant: simulationMoveVariant{launch: simulationLaunchAfterBoundary},
 			outcome: func(world simulationWorld) bool {
 				_, aborted := world.campaign.outcome.(abortedOutcome)
@@ -192,16 +166,16 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				return aborted && world.campaign.failure == nil
 			},
 			observe: func(trace simulationTrace) bool {
-				var launchBy supervisionInstant
+				var launchBy time.Time
 				for _, record := range trace.records {
 					if record.authority != supervisionAuthority {
 						continue
 					}
-					if record.supervisorEvent.kind == supervisorProspectiveRegistered {
-						launchBy = record.supervisorEvent.launchBy
+					if record.supervisorEvent.Kind() == supervision.ProspectiveRegisteredFact {
+						launchBy, _, _ = record.supervisorEvent.LaunchEvidence()
 					}
-					if record.supervisorEvent.kind == supervisorLaunchCompleted &&
-						record.supervisorEvent.at.production().After(launchBy.production()) {
+					if record.supervisorEvent.Kind() == supervision.LaunchCompletedFact &&
+						record.supervisorEvent.OccurredAt().After(launchBy) {
 						return true
 					}
 				}
@@ -210,7 +184,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			},
 		},
 		{
-			name: "deadline after", action: supervisorWaitRoot,
+			name: "deadline after", action: supervision.WaitRootEffect,
 			variant: simulationMoveVariant{running: simulationRunningAfterDeadline},
 			outcome: func(world simulationWorld) bool {
 				completed, ok := world.campaign.outcome.(completedOutcome)
@@ -221,15 +195,11 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			observe: func(trace simulationTrace) bool {
 				for _, record := range trace.records {
 					if record.authority != supervisionAuthority ||
-						record.supervisorEvent.kind != supervisorRunningObserved ||
-						record.supervisorEvent.running == nil {
+						record.supervisorEvent.Kind() != supervision.RunningObservedFact {
 						continue
 					}
-					for _, fact := range record.supervisorEvent.running.facts {
-						if fact.kind == supervisorRunningRootExited &&
-							fact.at.production().After(record.supervisorEvent.running.exitRecheck.at.production()) {
-							return true
-						}
+					if record.supervisorEvent.HasRootExitAfterRecheck() {
+						return true
 					}
 				}
 
@@ -237,7 +207,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			},
 		},
 		{
-			name: "drain after", action: supervisorObserveEmptiness,
+			name: "drain after", action: supervision.ObserveEmptinessEffect,
 			variant: simulationMoveVariant{drain: simulationDrainAfterBoundary},
 			outcome: func(world simulationWorld) bool {
 				_, failed := world.campaign.failure.(cleanupUnconfirmedFault)
@@ -245,17 +215,17 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				return failed && world.runtime.Unconfirmed()
 			},
 			observe: func(trace simulationTrace) bool {
-				drainBy := make(map[supervisorActionToken]supervisionInstant)
+				drainBy := make(map[supervision.ActionToken]time.Time)
 				for _, record := range trace.records {
 					for _, action := range record.supervisorActions {
-						if action.kind == supervisorObserveEmptiness {
-							drainBy[action.token] = action.drainBy
+						if action.Kind() == supervision.ObserveEmptinessEffect {
+							drainBy[action.Token()] = action.DrainBy()
 						}
 					}
 					if record.authority == supervisionAuthority &&
-						record.supervisorEvent.kind == supervisorDrainCompleted &&
-						record.supervisorEvent.at.production().After(
-							drainBy[supervisorActionToken(record.source.identity)].production(),
+						record.supervisorEvent.Kind() == supervision.DrainCompletedFact &&
+						record.supervisorEvent.OccurredAt().After(
+							drainBy[supervision.ActionToken(record.source.identity)],
 						) {
 						return true
 					}
@@ -270,7 +240,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			selected := false
 			choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 				for index, move := range moves {
-					if move.action.kind == test.action && move.attemptKind == campaignAttemptPrimary &&
+					if move.action.Kind() == test.action && move.attemptKind == campaignAttemptPrimary &&
 						move.variant == test.variant {
 						selected = true
 
@@ -278,7 +248,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 					}
 				}
 				for index, move := range moves {
-					if move.action.kind != supervisorWaitRoot {
+					if move.action.Kind() != supervision.WaitRootEffect {
 						return index
 					}
 				}
@@ -296,18 +266,18 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			assert.True(t, selected, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
 			assert.True(t, test.outcome(explored.world), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
 			assert.True(t, test.observe(explored.trace), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
-			if test.action == supervisorLaunchNative {
-				order := make(map[supervisorActionKind]int)
+			if test.action == supervision.LaunchNativeEffect {
+				order := make(map[supervision.EffectKind]int)
 				ordinal := 0
 				for _, record := range explored.trace.records {
 					for _, action := range record.supervisorActions {
 						ordinal++
-						order[action.kind] = ordinal
+						order[action.Kind()] = ordinal
 					}
 				}
-				assert.False(t, order[supervisorRevokeLaunchRelease] >= order[supervisorPublishLaunchUnconfirmed], "late closure/adoption action order=%v", order)
-				assert.False(t, order[supervisorPublishLaunchUnconfirmed] >= order[supervisorAdoptOwned], "late closure/adoption action order=%v", order)
-				assert.False(t, order[supervisorAdoptOwned] >= order[supervisorForceOwned], "late closure/adoption action order=%v", order)
+				assert.False(t, order[supervision.RevokeLaunchReleaseEffect] >= order[supervision.PublishLaunchUnconfirmedEffect], "late closure/adoption action order=%v", order)
+				assert.False(t, order[supervision.PublishLaunchUnconfirmedEffect] >= order[supervision.AdoptOwnedEffect], "late closure/adoption action order=%v", order)
+				assert.False(t, order[supervision.AdoptOwnedEffect] >= order[supervision.ForceOwnedEffect], "late closure/adoption action order=%v", order)
 			}
 			{
 				replayed := ReplayLegal(explored.trace)
@@ -339,13 +309,13 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 				for index, move := range moves {
-					if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
+					if move.action.Kind() == supervision.WaitRootEffect && move.attemptKind == campaignAttemptPrimary &&
 						move.variant.running == test.variant {
 						return index
 					}
 				}
 				for index, move := range moves {
-					if move.action.kind != supervisorWaitRoot {
+					if move.action.Kind() != supervision.WaitRootEffect {
 						return index
 					}
 				}
@@ -440,7 +410,7 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 		}
 		if grantAt >= 0 {
 			for index, move := range moves {
-				if index == grantAt || move.action.kind == supervisorWaitRoot {
+				if index == grantAt || move.action.Kind() == supervision.WaitRootEffect {
 					continue
 				}
 				delayed = true
@@ -451,7 +421,7 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 			return grantAt
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -477,13 +447,13 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 func TestSimulationFocusedRepeatedIntrinsicDeadlinesDoNotChangeAdmission(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
+			if move.action.Kind() == supervision.WaitRootEffect && move.attemptKind == campaignAttemptPrimary &&
 				move.variant.running == simulationRunningAtDeadline {
 				return index
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -521,12 +491,12 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 		if !timedOut {
 			peerReady := false
 			for _, move := range moves {
-				peerReady = peerReady || move.action.kind == supervisorWaitRoot &&
+				peerReady = peerReady || move.action.Kind() == supervision.WaitRootEffect &&
 					move.attemptKind == campaignAttemptPrimary && move.mutant == "mutant-b"
 			}
 			if peerReady {
 				for index, move := range moves {
-					if move.action.kind == supervisorWaitRoot &&
+					if move.action.Kind() == supervision.WaitRootEffect &&
 						move.variant.running == simulationRunningAtDeadline &&
 						move.attemptKind == campaignAttemptPrimary && move.mutant == "mutant-a" {
 						timedOut = true
@@ -537,7 +507,7 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -572,7 +542,7 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		ready := 0
 		for _, move := range moves {
-			if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary {
+			if move.action.Kind() == supervision.WaitRootEffect && move.attemptKind == campaignAttemptPrimary {
 				ready++
 			}
 		}
@@ -582,7 +552,7 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 					continue
 				}
 				for index, move := range moves {
-					if move.action.kind == supervisorWaitRoot && move.attemptKind == campaignAttemptPrimary &&
+					if move.action.Kind() == supervision.WaitRootEffect && move.attemptKind == campaignAttemptPrimary &&
 						move.mutant == mutant &&
 						move.variant.running == simulationRunningAtDeadline {
 						timedOut[mutant] = true
@@ -593,7 +563,7 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -645,11 +615,11 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 	selected := false
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		ownedPeerReady := slices.ContainsFunc(moves, func(move simulationEngineMove) bool {
-			return move.action.kind == supervisorWaitRoot && move.mutant == "mutant-a"
+			return move.action.Kind() == supervision.WaitRootEffect && move.mutant == "mutant-a"
 		})
 		if ownedPeerReady {
 			for index, move := range moves {
-				if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-b" &&
+				if move.action.Kind() == supervision.LaunchNativeEffect && move.mutant == "mutant-b" &&
 					move.variant.launch == simulationLaunchProvenNotReleased {
 					selected = true
 
@@ -658,10 +628,10 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-b" {
+			if move.action.Kind() == supervision.LaunchNativeEffect && move.mutant == "mutant-b" {
 				continue
 			}
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -680,7 +650,7 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 	publicationAt, stopEffectAt, stopFactAt := -1, -1, -1
 	for index, record := range explored.trace.records {
 		for _, action := range record.supervisorActions {
-			if action.kind == supervisorPublishNotReleased {
+			if action.Kind() == supervision.PublishNotReleasedEffect {
 				publicationAt = index
 			}
 		}
@@ -689,12 +659,7 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 				stopEffectAt = index
 			}
 		}
-		if record.supervisorEvent.running != nil && slices.ContainsFunc(
-			record.supervisorEvent.running.facts,
-			func(fact supervisionRunningFact) bool {
-				return fact.kind == supervisorRunningStopRequested
-			},
-		) {
+		if record.supervisorEvent.HasStopRequest() {
 			stopFactAt = index
 		}
 	}
@@ -712,11 +677,11 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 	selected := false
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		ownedPeerReady := slices.ContainsFunc(moves, func(move simulationEngineMove) bool {
-			return move.action.kind == supervisorWaitRoot && move.mutant == "mutant-b"
+			return move.action.Kind() == supervision.WaitRootEffect && move.mutant == "mutant-b"
 		})
 		if ownedPeerReady {
 			for index, move := range moves {
-				if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-a" &&
+				if move.action.Kind() == supervision.LaunchNativeEffect && move.mutant == "mutant-a" &&
 					move.variant.launch == simulationLaunchAfterBoundary {
 					selected = true
 
@@ -725,10 +690,10 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind == supervisorLaunchNative && move.mutant == "mutant-a" {
+			if move.action.Kind() == supervision.LaunchNativeEffect && move.mutant == "mutant-a" {
 				continue
 			}
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -772,7 +737,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	expired := false
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorObserveEmptiness &&
+			if move.action.Kind() == supervision.ObserveEmptinessEffect &&
 				move.variant.drain == simulationDrainAtBoundary &&
 				move.attemptKind == campaignAttemptPrimary {
 				expired = true
@@ -781,7 +746,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -833,21 +798,21 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	assert.Nil(t, replayed.failure, "drain-expiry replay failure=%v", replayed.failure)
 	assert.Equal(t, explored.world, replayed.world, "drain-expiry replay world diverged")
 
-	var repeatedEmergency supervisionFact
+	var repeatedEmergency supervision.Fact
 	var settledAt int
 	for index, record := range explored.trace.records {
 		if record.authority != supervisionAuthority {
 			continue
 		}
-		if record.supervisorEvent.kind == supervisorEmergencyStarted {
+		if record.supervisorEvent.Kind() == supervision.EmergencyStartedFact {
 			repeatedEmergency = record.supervisorEvent
 		}
-		if record.supervisorEvent.kind == supervisorEmergencySettlementCompleted {
+		if record.supervisorEvent.Kind() == supervision.EmergencySettlementCompletedFact {
 			settledAt = index + 1
 		}
 	}
-	assert.NotEqual(t, 0, repeatedEmergency.kind, "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.kind, settledAt)
-	assert.NotEqual(t, 0, settledAt, "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.kind, settledAt)
+	assert.NotEqual(t, 0, repeatedEmergency.Kind(), "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.Kind(), settledAt)
+	assert.NotEqual(t, 0, settledAt, "fatal trace lacks emergency start/settlement: start=%v settlement=%d", repeatedEmergency.Kind(), settledAt)
 
 	malformed := simulationMalformedFact{
 		authority:  supervisionAuthority,
@@ -856,7 +821,7 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	firstViolation := ReplayViolation(explored.trace, malformed)
 	secondViolation := ReplayViolation(explored.trace, malformed)
 	assert.Nil(t, firstViolation.failure, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
-	assert.Equal(t, supervisorReducerOperation, firstViolation.invariant.operation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, "reduce supervisor", firstViolation.invariant.operation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
 	assert.EqualValues(t, "emergency epoch is invalid, duplicated, or conflicting", firstViolation.invariant.reason, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
 	assert.Equal(t, secondViolation, firstViolation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
 	assert.Equal(t, explored.world.campaign.outcome, firstViolation.world.campaign.outcome, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
@@ -985,12 +950,12 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{simulationChooseBaselineFailure})
 	prefixLength := 0
-	var registered supervisorEvent
+	var registered supervision.Fact
 	for index, record := range explored.trace.records {
 		if record.authority == supervisionAuthority &&
-			record.supervisorEvent.kind == supervisorProspectiveRegistered {
+			record.supervisorEvent.Kind() == supervision.ProspectiveRegisteredFact {
 			prefixLength = index + 1
-			registered = record.supervisorEvent.production()
+			registered = record.supervisorEvent
 			break
 		}
 	}
@@ -998,16 +963,11 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 		definition: explored.trace.definition,
 		records:    append([]simulationRecord(nil), explored.trace.records[:prefixLength]...),
 	}
-	completedAt := registered.launchBy.Add(-time.Nanosecond)
+	launchBy, _, _ := registered.LaunchEvidence()
+	completedAt := launchBy.Add(-time.Nanosecond)
 	malformed := simulationMalformedFact{
-		authority: supervisionAuthority,
-		supervisor: supervisionFactFromEvent(supervisorEvent{
-			kind: supervisorLaunchCompleted, generation: registered.generation, at: completedAt,
-			completion: &supervisorLaunchCompletion{
-				generation: registered.generation, action: 999, at: completedAt,
-				kind: supervisorLaunchReleased,
-			},
-		}),
+		authority:  supervisionAuthority,
+		supervisor: registered.LaunchCompletionWithAction(999, completedAt),
 	}
 
 	first := ReplayViolation(prefix, malformed)
@@ -1015,24 +975,24 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	assert.Nil(t, first.failure, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, second, first, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, supervisionAuthority, first.key.authority, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.Equal(t, supervisorReducerOperation, first.invariant.operation, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.Equal(t, "reduce supervisor", first.invariant.operation, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	residual := first.world.runtime.Residual()
 	assert.True(t, first.world.runtime.Unconfirmed(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 	require.Len(t, residual, 1, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
-	assert.Equal(t, registered.generation, residual[0].Generation(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
+	assert.Equal(t, registered.Generation(), residual[0].Generation(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 	assert.True(t, residual[0].Transferred(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorLaunchNative &&
+			if move.action.Kind() == supervision.LaunchNativeEffect &&
 				move.variant.launch == simulationLaunchAtBoundary {
 				return index
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -1053,18 +1013,18 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 		if record.authority != supervisionAuthority {
 			continue
 		}
-		if registeredAt < 0 && record.supervisorEvent.kind == supervisorProspectiveRegistered {
+		if registeredAt < 0 && record.supervisorEvent.Kind() == supervision.ProspectiveRegisteredFact {
 			registeredAt, registered = index, record
 		}
-		if registeredAt >= 0 && record.supervisorEvent.kind == supervisorLaunchBoundary &&
-			record.supervisorEvent.generation == registered.supervisorEvent.generation {
+		if registeredAt >= 0 && record.supervisorEvent.Kind() == supervision.LaunchBoundaryFact &&
+			record.supervisorEvent.Generation() == registered.supervisorEvent.Generation() {
 			boundaryAt = index
 			break
 		}
 	}
 	assert.False(t, registeredAt < 0, "supervisor corruption cuts registration/boundary=%d/%d", registeredAt, boundaryAt)
 	assert.False(t, boundaryAt < 0, "supervisor corruption cuts registration/boundary=%d/%d", registeredAt, boundaryAt)
-	launchAction := registered.supervisorActions[0].token
+	launchAction := registered.supervisorActions[0].Token()
 	registrationPrefix := simulationTrace{
 		definition: explored.trace.definition,
 		records:    slices.Clone(explored.trace.records[:registeredAt+1]),
@@ -1073,12 +1033,13 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 		definition: explored.trace.definition,
 		records:    slices.Clone(explored.trace.records[:boundaryAt+1]),
 	}
-	registeredEvent := registered.supervisorEvent.production()
-	completionAt := registeredEvent.launchBy.Add(-time.Nanosecond)
+	registeredEvent := registered.supervisorEvent
+	launchBy, _, _ := registeredEvent.LaunchEvidence()
+	completionAt := launchBy.Add(-time.Nanosecond)
 	tests := []struct {
 		name      string
 		prefix    simulationTrace
-		malformed supervisorEvent
+		malformed supervision.Fact
 		reason    string
 	}{
 		{
@@ -1089,59 +1050,39 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 		{
 			name:      "wrong event kind",
 			prefix:    registrationPrefix,
-			malformed: supervisorEvent{generation: registeredEvent.generation, at: completionAt},
+			malformed: registeredEvent.MalformedWithoutKind(completionAt),
 			reason:    "event kind is invalid",
 		},
 		{
-			name:   "contradictory released completion",
-			prefix: registrationPrefix,
-			malformed: supervisorEvent{
-				kind: supervisorLaunchCompleted, generation: registeredEvent.generation, at: completionAt,
-				completion: &supervisorLaunchCompletion{
-					generation: registeredEvent.generation, action: launchAction, at: completionAt,
-					kind: supervisorLaunchReleased, failure: LaunchFailed,
-				},
-			},
-			reason: "released completion carries a launch failure",
+			name:      "contradictory released completion",
+			prefix:    registrationPrefix,
+			malformed: registeredEvent.MalformedContradictoryRelease(launchAction, completionAt),
+			reason:    "released completion carries a launch failure",
 		},
 		{
-			name:   "output completion in launch phase",
-			prefix: registrationPrefix,
-			malformed: supervisorEvent{
-				kind: supervisorOutputCompleted, generation: registeredEvent.generation, at: completionAt,
-				output: &supervisorOutputCompletion{
-					generation: registeredEvent.generation,
-					action:     supervisorPendingAction{kind: supervisorCaptureOutput, token: launchAction},
-					at:         completionAt, ref: 1,
-				},
-			},
-			reason: "output completion correlation, evidence, or shape is invalid",
+			name:      "output completion in launch phase",
+			prefix:    registrationPrefix,
+			malformed: registeredEvent.MalformedOutputCompletion(launchAction, completionAt),
+			reason:    "output completion correlation, evidence, or shape is invalid",
 		},
 		{
-			name:   "late release after boundary revocation",
-			prefix: boundaryPrefix,
-			malformed: supervisorEvent{
-				kind: supervisorLaunchCompleted, generation: registeredEvent.generation,
-				at: registeredEvent.launchBy.Add(time.Nanosecond),
-				completion: &supervisorLaunchCompletion{
-					generation: registeredEvent.generation, action: launchAction,
-					at: registeredEvent.launchBy.Add(time.Nanosecond), kind: supervisorLaunchReleased,
-				},
-			},
-			reason: "launch completion was duplicated after closure",
+			name:      "late release after boundary revocation",
+			prefix:    boundaryPrefix,
+			malformed: registeredEvent.LaunchCompletionWithAction(launchAction, launchBy.Add(time.Nanosecond)),
+			reason:    "launch completion was duplicated after closure",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			malformed := simulationMalformedFact{
 				authority:  supervisionAuthority,
-				supervisor: supervisionFactFromEvent(test.malformed),
+				supervisor: test.malformed,
 			}
 			first := ReplayViolation(test.prefix, malformed)
 			second := ReplayViolation(test.prefix, malformed)
 			assert.Nil(t, first.failure, "supervisor corruption replay diverged: first=%#v second=%#v", first, second)
 			assert.Equal(t, second, first, "supervisor corruption replay diverged: first=%#v second=%#v", first, second)
-			assert.Equal(t, supervisorReducerOperation, first.invariant.operation, "supervisor corruption invariant=%#v", first.invariant)
+			assert.Equal(t, "reduce supervisor", first.invariant.operation, "supervisor corruption invariant=%#v", first.invariant)
 			assert.Equal(t, test.reason, first.invariant.reason, "supervisor corruption invariant=%#v", first.invariant)
 		})
 	}
@@ -1324,13 +1265,13 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
+			if move.action.Kind() == supervision.LaunchNativeEffect && move.attemptKind == campaignAttemptPrimary &&
 				move.variant.launch == simulationLaunchAfterBoundary {
 				return index
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -1349,7 +1290,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	cut := -1
 	for index, record := range counterexample.records {
 		if record.authority == supervisionAuthority &&
-			record.supervisorEvent.kind == supervisorLaunchCompleted {
+			record.supervisorEvent.Kind() == supervision.LaunchCompletedFact {
 			cut = index
 			break
 		}
@@ -1358,7 +1299,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	counterexample.records = slices.Clone(counterexample.records[:cut+1])
 	counterexample.records[cut].supervisorActions = append(
 		counterexample.records[cut].supervisorActions,
-		supervisionEffect{kind: supervisorLaunchNative},
+		supervision.MalformedEffect(supervision.LaunchNativeEffect),
 	)
 	replayed := ReplayLegal(counterexample)
 	assert.NotNil(t, replayed.failure, "positive boundary replay=%#v", replayed)
@@ -1378,35 +1319,21 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 }
 
 func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
-	deadline := supervisionInstantFromTime(time.Unix(10, 0))
+	deadline := time.Unix(10, 0)
 	near := simulationTrace{
 		records: []simulationRecord{{
-			authority: supervisionAuthority,
-			supervisorEvent: supervisionFact{
-				kind: supervisorRunningObserved,
-				running: &supervisionRunningBundle{
-					exitRecheck: supervisionExitRecheck{performed: true, at: deadline},
-					facts: []supervisionRunningFact{{
-						kind: supervisorRunningRootExited,
-						at:   supervisionInstantFromTime(time.Unix(10, 1)),
-					}},
-				},
-			},
+			authority:       supervisionAuthority,
+			supervisorEvent: supervision.RunningBoundaryFact(deadline, time.Unix(10, 1)),
 		}},
 		choices: []simulationChoiceRecord{{selected: 9}},
 	}
 	far := simulationCloneTrace(near)
-	farRunning := *near.records[0].supervisorEvent.running
-	farRunning.facts = slices.Clone(farRunning.facts)
-	far.records[0].supervisorEvent.running = &farRunning
-	far.records[0].supervisorEvent.running.facts[0].at = supervisionInstantFromTime(time.Unix(10, 9))
+	far.records[0].supervisorEvent = far.records[0].supervisorEvent.WithRootExitAt(time.Unix(10, 9))
 	far.choices[0].selected = 0
 	assert.True(t, simulationShrinkMeasureLess(simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far)), "near/far shrink measures=%v/%v", simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far))
 
 	simple := simulationCloneTrace(near)
-	simpleRunning := *near.records[0].supervisorEvent.running
-	simple.records[0].supervisorEvent.running = &simpleRunning
-	simple.records[0].supervisorEvent.running.facts = nil
+	simple.records[0].supervisorEvent = simple.records[0].supervisorEvent.WithoutRunningEvidence()
 	assert.True(t, simulationShrinkMeasureLess(simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near)), "simple/rich payload measures=%v/%v", simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near))
 
 	uncanonical := simulationTrace{definition: simulationDefinition{
@@ -1484,13 +1411,13 @@ func TestSimulationReplayLegalityKeyIsIndependentOfDiagnostic(t *testing.T) {
 func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		for index, move := range moves {
-			if move.action.kind == supervisorLaunchNative && move.attemptKind == campaignAttemptPrimary &&
+			if move.action.Kind() == supervision.LaunchNativeEffect && move.attemptKind == campaignAttemptPrimary &&
 				move.variant.launch == simulationLaunchAfterBoundary {
 				return index
 			}
 		}
 		for index, move := range moves {
-			if move.action.kind != supervisorWaitRoot {
+			if move.action.Kind() != supervision.WaitRootEffect {
 				return index
 			}
 		}
@@ -1508,7 +1435,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	prefixLength := 0
 	for index, record := range explored.trace.records {
 		if record.authority != supervisionAuthority ||
-			record.supervisorEvent.kind != supervisorLaunchCompleted {
+			record.supervisorEvent.Kind() != supervision.LaunchCompletedFact {
 			continue
 		}
 		prefixLength = index + 1
@@ -1607,21 +1534,21 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
+	machine := supervision.NewMachine()
 
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
-	event := supervisorEvent{
-		kind: supervisorProspectiveRegistered, generation: 1, attempt: "attempt-a",
-		at: time.Unix(100, 0), launchBy: time.Unix(101, 0),
-		profile: AutomaticProfile, commandDeadline: time.Second,
-	}
-	actions := driver.reduce(event)
-	for _, action := range actions {
-		recorder.recordSupervisorEffect(supervisionEffectFromAction(action))
+	fact := supervision.ProspectiveRegistration(
+		1, "attempt-a", time.Unix(100, 0), time.Unix(101, 0), AutomaticProfile, time.Second,
+	)
+	machine, transition := machine.Apply(fact)
+	recorder.Publish(supervision.OwnerCutReservation(recorder.next.Add(1)), fact,
+		transition.Event(), transition.Projection(), transition.Effects())
+	for _, effect := range transition.Effects() {
+		recorder.recordSupervisorEffect(effect)
 	}
 
-	trace, projection := recorder.quiescent(runner, shell, driver)
+	trace, projection := recorder.quiescent(runner, shell, machine)
 	{
 		got, want := simulationAuthorities(trace), []simulationAuthority{
 			simulationRuntimeAuthority, simulationCampaignAuthority, supervisionAuthority,
@@ -1638,7 +1565,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	wantCampaign, wantEffects := advanceCampaign(campaign, campaignEvent{
 		id: 1, payload: campaignRegisteredEvent{registration: wantRegistration},
 	})
-	wantMachine, wantTransition := newSupervisorMachine().Apply(supervisionFactFromEvent(event))
+	wantMachine, wantTransition := supervision.NewMachine().Apply(fact)
 	wantProjection := simulationWorld{
 		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime),
 		supervisor: wantMachine.Projection(), machine: wantMachine,
@@ -1665,10 +1592,10 @@ func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
 		profile: AutomaticProfile, peers: 2,
 	})
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
+	machine := supervision.NewMachine()
 
 	assert.PanicsWithError(t, "process runtime event diverged", func() {
-		recorder.quiescent(runner, runtime, driver)
+		recorder.quiescent(runner, runtime, machine)
 	})
 }
 
@@ -1731,6 +1658,17 @@ func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) 
 }
 
 func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T) {
+	findEffect := func(effects []supervision.Effect, kind supervision.EffectKind) supervision.Effect {
+		t.Helper()
+		for _, effect := range effects {
+			if effect.Kind() == kind {
+				return effect
+			}
+		}
+		require.Failf(t, "effect not found", "kind %d in %v", kind, effects)
+
+		return supervision.Effect{}
+	}
 	recorder := newSimulationRecorder()
 	runtime := processruntime.NewReplay(1)
 	var applied processruntime.ReplayResult
@@ -1742,28 +1680,45 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 	grant := applied.Admission().Deliveries()[0]
 	runtime, applied = runtime.Apply(processruntime.CommitStartCut(grant))
 	generation := applied.Start().Generation()
-	publish := supervisorAction{kind: supervisorPublishOwned, token: 11, generation: generation}
-	recorder.recordSupervisorEffects(supervisionEffectsFromActions([]supervisorAction{publish}))
+	registeredAt := time.Unix(100, 0)
+	machine, transition := supervision.NewMachine().Apply(supervision.ProspectiveRegistration(
+		generation, "attempt", registeredAt, registeredAt.Add(time.Second),
+		processruntime.AutomaticProfile, time.Minute,
+	))
+	launch := findEffect(transition.Effects(), supervision.LaunchNativeEffect)
+	launchFacts, ok := machine.LaunchFacts(launch, supervision.LaunchReleasedBeforeBoundary)
+	require.True(t, ok)
+	require.Len(t, launchFacts, 1)
+	machine, transition = machine.Apply(launchFacts[0])
+	publish := findEffect(transition.Effects(), supervision.PublishOwnedEffect)
+	wait := findEffect(transition.Effects(), supervision.WaitRootEffect)
+	sample := findEffect(transition.Effects(), supervision.SampleRunningEffect)
+	recorder.recordSupervisorEffects([]supervision.Effect{publish})
 	launchReservation := recorder.reserve(simulationRuntimeAuthority)
 	runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Owned()))
 	recorder.recordRuntime(launchReservation, simulationRecord{runtimeCut: applied.RecordedCut()}, runtime)
-	recorder.recordSupervisorEffect(supervisionEffectFromAction(publish))
+	recorder.recordSupervisorEffect(publish)
 
-	settle := supervisorAction{kind: supervisorSettleRuntime, token: 12, generation: generation}
-	recorder.recordSupervisorEffects(supervisionEffectsFromActions([]supervisorAction{settle}))
+	running, ok := machine.RunningFact(wait, sample, supervision.RunningPassed)
+	require.True(t, ok)
+	machine, transition = machine.Apply(running)
+	effect := findEffect(transition.Effects(), supervision.ObserveEmptinessEffect)
+	for effect.Kind() != supervision.SettleRuntimeEffect {
+		completed, found := machine.CompletionFact(effect, supervision.CompletionBeforeBoundary)
+		require.True(t, found)
+		machine, transition = machine.Apply(completed)
+		effects := transition.Effects()
+		require.Len(t, effects, 1)
+		effect = effects[0]
+	}
+	settle := effect
+	recorder.recordSupervisorEffects([]supervision.Effect{settle})
 	terminalReservation := recorder.reserve(simulationRuntimeAuthority)
 	runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Settled(processruntime.AutomaticProfile, 0)))
 	recorder.recordRuntime(terminalReservation, simulationRecord{runtimeCut: applied.RecordedCut()}, runtime)
-	receipt := supervisorRuntimeCompletion{
-		generation: generation,
-		action: supervisorPendingAction{
-			kind: supervisorSettleRuntime, token: settle.token,
-		},
-		kind: supervisorRuntimeAcknowledged,
-	}
-	terminalSource := recorder.supervisorSource(supervisionFactFromEvent(supervisorEvent{
-		kind: supervisorRuntimeCompleted, generation: generation, runtime: &receipt,
-	}))
+	receipt, ok := machine.RuntimeReceiptFactFor(settle, applied.Receipt())
+	require.True(t, ok)
+	terminalSource := recorder.supervisorSource(receipt)
 	assert.Equal(t, simulationOwnerDeliverySource, terminalSource.kind, "runtime receipt source=%#v", terminalSource)
 	assert.Equal(t, terminalReservation.sequence, terminalSource.identity, "runtime receipt source=%#v", terminalSource)
 
@@ -1780,15 +1735,15 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 		profile: AutomaticProfile, peers: 1,
 	})
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
-	action := supervisorAction{kind: supervisorLaunchNative, token: 71, generation: 9}
-	recorder.recordSupervisorEffects(supervisionEffectsFromActions([]supervisorAction{action}))
+	machine := supervision.NewMachine()
+	action := supervision.MalformedEffect(supervision.LaunchNativeEffect)
+	recorder.actions[71] = simulationInFlightAction{kind: supervision.LaunchNativeEffect, generation: 9}
 
 	started := make(chan struct{})
 	completed := make(chan struct{})
 	go func() {
 		close(started)
-		recorder.quiescent(runner, shell, driver)
+		recorder.quiescent(runner, shell, machine)
 		close(completed)
 	}()
 	<-started
@@ -1798,7 +1753,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	recorder.recordSupervisorCompletion(supervisorPendingAction{kind: action.kind, token: action.token})
+	recorder.recordSupervisorCompletion(action.Kind(), 71)
 	select {
 	case <-completed:
 	case <-time.After(time.Second):
@@ -1815,8 +1770,8 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
-	cut := func() { _, _ = recorder.quiescent(runner, shell, driver) }
+	machine := supervision.NewMachine()
+	cut := func() { _, _ = recorder.quiescent(runner, shell, machine) }
 
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	cut()
@@ -1835,7 +1790,7 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	cut()
 	runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
 
-	trace, production := recorder.quiescent(runner, shell, driver)
+	trace, production := recorder.quiescent(runner, shell, machine)
 	assert.EqualValues(t, 7, len(trace.barriers), "retained prefix barriers=%d, want 7", len(trace.barriers))
 	replayed := ReplayLegal(trace)
 	require.Nil(t, replayed.failure, "recorded production trace did not replay: %v", replayed.failure)
@@ -1851,126 +1806,24 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 }
 
-func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
-	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	var clockMutex sync.Mutex
-	now := time.Unix(10_000, 0)
-	exitCodes := make(map[attemptGeneration]int)
-	tick := func() time.Time {
-		clockMutex.Lock()
-		defer clockMutex.Unlock()
-		now = now.Add(time.Nanosecond)
-
-		return now
-	}
-	driver := newSupervisorDriver(supervisorDriverConstruction{
-		runtime: shell, observer: recorder, ownerSequence: &recorder.next,
-		now: tick, launchProgress: time.Second, drainEpoch: 5 * time.Second,
-		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
-		prepare: func(generation attemptGeneration, spec Spec) {
-			clockMutex.Lock()
-			defer clockMutex.Unlock()
-			if spec.Deadline != baselineBootstrapDeadline {
-				exitCodes[generation] = 1
-			}
+func TestSimulationReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
+	explored := Explore(simulationDefinition{
+		campaign: campaignDefinition{
+			identity: "campaign-recorded-managed", lineage: 521, command: []string{"test"},
+			profile: SerialProfile, peers: 1,
 		},
-		execute: func(action supervisorAction) *supervisorEvent {
-			at := tick()
-			switch action.kind {
-			case supervisorLaunchNative:
-				return &supervisorEvent{
-					kind: supervisorLaunchCompleted, generation: action.generation, at: at,
-					completion: &supervisorLaunchCompletion{
-						generation: action.generation, action: action.token, at: at,
-						kind: supervisorLaunchReleased,
-					},
-				}
-			case supervisorWaitRoot:
-				clockMutex.Lock()
-				exitCode := exitCodes[action.generation]
-				clockMutex.Unlock()
-				return &supervisorEvent{
-					kind: supervisorRunningObserved, generation: action.generation, at: at,
-					drainBy: at.Add(5 * time.Second),
-					running: &supervisorRunningBundle{
-						generation: action.generation, waitAction: action.token,
-						facts: []supervisorRunningFact{{
-							generation: action.generation, action: action.token,
-							kind: supervisorRunningRootExited, at: at, exitCode: exitCode,
-						}},
-					},
-				}
-			case supervisorObserveEmptiness:
-				return &supervisorEvent{
-					kind: supervisorDrainCompleted, generation: action.generation, at: at,
-					drain: &supervisorDrainCompletion{
-						generation: action.generation,
-						action:     supervisorPendingAction{kind: action.kind, token: action.token},
-						at:         at, kind: supervisorDrainObservedEmpty,
-					},
-				}
-			case supervisorCaptureOutput:
-				return &supervisorEvent{
-					kind: supervisorOutputCompleted, generation: action.generation, at: at,
-					output: &supervisorOutputCompletion{
-						generation: action.generation,
-						action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: at, ref: 1,
-					},
-				}
-			case supervisorReleaseDomain:
-				return &supervisorEvent{
-					kind: supervisorReleaseCompleted, generation: action.generation, at: at,
-					release: &supervisorReleaseCompletion{
-						generation: action.generation,
-						action:     supervisorPendingAction{kind: action.kind, token: action.token}, at: at,
-					},
-				}
-			default:
-				assert.Fail(t, "unexpected scripted native action", "action: %#v", action)
-
-				return nil
-			}
-		},
-		readOutput: func(supervisorOutputRef) string { return "" },
-	})
-	attempts := &nativeManagedAttemptSystem{driver: driver}
-	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
-		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
-	}}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, recorder: recorder, repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
-	})
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-recorded-managed", lineage: 521, command: []string{"test"},
-		profile: SerialProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
-	})
-	{
-		completed, ok := result.outcome.(completedOutcome)
-		require.True(t, ok, "managed outcome=%#v, want one completed mutant", result.outcome)
-		assert.EqualValues(t, 1, len(completed.mutants), "managed outcome=%#v, want one completed mutant", result.outcome)
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, nil)
+	require.Nil(t, explored.failure)
+	path := simulationForbiddenValuePath(reflect.ValueOf(explored.trace), "trace")
+	assert.Empty(t, path)
+	for index, record := range explored.trace.records {
+		assert.NotZero(t, record.source.kind, "record %d", index)
+		assert.NotZero(t, record.source.identity, "record %d", index)
 	}
-
-	trace, production := recorder.quiescent(runner, shell, driver)
-	require.Len(t, trace.barriers, 1, "quiescent barriers=%#v, want one final accepted-prefix cut", trace.barriers)
-	assert.Equal(t, uint64(len(trace.records)), trace.barriers[0].afterSequence, "quiescent barriers=%#v, want one final accepted-prefix cut", trace.barriers)
-	{
-		path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace")
-		assert.EqualValues(t, "", path, "managed trace retained a production capability at %s", path)
-	}
-	for index, record := range trace.records {
-		assert.NotEqual(t, 0, record.source.kind, "managed production record %d has no causal source: %#v", index, record)
-		assert.NotEqual(t, 0, record.source.identity, "managed production record %d has no causal source: %#v", index, record)
-		{
-			want := simulationExpectedProductionSourceKind(record)
-			assert.Equal(t, want, record.source.kind, "managed production record %d source kind=%v, want %v", index, record.source.kind, want)
-		}
-	}
-	replayed := ReplayLegal(trace)
-	assert.Nil(t, replayed.failure, "non-empty production trace did not replay: %v", replayed.failure)
-	replayed.world.runtimeState = processruntime.Replay{}
-	assert.Equal(t, production, replayed.world, "non-empty production replay diverged:\n got=%#v\nwant=%#v", replayed.world, production)
+	replayed := ReplayLegal(explored.trace)
+	require.Nil(t, replayed.failure)
+	assert.Equal(t, explored.world, replayed.world)
 }
 
 func simulationExpectedProductionSourceKind(record simulationRecord) simulationCausalSourceKind {
@@ -1995,10 +1848,10 @@ func simulationExpectedProductionSourceKind(record simulationRecord) simulationC
 			return simulationCampaignEffectSource
 		}
 	case supervisionAuthority:
-		switch record.supervisorEvent.kind {
-		case supervisorProspectiveRegistered:
+		switch record.supervisorEvent.Kind() {
+		case supervision.ProspectiveRegisteredFact:
 			return simulationCampaignEffectSource
-		case supervisorRuntimeCompleted, supervisorEmergencyStarted, supervisorEmergencySettlementCompleted:
+		case supervision.RuntimeCompletedFact, supervision.EmergencyStartedFact, supervision.EmergencySettlementCompletedFact:
 			return simulationOwnerDeliverySource
 		default:
 			return supervisionActionSource
@@ -2017,14 +1870,14 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
+	machine := supervision.NewMachine()
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
 	mutants := []mutantIdentity{"mutant-a", "mutant-b"}
 	runner.advance(catalogueDiscoveredEvent{snapshot: "private-snapshot", mutants: mutants})
 
-	trace, _ := recorder.quiescent(runner, shell, driver)
+	trace, _ := recorder.quiescent(runner, shell, machine)
 	mutants[0] = "caller-rewrite"
 	got := trace.records[len(trace.records)-1].campaignEvent.production().payload.(catalogueDiscoveredEvent).mutants
 	assert.Equal(t, []mutantIdentity{"mutant-a", "mutant-b"}, got, "recorded catalogue changed with caller input: %v", got)
@@ -2061,9 +1914,9 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 		profile: AutomaticProfile, peers: 1,
 	})
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
+	machine := supervision.NewMachine()
 
-	trace, _ := recorder.quiescent(runner, shell, driver)
+	trace, _ := recorder.quiescent(runner, shell, machine)
 	{
 		path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace")
 		assert.EqualValues(t, "", path, "runtime trace leaked a delivery capability at %s", path)
@@ -2073,7 +1926,7 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 func TestSimulationCausalTerminalConsumesRecordedResolvedDeadline(t *testing.T) {
 	recorded := attemptTerminalEvent{
 		attempt: "baseline", generation: 7,
-		terminal:                 Settled{ExecutionData: ExecutionData{Deadline: time.Minute}},
+		terminal:                 supervision.Settled{ExecutionData: supervision.ExecutionData{Deadline: time.Minute}},
 		resolvedMutationDeadline: mutationDeadlineResolution{duration: 37 * time.Second},
 	}
 	derived := recorded
@@ -2090,10 +1943,10 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 		{id: 4, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-b", mutant: "mutant-b"},
 		{id: 3, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-a", mutant: "mutant-a"},
 	}
-	actions := supervisionEffectsFromActions([]supervisorAction{
-		{kind: supervisorWaitRoot, generation: 3, token: 8},
-		{kind: supervisorSampleRunning, generation: 3, token: 7},
-	})
+	actions := []supervision.Effect{
+		supervision.CorrelatedMalformedEffect(supervision.WaitRootEffect, 3, 8),
+		supervision.CorrelatedMalformedEffect(supervision.SampleRunningEffect, 3, 7),
+	}
 
 	got := simulationEnabledMoves(effects, actions, []mutantIdentity{"mutant-a", "mutant-b"})
 	want := []simulationEnabledMove{
@@ -2168,12 +2021,12 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
+	machine := supervision.NewMachine()
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	runner.advance(snapshotEstablishedEvent{snapshot: "/private/repository/snapshot-937"})
 
-	trace, projection := recorder.quiescent(runner, shell, driver)
+	trace, projection := recorder.quiescent(runner, shell, machine)
 	projected := fmt.Sprintf("%#v %#v", trace, projection)
 	assert.NotContains(t, projected, "/private/repository", "simulation projection leaked a filesystem path: %s", projected)
 	assert.EqualValues(t, "snapshot:campaign-paths", projection.campaign.snapshot, "logical snapshot identity=%q", projection.campaign.snapshot)
@@ -2181,20 +2034,22 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 
 func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 	recorder := newSimulationRecorder()
-	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
+	machine := supervision.NewMachine()
 	sourceLocation := time.FixedZone("private-host-zone", 9*60*60)
 	registeredAt := time.Date(2026, 8, 26, 1, 2, 3, 4, sourceLocation)
-	driver.reduce(supervisorEvent{
-		kind: supervisorProspectiveRegistered, generation: 1, attempt: "attempt-a",
-		at: registeredAt, launchBy: registeredAt.Add(time.Second),
-		profile: AutomaticProfile, commandDeadline: time.Second,
-	})
+	fact := supervision.ProspectiveRegistration(
+		1, "attempt-a", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Second,
+	)
+	machine, transition := machine.Apply(fact)
+	recorder.recordSupervisor(
+		recorder.reserve(supervisionAuthority), fact, transition.Event(), machine.Projection(), transition.Effects(),
+	)
 
 	recorder.mutex.Lock()
 	record := recorder.records[0]
 	recorder.mutex.Unlock()
 	{
-		got := record.supervisorEvent.at.production()
+		got := record.supervisorEvent.OccurredAt()
 		assert.True(t, got.Equal(registeredAt), "canonical instant changed: got=%s want=%s", got, registeredAt)
 		assert.Equal(t, time.UTC, got.Location(), "canonical instant changed: got=%s want=%s", got, registeredAt)
 	}
@@ -2268,8 +2123,8 @@ func TestSimulationFuzzInputDrivesSustainedLegalChoices(t *testing.T) {
 }
 
 func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
-	firstEvent := supervisionFactFromEvent(supervisorEvent{kind: supervisorRuntimeCompleted, generation: 1})
-	secondEvent := supervisionFactFromEvent(supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)})
+	firstEvent := supervision.CorrelatedMalformedFact(supervision.RuntimeCompletedFact, 1)
+	secondEvent := supervision.NewMachine().EmergencyRequest(time.Unix(1, 0), time.Unix(2, 0))
 	first := simulationEngineMove{
 		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
 		supervisorDelivery: &firstEvent,
@@ -2286,13 +2141,13 @@ func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
 }
 
 func TestSimulationSelectsOneTypedActionFromACompoundOwnerCut(t *testing.T) {
-	want := supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverTerminal, token: 10})
-	actions := []supervisionEffect{
+	want := supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, 0, 10)
+	actions := []supervision.Effect{
 		want,
-		supervisionEffectFromAction(supervisorAction{kind: supervisorSettleEmergency, token: 11}),
+		supervision.CorrelatedMalformedEffect(supervision.SettleEmergencyEffect, 0, 11),
 	}
 	{
-		got := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)
+		got := simulationOnlySupervisorAction(actions, supervision.DeliverTerminalEffect)
 		assert.Equal(t, want, got, "selected action=%#v, want %#v", got, want)
 	}
 }
@@ -2306,7 +2161,7 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 		},
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-			action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10}),
+			action: supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, 2, 10),
 		},
 	}}
 
@@ -2322,7 +2177,7 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 		runtime: runtime,
 		pending: []simulationEngineMove{{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 9},
-			action: supervisionEffectFromAction(supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9}),
+			action: supervision.CorrelatedMalformedEffect(supervision.TransferResidualCustodyEffect, 2, 9),
 		}},
 	}
 
@@ -2356,25 +2211,25 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 		pending: []simulationEngineMove{
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-				action: supervisionEffectFromAction(supervisorAction{kind: supervisorSettleRuntime, generation: generation, token: 10}),
+				action: supervision.CorrelatedMalformedEffect(supervision.SettleRuntimeEffect, generation, 10),
 			},
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 11},
-				action: supervisionEffectFromAction(supervisorAction{kind: supervisorSettleEmergency, token: 11}),
+				action: supervision.CorrelatedMalformedEffect(supervision.SettleEmergencyEffect, 0, 11),
 			},
 		},
 	}
 
 	moves := engine.enabledMoves()
 	require.Len(t, moves, 1, "enabled runtime custody actions=%#v, want token 10 only", moves)
-	assert.EqualValues(t, 10, moves[0].action.token, "enabled runtime custody actions=%#v, want token 10 only", moves)
+	assert.EqualValues(t, 10, moves[0].action.Token(), "enabled runtime custody actions=%#v, want token 10 only", moves)
 }
 
 func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-			action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10}),
+			action: supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, 2, 10),
 		},
 		{
 			source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 12},
@@ -2388,7 +2243,7 @@ func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing
 }
 
 func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {
-	completion := supervisionFactFromEvent(supervisorEvent{kind: supervisorRuntimeCompleted, generation: 2})
+	completion := supervision.CorrelatedMalformedFact(supervision.RuntimeCompletedFact, 2)
 	engine := simulationEngine{
 		trace: simulationTrace{records: []simulationRecord{{
 			sequence: 19,
@@ -2401,7 +2256,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 			},
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 11},
-				action: supervisionEffectFromAction(supervisorAction{kind: supervisorSettleEmergency, token: 11}),
+				action: supervision.CorrelatedMalformedEffect(supervision.SettleEmergencyEffect, 0, 11),
 			},
 		},
 	}
@@ -2414,7 +2269,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{{
 		source: simulationCausalSource{kind: supervisionActionSource, identity: 12},
-		action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 12}),
+		action: supervision.CorrelatedMalformedEffect(supervision.DeliverEmergencySettlementEffect, 0, 12),
 	}}}
 
 	{
@@ -2434,7 +2289,7 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 			},
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 20},
-				action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 20}),
+				action: supervision.CorrelatedMalformedEffect(supervision.DeliverEmergencySettlementEffect, 0, 20),
 			},
 		},
 	}
@@ -2445,7 +2300,7 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 }
 
 func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
-	emergency := supervisionFactFromEvent(supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)})
+	emergency := supervision.NewMachine().EmergencyRequest(time.Unix(1, 0), time.Unix(2, 0))
 	start := startCommittedEvent{
 		attempt: "attempt-b",
 		result:  campaignStartResult{decision: processruntime.StartAccepted, generation: 4},
@@ -2479,9 +2334,12 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 20},
 		effect: campaignEffect{id: 20, kind: campaignEffectStopAttempt, generation: generation},
 	}
+	machine, transition := supervision.NewMachine().Apply(supervision.ProspectiveRegistration(
+		generation, "attempt", time.Unix(1, 0), time.Unix(2, 0), AutomaticProfile, time.Second,
+	))
 	launchAction := simulationEngineMove{
 		source: simulationCausalSource{kind: supervisionActionSource, identity: 21},
-		action: supervisionEffectFromAction(supervisorAction{kind: supervisorLaunchNative, generation: generation, token: 21}),
+		action: transition.Effects()[0],
 	}
 	tests := []struct {
 		name   string
@@ -2491,9 +2349,7 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		{
 			"supervisor_launch_action_pending",
 			simulationEngine{
-				machine: newSupervisorMachineFrom(supervisorState{attempts: []supervisorAttemptState{{
-					generation: generation, phase: supervisorLaunchEstablishing,
-				}}}),
+				machine: machine,
 				pending: []simulationEngineMove{launchAction, stop},
 			},
 		},
@@ -2525,17 +2381,17 @@ func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 26},
-			action: supervisionEffectFromAction(supervisorAction{kind: supervisorSealStopAdmission, generation: 4, token: 26}),
+			action: supervision.CorrelatedMalformedEffect(supervision.SealStopAdmissionEffect, 4, 26),
 		},
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 27},
-			action: supervisionEffectFromAction(supervisorAction{kind: supervisorReleaseDomain, generation: 4, token: 27}),
+			action: supervision.CorrelatedMalformedEffect(supervision.ReleaseDomainEffect, 4, 27),
 		},
 	}}
 
 	moves := engine.enabledMoves()
 	require.Len(t, moves, 1, "enabled same-generation actions=%#v, want token 26 only", moves)
-	assert.EqualValues(t, 26, moves[0].action.token, "enabled same-generation actions=%#v, want token 26 only", moves)
+	assert.EqualValues(t, 26, moves[0].action.Token(), "enabled same-generation actions=%#v, want token 26 only", moves)
 }
 
 func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceBytes) {
@@ -2594,10 +2450,8 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 				}
 			case 2:
 				malformed = simulationMalformedFact{
-					authority: supervisionAuthority,
-					supervisor: supervisionFactFromEvent(supervisorEvent{
-						kind: supervisorProspectiveRegistered,
-					}),
+					authority:  supervisionAuthority,
+					supervisor: supervision.CorrelatedMalformedFact(supervision.ProspectiveRegisteredFact, 0),
 				}
 			}
 		}
@@ -2614,7 +2468,7 @@ func simulationRecordedActionSummary(trace simulationTrace) []string {
 		for _, action := range record.supervisorActions {
 			summary = append(summary, fmt.Sprintf(
 				"record=%d kind=%d generation=%d token=%d",
-				record.sequence, action.kind, action.generation, action.token,
+				record.sequence, action.Kind(), action.Generation(), action.Token(),
 			))
 		}
 	}

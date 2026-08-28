@@ -4,15 +4,22 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 type (
 	campaignLineage   = processruntime.Lineage
-	attemptIdentity   string
+	attemptIdentity   = supervision.Identity
 	attemptGeneration = processruntime.Generation
+	Profile           = processruntime.Profile
 	fatalEpochID      uint64
 	runtimeFatalCause string
 	campaignToken     = processruntime.Campaign
+)
+
+const (
+	AutomaticProfile = processruntime.AutomaticProfile
+	SerialProfile    = processruntime.SerialProfile
 )
 
 type campaignRegistration struct {
