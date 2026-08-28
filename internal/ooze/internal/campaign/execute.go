@@ -14,10 +14,14 @@ type TemporaryDirectory interface{ New() string }
 
 // Conformance records accepted campaign cuts and the effects they authorize.
 type Conformance interface {
+	// Enter holds the owner-cut gate until its returned function is called.
 	Enter() func()
+	// Reserve assigns the next process-wide owner-cut sequence.
 	Reserve() uint64
+	// Publish records one accepted immutable campaign transition.
 	Publish(uint64, Event, Projection, []Effect)
-	Execute(Effect) func()
+	// BeginEffect retains causal ownership until its returned function is called.
+	BeginEffect(Effect) func()
 }
 
 // Configuration fixes one campaign execution.

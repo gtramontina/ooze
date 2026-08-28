@@ -142,7 +142,7 @@ func (recorder simulationCampaignRecorder) Publish(
 	recorder.recorder.recordCampaign(reservation, event, projection, effects)
 }
 
-func (recorder simulationCampaignRecorder) Execute(effect campaignmodule.Effect) func() {
+func (recorder simulationCampaignRecorder) BeginEffect(effect campaignmodule.Effect) func() {
 	recorder.recorder.causalMutex.Lock()
 	if !recorder.recorder.activeEffect.IsZero() {
 		recorder.recorder.causalMutex.Unlock()

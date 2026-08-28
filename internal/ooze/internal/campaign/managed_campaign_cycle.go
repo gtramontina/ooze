@@ -19,7 +19,7 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 		for _, effect := range effects {
 			complete := func() {}
 			if runner.conformance != nil {
-				complete = runner.conformance.Execute(Effect{value: effect})
+				complete = runner.conformance.BeginEffect(Effect{value: effect})
 			}
 			next = append(next, runner.execute(effect, request)...)
 			complete()
