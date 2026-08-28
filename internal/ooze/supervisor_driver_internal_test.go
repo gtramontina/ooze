@@ -295,7 +295,7 @@ func TestSupervisorDriverEmergencyCoordinatesMultipleProspectiveEqualityCompleti
 		driver.mutex.Lock()
 		defer driver.mutex.Unlock()
 		closing := 0
-		for _, attempt := range driver.supervisorState().attempts {
+		for _, attempt := range driver.machine.snapshot().attempts {
 			if attempt.phase == supervisorClosingProspective {
 				closing++
 			}
@@ -1081,7 +1081,7 @@ func TestSupervisorDriverAdoptsAndDrainsReleaseCompletedAfterLaunchBoundary(t *t
 	deadline := time.After(time.Second)
 	for {
 		driver.mutex.Lock()
-		phase := driver.supervisorState().attempts[0].phase
+		phase := driver.machine.snapshot().attempts[0].phase
 		driver.mutex.Unlock()
 		if phase == supervisorAwaitingEmergencySettlement {
 			break
@@ -1459,7 +1459,7 @@ func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing
 	deadline := time.After(time.Second)
 	for {
 		driver.mutex.Lock()
-		emergencyActive := driver.supervisorState().emergency.active
+		emergencyActive := driver.machine.snapshot().emergency.active
 		driver.mutex.Unlock()
 		if emergencyActive {
 			break

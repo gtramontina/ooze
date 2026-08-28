@@ -245,6 +245,48 @@ func (machine *supervisorMachine) Projection() supervisionProjection {
 	return supervisionProjectionFromState(machine.state)
 }
 
+func (machine *supervisorMachine) MonitorDeadline(generation attemptGeneration) (time.Time, bool) {
+	if machine == nil {
+		return time.Time{}, false
+	}
+	index := machine.state.attemptIndex(generation)
+	if index < 0 || machine.state.attempts[index].deadlineAt.IsZero() {
+		return time.Time{}, false
+	}
+
+	return machine.state.attempts[index].deadlineAt, true
+}
+
+func (machine *supervisorMachine) AcceptsRunningObservation(generation attemptGeneration) bool {
+	if machine == nil {
+		return false
+	}
+	index := machine.state.attemptIndex(generation)
+	if index < 0 {
+		return false
+	}
+	switch machine.state.attempts[index].phase {
+	case supervisorRunning, supervisorIntentLatched, supervisorEmergencyDraining:
+		return true
+	default:
+		return false
+	}
+}
+
+func (machine *supervisorMachine) EmergencyEvidenceGenerations() []attemptGeneration {
+	if machine == nil {
+		return nil
+	}
+	generations := make([]attemptGeneration, 0, len(machine.state.attempts))
+	for _, attempt := range machine.state.attempts {
+		if attempt.phase != supervisorLaunchClosedNotReleased {
+			generations = append(generations, attempt.generation)
+		}
+	}
+
+	return generations
+}
+
 func (projection supervisionProjection) Equal(other supervisionProjection) bool {
 	return reflect.DeepEqual(projection, other)
 }

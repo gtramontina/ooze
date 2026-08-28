@@ -519,14 +519,6 @@ func (driver *supervisorDriver) publishOwnerCuts() {
 	}
 }
 
-func (driver *supervisorDriver) supervisorState() supervisorState {
-	if driver.machine == nil {
-		return supervisorState{}
-	}
-
-	return driver.machine.snapshot()
-}
-
 func (driver *supervisorDriver) apply(event supervisorEvent) {
 	actions := driver.reduce(event)
 	for _, action := range actions {
@@ -714,10 +706,13 @@ func (driver *supervisorDriver) startEligibleMonitors() {
 			continue
 		}
 		attempt.monitorStarted = true
-		state := driver.supervisorState()
-		attemptState := state.attempts[state.requireAttempt(generation)]
+		deadline, found := driver.machine.MonitorDeadline(generation)
+		if !found {
+			driver.mutex.Unlock()
+			invariant(supervisorDriverOperation, "monitor deadline is absent")
+		}
 		starts = append(starts, monitorStart{
-			wait: attempt.waitAction, sample: attempt.sampleAction, deadline: attemptState.deadlineAt,
+			wait: attempt.waitAction, sample: attempt.sampleAction, deadline: deadline,
 		})
 	}
 	driver.mutex.Unlock()
@@ -993,16 +988,7 @@ func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 		}
 	}()
 	driver.mutex.Lock()
-	state := driver.supervisorState()
-	index := state.attemptIndex(event.generation)
-	if index < 0 {
-		driver.mutex.Unlock()
-		return
-	}
-	attempt := state.attempts[index]
-	accept := attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
-		attempt.phase == supervisorEmergencyDraining
-	if !accept {
+	if !driver.machine.AcceptsRunningObservation(event.generation) {
 		driver.mutex.Unlock()
 		return
 	}
@@ -1204,11 +1190,11 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 	}
 	driver.emergencyStarted = true
 	preempted := driver.preemptReservedLaunchesLocked(request)
-	stateSnapshot := driver.supervisorState()
-	launchEvidence := make([]supervisionEmergencyEvidence, 0, len(stateSnapshot.attempts))
-	for _, state := range stateSnapshot.attempts {
-		attempt := driver.requireAttempt(state.generation)
-		item := supervisionEmergencyEvidence{generation: state.generation}
+	evidenceGenerations := driver.machine.EmergencyEvidenceGenerations()
+	launchEvidence := make([]supervisionEmergencyEvidence, 0, len(evidenceGenerations))
+	for _, generation := range evidenceGenerations {
+		attempt := driver.requireAttempt(generation)
+		item := supervisionEmergencyEvidence{generation: generation}
 		if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
 			!attempt.launchEvent.at.After(request.At) {
 			item.completion = attempt.launchEvent.completion
