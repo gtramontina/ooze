@@ -1,6 +1,7 @@
 package supervision_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -61,15 +62,79 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 		_, stopped := owned.Attempt.Wait().(supervision.Stopped)
 		assert.True(t, stopped)
 	})
+
+	t.Run("launch boundary closes a late not-released launch", func(t *testing.T) {
+		runtime, driver, boundary, start, spec := supervisionContractAttempt(t)
+		boundary.mutex.Lock()
+		boundary.launchGate = make(chan struct{})
+		boundary.launchBoundary = make(chan time.Time, 1)
+		boundary.launchNotReleased = true
+		boundary.mutex.Unlock()
+		launched := make(chan supervision.ObservedLaunch, 1)
+		go func() { launched <- driver.Launch(start, spec) }()
+
+		launchBy := <-boundary.awaitedLaunch
+		boundary.setNow(launchBy.Add(time.Nanosecond))
+		boundary.launchBoundary <- launchBy
+		observed := <-launched
+		unconfirmed, ok := observed.Result().(supervision.LaunchUnconfirmed)
+		require.True(t, ok)
+		assert.Equal(t, supervision.ProspectiveUnresolved, unconfirmed.Residual)
+		_, beforeCompletion := driver.Snapshot()
+		close(boundary.launchGate)
+		require.Eventually(t, func() bool {
+			_, afterCompletion := driver.Snapshot()
+
+			return boundary.completedLaunch() && !afterCompletion.Equal(beforeCompletion)
+		}, time.Second, time.Millisecond)
+		assert.True(t, runtime.EmergencySettlementRequired())
+		at := boundary.Now().Add(time.Nanosecond)
+		sweep, settlement := driver.EmergencyDrain(supervision.EmergencyRequest{
+			At: at, DrainBy: at.Add(time.Second),
+		})
+		_, drained := sweep.(supervision.SweepDrained)
+		assert.True(t, drained)
+		assert.NotZero(t, settlement.Epoch())
+	})
 }
 
 type supervisionBoundary struct {
-	wait chan struct{}
+	wait              chan struct{}
+	launchGate        chan struct{}
+	launchBoundary    chan time.Time
+	launchNotReleased bool
+	awaitedLaunch     chan time.Time
+	mutex             sync.Mutex
+	now               time.Time
+	launchCompleted   bool
 }
 
-func (*supervisionBoundary) Now() time.Time { return time.Now() }
+func (boundary *supervisionBoundary) Now() time.Time {
+	boundary.mutex.Lock()
+	defer boundary.mutex.Unlock()
+	if boundary.now.IsZero() {
+		return time.Now()
+	}
 
-func (*supervisionBoundary) AwaitLaunch(at time.Time) <-chan time.Time {
+	return boundary.now
+}
+
+func (boundary *supervisionBoundary) setNow(at time.Time) {
+	boundary.mutex.Lock()
+	boundary.now = at
+	boundary.mutex.Unlock()
+}
+
+func (boundary *supervisionBoundary) AwaitLaunch(at time.Time) <-chan time.Time {
+	boundary.mutex.Lock()
+	controlled := boundary.launchBoundary
+	boundary.mutex.Unlock()
+	if controlled != nil {
+		boundary.awaitedLaunch <- at
+
+		return controlled
+	}
+
 	return time.After(time.Until(at))
 }
 
@@ -90,19 +155,41 @@ func (boundary *supervisionBoundary) Execute(
 ) (supervision.Fact, bool) {
 	switch effect.Kind() {
 	case supervision.LaunchNativeEffect:
-		return effect.LaunchReleasedFact(time.Now())
+		boundary.mutex.Lock()
+		gate := boundary.launchGate
+		notReleased := boundary.launchNotReleased
+		boundary.mutex.Unlock()
+		if gate != nil {
+			<-gate
+		}
+		if notReleased {
+			fact, ready := effect.LaunchNotReleasedFact(boundary.Now(), supervision.LaunchFailed, 0)
+			boundary.mutex.Lock()
+			boundary.launchCompleted = true
+			boundary.mutex.Unlock()
+
+			return fact, ready
+		}
+		return effect.LaunchReleasedFact(boundary.Now())
 	case supervision.RevokeLaunchReleaseEffect:
 		return supervision.Fact{}, true
 	case supervision.WaitRootEffect:
 		<-boundary.wait
 
-		return effect.RootExitFact(time.Now(), supervision.ExitStatus{})
+		return effect.RootExitFact(boundary.Now(), supervision.ExitStatus{})
 	case supervision.ForceOwnedEffect, supervision.ObserveEmptinessEffect,
 		supervision.CaptureOutputEffect, supervision.ReleaseDomainEffect:
-		return effect.SystemCompletionFact(time.Now())
+		return effect.SystemCompletionFact(boundary.Now())
 	default:
 		return supervision.Fact{}, false
 	}
+}
+
+func (boundary *supervisionBoundary) completedLaunch() bool {
+	boundary.mutex.Lock()
+	defer boundary.mutex.Unlock()
+
+	return boundary.launchCompleted
 }
 
 func (*supervisionBoundary) RecheckRoot(supervision.Generation) (supervision.ExitStatus, time.Time, bool, error) {
@@ -133,7 +220,9 @@ func supervisionContractAttempt(
 	})
 	grant, received := request.Receive()
 	require.True(t, received)
-	boundary := &supervisionBoundary{wait: make(chan struct{})}
+	boundary := &supervisionBoundary{
+		wait: make(chan struct{}), awaitedLaunch: make(chan time.Time, 1),
+	}
 	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
 	require.NoError(t, err)
 	spec := supervision.Spec{

@@ -664,6 +664,27 @@ func (effect Effect) LaunchReleasedFact(at time.Time) (Fact, bool) {
 	}), true
 }
 
+// LaunchNotReleasedFact returns correlated proof that this launch did not cross release.
+func (effect Effect) LaunchNotReleasedFact(
+	at time.Time,
+	failure LaunchFailure,
+	diagnostic uint64,
+) (Fact, bool) {
+	if effect.kind != supervisorLaunchNative || at.IsZero() ||
+		(failure != LaunchFailed && failure != LaunchResourceExhausted) {
+		return Fact{}, false
+	}
+	completion := supervisorLaunchCompletion{
+		generation: effect.generation, action: effect.token, at: at,
+		kind: supervisorLaunchProvenNotReleased, failure: failure,
+		diagnostic: supervisorDiagnosticRef(diagnostic),
+	}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorLaunchCompleted, generation: effect.generation, at: at, completion: &completion,
+	}), true
+}
+
 // RunningFact returns canonical evidence for correlated monitor effects.
 func (machine *Machine) RunningFact(
 	wait Effect,
