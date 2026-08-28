@@ -742,7 +742,7 @@ func (event Event) Canonical() Event {
 		payload.identity = canonicalResourceIdentity(payload.kind, payload.identity, event.previous)
 		value.payload = payload
 	}
-	return Event{value: value, previous: event.previous}
+	return Event{value: value}
 }
 
 // Canonical returns the fact without process-runtime authority.

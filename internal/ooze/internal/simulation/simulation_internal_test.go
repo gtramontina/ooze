@@ -2164,14 +2164,16 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 	machine := supervision.NewMachine()
 	registration := shell.RegisterCampaign(definition.Lineage)
 	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.Registered(registration))
-	_, _ = applyRecordedCampaign(observer, campaign,
+	campaign, _ = applyRecordedCampaign(observer, campaign,
 		campaignmodule.SnapshotEstablished("/private/repository/snapshot-937"))
+	_, _ = applyRecordedCampaign(observer, campaign,
+		campaignmodule.CatalogueDiscovered("/private/repository/snapshot-937", nil))
 
 	trace, projection := recorder.quiescent(shell, machine)
 	projected := fmt.Sprintf("%#v %#v", trace, projection)
 	assert.NotContains(t, projected, "/private/repository", "simulation projection leaked a filesystem path: %s", projected)
 	assert.True(t, trace.records[len(trace.records)-1].campaignEvent.Fact().Equal(
-		campaignmodule.SnapshotEstablished("snapshot:campaign-paths")))
+		campaignmodule.CatalogueDiscovered("snapshot:campaign-paths", nil)))
 }
 
 func applyRecordedCampaign(
