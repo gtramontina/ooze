@@ -37,6 +37,11 @@ type ArtifactRequest struct{ effect Effect }
 // SupervisionRequest is one opaque attempt-supervision request emitted by a campaign.
 type SupervisionRequest struct{ effect Effect }
 
+// BindsConfirmationBarrier reports whether the effect closes a confirmation queue around one attempt.
+func (effect Effect) BindsConfirmationBarrier() bool {
+	return effect.value.kind == campaignEffectBindConfirmationBarrier
+}
+
 // BindRuntime retains the executable authority outside pure campaign state.
 func BindRuntime(registration processruntime.Registration) RuntimeBinding {
 	return RuntimeBinding{campaign: registration.Campaign()}
@@ -46,31 +51,6 @@ func BindRuntime(registration processruntime.Registration) RuntimeBinding {
 func (binding RuntimeBinding) RuntimeRequest(effect Effect, definition Definition) (RuntimeRequest, bool) {
 	cut, ok := binding.runtimeCut(effect, definition)
 	return RuntimeRequest{effect: effect, cut: cut}, ok
-}
-
-// RuntimeOperation returns the process-runtime operation represented by an effect.
-func (effect Effect) RuntimeOperation() (processruntime.Operation, bool) {
-	switch effect.value.kind {
-	case campaignEffectRegister:
-		return processruntime.RegisterCampaignOperation, true
-	case campaignEffectRequestAdmission:
-		return processruntime.RequestAdmissionOperation, true
-	case campaignEffectCancelAdmission:
-		return processruntime.CancelAdmissionOperation, true
-	case campaignEffectReturnAdmission:
-		return processruntime.ReturnGrantOperation, true
-	case campaignEffectBindConfirmationBarrier:
-		return processruntime.BindConfirmationBarrierOperation, true
-	case campaignEffectRequestStartCommitment:
-		return processruntime.CommitStartOperation, true
-	case campaignEffectProposeTerminal:
-		if effect.value.fatalEpoch != 0 {
-			return processruntime.AuthorizeForcedAbortOperation, true
-		}
-		return processruntime.CommitTerminalOperation, true
-	default:
-		return 0, false
-	}
 }
 
 // Cut returns the input for the process-runtime reducer.

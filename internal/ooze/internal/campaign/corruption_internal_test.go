@@ -1,7 +1,6 @@
 package campaign
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,10 +21,6 @@ func TestCampaignRejectsInjectedBaselineDeadline(t *testing.T) {
 		baselineDeadline: time.Second,
 	}
 	assert.Panics(t, func() { _, _ = beginCampaign(definition) })
-}
-
-func TestCampaignStateUsesInertRuntimeIdentity(t *testing.T) {
-	assert.NotEqual(t, reflect.TypeOf(processruntime.Campaign{}), reflect.TypeOf(campaignToken{}))
 }
 
 func TestCampaignInvariantProjectionOmitsPrivateCustodyAndFilesystemFacts(t *testing.T) {

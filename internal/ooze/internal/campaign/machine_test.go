@@ -19,27 +19,38 @@ func TestMachineCommitsAnEmptyCatalogueWithoutLaunchingAnAttempt(t *testing.T) {
 		Profile:  processruntime.AutomaticProfile,
 		Peers:    4,
 	})
-	require.Equal(t, []testEffectKind{registerEffect}, effectKinds(transition.Effects()))
+	require.Len(t, transition.Effects(), 1)
 	runtime := processruntime.NewReplay(4)
 	runtime, registered := runtime.Apply(processruntime.RegisterCampaignCut(11))
+	binding := campaign.BindRuntime(registered.Registration())
 
 	t.Run("records the runtime registration", func(t *testing.T) {
 		machine, transition = machine.Apply(campaign.Registered(registered.Registration()))
-		assert.Equal(t, []testEffectKind{establishSnapshotEffect}, effectKinds(transition.Effects()))
+		require.Len(t, transition.Effects(), 1)
+		request, ok := transition.Effects()[0].ArtifactRequest()
+		require.True(t, ok)
+		assert.True(t, request.EstablishesSnapshot())
 	})
 	_ = runtime
 
 	t.Run("establishes and discovers the repository snapshot", func(t *testing.T) {
 		machine, transition = machine.Apply(campaign.SnapshotEstablished("snapshot-a"))
-		assert.Equal(t, []testEffectKind{discoverCatalogueEffect}, effectKinds(transition.Effects()))
+		require.Len(t, transition.Effects(), 1)
+		request, ok := transition.Effects()[0].ArtifactRequest()
+		require.True(t, ok)
+		_, ok = request.CatalogueSnapshot()
+		assert.True(t, ok)
 
 		machine, transition = machine.Apply(campaign.CatalogueDiscovered("snapshot-a", nil))
-		assert.Equal(t, []testEffectKind{releaseSnapshotEffect}, effectKinds(transition.Effects()))
+		requireArtifactSettlement(t, transition.Effects(), campaign.SnapshotResource)
 	})
 
 	t.Run("commits no mutants after releasing the snapshot", func(t *testing.T) {
 		machine, transition = machine.Apply(campaign.ResourceSettled(campaign.SnapshotResource, "snapshot-a"))
-		assert.Equal(t, []testEffectKind{proposeTerminalEffect}, effectKinds(transition.Effects()))
+		requireRuntimeOperation(t, binding, campaign.Definition{
+			Identity: "campaign-a", Lineage: 11, Command: []string{"go", "test", "./..."},
+			Profile: processruntime.AutomaticProfile, Peers: 4,
+		}, transition.Effects(), processruntime.CommitTerminalOperation)
 
 		machine, transition = machine.Apply(campaign.TerminalCommitted(processruntime.TerminalCommitted))
 		assert.Empty(t, transition.Effects())
@@ -86,7 +97,7 @@ func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *te
 
 	fork := machine.Projection().Canonical().Fork()
 	_, transition = fork.Apply(campaign.RuntimeEmergencyStarted(closed.Closure()).Canonical())
-	require.Equal(t, []testEffectKind{returnAdmissionEffect}, effectKinds(transition.Effects()))
+	require.Len(t, transition.Effects(), 1)
 	_, ok = binding.RuntimeRequest(transition.Effects()[0], definition)
 	assert.False(t, ok)
 	_ = runtime
@@ -107,23 +118,23 @@ func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 	machine, transition := machine.Apply(campaign.CatalogueDiscovered("snapshot-a", []string{"mutant-a"}))
 
 	t.Run("owns the fixed baseline deadline", func(t *testing.T) {
-		require.Equal(t, []testEffectKind{materializeWorkspaceEffect}, effectKinds(transition.Effects()))
+		requireWorkspaceMaterialization(t, transition.Effects())
 		materialize := transition.Effects()[0]
 		machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
-		require.Equal(t, []testEffectKind{requestAdmissionEffect}, effectKinds(transition.Effects()))
+		requireRuntimeOperation(t, binding, definition, transition.Effects(), processruntime.RequestAdmissionOperation)
 		request := transition.Effects()[0]
 		runtimeRequest, ok := binding.RuntimeRequest(request, definition)
 		require.True(t, ok)
 		runtime, admitted := runtime.Apply(runtimeRequest.Cut())
 		require.Len(t, admitted.Admission().Deliveries(), 1)
 		machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
-		require.Equal(t, []testEffectKind{requestStartCommitmentEffect}, effectKinds(transition.Effects()))
+		requireRuntimeOperation(t, binding, definition, transition.Effects(), processruntime.CommitStartOperation)
 		start := transition.Effects()[0]
 		runtimeRequest, ok = binding.RuntimeRequest(start, definition)
 		require.True(t, ok)
 		_, started := runtime.Apply(runtimeRequest.Cut())
 		machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
-		require.Equal(t, []testEffectKind{launchAttemptEffect}, effectKinds(transition.Effects()))
+		requireProspectiveLaunch(t, transition.Effects())
 		assert.Equal(t, 10*time.Minute, transition.Effects()[0].Spec().Deadline)
 		assert.Equal(t, []string{"go", "test"}, transition.Effects()[0].Spec().Command)
 		assert.Equal(t, []string{"A=1"}, transition.Effects()[0].Spec().Env)
@@ -160,8 +171,9 @@ func TestMachineRejectsPreparationWithoutStartingACommand(t *testing.T) {
 		_, registered := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
 		machine, _ := campaign.NewMachine(definition)
 		machine, _ = machine.Apply(campaign.Registered(registered.Registration()))
+		binding := campaign.BindRuntime(registered.Registration())
 		machine, transition := machine.Apply(campaign.PreparationFailed(false, "snapshot failed"))
-		assert.Equal(t, []testEffectKind{proposeTerminalEffect}, effectKinds(transition.Effects()))
+		requireRuntimeOperation(t, binding, definition, transition.Effects(), processruntime.CommitTerminalOperation)
 		assert.Zero(t, machine.CommandCount())
 	})
 }
@@ -204,7 +216,7 @@ func TestMachineRetainsRecordedMutationDeadline(t *testing.T) {
 		started.Start().Generation(), processruntime.Settled(definition.Profile, 10*time.Minute),
 	))
 	machine, transition = machine.Apply(campaign.AttemptTerminal(launch, terminal, settled.Receipt(), time.Nanosecond))
-	assert.Equal(t, []testEffectKind{releaseWorkspaceEffect}, effectKinds(transition.Effects()))
+	requireArtifactSettlement(t, transition.Effects(), campaign.WorkspaceResource)
 	deadline, ok := transition.Event().Fact().ResolvedMutationDeadline()
 	require.True(t, ok)
 	assert.Equal(t, time.Nanosecond, deadline)

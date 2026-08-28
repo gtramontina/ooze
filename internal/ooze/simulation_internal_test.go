@@ -18,30 +18,15 @@ type simulationFocusedChoiceSource func([]simulationEngineMove) int
 
 type mutantResultKind = campaignmodule.ManagedMutationOutcome
 type campaignAttemptEvidenceKind = campaignmodule.AttemptKind
-type simulationTestEffectKind string
 type simulationTestFactKind string
 
 const (
-	campaignEffectRegister                simulationTestEffectKind = "register"
-	campaignEffectEstablishSnapshot       simulationTestEffectKind = "establish snapshot"
-	campaignEffectDiscoverCatalogue       simulationTestEffectKind = "discover catalogue"
-	campaignEffectReleaseSnapshot         simulationTestEffectKind = "release snapshot"
-	campaignEffectMaterializeWorkspace    simulationTestEffectKind = "materialize workspace"
-	campaignEffectRequestAdmission        simulationTestEffectKind = "request admission"
-	campaignEffectRequestStartCommitment  simulationTestEffectKind = "request start"
-	campaignEffectLaunchAttempt           simulationTestEffectKind = "launch"
-	campaignEffectCancelAdmission         simulationTestEffectKind = "cancel admission"
-	campaignEffectReturnAdmission         simulationTestEffectKind = "return admission"
-	campaignEffectStopAttempt             simulationTestEffectKind = "stop"
-	campaignEffectReleaseWorkspace        simulationTestEffectKind = "release workspace"
-	campaignEffectBindConfirmationBarrier simulationTestEffectKind = "bind confirmation"
-	campaignEffectProposeTerminal         simulationTestEffectKind = "propose terminal"
-	campaignAttemptBaseline                                        = campaignmodule.BaselineAttempt
-	campaignAttemptPrimary                                         = campaignmodule.PrimaryAttempt
-	campaignAttemptConfirmation                                    = campaignmodule.ConfirmationAttempt
-	campaignFactAttemptLaunched           simulationTestFactKind   = "attempt launched"
-	campaignFactAttemptTerminal           simulationTestFactKind   = "attempt terminal"
-	campaignFactStartCommitted            simulationTestFactKind   = "start committed"
+	campaignAttemptBaseline                            = campaignmodule.BaselineAttempt
+	campaignAttemptPrimary                             = campaignmodule.PrimaryAttempt
+	campaignAttemptConfirmation                        = campaignmodule.ConfirmationAttempt
+	campaignFactAttemptLaunched simulationTestFactKind = "attempt launched"
+	campaignFactAttemptTerminal simulationTestFactKind = "attempt terminal"
+	campaignFactStartCommitted  simulationTestFactKind = "start committed"
 
 	mutantSurvived = campaignmodule.ManagedSurvived
 	mutantKilled   = campaignmodule.ManagedKilled
@@ -58,54 +43,31 @@ func (source simulationFocusedChoiceSource) chooseMove(moves []simulationEngineM
 	return source(moves)
 }
 
-func simulationTestEffect(effect campaignmodule.Effect) simulationTestEffectKind {
-	if effect.IsZero() {
-		return ""
+func simulationMaterializesWorkspace(effect campaignmodule.Effect) bool {
+	request, ok := effect.ArtifactRequest()
+	if !ok {
+		return false
 	}
-	if operation, ok := effect.RuntimeOperation(); ok {
-		switch operation {
-		case processruntime.RegisterCampaignOperation:
-			return campaignEffectRegister
-		case processruntime.RequestAdmissionOperation:
-			return campaignEffectRequestAdmission
-		case processruntime.CommitStartOperation:
-			return campaignEffectRequestStartCommitment
-		case processruntime.CancelAdmissionOperation:
-			return campaignEffectCancelAdmission
-		case processruntime.ReturnGrantOperation:
-			return campaignEffectReturnAdmission
-		case processruntime.BindConfirmationBarrierOperation:
-			return campaignEffectBindConfirmationBarrier
-		case processruntime.CommitTerminalOperation, processruntime.AuthorizeForcedAbortOperation:
-			return campaignEffectProposeTerminal
-		}
+	_, _, ok = request.Workspace()
+	return ok
+}
+
+func simulationLaunchesAttempt(effect campaignmodule.Effect) bool {
+	request, ok := effect.SupervisionRequest()
+	if !ok {
+		return false
 	}
-	if request, ok := effect.ArtifactRequest(); ok {
-		if request.EstablishesSnapshot() {
-			return campaignEffectEstablishSnapshot
-		}
-		if _, ok := request.CatalogueSnapshot(); ok {
-			return campaignEffectDiscoverCatalogue
-		}
-		if _, _, ok := request.Workspace(); ok {
-			return campaignEffectMaterializeWorkspace
-		}
-		if kind, _, ok := request.Settlement(); ok {
-			if kind == campaignmodule.SnapshotResource {
-				return campaignEffectReleaseSnapshot
-			}
-			return campaignEffectReleaseWorkspace
-		}
+	_, ok = request.Prospective(time.Time{}, time.Time{})
+	return ok
+}
+
+func simulationStopsAttempt(effect campaignmodule.Effect) bool {
+	request, ok := effect.SupervisionRequest()
+	if !ok {
+		return false
 	}
-	if request, ok := effect.SupervisionRequest(); ok {
-		if _, launches := request.Prospective(time.Time{}, time.Time{}); launches {
-			return campaignEffectLaunchAttempt
-		}
-		if _, stops := request.StopGeneration(); stops {
-			return campaignEffectStopAttempt
-		}
-	}
-	panic("simulation test effect is invalid")
+	_, ok = request.StopGeneration()
+	return ok
 }
 
 func simulationTestFact(fact campaignmodule.Fact) simulationTestFactKind {
@@ -687,10 +649,10 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 	var barriers, confirmations []mutantIdentity
 	for _, record := range explored.trace.records {
 		for _, effect := range record.campaignEffects {
-			if simulationTestEffect(effect) == campaignEffectBindConfirmationBarrier {
+			if effect.BindsConfirmationBarrier() {
 				barriers = append(barriers, effect.Mutant())
 			}
-			if simulationTestEffect(effect) == campaignEffectLaunchAttempt && effect.AttemptRole() == campaignAttemptConfirmation {
+			if simulationLaunchesAttempt(effect) && effect.AttemptRole() == campaignAttemptConfirmation {
 				confirmations = append(confirmations, effect.Mutant())
 			}
 		}
@@ -748,7 +710,7 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 			}
 		}
 		for _, effect := range record.campaignEffects {
-			if simulationTestEffect(effect) == campaignEffectStopAttempt {
+			if simulationStopsAttempt(effect) {
 				stopEffectAt = index
 			}
 		}
@@ -928,7 +890,7 @@ func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	explorePreferred := func(preferred mutantIdentity) SimulationResult {
 		return Explore(definition, simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 			for index, move := range moves {
-				if simulationTestEffect(move.effect) == campaignEffectMaterializeWorkspace && move.effect.Mutant() == preferred {
+				if simulationMaterializesWorkspace(move.effect) && move.effect.Mutant() == preferred {
 					return index
 				}
 			}
@@ -2021,11 +1983,11 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 	for _, record := range explored.trace.records {
 		for _, effect := range record.campaignEffects {
 			switch {
-			case simulationTestEffect(effect) == campaignEffectMaterializeWorkspace && effect.Mutant() == "mutant-a":
+			case simulationMaterializesWorkspace(effect) && effect.Mutant() == "mutant-a":
 				materializeA = effect
-			case simulationTestEffect(effect) == campaignEffectMaterializeWorkspace && effect.Mutant() == "mutant-b":
+			case simulationMaterializesWorkspace(effect) && effect.Mutant() == "mutant-b":
 				materializeB = effect
-			case simulationTestEffect(effect) == campaignEffectLaunchAttempt && launch.IsZero():
+			case simulationLaunchesAttempt(effect) && launch.IsZero():
 				launch = effect
 			}
 		}
@@ -2167,34 +2129,40 @@ func simulationFact(t *testing.T, trace simulationTrace, kind simulationTestFact
 	return campaignmodule.Fact{}
 }
 
-func simulationEffect(t *testing.T, trace simulationTrace, kind simulationTestEffectKind) campaignmodule.Effect {
+func simulationEffect(
+	t *testing.T,
+	trace simulationTrace,
+	matches func(campaignmodule.Effect) bool,
+	name string,
+) campaignmodule.Effect {
 	t.Helper()
 	for _, record := range trace.records {
 		for _, effect := range record.campaignEffects {
-			if simulationTestEffect(effect) == kind {
+			if matches(effect) {
 				return effect
 			}
 		}
 	}
-	require.FailNowf(t, "campaign effect not found", "kind=%s", kind)
+	require.FailNowf(t, "campaign effect not found", "effect=%s", name)
 	return campaignmodule.Effect{}
 }
 
 func simulationEffectForGeneration(
 	t *testing.T,
 	trace simulationTrace,
-	kind simulationTestEffectKind,
+	matches func(campaignmodule.Effect) bool,
+	name string,
 	generation processruntime.Generation,
 ) campaignmodule.Effect {
 	t.Helper()
 	for _, record := range trace.records {
 		for _, effect := range record.campaignEffects {
-			if simulationTestEffect(effect) == kind && effect.Generation() == generation {
+			if matches(effect) && effect.Generation() == generation {
 				return effect
 			}
 		}
 	}
-	require.FailNowf(t, "campaign effect not found", "kind=%s generation=%d", kind, generation)
+	require.FailNowf(t, "campaign effect not found", "effect=%s generation=%d", name, generation)
 	return campaignmodule.Effect{}
 }
 
@@ -2579,8 +2547,10 @@ func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
 
 func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 	trace := simulationStopTrace(t)
-	stopEffect := simulationEffect(t, trace, campaignEffectStopAttempt)
-	launchEffect := simulationEffectForGeneration(t, trace, campaignEffectLaunchAttempt, stopEffect.Generation())
+	stopEffect := simulationEffect(t, trace, simulationStopsAttempt, "stop attempt")
+	launchEffect := simulationEffectForGeneration(
+		t, trace, simulationLaunchesAttempt, "launch attempt", stopEffect.Generation(),
+	)
 	generation := launchEffect.Generation()
 	launch := simulationEngineMove{
 		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(launchEffect.ID())},
@@ -2615,7 +2585,7 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 			moves := test.engine.enabledMoves()
 			assert.NotEqual(t, 0, len(moves), "attempt ownership made no progress")
 			for _, move := range moves {
-				assert.NotEqual(t, campaignEffectStopAttempt, simulationTestEffect(move.effect), "enabled stop before supervisor ownership: %#v", moves)
+				assert.False(t, simulationStopsAttempt(move.effect), "enabled stop before supervisor ownership: %#v", moves)
 			}
 		})
 	}
@@ -2626,7 +2596,7 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		}
 		moves := completed.enabledMoves()
 		require.EqualValues(t, 1, len(moves), "completed generation retained disabled stop: %#v", moves)
-		assert.Equal(t, campaignEffectStopAttempt, simulationTestEffect(moves[0].effect), "completed generation retained disabled stop: %#v", moves)
+		assert.True(t, simulationStopsAttempt(moves[0].effect), "completed generation retained disabled stop: %#v", moves)
 		assert.True(t, completed.consume(moves[0]), "completed generation stop was not pending")
 		err := completed.apply(moves[0])
 		assert.NoError(t, err, "completed generation stop=%v, want no-op", err)
