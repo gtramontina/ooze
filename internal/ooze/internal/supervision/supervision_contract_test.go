@@ -1,6 +1,7 @@
 package supervision_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -124,6 +125,39 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 		}}, residuals.Residuals())
 		assert.NotZero(t, settlement.Epoch())
 	})
+
+	for _, test := range []struct {
+		name       string
+		cause      supervision.Cause
+		diagnostic func(supervision.FailureDiagnostics) string
+	}{
+		{name: "wait", cause: supervision.WaitFailed, diagnostic: func(value supervision.FailureDiagnostics) string { return value.Wait }},
+		{name: "drain census", cause: supervision.CensusFailed, diagnostic: func(value supervision.FailureDiagnostics) string { return value.DrainCensus }},
+		{name: "termination", cause: supervision.TerminationControlFailed, diagnostic: func(value supervision.FailureDiagnostics) string { return value.Termination }},
+		{name: "output", cause: supervision.OutputCaptureFailed, diagnostic: func(value supervision.FailureDiagnostics) string { return value.Output }},
+		{name: "release", cause: supervision.ReleaseFailed, diagnostic: func(value supervision.FailureDiagnostics) string { return value.Release }},
+	} {
+		t.Run(test.name+" failure remains public", func(t *testing.T) {
+			_, driver, boundary, start, spec := supervisionContractAttempt(t)
+			boundary.mutex.Lock()
+			boundary.failure = test.cause
+			if test.cause == supervision.TerminationControlFailed {
+				boundary.residual = true
+			}
+			boundary.mutex.Unlock()
+			launched := driver.Launch(start, spec)
+			owned, ok := launched.Result().(supervision.Owned)
+			require.True(t, ok)
+			close(boundary.wait)
+
+			terminal := driver.Wait(start.Generation(), owned.Attempt)
+			failure, ok := terminal.Terminal().(supervision.Infrastructure)
+			require.True(t, ok)
+			assert.Equal(t, test.cause, failure.Cause)
+			assert.EqualError(t, failure.Err, test.name+" failure")
+			assert.Equal(t, test.name+" failure", test.diagnostic(failure.Failures))
+		})
+	}
 }
 
 type supervisionBoundary struct {
@@ -136,6 +170,11 @@ type supervisionBoundary struct {
 	now               time.Time
 	launchCompleted   bool
 	residual          bool
+	failure           supervision.Cause
+	drainFailures     int
+	drainResiduals    int
+	diagnostics       map[uint64]error
+	nextDiagnostic    uint64
 }
 
 func (boundary *supervisionBoundary) Now() time.Time {
@@ -204,14 +243,54 @@ func (boundary *supervisionBoundary) Execute(
 		return supervision.Fact{}, true
 	case supervision.WaitRootEffect:
 		<-boundary.wait
+		boundary.mutex.Lock()
+		failure := boundary.failure
+		boundary.mutex.Unlock()
+		if failure == supervision.WaitFailed {
+			return effect.WaitFailureFact(boundary.Now(), boundary.record(errors.New("wait failure")))
+		}
 
 		return effect.RootExitFact(boundary.Now(), supervision.ExitStatus{})
 	case supervision.ForceOwnedEffect, supervision.ObserveEmptinessEffect,
 		supervision.CaptureOutputEffect, supervision.ReleaseDomainEffect:
 		boundary.mutex.Lock()
 		residual := boundary.residual
+		failure := boundary.failure
+		drainFailures := boundary.drainFailures
+		drainResiduals := boundary.drainResiduals
+		if effect.Kind() == supervision.ObserveEmptinessEffect && failure == supervision.CensusFailed {
+			boundary.drainFailures++
+		}
+		if effect.Kind() == supervision.ObserveEmptinessEffect && residual {
+			boundary.drainResiduals++
+		}
 		boundary.mutex.Unlock()
+		if effect.Kind() == supervision.ForceOwnedEffect && failure == supervision.TerminationControlFailed {
+			return effect.DrainFailureFact(
+				boundary.Now(), 0, boundary.record(errors.New("termination failure")),
+			)
+		}
+		if effect.Kind() == supervision.ObserveEmptinessEffect &&
+			failure == supervision.CensusFailed && drainFailures == 0 {
+			return effect.DrainFailureFact(
+				boundary.Now(), 0, boundary.record(errors.New("drain census failure")),
+			)
+		}
+		if effect.Kind() == supervision.CaptureOutputEffect && failure == supervision.OutputCaptureFailed {
+			return effect.OutputFailureFact(
+				boundary.Now(), 1, 1, 0, 0, boundary.record(errors.New("output failure")),
+			)
+		}
+		if effect.Kind() == supervision.ReleaseDomainEffect && failure == supervision.ReleaseFailed {
+			return effect.ReleaseFailureFact(boundary.Now(), boundary.record(errors.New("release failure")))
+		}
 		if residual && effect.Kind() == supervision.ObserveEmptinessEffect {
+			if failure == supervision.TerminationControlFailed && drainResiduals == 0 {
+				return effect.DrainResidualFact(boundary.Now())
+			}
+			if failure == supervision.TerminationControlFailed {
+				return effect.SystemCompletionFact(boundary.Now())
+			}
 			boundary.setNow(effect.DrainBy())
 
 			return effect.DrainResidualFact(effect.DrainBy())
@@ -239,9 +318,23 @@ func (*supervisionBoundary) SampleRunning(supervision.Generation) (bool, uint64,
 
 func (*supervisionBoundary) ReadOutput(uint64) string { return "contract output" }
 
-func (*supervisionBoundary) ReadDiagnostic(uint64) error { return nil }
+func (boundary *supervisionBoundary) ReadDiagnostic(ref uint64) error {
+	boundary.mutex.Lock()
+	defer boundary.mutex.Unlock()
 
-func (*supervisionBoundary) RecordDiagnostic(error) uint64 { return 1 }
+	return boundary.diagnostics[ref]
+}
+
+func (boundary *supervisionBoundary) RecordDiagnostic(err error) uint64 { return boundary.record(err) }
+
+func (boundary *supervisionBoundary) record(err error) uint64 {
+	boundary.mutex.Lock()
+	defer boundary.mutex.Unlock()
+	boundary.nextDiagnostic++
+	boundary.diagnostics[boundary.nextDiagnostic] = err
+
+	return boundary.nextDiagnostic
+}
 
 func supervisionContractAttempt(
 	t *testing.T,
@@ -259,6 +352,7 @@ func supervisionContractAttempt(
 	require.True(t, received)
 	boundary := &supervisionBoundary{
 		wait: make(chan struct{}), awaitedLaunch: make(chan time.Time, 1),
+		diagnostics: make(map[uint64]error),
 	}
 	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
 	require.NoError(t, err)

@@ -772,6 +772,26 @@ func (effect Effect) RootExitFact(
 	}), true
 }
 
+// WaitFailureFact returns failed root-wait evidence correlated with this effect.
+func (effect Effect) WaitFailureFact(at time.Time, diagnostic uint64) (Fact, bool) {
+	if effect.kind != supervisorWaitRoot || at.IsZero() || diagnostic == 0 {
+		return Fact{}, false
+	}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorRunningObserved, generation: effect.generation, at: at,
+		drainBy: at.Add(5 * time.Second),
+		running: &supervisorRunningBundle{
+			generation: effect.generation, waitAction: effect.token,
+			facts: []supervisorRunningFact{{
+				generation: effect.generation, action: effect.token,
+				kind: supervisorRunningObservationFailed, at: at,
+				source: supervisorObservationWait, diagnostic: supervisorDiagnosticRef(diagnostic),
+			}},
+		},
+	}), true
+}
+
 // SystemCompletionFact returns successful native completion evidence for this effect.
 func (effect Effect) SystemCompletionFact(at time.Time) (Fact, bool) {
 	if at.IsZero() {
@@ -823,6 +843,77 @@ func (effect Effect) DrainResidualFact(at time.Time) (Fact, bool) {
 		kind: supervisorDrainCompleted, generation: effect.generation, at: at,
 		drain: &supervisorDrainCompletion{
 			generation: effect.generation, action: pending, at: at, kind: supervisorDrainObservedResidual,
+		},
+	}), true
+}
+
+// DrainFailureFact returns native force or census failure evidence for this effect.
+func (effect Effect) DrainFailureFact(
+	at time.Time,
+	waitDiagnostic uint64,
+	diagnostic uint64,
+) (Fact, bool) {
+	if at.IsZero() || diagnostic == 0 || waitDiagnostic == diagnostic {
+		return Fact{}, false
+	}
+	kind := supervisorDrainForceCompleted
+	switch effect.kind {
+	case supervisorForceOwned:
+	case supervisorObserveEmptiness:
+		kind = supervisorDrainObservationFailed
+	default:
+		return Fact{}, false
+	}
+	pending := supervisorPendingAction{kind: effect.kind, token: effect.token}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorDrainCompleted, generation: effect.generation, at: at,
+		drain: &supervisorDrainCompletion{
+			generation: effect.generation, action: pending, at: at, kind: kind,
+			waitDiagnostic: supervisorDiagnosticRef(waitDiagnostic),
+			diagnostic:     supervisorDiagnosticRef(diagnostic),
+		},
+	}), true
+}
+
+// OutputFailureFact returns partial output and its independent failure evidence.
+func (effect Effect) OutputFailureFact(
+	at time.Time,
+	ref uint64,
+	cutoff uint64,
+	prefixLength uint64,
+	waitDiagnostic uint64,
+	diagnostic uint64,
+) (Fact, bool) {
+	if effect.kind != supervisorCaptureOutput || at.IsZero() || ref == 0 || diagnostic == 0 ||
+		prefixLength > cutoff || prefixLength == cutoff || waitDiagnostic == diagnostic {
+		return Fact{}, false
+	}
+	pending := supervisorPendingAction{kind: effect.kind, token: effect.token}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorOutputCompleted, generation: effect.generation, at: at,
+		output: &supervisorOutputCompletion{
+			generation: effect.generation, action: pending, at: at,
+			ref: supervisorOutputRef(ref), cutoff: cutoff, prefixLength: prefixLength,
+			waitDiagnostic: supervisorDiagnosticRef(waitDiagnostic),
+			diagnostic:     supervisorDiagnosticRef(diagnostic),
+		},
+	}), true
+}
+
+// ReleaseFailureFact returns domain-release failure evidence for this effect.
+func (effect Effect) ReleaseFailureFact(at time.Time, diagnostic uint64) (Fact, bool) {
+	if effect.kind != supervisorReleaseDomain || at.IsZero() || diagnostic == 0 {
+		return Fact{}, false
+	}
+	pending := supervisorPendingAction{kind: effect.kind, token: effect.token}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorReleaseCompleted, generation: effect.generation, at: at,
+		release: &supervisorReleaseCompletion{
+			generation: effect.generation, action: pending, at: at,
+			diagnostic: supervisorDiagnosticRef(diagnostic),
 		},
 	}), true
 }
