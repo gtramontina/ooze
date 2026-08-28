@@ -156,7 +156,7 @@ func (recorder *simulationRecorder) recordCampaign(
 func (recorder *simulationRecorder) recordSupervisor(
 	reservation simulationReservation,
 	event supervisorEvent,
-	state supervisorState,
+	state simulationSupervisorState,
 	actions []supervisorAction,
 ) {
 	if recorder == nil {
@@ -167,7 +167,7 @@ func (recorder *simulationRecorder) recordSupervisor(
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority, source: source,
 		supervisorEvent:   simulationTraceSupervisorEvent(event),
-		supervisorState:   simulationTraceSupervisorState(state),
+		supervisorState:   state,
 		supervisorActions: simulationTraceSupervisorActions(actions),
 	})
 }
@@ -486,7 +486,8 @@ func (recorder *simulationRecorder) quiescent(
 
 	runtimeState := simulationTraceRuntimeState(recorder.runtimeState)
 	driver.mutex.Lock()
-	supervisorState := simulationProjectSupervisorState(driver.supervisorState())
+	driverState := simulationProjectSupervisorState(driver.supervisorState())
+	supervisorState := driver.machine.Projection()
 	driver.mutex.Unlock()
 	campaignState := simulationProjectCampaign(runner.state)
 	definition := campaignState.definition
@@ -502,7 +503,7 @@ func (recorder *simulationRecorder) quiescent(
 		afterSequence: afterSequence,
 		campaign:      simulationTraceCampaignState(campaignState),
 		runtime:       runtimeState,
-		supervisor:    simulationTraceSupervisorState(supervisorState),
+		supervisor:    supervisorState,
 	}
 	recorder.mutex.Lock()
 	recorder.barriers = append(recorder.barriers, barrier)
@@ -516,7 +517,7 @@ func (recorder *simulationRecorder) quiescent(
 			},
 			records: records, barriers: barriers,
 		}, simulationWorld{
-			campaign: campaignState, runtime: runtimeState, supervisor: supervisorState,
+			campaign: campaignState, runtime: runtimeState, supervisor: driverState,
 		}
 }
 

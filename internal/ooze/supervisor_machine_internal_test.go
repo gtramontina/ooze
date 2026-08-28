@@ -62,3 +62,18 @@ func TestSupervisorMachineCanForkWithoutSharingState(t *testing.T) {
 	assert.Equal(t, leftTransition.Effects(), rightTransition.Effects())
 	assert.Empty(t, machine.snapshot().attempts)
 }
+
+func TestSupervisorMachineProjectionDoesNotExposeReducerState(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	fact := supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: 1, attempt: "mutant-1",
+		at: registeredAt, launchBy: registeredAt.Add(time.Second),
+		profile: AutomaticProfile, commandDeadline: time.Minute,
+	}
+	machine, _ := newSupervisorMachine().Apply(fact)
+
+	projection := machine.Projection()
+	projection.attempts[0].attempt = "corrupted"
+
+	assert.Equal(t, attemptIdentity("mutant-1"), machine.Projection().attempts[0].attempt)
+}

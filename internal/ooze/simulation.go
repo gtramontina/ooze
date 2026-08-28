@@ -729,7 +729,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			for _, action := range actions {
 				actionKinds[action.token] = action.kind
 			}
-			if !reflect.DeepEqual(simulationTraceSupervisorState(supervisor), record.supervisorState) ||
+			if !reflect.DeepEqual(supervisorMachine.Projection(), record.supervisorState) ||
 				!reflect.DeepEqual(simulationTraceSupervisorActions(actions), record.supervisorActions) {
 				return simulationReplayDivergenceFailure(
 					trace, simulationSupervisorDivergence, "supervisor transition diverged at record %d", index,
@@ -921,7 +921,7 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 		machine, transition := machine.Apply(record.supervisorEvent.production())
 		actions := transition.Effects()
 		state := machine.snapshot()
-		if !reflect.DeepEqual(simulationTraceSupervisorState(state), record.supervisorState) ||
+		if !reflect.DeepEqual(machine.Projection(), record.supervisorState) ||
 			!reflect.DeepEqual(simulationTraceSupervisorActions(actions), record.supervisorActions) {
 			return simulationWorld{}, fmt.Errorf("supervisor owner cut diverged")
 		}

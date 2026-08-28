@@ -35,6 +35,14 @@ func (machine *supervisorMachine) snapshot() supervisorState {
 	return cloneSupervisorState(machine.state)
 }
 
+func (machine *supervisorMachine) Projection() simulationSupervisorState {
+	if machine == nil {
+		return simulationTraceSupervisorState(supervisorState{})
+	}
+
+	return simulationTraceSupervisorState(machine.state)
+}
+
 func (transition supervisorTransition) Event() supervisorDomainEvent {
 	return supervisorDomainEvent{fact: cloneSupervisorEvent(transition.event.fact)}
 }

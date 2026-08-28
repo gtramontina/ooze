@@ -767,11 +767,10 @@ func (engine *simulationEngine) applySupervisor(
 	accepted := transition.Event().Fact()
 	actions := transition.Effects()
 	engine.supervisor = engine.machine.snapshot()
-	state := engine.supervisor
 	record := simulationRecord{
 		authority: simulationSupervisorAuthority, source: source,
 		supervisorEvent:   simulationTraceSupervisorEvent(accepted),
-		supervisorState:   simulationTraceSupervisorState(state),
+		supervisorState:   engine.machine.Projection(),
 		supervisorActions: simulationTraceSupervisorActions(actions),
 	}
 	engine.append(record)

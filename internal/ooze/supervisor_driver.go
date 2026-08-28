@@ -459,8 +459,7 @@ func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisor
 	driver.machine, transition = driver.machine.Apply(event)
 	accepted := transition.Event().Fact()
 	actions := transition.Effects()
-	next := driver.machine.snapshot()
-	driver.recorder.recordSupervisor(reservation, accepted, next, actions)
+	driver.recorder.recordSupervisor(reservation, accepted, driver.machine.Projection(), actions)
 
 	return actions
 }
