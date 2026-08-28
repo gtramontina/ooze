@@ -518,6 +518,35 @@ func (machine *supervisorMachine) EmergencySettlementFact(
 	}), true
 }
 
+func (machine *supervisorMachine) EmergencyRequest(at, drainBy time.Time) supervisionFact {
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorEmergencyStarted, at: at, drainBy: drainBy,
+	})
+}
+
+func (machine *supervisorMachine) RuntimeReceiptFact(
+	effect supervisionEffect,
+	kind supervisorRuntimeReceiptKind,
+) (supervisionFact, bool) {
+	if machine == nil {
+		return supervisionFact{}, false
+	}
+	index := machine.state.attemptIndex(effect.generation)
+	if index < 0 {
+		return supervisionFact{}, false
+	}
+	attempt := machine.state.attempts[index]
+	if attempt.pendingAction.kind != effect.kind || attempt.pendingAction.token != effect.token {
+		return supervisionFact{}, false
+	}
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorRuntimeCompleted, generation: effect.generation,
+		runtime: &supervisorRuntimeCompletion{
+			generation: effect.generation, action: attempt.pendingAction, kind: kind,
+		},
+	}), true
+}
+
 func (machine *supervisorMachine) PrepareEmergency(
 	at, drainBy time.Time,
 	drainEpoch time.Duration,

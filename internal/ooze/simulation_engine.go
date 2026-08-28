@@ -229,7 +229,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	}
 	if move.source.kind == simulationOwnerDeliverySource {
 		if move.supervisorDelivery != nil {
-			return engine.applySupervisor(move.source, move.supervisorDelivery.production())
+			return engine.applySupervisorFact(move.source, *move.supervisorDelivery)
 		}
 		return fmt.Errorf("simulation owner delivery is absent")
 	}
@@ -338,11 +338,10 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		move.effect.mutant = simulationCampaignAttemptMutant(engine.campaign, move.effect.attempt)
 		engine.launches[move.effect.generation] = move.effect
 		registeredAt := time.Unix(int64(1_000+engine.attempts*100), 0)
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorProspectiveRegistered, generation: move.effect.generation,
-			attempt: move.effect.attempt, at: registeredAt, launchBy: registeredAt.Add(time.Second),
-			profile: move.effect.spec.Profile, commandDeadline: move.effect.spec.Deadline,
-		})
+		return engine.applySupervisorFact(move.source, supervisionProspectiveRegistration(
+			move.effect.generation, move.effect.attempt, registeredAt, registeredAt.Add(time.Second),
+			move.effect.spec.Profile, move.effect.spec.Deadline,
+		))
 	case campaignEffectStopAttempt:
 		fact, disposition := engine.machine.StopFact(move.effect.generation)
 		switch disposition {
@@ -448,9 +447,9 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		if action.kind == supervisorPublishLaunchUnconfirmed && result.runtimeClosureInProgress &&
 			engine.machine.AcceptsEmergencyRequest() && !engine.hasPendingSupervisorEmergency() {
 			emergencyAt := action.at.production().Add(time.Nanosecond)
-			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
-			})
+			engine.enqueueSupervisorFact(
+				sequence, engine.machine.EmergencyRequest(emergencyAt, emergencyAt.Add(5*time.Second)),
+			)
 		}
 	case supervisorCloseProspective:
 		observation := launchObservationFromAction(action.production())
@@ -461,14 +460,11 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, result.deliveries)
-		completion := supervisorRuntimeCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token},
-			kind:       normalizedSupervisorRuntimeReceipt(processed),
+		fact, ready := engine.machine.RuntimeReceiptFact(action, normalizedSupervisorRuntimeReceipt(processed))
+		if !ready {
+			return fmt.Errorf("simulation runtime receipt is not enabled")
 		}
-		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-			kind: supervisorRuntimeCompleted, generation: action.generation, runtime: &completion,
-		})
+		engine.enqueueSupervisorFact(sequence, fact)
 	case supervisorAdoptOwned:
 		observation := attemptObservation(launchOwned{})
 		engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation)))
@@ -497,19 +493,16 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			authority: simulationRuntimeAuthority, source: move.source,
 			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
-		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-			kind: supervisorRuntimeCompleted, generation: action.generation,
-			runtime: &supervisorRuntimeCompletion{
-				generation: action.generation,
-				action:     supervisorPendingAction{kind: action.kind, token: action.token},
-				kind:       supervisorRuntimeClosurePending,
-			},
-		})
+		fact, ready := engine.machine.RuntimeReceiptFact(action, supervisorRuntimeClosurePending)
+		if !ready {
+			return fmt.Errorf("simulation residual custody receipt is not enabled")
+		}
+		engine.enqueueSupervisorFact(sequence, fact)
 		if wasOpen {
 			emergencyAt := action.at.production().Add(time.Nanosecond)
-			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
-			})
+			engine.enqueueSupervisorFact(
+				sequence, engine.machine.EmergencyRequest(emergencyAt, emergencyAt.Add(5*time.Second)),
+			)
 		}
 	case supervisorSettleEmergency:
 		resolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(action.resolutions)
@@ -546,14 +539,11 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
 		engine.enqueueAdmissionDeliveries(sequence, receipt.deliveries)
-		completion := supervisorRuntimeCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token},
-			kind:       normalizedSupervisorRuntimeReceipt(processed),
+		fact, ready := engine.machine.RuntimeReceiptFact(action, normalizedSupervisorRuntimeReceipt(processed))
+		if !ready {
+			return fmt.Errorf("simulation terminal receipt is not enabled")
 		}
-		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-			kind: supervisorRuntimeCompleted, generation: action.generation, runtime: &completion,
-		})
+		engine.enqueueSupervisorFact(sequence, fact)
 	case supervisorDeliverTerminal:
 		launch := engine.launches[action.generation]
 		receipt := engine.receipts[action.generation]
@@ -666,30 +656,24 @@ func (engine *simulationEngine) retireCampaignTerminals() {
 	}
 }
 
-func (engine *simulationEngine) applySupervisor(
-	source simulationCausalSource,
-	event supervisorEvent,
-) error {
-	if event.kind == supervisorEmergencyStarted && source.kind == simulationOwnerDeliverySource {
-		evidence := engine.machine.DeterministicEmergencyEvidence(event.at)
-		fact, ready := engine.machine.PrepareEmergency(
-			event.at, event.at.Add(5*time.Second), 5*time.Second, evidence,
-		)
-		if !ready {
-			return fmt.Errorf("simulation emergency fact is not enabled")
-		}
-		event = fact.production()
-	}
-	if engine.machine == nil {
-		engine.machine = newSupervisorMachine()
-	}
-	return engine.applySupervisorFact(source, supervisionFactFromEvent(event))
-}
-
 func (engine *simulationEngine) applySupervisorFact(
 	source simulationCausalSource,
 	fact supervisionFact,
 ) error {
+	if engine.machine == nil {
+		engine.machine = newSupervisorMachine()
+	}
+	if fact.kind == supervisorEmergencyStarted && source.kind == simulationOwnerDeliverySource {
+		at := fact.at.production()
+		evidence := engine.machine.DeterministicEmergencyEvidence(at)
+		prepared, ready := engine.machine.PrepareEmergency(
+			at, at.Add(5*time.Second), 5*time.Second, evidence,
+		)
+		if !ready {
+			return fmt.Errorf("simulation emergency fact is not enabled")
+		}
+		fact = prepared
+	}
 	var transition supervisorTransition
 	engine.machine, transition = engine.machine.Apply(fact)
 	accepted := fact
@@ -789,11 +773,6 @@ func (engine *simulationEngine) enqueueAdmissionDeliveries(
 			attempt: grant.attempt, grant: campaignAdmissionValue(grant),
 		})
 	}
-}
-
-func (engine *simulationEngine) enqueueSupervisorDelivery(sequence uint64, event supervisorEvent) {
-	fact := supervisionFactFromEvent(event)
-	engine.enqueueSupervisorFact(sequence, fact)
 }
 
 func (engine *simulationEngine) enqueueSupervisorFact(sequence uint64, fact supervisionFact) {
