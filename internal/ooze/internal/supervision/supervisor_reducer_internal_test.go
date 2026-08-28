@@ -596,12 +596,17 @@ func TestSupervisorReducerLaunchUnconfirmedEmergencyEstablishesMonotonicFloor(t 
 			generation: generation, action: launch.token,
 			at: completionAt, kind: supervisorLaunchReleased,
 		}
-		assertSupervisorInvariant(t, func() {
-			reduceSupervisor(floored, supervisorEvent{
-				kind: supervisorLaunchCompleted, generation: generation,
-				at: completion.at, completion: &completion,
-			})
+		accepted, actions := reduceSupervisor(floored, supervisorEvent{
+			kind: supervisorLaunchCompleted, generation: generation,
+			at: completion.at, completion: &completion,
 		})
+		assertSupervisorActions(t, actions, supervisorAdoptOwned, supervisorForceOwned)
+		for _, action := range actions {
+			assert.True(t, action.at.Equal(emergencyAt), "late completion envelope = %s, want %s", action.at, emergencyAt)
+			assert.Equal(t, completionAt.Sub(launchBy.Add(-time.Second)), action.launchDuration)
+		}
+		attempt = supervisorAttemptByGeneration(t, accepted, generation)
+		assert.True(t, attempt.lastEventAt.Equal(emergencyAt), "late completion floor = %s, want %s", attempt.lastEventAt, emergencyAt)
 	})
 
 	t.Run("released completion floors its force completion", func(t *testing.T) {

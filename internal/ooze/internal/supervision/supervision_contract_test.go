@@ -123,6 +123,7 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 
 	t.Run("emergency during prospective launch waits for exact no-release closure", func(t *testing.T) {
 		runtime, driver, boundary, start, spec := supervisionContractAttempt(t)
+		boundary.setNow(boundary.Now().Add(time.Second))
 		boundary.mutex.Lock()
 		boundary.launchGate = make(chan struct{})
 		boundary.launchNotReleased = true

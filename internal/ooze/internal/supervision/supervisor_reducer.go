@@ -740,8 +740,11 @@ func reducelaunchCompletion(
 		!event.launchBy.IsZero() || event.drain != nil || event.output != nil || event.seal != nil ||
 		event.release != nil ||
 		len(event.emergencySnapshots) != 0 || event.profile != 0 || event.commandDeadline != 0 ||
-		event.running != nil || event.at.Before(attempt.lastEventAt) {
+		event.running != nil {
 		invariant(supervisorReducerOperation, "launch completion event is malformed or moved backward")
+	}
+	if event.at.Before(attempt.lastEventAt) {
+		event.at = attempt.lastEventAt
 	}
 
 	switch attempt.phase {
