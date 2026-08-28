@@ -1111,6 +1111,17 @@ func (driver *Driver) applyMonitorEvent(event supervisorEvent) {
 func (driver *Driver) stop(generation attemptGeneration, request StopRequest) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(generation)
+	index := driver.machine.state.attemptIndex(generation)
+	if index < 0 {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "stop generation is absent")
+	}
+	phase := driver.machine.state.attempts[index].phase
+	if phase != supervisorRunning && phase != supervisorIntentLatched && phase != supervisorEmergencyDraining {
+		driver.mutex.Unlock()
+
+		return
+	}
 	bundle := supervisorRunningBundle{
 		generation: generation, waitAction: attempt.waitAction.token,
 		sampleAction: attempt.sampleAction.token,
@@ -1119,11 +1130,12 @@ func (driver *Driver) stop(generation attemptGeneration, request StopRequest) {
 			at: request.At, stop: request,
 		}},
 	}
-	driver.mutex.Unlock()
-	actions := driver.reduce(supervisorEvent{
+	actions := driver.reduceLocked(supervisorEvent{
 		kind: supervisorRunningObserved, generation: generation,
 		at: request.At, drainBy: request.DrainBy, running: &bundle,
 	})
+	driver.mutex.Unlock()
+	driver.publishOwnerCuts()
 	if len(actions) != 0 {
 		go func() {
 			for _, action := range actions {

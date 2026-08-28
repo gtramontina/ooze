@@ -2,6 +2,7 @@ package supervision_test
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -41,6 +42,25 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 		terminal := driver.Wait(start.Generation(), owned.Attempt)
 		_, stopped := terminal.Terminal().(supervision.Stopped)
 		assert.True(t, stopped)
+	})
+
+	t.Run("concurrent stop and wait share one terminal", func(t *testing.T) {
+		_, driver, boundary, start, spec := supervisionContractAttempt(t)
+		launched := driver.Launch(start, spec)
+		owned, ok := launched.Result().(supervision.Owned)
+		require.True(t, ok)
+
+		const callers = 12
+		terminals := make(chan supervision.Terminal, callers)
+		for range callers {
+			go func() { terminals <- driver.Wait(start.Generation(), owned.Attempt).Terminal() }()
+			go driver.Stop(owned.Attempt)
+		}
+		close(boundary.wait)
+		for range callers {
+			_, stopped := (<-terminals).(supervision.Stopped)
+			assert.True(t, stopped)
+		}
 	})
 
 	t.Run("emergency without waiter", func(t *testing.T) {
@@ -158,6 +178,60 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 			assert.Equal(t, test.name+" failure", test.diagnostic(failure.Failures))
 		})
 	}
+}
+
+func TestSupervisionConcurrentPublicLifecycle(t *testing.T) {
+	runtime := processruntime.New(2)
+	registration := runtime.RegisterCampaign(2)
+	require.Equal(t, processruntime.CampaignRegistered, registration.Decision())
+	boundary := &supervisionBoundary{
+		wait: make(chan struct{}), awaitedLaunch: make(chan time.Time, 2),
+		diagnostics: make(map[uint64]error),
+	}
+	close(boundary.wait)
+	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
+	require.NoError(t, err)
+
+	type launch struct {
+		start processruntime.PreparedStart
+		spec  supervision.Spec
+	}
+	launches := make([]launch, 2)
+	for index := range launches {
+		attempt := fmt.Sprintf("contract-%d", index)
+		request := runtime.RequestAdmission(processruntime.Admission{
+			Campaign: registration.Campaign(), Attempt: attempt,
+			Class: processruntime.SharedAdmission, Profile: processruntime.AutomaticProfile,
+			Deadline: 5 * time.Second,
+		})
+		grant, received := request.Receive()
+		require.True(t, received)
+		cell := processruntime.NewStartCell()
+		spec := supervision.Spec{
+			Attempt: attempt, Command: []string{"contract"}, Dir: t.TempDir(),
+			Profile: supervision.AutomaticProfile, Deadline: 5 * time.Second,
+		}
+		driver.ReserveLaunch(cell, spec)
+		launches[index] = launch{start: runtime.CommitStart(grant, cell), spec: spec}
+		require.Equal(t, processruntime.StartAccepted, launches[index].start.Decision())
+	}
+
+	results := make(chan supervision.ObservedLaunch, len(launches))
+	for _, attempt := range launches {
+		go func() { results <- driver.Launch(attempt.start, attempt.spec) }()
+	}
+	generations := make(map[supervision.Generation]struct{}, len(launches))
+	for range launches {
+		observed := <-results
+		owned, ok := observed.Result().(supervision.Owned)
+		require.True(t, ok)
+		generation := supervision.Generation(observed.Receipt().Generation())
+		generations[generation] = struct{}{}
+		terminal := driver.Wait(generation, owned.Attempt)
+		_, settled := terminal.Terminal().(supervision.Settled)
+		assert.True(t, settled)
+	}
+	assert.Len(t, generations, len(launches))
 }
 
 type supervisionBoundary struct {
