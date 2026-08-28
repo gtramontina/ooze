@@ -109,10 +109,6 @@ func newProcessRuntimeShell(capacity int) *processruntime.Runtime {
 	return processruntime.New(capacity)
 }
 
-func newProcessRuntimeShellWithObserver(capacity int, observer processruntime.Observer) *processruntime.Runtime {
-	return processruntime.NewObserved(capacity, observer)
-}
-
 type testOwnerObserver struct {
 	gate sync.RWMutex
 	next OwnerCutSequence
