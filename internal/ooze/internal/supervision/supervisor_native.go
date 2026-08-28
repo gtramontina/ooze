@@ -108,6 +108,22 @@ func (executor *supervisorNativeExecutor) Prepare(generation Generation, spec Sp
 	executor.prepare(attemptGeneration(generation), spec)
 }
 
+func (*supervisorNativeExecutor) Now() time.Time { return time.Now() }
+
+func (*supervisorNativeExecutor) AwaitLaunch(at time.Time) <-chan time.Time {
+	return time.After(time.Until(at))
+}
+
+func (*supervisorNativeExecutor) AwaitCommand(at time.Time) <-chan time.Time {
+	return time.After(time.Until(at))
+}
+
+func (*supervisorNativeExecutor) SampleTicks() (<-chan time.Time, func()) {
+	ticker := time.NewTicker(nominalSupervisorFuseCadence)
+
+	return ticker.C, ticker.Stop
+}
+
 func (executor *supervisorNativeExecutor) Execute(effect Effect) (Fact, bool) {
 	event := executor.execute(effect.production())
 	if event == nil {

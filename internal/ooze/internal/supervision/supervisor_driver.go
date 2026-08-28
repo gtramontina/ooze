@@ -16,6 +16,10 @@ const nominalSupervisorFuseCadence = 50 * time.Millisecond
 
 // SystemBoundary executes native process operations requested by supervision.
 type SystemBoundary interface {
+	Now() time.Time
+	AwaitLaunch(time.Time) <-chan time.Time
+	AwaitCommand(time.Time) <-chan time.Time
+	SampleTicks() (<-chan time.Time, func())
 	Prepare(Generation, Spec)
 	Execute(Effect) (Fact, bool)
 	RecheckRoot(Generation) (ExitStatus, time.Time, bool, error)
@@ -112,7 +116,10 @@ func NewDriver(
 		return nil, errors.New("supervision system boundary is required")
 	}
 	driver := newSupervisorDriver(supervisorDriverConstruction{
-		runtime: runtime, now: time.Now, launchProgress: launchProgress, drainEpoch: drainEpoch,
+		runtime: runtime, now: boundary.Now,
+		launchBoundary: boundary.AwaitLaunch, commandBoundary: boundary.AwaitCommand,
+		sampleTicks:    boundary.SampleTicks,
+		launchProgress: launchProgress, drainEpoch: drainEpoch,
 		execute: func(supervisorAction) *supervisorEvent {
 			panic("system boundary was not installed")
 		},

@@ -67,6 +67,22 @@ type supervisionBoundary struct {
 	wait chan struct{}
 }
 
+func (*supervisionBoundary) Now() time.Time { return time.Now() }
+
+func (*supervisionBoundary) AwaitLaunch(at time.Time) <-chan time.Time {
+	return time.After(time.Until(at))
+}
+
+func (*supervisionBoundary) AwaitCommand(at time.Time) <-chan time.Time {
+	return time.After(time.Until(at))
+}
+
+func (*supervisionBoundary) SampleTicks() (<-chan time.Time, func()) {
+	ticker := time.NewTicker(time.Hour)
+
+	return ticker.C, ticker.Stop
+}
+
 func (*supervisionBoundary) Prepare(supervision.Generation, supervision.Spec) {}
 
 func (boundary *supervisionBoundary) Execute(
