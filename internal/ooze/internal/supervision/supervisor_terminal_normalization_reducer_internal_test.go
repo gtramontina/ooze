@@ -146,7 +146,7 @@ func TestSupervisorReducerDrainCensusNormalizationPrecedence(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			evidence := normalizeTerminalEvidence(test.attempt)
+			evidence := normalizeterminalEvidence(test.attempt)
 			assert.Equal(t, test.want, evidence.kind, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
 			assert.Equal(t, test.attempt.drain.waitDiagnostic, evidence.diagnostics.wait, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
 			assert.Equal(t, test.attempt.drain.observationDiagnostic, evidence.diagnostics.drain, "normalized evidence = %#v, want kind %d with every diagnostic", evidence, test.want)
@@ -164,7 +164,7 @@ func TestSupervisorReducerDrainCensusNormalizationPrecedence(t *testing.T) {
 		output:            supervisorOutputEvidence{diagnostic: 505},
 		releaseDiagnostic: 404,
 	}
-	evidence := normalizeDrainUnconfirmedTerminalEvidence(attempt)
+	evidence := normalizeDrainUnconfirmedterminalEvidence(attempt)
 	assert.Equal(t, supervisorTerminalDrainUnconfirmed, evidence.kind, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
 	assert.EqualValues(t, 101, evidence.diagnostics.wait, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)
 	assert.EqualValues(t, 303, evidence.diagnostics.drain, "unconfirmed evidence = %#v, want unconfirmed with every diagnostic", evidence)

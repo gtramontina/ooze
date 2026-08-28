@@ -7,6 +7,7 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
+// Profile selects automatic or serial supervision policy.
 type Profile = processruntime.Profile
 
 const (
@@ -14,6 +15,7 @@ const (
 	SerialProfile    = processruntime.SerialProfile
 )
 
+// LaunchFailure classifies a proven pre-release failure.
 type LaunchFailure uint8
 
 const (
@@ -21,6 +23,7 @@ const (
 	LaunchResourceExhausted
 )
 
+// StopRequest bounds explicit attempt drainage.
 type StopRequest struct {
 	At      time.Time
 	DrainBy time.Time
@@ -176,6 +179,7 @@ type supervisionAttemptState struct {
 	terminal          supervisionTerminalEvidence
 }
 
+// Projection is an opaque immutable supervision-state view.
 type Projection struct {
 	value supervisionProjectionValue
 }
@@ -197,6 +201,7 @@ type supervisionEmergencySnapshot struct {
 	running    *supervisionRunningBundle
 }
 
+// Fact is an immutable normalized supervision input.
 type Fact struct {
 	kind                supervisionFactKind
 	generation          attemptGeneration
@@ -217,6 +222,7 @@ type Fact struct {
 	emergencySettlement *supervisorEmergencySettlementCompletion
 }
 
+// Effect is an immutable normalized supervision output.
 type Effect struct {
 	kind             supervisionEffectKind
 	generation       attemptGeneration
@@ -332,7 +338,7 @@ func (bundle *supervisionRunningBundle) production() *supervisorRunningBundle {
 	}
 }
 
-func simulationTraceLaunchCompletion(value *supervisorLaunchCompletion) *supervisionLaunchCompletion {
+func simulationTracelaunchCompletion(value *supervisorLaunchCompletion) *supervisionLaunchCompletion {
 	if value == nil {
 		return nil
 	}
@@ -404,7 +410,7 @@ func supervisionFactFromEvent(value supervisorEvent) Fact {
 	event := Fact{
 		kind: value.kind, generation: value.generation, attempt: value.attempt,
 		at: supervisionInstantFromTime(value.at), launchBy: supervisionInstantFromTime(value.launchBy),
-		drainBy: supervisionInstantFromTime(value.drainBy), completion: simulationTraceLaunchCompletion(value.completion),
+		drainBy: supervisionInstantFromTime(value.drainBy), completion: simulationTracelaunchCompletion(value.completion),
 		profile: value.profile, commandDeadline: supervisionDurationFromTime(value.commandDeadline),
 		running: simulationTraceRunningBundle(value.running),
 		runtime: value.runtime, emergencySettlement: value.emergencySettlement,
@@ -431,7 +437,7 @@ func supervisionFactFromEvent(value supervisorEvent) Fact {
 		event.emergencySnapshots = make([]supervisionEmergencySnapshot, len(value.emergencySnapshots))
 		for index, snapshot := range value.emergencySnapshots {
 			event.emergencySnapshots[index] = supervisionEmergencySnapshot{
-				generation: snapshot.generation, completion: simulationTraceLaunchCompletion(snapshot.completion),
+				generation: snapshot.generation, completion: simulationTracelaunchCompletion(snapshot.completion),
 				running: simulationTraceRunningBundle(snapshot.running),
 			}
 		}

@@ -482,7 +482,7 @@ func reduceSupervisor(state supervisorState, event supervisorEvent) (supervisorS
 	case supervisorProspectiveRegistered:
 		next, actions = reduceProspectiveRegistration(next, event)
 	case supervisorLaunchCompleted:
-		next, actions = reduceLaunchCompletion(next, event)
+		next, actions = reducelaunchCompletion(next, event)
 	case supervisorLaunchBoundary:
 		next, actions = reduceLaunchBoundary(next, event)
 	case supervisorEmergencyStarted:
@@ -699,13 +699,13 @@ func reduceProspectiveRegistration(
 	return state, []supervisorAction{action}
 }
 
-func reduceLaunchCompletion(
+func reducelaunchCompletion(
 	state supervisorState,
 	event supervisorEvent,
 ) (supervisorState, []supervisorAction) {
 	index := state.requireAttempt(event.generation)
 	attempt := state.attempts[index]
-	completion := requireLaunchCompletion(attempt, event.completion)
+	completion := requirelaunchCompletion(attempt, event.completion)
 	if event.at.IsZero() || !event.at.Equal(completion.at) || !event.attemptIsZero() ||
 		!event.launchBy.IsZero() || event.drain != nil || event.output != nil || event.seal != nil ||
 		event.release != nil ||
@@ -770,7 +770,7 @@ func reduceLaunchBoundary(
 		invariant(supervisorReducerOperation, "launch boundary is invalid or duplicated")
 	}
 	if event.completion != nil {
-		completion := requireLaunchCompletion(attempt, event.completion)
+		completion := requirelaunchCompletion(attempt, event.completion)
 		releaseUnknown := completion.kind == supervisorLaunchReleaseUnconfirmed
 		if (releaseUnknown && !event.drainBy.After(completion.at)) ||
 			(!releaseUnknown && !event.drainBy.IsZero()) {
@@ -830,7 +830,7 @@ func reduceLaunchEmergency(
 
 				continue
 			}
-			completion := requireLaunchCompletion(attempt, snapshot.completion)
+			completion := requirelaunchCompletion(attempt, snapshot.completion)
 			if completion.at.After(event.at) || completion.at.Before(attempt.lastEventAt) {
 				invariant(supervisorReducerOperation, "emergency completion is outside its serialized interval")
 			}
@@ -858,7 +858,7 @@ func reduceLaunchEmergency(
 			if snapshot.completion == nil {
 				continue
 			}
-			completion := requireLaunchCompletion(attempt, snapshot.completion)
+			completion := requirelaunchCompletion(attempt, snapshot.completion)
 			if completion.at.After(event.at) || completion.at.Before(attempt.revokedAt) {
 				invariant(supervisorReducerOperation, "emergency late completion is outside its interval")
 			}
@@ -1031,7 +1031,7 @@ func validateNormalizedTerminalCustody(
 		invariant(supervisorReducerOperation, "normalized terminal drain diagnostics are invalid")
 	}
 	validateTerminalReleaseProvenance(attempt, emergency)
-	if attempt.terminal != normalizeTerminalEvidence(attempt) {
+	if attempt.terminal != normalizeterminalEvidence(attempt) {
 		invariant(supervisorReducerOperation, "normalized terminal evidence is invalid")
 	}
 }
@@ -1300,7 +1300,7 @@ func reduceReleaseCompletion(
 	}
 
 	validateTerminalReleaseProvenance(attempt, state.emergency)
-	evidence := normalizeTerminalEvidence(state.attempts[index])
+	evidence := normalizeterminalEvidence(state.attempts[index])
 
 	return state.beginRuntimeSettlement(index, completion.at, evidence)
 }
@@ -1383,7 +1383,7 @@ func reduceRuntimeTransferCompletion(
 	if !attempt.intent.latched {
 		return state, nil
 	}
-	evidence := normalizeDrainUnconfirmedTerminalEvidence(attempt)
+	evidence := normalizeDrainUnconfirmedterminalEvidence(attempt)
 	action := state.newAction(supervisorDeliverTerminal, index, time.Time{}, time.Time{}, nil)
 	action.terminal = evidence
 	action.runtimeKind = supervisorRuntimeClosurePending
@@ -1756,7 +1756,7 @@ func validateObservationFailureTerminalProvenance(attempt supervisorAttemptState
 	}
 }
 
-func normalizeTerminalEvidence(
+func normalizeterminalEvidence(
 	attempt supervisorAttemptState,
 ) supervisorTerminalEvidence {
 	terminalKind, firedBound, count, exitCode, exitSignal := normalizeTerminalIntent(attempt)
@@ -1806,10 +1806,10 @@ func terminalWaitDiagnostic(attempt supervisorAttemptState) supervisorDiagnostic
 	return attempt.intent.diagnostics.wait
 }
 
-func normalizeDrainUnconfirmedTerminalEvidence(
+func normalizeDrainUnconfirmedterminalEvidence(
 	attempt supervisorAttemptState,
 ) supervisorTerminalEvidence {
-	evidence := normalizeTerminalEvidence(attempt)
+	evidence := normalizeterminalEvidence(attempt)
 	evidence.kind = supervisorTerminalDrainUnconfirmed
 	evidence.exitCode = 0
 	evidence.exitSignal = 0
@@ -2492,7 +2492,7 @@ func (state supervisorState) revokeProspective(
 	return state, actions
 }
 
-func requireLaunchCompletion(
+func requirelaunchCompletion(
 	attempt supervisorAttemptState,
 	completion *supervisorLaunchCompletion,
 ) supervisorLaunchCompletion {

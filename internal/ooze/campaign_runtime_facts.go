@@ -25,10 +25,7 @@ func campaignAdmissionEvidence(result admissionResult) campaignAdmissionResult {
 }
 
 func campaignAdmissionValue(authority admissionAuthority) campaignAdmission {
-	return campaignAdmission{
-		campaign: authority.campaign, attempt: authority.attempt, class: authority.class,
-		profile: authority.profile, deadline: authority.deadline,
-	}
+	return campaignAdmission(authority)
 }
 
 func campaignRegistrationEvidence(result processruntime.Registration) campaignRegistration {
@@ -137,10 +134,7 @@ func campaignBarrierEvidence(result barrierResult) campaignBarrierResult {
 }
 
 func runtimeAdmissionRequest(fact campaignAdmission) admissionRequest {
-	return admissionAuthority{
-		campaign: fact.campaign, attempt: fact.attempt, class: fact.class,
-		profile: fact.profile, deadline: fact.deadline,
-	}
+	return admissionAuthority(fact)
 }
 
 func processRuntimeAdmission(fact campaignAdmission) processruntime.Admission {

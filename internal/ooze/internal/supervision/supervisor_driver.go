@@ -205,7 +205,7 @@ func (driver *Driver) DiscardLaunch(cell *processruntime.StartCell) { driver.dis
 // Launch starts one runtime-authorized attempt.
 func (driver *Driver) Launch(start processruntime.PreparedStart, spec Spec) ObservedLaunch {
 	observed := driver.launchManaged(start, spec)
-	return ObservedLaunch{result: observed.result, receipt: observed.receipt}
+	return ObservedLaunch(observed)
 }
 
 func (driver *Driver) launchManaged(start processruntime.PreparedStart, spec Spec) launchObservationResult {
@@ -647,7 +647,7 @@ func launchObservationFromAction(action supervisorAction) processruntime.Observa
 }
 
 func launchObservationFromEffect(effect Effect) processruntime.Observation {
-	completion, ok := effect.LaunchCompletion()
+	completion, ok := effect.launchCompletion()
 	if !ok {
 		invariant(supervisorDriverOperation, "effect cannot publish a launch observation")
 	}
@@ -738,7 +738,7 @@ func (driver *Driver) startEligibleMonitors() {
 			continue
 		}
 		attempt.monitorStarted = true
-		deadline, found := driver.machine.MonitorDeadline(generation)
+		deadline, found := driver.machine.monitorDeadline(generation)
 		if !found {
 			driver.mutex.Unlock()
 			invariant(supervisorDriverOperation, "monitor deadline is absent")
@@ -1020,7 +1020,7 @@ func (driver *Driver) applyMonitorEvent(event supervisorEvent) {
 		}
 	}()
 	driver.mutex.Lock()
-	if !driver.machine.AcceptsRunningObservation(event.generation) {
+	if !driver.machine.acceptsRunningObservation(event.generation) {
 		driver.mutex.Unlock()
 		return
 	}
@@ -1152,7 +1152,7 @@ func terminalObservation(evidence supervisorTerminalEvidence) processruntime.Obs
 }
 
 func terminalObservationFromEffect(effect Effect) processruntime.Observation {
-	evidence, _, ok := effect.TerminalEvidence()
+	evidence, _, ok := effect.terminalEvidence()
 	if !ok {
 		invariant(supervisorDriverOperation, "effect cannot settle a terminal observation")
 	}
@@ -1205,7 +1205,7 @@ func (observed ObservedTerminal) Receipt() processruntime.Receipt { return obser
 // Wait joins one owned attempt and returns its exact terminal receipt.
 func (driver *Driver) Wait(generation Generation, owned *OwnedAttempt) ObservedTerminal {
 	observed := driver.waitManaged(generation, owned)
-	return ObservedTerminal{terminal: observed.terminal, receipt: observed.receipt}
+	return ObservedTerminal(observed)
 }
 
 // Stop requests bounded drainage for one owned attempt.
@@ -1268,7 +1268,7 @@ func (driver *Driver) emergencyDrain(request EmergencyRequest) SweepResult {
 	}
 	driver.emergencyStarted = true
 	preempted := driver.preemptReservedLaunchesLocked(request)
-	evidenceGenerations := driver.machine.EmergencyEvidenceGenerations()
+	evidenceGenerations := driver.machine.emergencyEvidenceGenerations()
 	launchEvidence := make([]supervisionEmergencyEvidence, 0, len(evidenceGenerations))
 	for _, generation := range evidenceGenerations {
 		attempt := driver.requireAttempt(generation)
@@ -1521,7 +1521,7 @@ func publicTerminalFromEffect(
 	readOutput func(supervisorOutputRef) string,
 	readDiagnostic func(supervisorDiagnosticRef) error,
 ) Terminal {
-	evidence, runtimeKind, ok := effect.TerminalEvidence()
+	evidence, runtimeKind, ok := effect.terminalEvidence()
 	if !ok {
 		invariant(supervisorDriverOperation, "effect cannot publish a terminal")
 	}

@@ -13,10 +13,7 @@ type attemptGeneration = Generation
 
 // Violation reports a supervision invariant breach.
 type Violation struct {
-	operation, reason                               string
-	phase                                           uint8
-	rejectedEvent                                   string
-	stableIdentities, obligationSnapshot, traceTail []string
+	operation, reason string
 }
 
 // Operation returns the supervision operation that rejected the fact.

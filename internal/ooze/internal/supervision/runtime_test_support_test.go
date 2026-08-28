@@ -50,25 +50,21 @@ type admissionAwait struct {
 }
 
 type startCommittedResult struct {
-	decision                                         processruntime.StartDecision
-	generation                                       attemptGeneration
-	settlementAcknowledged, runtimeClosureInProgress bool
+	decision   processruntime.StartDecision
+	generation attemptGeneration
 }
 
 type observationResult struct {
-	generation                                      attemptGeneration
-	deliveries                                      []admissionAuthority
-	cancelledWaiting, compensatedGrants             []admissionAuthority
-	settlementAcknowledged, confirmationProvisional bool
-	pressureTransitioned, runtimeClosureInProgress  bool
-	confirmationObserved, confirmationQueueDrained  bool
-	fatalEpoch                                      fatalEpochID
+	generation                                     attemptGeneration
+	confirmationProvisional                        bool
+	pressureTransitioned, runtimeClosureInProgress bool
+	confirmationObserved, confirmationQueueDrained bool
+	fatalEpoch                                     fatalEpochID
 }
 
 type runtimeClosure struct {
-	epoch                               fatalEpochID
-	cancelledWaiting, compensatedGrants []admissionAuthority
-	residual                            []residualCustody
+	epoch    fatalEpochID
+	residual []residualCustody
 }
 
 type attemptTripKind uint8
@@ -256,7 +252,7 @@ func processRuntimeObservation(observation attemptObservation) processruntime.Ob
 
 func runtimeReceipt(receipt processruntime.Receipt) observationResult {
 	return observationResult{
-		generation: receipt.Generation(), settlementAcknowledged: receipt.SettlementAcknowledged(),
+		generation:               receipt.Generation(),
 		confirmationProvisional:  receipt.ConfirmationProvisional(),
 		pressureTransitioned:     receipt.PressureTransitioned(),
 		runtimeClosureInProgress: receipt.RuntimeClosureInProgress(),

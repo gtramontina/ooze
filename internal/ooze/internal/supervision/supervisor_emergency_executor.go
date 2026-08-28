@@ -31,14 +31,14 @@ func (executor supervisorEmergencyExecutor) settle(
 	machine *Machine,
 	effect Effect,
 ) *Fact {
-	resolutions, ready := machine.EmergencySettlementRequest(effect)
+	resolutions, ready := machine.emergencySettlementRequest(effect)
 	if !ready || executor.settleEmergency == nil {
 		invariant(supervisorEmergencyExecutorOperation, "settlement effect is stale, wrong, or inexecutable")
 	}
 	runtimeResolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(resolutions)
 	settled := executor.settleEmergency(emergencySweep{resolutions: runtimeResolutions})
 	validateSupervisorRuntimeSettlement(settled, acknowledged, residuals)
-	fact, ready := machine.EmergencySettlementFact(effect, acknowledged, residuals)
+	fact, ready := machine.emergencySettlementFact(effect, acknowledged, residuals)
 	if !ready {
 		invariant(supervisorEmergencyExecutorOperation, "settlement effect cannot produce a completion fact")
 	}
@@ -77,7 +77,7 @@ func normalizeSupervisorEmergencyResolutions(
 }
 
 func (executor supervisorEmergencyExecutor) deliver(machine *Machine, effect Effect) {
-	residuals, ready := machine.EmergencyDelivery(effect)
+	residuals, ready := machine.emergencyDelivery(effect)
 	if !ready || executor.deliverEmergencySettlement == nil {
 		invariant(supervisorEmergencyExecutorOperation, "delivery effect is stale, wrong, or inexecutable")
 	}

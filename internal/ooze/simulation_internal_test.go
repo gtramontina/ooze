@@ -1826,41 +1826,6 @@ func TestSimulationReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
 	assert.Equal(t, explored.world, replayed.world)
 }
 
-func simulationExpectedProductionSourceKind(record simulationRecord) simulationCausalSourceKind {
-	switch record.authority {
-	case simulationRuntimeAuthority:
-		switch record.runtimeCut.Operation() {
-		case processruntime.ObserveAttemptOperation, processruntime.CompleteConfirmationQueueOperation, processruntime.SettleEmergencyOperation:
-			return supervisionActionSource
-		default:
-			return simulationCampaignEffectSource
-		}
-	case simulationCampaignAuthority:
-		switch record.campaignEvent.kind {
-		case simulationCampaignRegistered, simulationAdmissionGranted, simulationAdmissionCancelled,
-			simulationAdmissionRejected, simulationStartCommittedEvent, simulationAttemptLaunched,
-			simulationConfirmationBarrierBound, simulationGrantReturnAcknowledged,
-			simulationRuntimeEmergencyStarted, simulationTerminalCommitted:
-			return simulationOwnerDeliverySource
-		case simulationAttemptTerminal, simulationRuntimeEmergencySettled:
-			return supervisionActionSource
-		default:
-			return simulationCampaignEffectSource
-		}
-	case supervisionAuthority:
-		switch record.supervisorEvent.Kind() {
-		case supervision.ProspectiveRegisteredFact:
-			return simulationCampaignEffectSource
-		case supervision.RuntimeCompletedFact, supervision.EmergencyStartedFact, supervision.EmergencySettlementCompletedFact:
-			return simulationOwnerDeliverySource
-		default:
-			return supervisionActionSource
-		}
-	default:
-		panic("simulation production record authority is invalid")
-	}
-}
-
 func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T) {
 	recorder := newSimulationRecorder()
 	definition := campaignDefinition{

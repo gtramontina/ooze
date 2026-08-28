@@ -64,6 +64,7 @@ const (
 	ManagedAttemptDrainUnconfirmed
 )
 
+// BoundFired identifies the execution bound recorded in report evidence.
 type BoundFired uint8
 
 const (
@@ -71,6 +72,7 @@ const (
 	CommandDeadlineFired
 )
 
+// OutputSnapshot records captured output through a fixed cutoff.
 type OutputSnapshot struct {
 	Bytes                 string
 	Cutoff                uint64
@@ -78,6 +80,7 @@ type OutputSnapshot struct {
 	Final                 bool
 }
 
+// FailureDiagnostics retains independent attempt failures.
 type FailureDiagnostics struct {
 	Wait          string
 	RunningCensus string
@@ -87,6 +90,7 @@ type FailureDiagnostics struct {
 	Release       string
 }
 
+// ObservedCount distinguishes an absent count from zero.
 type ObservedCount struct {
 	Value   int
 	Present bool

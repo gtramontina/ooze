@@ -23,6 +23,7 @@ type MutationAttemptPlan struct {
 	profile  Profile
 }
 
+// Spec describes the command facts retained by a mutation attempt plan.
 type Spec struct {
 	Attempt  string
 	Command  []string

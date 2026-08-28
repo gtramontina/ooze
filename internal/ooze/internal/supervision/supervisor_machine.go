@@ -9,12 +9,15 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
+// Machine applies canonical facts through the production supervision reducer.
 type Machine struct {
 	state supervisorState
 }
 
+// OwnerCutReservation orders one accepted owner transition.
 type OwnerCutReservation uint64
 
+// OwnerCutSequence allocates process-wide owner transition order.
 type OwnerCutSequence struct {
 	atomic.Uint64
 }
@@ -27,6 +30,7 @@ type ownerCut struct {
 	effects     []Effect
 }
 
+// Registration is the immutable prospective-attempt registration fact.
 type Registration struct {
 	generation      attemptGeneration
 	attempt         attemptIdentity
@@ -46,6 +50,7 @@ func (registration Registration) Profile() Profile { return registration.profile
 // CommandDeadline returns the resolved command deadline.
 func (registration Registration) CommandDeadline() time.Duration { return registration.commandDeadline }
 
+// Registration returns prospective registration evidence when present.
 func (fact Fact) Registration() (Registration, bool) {
 	if fact.kind != supervisorProspectiveRegistered {
 		return Registration{}, false
@@ -57,6 +62,7 @@ func (fact Fact) Registration() (Registration, bool) {
 	}, true
 }
 
+// StopGeneration returns the generation named by a stop request.
 func (fact Fact) StopGeneration() (attemptGeneration, bool) {
 	if fact.kind != supervisorRunningObserved || fact.running == nil {
 		return 0, false
@@ -70,6 +76,7 @@ func (fact Fact) StopGeneration() (attemptGeneration, bool) {
 	return 0, false
 }
 
+// CausalEffect returns the effect token completed by this fact.
 func (fact Fact) CausalEffect() (supervisorActionToken, bool) {
 	var token supervisorActionToken
 	switch fact.kind {
@@ -300,6 +307,7 @@ func (fact Fact) RewriteCorrelated(before, after Fact) Fact {
 	return rewritten
 }
 
+// OwnerCutObserver receives accepted supervision transitions and effect completion.
 type OwnerCutObserver interface {
 	Enter() func()
 	Publish(OwnerCutReservation, Fact, Event, Projection, []Effect)
@@ -323,6 +331,7 @@ func (noopObserver) Publish(
 
 func (noopObserver) Complete(Effect) {}
 
+// Transition contains one accepted event, its effects, and its projection.
 type Transition struct {
 	event   Event
 	effects []Effect
@@ -362,6 +371,7 @@ const (
 	EmergencySettlementAcceptedEvent EventKind = supervisionEmergencySettlementAccepted
 )
 
+// Event is the published domain event for one accepted fact.
 type Event struct {
 	kind       supervisionEventKind
 	outcome    supervisionEventOutcome
@@ -391,6 +401,7 @@ const (
 	supervisionRuntimeClosurePendingEvent
 )
 
+// LaunchOutcome selects canonical launch-boundary evidence.
 type LaunchOutcome uint8
 
 const (
@@ -400,6 +411,7 @@ const (
 	LaunchProvenNotReleased
 )
 
+// RunningOutcome selects canonical running evidence.
 type RunningOutcome uint8
 
 const (
@@ -410,6 +422,7 @@ const (
 	RunningAfterDeadline
 )
 
+// StopDisposition describes whether a stop fact can be accepted.
 type StopDisposition uint8
 
 const (
@@ -419,6 +432,7 @@ const (
 	StopResolved
 )
 
+// CompletionPosition places completion evidence around its bound.
 type CompletionPosition uint8
 
 const (
@@ -427,6 +441,7 @@ const (
 	CompletionAfterBoundary
 )
 
+// NewMachine creates an empty supervision machine.
 func NewMachine() *Machine {
 	return &Machine{}
 }
@@ -435,6 +450,7 @@ func newMachineFrom(state supervisorState) *Machine {
 	return &Machine{state: cloneSupervisorState(state)}
 }
 
+// Apply reduces one canonical fact without mutating the receiver.
 func (machine *Machine) Apply(fact Fact) (*Machine, Transition) {
 	accepted := cloneSupervisionFact(fact)
 	next, actions := reduceSupervisor(machine.state, accepted.production())
@@ -451,6 +467,7 @@ func (machine *Machine) snapshot() supervisorState {
 	return cloneSupervisorState(machine.state)
 }
 
+// Projection returns the machine's opaque comparable projection.
 func (machine *Machine) Projection() Projection {
 	if machine == nil {
 		return supervisionProjectionFromState(supervisorState{})
@@ -459,7 +476,7 @@ func (machine *Machine) Projection() Projection {
 	return supervisionProjectionFromState(machine.state)
 }
 
-func (machine *Machine) MonitorDeadline(generation attemptGeneration) (time.Time, bool) {
+func (machine *Machine) monitorDeadline(generation attemptGeneration) (time.Time, bool) {
 	if machine == nil {
 		return time.Time{}, false
 	}
@@ -471,7 +488,7 @@ func (machine *Machine) MonitorDeadline(generation attemptGeneration) (time.Time
 	return machine.state.attempts[index].deadlineAt, true
 }
 
-func (machine *Machine) AcceptsRunningObservation(generation attemptGeneration) bool {
+func (machine *Machine) acceptsRunningObservation(generation attemptGeneration) bool {
 	if machine == nil {
 		return false
 	}
@@ -487,7 +504,7 @@ func (machine *Machine) AcceptsRunningObservation(generation attemptGeneration) 
 	}
 }
 
-func (machine *Machine) EmergencyEvidenceGenerations() []attemptGeneration {
+func (machine *Machine) emergencyEvidenceGenerations() []attemptGeneration {
 	if machine == nil {
 		return nil
 	}
@@ -501,14 +518,17 @@ func (machine *Machine) EmergencyEvidenceGenerations() []attemptGeneration {
 	return generations
 }
 
+// Equal reports whether two projections describe the same state.
 func (projection Projection) Equal(other Projection) bool {
 	return reflect.DeepEqual(projection, other)
 }
 
+// Quiescent reports whether the projection has no pending effect.
 func (projection Projection) Quiescent() bool {
 	return len(projection.value.attempts) == 0 && !projection.value.emergency.active
 }
 
+// BoundaryDistance measures fact and effect distance from recorded boundaries.
 func (projection Projection) BoundaryDistance(
 	fact Fact,
 	origins []Effect,
@@ -569,6 +589,7 @@ func supervisionInstantDistance(left, right supervisionInstant) int {
 	return int(distance)
 }
 
+// Fork returns an independent machine at the same state.
 func (machine *Machine) Fork() *Machine {
 	if machine == nil {
 		return NewMachine()
@@ -577,6 +598,7 @@ func (machine *Machine) Fork() *Machine {
 	return newMachineFrom(machine.state)
 }
 
+// LaunchFacts returns canonical evidence for one launch effect.
 func (machine *Machine) LaunchFacts(
 	effect Effect,
 	outcome LaunchOutcome,
@@ -628,6 +650,7 @@ func (machine *Machine) LaunchFacts(
 	return facts, true
 }
 
+// RunningFact returns canonical evidence for correlated monitor effects.
 func (machine *Machine) RunningFact(
 	wait Effect,
 	sample Effect,
@@ -691,6 +714,7 @@ func (machine *Machine) RunningFact(
 	}), true
 }
 
+// StopFact returns the canonical stop request allowed by current state.
 func (machine *Machine) StopFact(generation attemptGeneration) (
 	Fact,
 	StopDisposition,
@@ -725,6 +749,7 @@ func (machine *Machine) StopFact(generation attemptGeneration) (
 	}
 }
 
+// CompletionFact returns canonical completion evidence for one effect.
 func (machine *Machine) CompletionFact(
 	effect Effect,
 	position CompletionPosition,
@@ -826,6 +851,7 @@ type supervisionEmergencyPlan struct {
 	returning  []attemptGeneration
 }
 
+// PlanEmergency snapshots the obligations at an emergency cut.
 func (machine *Machine) PlanEmergency(
 	at, drainBy time.Time,
 	drainEpoch time.Duration,
@@ -875,14 +901,17 @@ func (machine *Machine) PlanEmergency(
 	return plan, true
 }
 
+// RootRequests returns the roots that require an independent snapshot.
 func (plan supervisionEmergencyPlan) RootRequests() []supervisionEmergencyRootRequest {
 	return append([]supervisionEmergencyRootRequest(nil), plan.roots...)
 }
 
+// ReturningLaunches returns prospective callbacks crossing the emergency cut.
 func (plan supervisionEmergencyPlan) ReturningLaunches() []attemptGeneration {
 	return append([]attemptGeneration(nil), plan.returning...)
 }
 
+// DeterministicRootEvidence returns root evidence already fixed at the cut.
 func (plan supervisionEmergencyPlan) DeterministicRootEvidence() []supervisionEmergencyEvidence {
 	evidence := make([]supervisionEmergencyEvidence, len(plan.roots))
 	for index, request := range plan.roots {
@@ -895,6 +924,7 @@ func (plan supervisionEmergencyPlan) DeterministicRootEvidence() []supervisionEm
 	return evidence
 }
 
+// PrepareEmergencyPlan combines fixed and independently observed root evidence.
 func (machine *Machine) PrepareEmergencyPlan(
 	plan supervisionEmergencyPlan,
 	rootEvidence []supervisionEmergencyEvidence,
@@ -924,11 +954,12 @@ func (machine *Machine) PrepareEmergencyPlan(
 	return machine.prepareEmergency(plan.at, plan.drainBy, plan.drainEpoch, evidence)
 }
 
+// AcceptsEmergencyRequest reports whether a first emergency may start.
 func (machine *Machine) AcceptsEmergencyRequest() bool {
 	return machine != nil && !machine.state.emergency.active
 }
 
-func (machine *Machine) EmergencySettlementFact(
+func (machine *Machine) emergencySettlementFact(
 	effect Effect,
 	acknowledged []attemptGeneration,
 	residuals []supervisorEmergencyResolution,
@@ -948,7 +979,7 @@ func (machine *Machine) EmergencySettlementFact(
 	}), true
 }
 
-func (machine *Machine) EmergencySettlementRequest(
+func (machine *Machine) emergencySettlementRequest(
 	effect Effect,
 ) ([]supervisorEmergencyResolution, bool) {
 	if machine == nil || effect.kind != supervisorSettleEmergency || effect.token == 0 ||
@@ -963,7 +994,7 @@ func (machine *Machine) EmergencySettlementRequest(
 	return slices.Clone(effect.resolutions), true
 }
 
-func (machine *Machine) EmergencyDelivery(
+func (machine *Machine) emergencyDelivery(
 	effect Effect,
 ) ([]supervisorEmergencyResidual, bool) {
 	if machine == nil || effect.kind != supervisorDeliverEmergencySettlement || effect.token == 0 ||
@@ -976,13 +1007,14 @@ func (machine *Machine) EmergencyDelivery(
 	return slices.Clone(effect.residuals), true
 }
 
+// EmergencyRequest returns a canonical global emergency fact.
 func (machine *Machine) EmergencyRequest(at, drainBy time.Time) Fact {
 	return supervisionFactFromEvent(supervisorEvent{
 		kind: supervisorEmergencyStarted, at: at, drainBy: drainBy,
 	})
 }
 
-func (machine *Machine) RuntimeReceiptFact(
+func (machine *Machine) runtimeReceiptFact(
 	effect Effect,
 	kind supervisorRuntimeReceiptKind,
 ) (Fact, bool) {
@@ -1098,6 +1130,7 @@ func (machine *Machine) prepareEmergency(
 	}), true
 }
 
+// Event returns the accepted domain event.
 func (transition Transition) Event() Event {
 	return transition.event
 }
@@ -1117,14 +1150,17 @@ func (event Event) OccurredAt() time.Time { return event.at.production() }
 // Equal reports whether two published events are identical.
 func (event Event) Equal(other Event) bool { return event == other }
 
+// Effects returns detached effects in reducer order.
 func (transition Transition) Effects() []Effect {
 	return cloneSupervisionEffects(transition.effects)
 }
 
+// Projection returns the state after the accepted fact.
 func (transition Transition) Projection() Projection {
 	return cloneSupervisionProjection(transition.state)
 }
 
+// OccurredAt returns the effect's normalized instant.
 func (effect Effect) OccurredAt() time.Time {
 	return effect.at.production()
 }
@@ -1174,9 +1210,9 @@ func (effect Effect) TerminalObservation() (processruntime.Observation, bool) {
 	return terminalObservationFromEffect(effect), true
 }
 
-// RuntimeReceiptFact converts a process-runtime receipt into the correlated supervision fact.
+// runtimeReceiptFact converts a process-runtime receipt into the correlated supervision fact.
 func (machine *Machine) RuntimeReceiptFactFor(effect Effect, receipt processruntime.Receipt) (Fact, bool) {
-	return machine.RuntimeReceiptFact(effect, normalizedSupervisorRuntimeReceipt(receipt))
+	return machine.runtimeReceiptFact(effect, normalizedSupervisorRuntimeReceipt(receipt))
 }
 
 // EmergencyResolutions returns the process-runtime resolutions requested by an emergency effect.
@@ -1198,10 +1234,10 @@ func (machine *Machine) EmergencySettlementFactFor(
 		return Fact{}, false
 	}
 	validateSupervisorRuntimeSettlement(runtimeEmergencySettlement(settlement), acknowledged, residuals)
-	return machine.EmergencySettlementFact(effect, acknowledged, residuals)
+	return machine.emergencySettlementFact(effect, acknowledged, residuals)
 }
 
-func (effect Effect) LaunchCompletion() (supervisionLaunchCompletion, bool) {
+func (effect Effect) launchCompletion() (supervisionLaunchCompletion, bool) {
 	switch effect.kind {
 	case supervisorPublishNotReleased, supervisorCloseProspective:
 		return supervisionLaunchCompletion{
@@ -1214,7 +1250,7 @@ func (effect Effect) LaunchCompletion() (supervisionLaunchCompletion, bool) {
 	}
 }
 
-func (effect Effect) TerminalEvidence() (
+func (effect Effect) terminalEvidence() (
 	supervisionTerminalEvidence,
 	supervisorRuntimeReceiptKind,
 	bool,

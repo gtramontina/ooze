@@ -13,7 +13,6 @@ type (
 	attemptGeneration = processruntime.Generation
 	Profile           = processruntime.Profile
 	fatalEpochID      uint64
-	runtimeFatalCause string
 	campaignToken     = processruntime.Campaign
 )
 
@@ -33,7 +32,6 @@ type admissionAuthority struct {
 	class    processruntime.AdmissionClass
 	profile  Profile
 	deadline time.Duration
-	grant    processruntime.Grant
 }
 
 type admissionRequest = admissionAuthority
