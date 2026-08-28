@@ -146,7 +146,7 @@ func newLinuxNativeSupervisorForTest(
 	t *testing.T,
 	attempt string,
 	lineage campaignLineage,
-) (*processRuntimeShell, *Supervisor) {
+) (*processRuntimeShell, *supervisor) {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})

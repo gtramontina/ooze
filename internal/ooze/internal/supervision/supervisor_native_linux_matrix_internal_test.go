@@ -151,7 +151,7 @@ func newLinuxMatrixSupervisor(
 	executor *supervisorNativeExecutor,
 	attempt attemptIdentity,
 	lineage campaignLineage,
-) *Supervisor {
+) *supervisor {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})

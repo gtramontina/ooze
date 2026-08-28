@@ -160,7 +160,7 @@ func (driver *Driver) completeOwnerEffect(action supervisorAction) {
 func newDrivenSupervisorForTest(
 	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart,
 	driver *Driver,
-) *Supervisor {
+) *supervisor {
 	if driver == nil {
 		panic("driven supervisor requires a driver")
 	}

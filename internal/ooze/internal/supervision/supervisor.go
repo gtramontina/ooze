@@ -86,8 +86,7 @@ type supervisorConstruction struct {
 	launchNative func(attemptGeneration, Spec) LaunchResult
 }
 
-// Supervisor binds process-runtime start custody to native launch.
-type Supervisor struct {
+type supervisor struct {
 	installStart   func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart
 	launchNative   func(attemptGeneration, Spec) LaunchResult
 	reserveLaunch  func(*processruntime.StartCell, Spec)
@@ -96,7 +95,7 @@ type Supervisor struct {
 	emergencyDrain func(EmergencyRequest) SweepResult
 }
 
-func constructSupervisor(construction supervisorConstruction) (*Supervisor, error) {
+func constructSupervisor(construction supervisorConstruction) (*supervisor, error) {
 	if !construction.supported {
 		return nil, ErrUnsupportedPlatform
 	}
@@ -104,7 +103,7 @@ func constructSupervisor(construction supervisorConstruction) (*Supervisor, erro
 		return nil, errors.New("supervisor construction requires start and native launch plumbing")
 	}
 
-	return &Supervisor{
+	return &supervisor{
 		installStart: construction.installStart,
 		launchNative: construction.launchNative,
 	}, nil
@@ -113,7 +112,7 @@ func constructSupervisor(construction supervisorConstruction) (*Supervisor, erro
 func newSupervisorForTest(
 	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart,
 	launchNative func(attemptGeneration, Spec) LaunchResult,
-) *Supervisor {
+) *supervisor {
 	supervisor, err := constructSupervisor(supervisorConstruction{
 		supported: true, installStart: installStart, launchNative: launchNative,
 	})
@@ -125,7 +124,7 @@ func newSupervisorForTest(
 }
 
 // Launch commits process-runtime custody before invoking native launch.
-func (s *Supervisor) Launch(spec Spec) LaunchResult {
+func (s *supervisor) Launch(spec Spec) LaunchResult {
 	if err := spec.validate(); err != nil {
 		panic(err)
 	}
@@ -153,7 +152,7 @@ func (s *Supervisor) Launch(spec Spec) LaunchResult {
 }
 
 // EmergencyDrain joins one bounded global drainage epoch.
-func (s *Supervisor) EmergencyDrain(request EmergencyRequest) SweepResult {
+func (s *supervisor) EmergencyDrain(request EmergencyRequest) SweepResult {
 	if err := request.validate(); err != nil {
 		panic(err)
 	}
@@ -375,11 +374,6 @@ func newOwnedAttempt(stop func(StopRequest), wait func() Terminal) *OwnedAttempt
 	attempt.stateChanged = sync.NewCond(&attempt.stateMu)
 
 	return attempt
-}
-
-// NewOwnedAttempt constructs an owned attempt from its stop and wait behaviors.
-func NewOwnedAttempt(stop func(StopRequest), wait func() Terminal) *OwnedAttempt {
-	return newOwnedAttempt(stop, wait)
 }
 
 // Stop records an explicit bounded stop request.

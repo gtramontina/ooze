@@ -401,7 +401,7 @@ func newWindowsMatrixSupervisor(
 	executor *supervisorNativeExecutor,
 	attempt attemptIdentity,
 	lineage campaignLineage,
-) *Supervisor {
+) *supervisor {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})
@@ -524,7 +524,7 @@ func newWindowsNativeSupervisorForFixture(
 	t *testing.T,
 	attempt attemptIdentity,
 	lineage campaignLineage,
-) (*processRuntimeShell, *Supervisor) {
+) (*processRuntimeShell, *supervisor) {
 	t.Helper()
 	shell := newProcessRuntimeShell(1)
 	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: lineage})

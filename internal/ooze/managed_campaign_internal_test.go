@@ -677,9 +677,7 @@ func (f *managedAttemptFixture) launch(start installedStart, spec supervision.Sp
 		return managedObservedLaunch{result: result, receipt: receipt}
 	}
 	observed := start.Launch(func(processruntime.Generation) processruntime.Observation {
-		result = supervision.Owned{Attempt: supervision.NewOwnedAttempt(
-			func(supervision.StopRequest) {}, func() supervision.Terminal { return nil },
-		)}
+		result = supervision.Owned{Attempt: &supervision.OwnedAttempt{}}
 
 		return processruntime.Owned()
 	})
