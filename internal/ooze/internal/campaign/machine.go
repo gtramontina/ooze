@@ -260,6 +260,8 @@ func (projection Projection) Canonical() Projection {
 		state.snapshot = logicalSnapshot
 	}
 	for index := range state.attempts {
+		state.attempts[index].request = canonicalCampaignAdmission(state.attempts[index].request)
+		state.attempts[index].grant = canonicalCampaignAdmission(state.attempts[index].grant)
 		if state.attempts[index].workspace != "" {
 			state.attempts[index].workspace = "workspace:" + string(state.attempts[index].identity)
 		}
@@ -282,6 +284,8 @@ func (projection Projection) Canonical() Projection {
 	}
 	state.definition.baselineDeadline = 0
 	state.runtimeToken = campaignToken{}
+	state.pendingGrantReturns = canonicalCampaignAdmissions(state.pendingGrantReturns)
+	state.acknowledgedGrantReturns = canonicalCampaignAdmissions(state.acknowledgedGrantReturns)
 	return Projection{state: state}
 }
 

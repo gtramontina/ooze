@@ -63,6 +63,35 @@ func TestCanonicalCampaignEventDoesNotRetainRuntimeAuthority(t *testing.T) {
 	_ = runtime
 }
 
+func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *testing.T) {
+	definition := campaign.Definition{
+		Identity: "campaign-a", Lineage: 11, Command: []string{"test"},
+		Profile: processruntime.SerialProfile, Peers: 1,
+	}
+	runtime := processruntime.NewReplay(1)
+	runtime, campaignRegistration := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
+	machine, _ := campaign.NewMachine(definition)
+	machine, _ = machine.Apply(campaign.Registered(campaignRegistration.Registration()))
+	machine, _ = machine.Apply(campaign.SnapshotEstablished("snapshot-a"))
+	machine, transition := machine.Apply(campaign.CatalogueDiscovered("snapshot-a", []string{"mutant-a"}))
+	machine, transition = machine.Apply(campaign.WorkspaceMaterialized(transition.Effects()[0], "workspace-a"))
+	request := transition.Effects()[0]
+	requestCut, ok := request.RuntimeCut(definition)
+	require.True(t, ok)
+	runtime, admitted := runtime.Apply(requestCut)
+	require.Len(t, admitted.Admission().Deliveries(), 1)
+	machine, _ = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
+	runtime, closed := runtime.Apply(processruntime.CloseCut("test closure"))
+
+	fork := machine.Projection().Canonical().Fork()
+	_, transition = fork.Apply(campaign.RuntimeEmergencyStarted(closed.Closure()).Canonical())
+	require.Equal(t, []campaign.EffectKind{campaign.ReturnAdmissionEffect}, transition.EffectKinds())
+	returned, ok := transition.Effects()[0].RuntimeCut(definition)
+	require.True(t, ok)
+
+	assert.False(t, runtime.Accepts(returned))
+}
+
 func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 	definition := campaign.Definition{
 		Identity: "campaign-a", Lineage: 11, Command: []string{"go", "test"},
