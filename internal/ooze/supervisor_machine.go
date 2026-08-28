@@ -35,6 +35,15 @@ type supervisorDomainEvent struct {
 	at         supervisionInstant
 }
 
+type supervisionLaunchOutcome uint8
+
+const (
+	supervisionLaunchReleasedBeforeBoundary supervisionLaunchOutcome = iota
+	supervisionLaunchReleasedAtBoundary
+	supervisionLaunchReleasedAfterBoundary
+	supervisionLaunchProvenNotReleased
+)
+
 func newSupervisorMachine() *supervisorMachine {
 	return &supervisorMachine{}
 }
@@ -73,6 +82,57 @@ func (machine *supervisorMachine) Fork() *supervisorMachine {
 	}
 
 	return newSupervisorMachineFrom(machine.state)
+}
+
+func (machine *supervisorMachine) LaunchFacts(
+	effect supervisionEffect,
+	outcome supervisionLaunchOutcome,
+) ([]supervisionFact, bool) {
+	if machine == nil || effect.kind != supervisorLaunchNative {
+		return nil, false
+	}
+	index := machine.state.attemptIndex(effect.generation)
+	if index < 0 {
+		return nil, false
+	}
+	attempt := machine.state.attempts[index]
+	if attempt.launchAction != effect.token || attempt.phase != supervisorLaunchEstablishing {
+		return nil, false
+	}
+	launchBy := attempt.launchBy
+	completedAt := launchBy.Add(-time.Nanosecond)
+	completionKind := supervisorLaunchReleased
+	eventKind := supervisorLaunchCompleted
+	var failure LaunchFailure
+	var facts []supervisionFact
+	var drainBy time.Time
+	switch outcome {
+	case supervisionLaunchReleasedBeforeBoundary:
+	case supervisionLaunchReleasedAtBoundary:
+		completedAt = launchBy
+		eventKind = supervisorLaunchBoundary
+	case supervisionLaunchReleasedAfterBoundary:
+		facts = append(facts, supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorLaunchBoundary, generation: effect.generation, at: launchBy,
+		}))
+		completedAt = launchBy.Add(time.Nanosecond)
+		drainBy = completedAt.Add(5 * time.Second)
+	case supervisionLaunchProvenNotReleased:
+		completionKind = supervisorLaunchProvenNotReleased
+		failure = LaunchFailed
+	default:
+		return nil, false
+	}
+	completion := supervisorLaunchCompletion{
+		generation: effect.generation, action: effect.token, at: completedAt,
+		kind: completionKind, failure: failure,
+	}
+	facts = append(facts, supervisionFactFromEvent(supervisorEvent{
+		kind: eventKind, generation: effect.generation, at: completedAt,
+		drainBy: drainBy, completion: &completion,
+	}))
+
+	return facts, true
 }
 
 func (machine *supervisorMachine) EmergencyActive() bool {

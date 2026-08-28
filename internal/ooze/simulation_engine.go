@@ -39,12 +39,12 @@ type simulationMoveVariant struct {
 	drain   simulationDrainVariant
 }
 
-type simulationLaunchVariant uint8
+type simulationLaunchVariant = supervisionLaunchOutcome
 
 const (
-	simulationLaunchAtBoundary simulationLaunchVariant = iota + 1
-	simulationLaunchAfterBoundary
-	simulationLaunchProvenNotReleased
+	simulationLaunchAtBoundary        = supervisionLaunchReleasedAtBoundary
+	simulationLaunchAfterBoundary     = supervisionLaunchReleasedAfterBoundary
+	simulationLaunchProvenNotReleased = supervisionLaunchProvenNotReleased
 )
 
 type simulationRunningVariant uint8
@@ -414,38 +414,16 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	action := move.action
 	switch action.kind {
 	case supervisorLaunchNative:
-		attempt := supervisionAttempt(engine.machine.Projection(), action.generation)
-		launchBy := attempt.launchBy.production()
-		completedAt := launchBy.Add(-time.Nanosecond)
-		var drainBy time.Time
-		kind := supervisorLaunchCompleted
-		completionKind := supervisorLaunchReleased
-		var failure LaunchFailure
-		if move.variant.launch == simulationLaunchAtBoundary {
-			completedAt = launchBy
-			kind = supervisorLaunchBoundary
+		facts, ready := engine.machine.LaunchFacts(action, move.variant.launch)
+		if !ready {
+			return fmt.Errorf("simulation launch outcome is not enabled")
 		}
-		if move.variant.launch == simulationLaunchAfterBoundary {
-			if err := engine.applySupervisor(move.source, supervisorEvent{
-				kind: supervisorLaunchBoundary, generation: action.generation, at: launchBy,
-			}); err != nil {
+		for _, fact := range facts {
+			if err := engine.applySupervisorFact(move.source, fact); err != nil {
 				return err
 			}
-			completedAt = launchBy.Add(time.Nanosecond)
-			drainBy = completedAt.Add(5 * time.Second)
 		}
-		if move.variant.launch == simulationLaunchProvenNotReleased {
-			completionKind = supervisorLaunchProvenNotReleased
-			failure = LaunchFailed
-		}
-		completion := supervisorLaunchCompletion{
-			generation: action.generation, action: action.token, at: completedAt,
-			kind: completionKind, failure: failure,
-		}
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: kind, generation: action.generation,
-			at: completedAt, drainBy: drainBy, completion: &completion,
-		})
+		return nil
 	case supervisorPublishOwned:
 		launch := engine.launches[action.generation]
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.Owned())).Receipt()
@@ -766,7 +744,13 @@ func (engine *simulationEngine) applySupervisor(
 	if engine.machine == nil {
 		engine.machine = newSupervisorMachine()
 	}
-	fact := supervisionFactFromEvent(event)
+	return engine.applySupervisorFact(source, supervisionFactFromEvent(event))
+}
+
+func (engine *simulationEngine) applySupervisorFact(
+	source simulationCausalSource,
+	fact supervisionFact,
+) error {
 	var transition supervisorTransition
 	engine.machine, transition = engine.machine.Apply(fact)
 	accepted := fact

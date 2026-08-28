@@ -123,3 +123,59 @@ func TestSupervisorMachinePreparesEmergencyFromOwnedState(t *testing.T) {
 		assert.False(t, ready)
 	})
 }
+
+func TestSupervisorMachineProducesLaunchFactsFromItsOwnEffect(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	machine, transition := newSupervisorMachine().Apply(supervisionProspectiveRegistration(
+		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
+	))
+	require.Len(t, transition.Effects(), 1)
+	launch := transition.Effects()[0]
+
+	tests := []struct {
+		name       string
+		outcome    supervisionLaunchOutcome
+		wantKinds  []supervisorEventKind
+		wantAt     []time.Time
+		wantLaunch supervisorLaunchCompletionKind
+	}{
+		{
+			name: "released before boundary", outcome: supervisionLaunchReleasedBeforeBoundary,
+			wantKinds:  []supervisorEventKind{supervisorLaunchCompleted},
+			wantAt:     []time.Time{registeredAt.Add(time.Second - time.Nanosecond)},
+			wantLaunch: supervisorLaunchReleased,
+		},
+		{
+			name: "released at boundary", outcome: supervisionLaunchReleasedAtBoundary,
+			wantKinds:  []supervisorEventKind{supervisorLaunchBoundary},
+			wantAt:     []time.Time{registeredAt.Add(time.Second)},
+			wantLaunch: supervisorLaunchReleased,
+		},
+		{
+			name: "released after boundary", outcome: supervisionLaunchReleasedAfterBoundary,
+			wantKinds:  []supervisorEventKind{supervisorLaunchBoundary, supervisorLaunchCompleted},
+			wantAt:     []time.Time{registeredAt.Add(time.Second), registeredAt.Add(time.Second + time.Nanosecond)},
+			wantLaunch: supervisorLaunchReleased,
+		},
+		{
+			name: "proven not released", outcome: supervisionLaunchProvenNotReleased,
+			wantKinds:  []supervisorEventKind{supervisorLaunchCompleted},
+			wantAt:     []time.Time{registeredAt.Add(time.Second - time.Nanosecond)},
+			wantLaunch: supervisorLaunchProvenNotReleased,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			facts, ok := machine.LaunchFacts(launch, test.outcome)
+
+			require.True(t, ok)
+			require.Len(t, facts, len(test.wantKinds))
+			for index := range facts {
+				assert.Equal(t, test.wantKinds[index], facts[index].kind)
+				assert.True(t, test.wantAt[index].Equal(facts[index].at.production()))
+			}
+			require.NotNil(t, facts[len(facts)-1].completion)
+			assert.Equal(t, test.wantLaunch, facts[len(facts)-1].completion.kind)
+		})
+	}
+}
