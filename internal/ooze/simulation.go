@@ -754,9 +754,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"runtime completion has no causal launch at record %d", index,
 					)
 				}
-				terminal := publicTerminal(
-					effect.terminal.production(), func(supervisorOutputRef) string { return "" }, nil, effect.runtimeKind,
-				)
+				terminal := publicTerminalFromEffect(effect, func(supervisorOutputRef) string { return "" }, nil)
 				receipt, found := terminalReceipts[activeLaunch.generation]
 				if !found {
 					return simulationReplayFailure(

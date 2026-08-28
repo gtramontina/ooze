@@ -622,6 +622,15 @@ func launchObservationFromAction(action supervisorAction) attemptObservation {
 	return launchObservation(&completion)
 }
 
+func launchObservationFromEffect(effect supervisionEffect) attemptObservation {
+	completion, ok := effect.LaunchCompletion()
+	if !ok {
+		invariant(supervisorDriverOperation, "effect cannot publish a launch observation")
+	}
+
+	return launchObservation(completion.production())
+}
+
 func (driver *supervisorDriver) executeAction(action supervisorAction) {
 	event := driver.execute(action)
 	if event == nil {
@@ -1126,6 +1135,15 @@ func terminalObservation(evidence supervisorTerminalEvidence) attemptObservation
 	}
 }
 
+func terminalObservationFromEffect(effect supervisionEffect) attemptObservation {
+	evidence, _, ok := effect.TerminalEvidence()
+	if !ok {
+		invariant(supervisorDriverOperation, "effect cannot settle a terminal observation")
+	}
+
+	return terminalObservation(evidence.production())
+}
+
 func (driver *supervisorDriver) deliverTerminal(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
@@ -1432,6 +1450,19 @@ func publicTerminal(
 
 		return nil
 	}
+}
+
+func publicTerminalFromEffect(
+	effect supervisionEffect,
+	readOutput func(supervisorOutputRef) string,
+	readDiagnostic func(supervisorDiagnosticRef) error,
+) Terminal {
+	evidence, runtimeKind, ok := effect.TerminalEvidence()
+	if !ok {
+		invariant(supervisorDriverOperation, "effect cannot publish a terminal")
+	}
+
+	return publicTerminal(evidence.production(), readOutput, readDiagnostic, runtimeKind)
 }
 
 type publicSupervisorDiagnostics struct {

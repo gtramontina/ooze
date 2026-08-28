@@ -99,6 +99,10 @@ func (fact supervisionFact) CausalEffect() (supervisorActionToken, bool) {
 	return token, token != 0
 }
 
+func (fact supervisionFact) OccurredAt() time.Time {
+	return fact.at.production()
+}
+
 type supervisionOwnerCutObserver interface {
 	Enter() func()
 	Publish(supervisionOwnerCutReservation, supervisionFact, supervisorDomainEvent, supervisionProjection, []supervisionEffect)
@@ -820,6 +824,36 @@ func (transition supervisorTransition) Effects() []supervisionEffect {
 
 func (transition supervisorTransition) Projection() supervisionProjection {
 	return cloneSupervisionProjection(transition.state)
+}
+
+func (effect supervisionEffect) OccurredAt() time.Time {
+	return effect.at.production()
+}
+
+func (effect supervisionEffect) LaunchCompletion() (supervisionLaunchCompletion, bool) {
+	switch effect.kind {
+	case supervisorPublishNotReleased, supervisorCloseProspective:
+		return supervisionLaunchCompletion{
+			generation: effect.generation,
+			kind:       effect.launchKind,
+			failure:    effect.launchFailure,
+		}, true
+	default:
+		return supervisionLaunchCompletion{}, false
+	}
+}
+
+func (effect supervisionEffect) TerminalEvidence() (
+	supervisionTerminalEvidence,
+	supervisorRuntimeReceiptKind,
+	bool,
+) {
+	switch effect.kind {
+	case supervisorSettleRuntime, supervisorDeliverTerminal:
+		return effect.terminal, effect.runtimeKind, true
+	default:
+		return supervisionTerminalEvidence{}, 0, false
+	}
 }
 
 func (transition supervisorTransition) actions() []supervisorAction {
