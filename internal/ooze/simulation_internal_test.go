@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtramontina/ooze/internal/gosourcefile"
 	campaignmodule "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
@@ -1861,6 +1862,90 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 }
 
+func TestSimulationRecorderReplaysTheProductionCampaignExecutor(t *testing.T) {
+	recorder := newSimulationRecorder()
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
+	executor := campaignmodule.NewConformingExecutorWithSystem(
+		shell, simulationUnusedAttemptSystem{}, simulationCampaignRecorder{recorder: recorder},
+	)
+	result := executor.Execute(campaignmodule.Configuration{
+		Identity: "campaign-recorded-executor", Lineage: 53,
+		Repository:   campaignRepository{Repository: &simulationEmptyRepository{}},
+		TemporaryDir: &simulationTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+	})
+	require.Equal(t, campaignmodule.ManagedNoMutants, result.Outcome)
+
+	trace, production := recorder.quiescent(shell, supervision.NewMachine())
+	replayed := ReplayLegal(trace)
+	require.NoError(t, replayed.failure)
+	replayed.world.runtimeState = processruntime.Replay{}
+	assert.Equal(t, production, replayed.world)
+	assert.Equal(t, []simulationAuthority{
+		simulationRuntimeAuthority,
+		simulationCampaignAuthority,
+		simulationCampaignAuthority,
+		simulationCampaignAuthority,
+		simulationCampaignAuthority,
+		simulationRuntimeAuthority,
+		simulationCampaignAuthority,
+	}, simulationAuthorities(trace))
+}
+
+type simulationEmptyRepository struct{}
+
+func (*simulationEmptyRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile { return nil }
+
+func (*simulationEmptyRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+	return &simulationEmptyTemporaryRepository{path: path}
+}
+
+type simulationEmptyTemporaryRepository struct{ path string }
+
+func (repository *simulationEmptyTemporaryRepository) Root() string { return repository.path }
+func (*simulationEmptyTemporaryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return nil
+}
+func (*simulationEmptyTemporaryRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+	return &simulationEmptyTemporaryRepository{path: path}
+}
+func (*simulationEmptyTemporaryRepository) Overwrite(string, []byte) {}
+func (*simulationEmptyTemporaryRepository) Remove()                  {}
+
+type simulationTemporaryDirectory struct{ next int }
+
+func (directory *simulationTemporaryDirectory) New() string {
+	directory.next++
+	return fmt.Sprintf("workspace-%d", directory.next)
+}
+
+type simulationUnusedAttemptSystem struct{}
+
+func (simulationUnusedAttemptSystem) ReserveLaunch(*processruntime.StartCell, supervision.Spec) {
+	panic("unexpected launch")
+}
+func (simulationUnusedAttemptSystem) DiscardLaunch(*processruntime.StartCell) {
+	panic("unexpected launch")
+}
+func (simulationUnusedAttemptSystem) Launch(
+	processruntime.PreparedStart,
+	supervision.Spec,
+) supervision.ObservedLaunch {
+	panic("unexpected launch")
+}
+func (simulationUnusedAttemptSystem) Wait(
+	supervision.Generation,
+	*supervision.OwnedAttempt,
+) supervision.ObservedTerminal {
+	panic("unexpected wait")
+}
+func (simulationUnusedAttemptSystem) Stop(*supervision.OwnedAttempt) { panic("unexpected stop") }
+func (simulationUnusedAttemptSystem) EmergencyDrain(
+	supervision.EmergencyRequest,
+) (supervision.SweepResult, processruntime.EmergencySettlement) {
+	panic("unexpected emergency")
+}
+
 func TestSimulationReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
 	explored := Explore(simulationDefinition{
 		campaign: campaignmodule.Definition{
@@ -2094,11 +2179,11 @@ func applyRecordedCampaign(
 	machine campaignmodule.Machine,
 	fact campaignmodule.Fact,
 ) (campaignmodule.Machine, campaignmodule.Transition) {
-	leave := observer.enter()
+	leave := observer.Enter()
 	defer leave()
-	reservation := observer.reserve()
+	reservation := observer.Reserve()
 	next, transition := machine.Apply(fact)
-	observer.publish(reservation, transition.Event(), transition.Projection(), transition.Effects())
+	observer.Publish(reservation, transition.Event(), transition.Projection(), transition.Effects())
 	return next, transition
 }
 

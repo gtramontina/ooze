@@ -335,12 +335,6 @@ func (effect Effect) Canonical(projection Projection) Effect {
 	return Effect{value: value}
 }
 
-// Snapshot returns the affected snapshot identity.
-func (effect Effect) Snapshot() string { return string(effect.value.snapshot) }
-
-// Workspace returns the affected workspace identity.
-func (effect Effect) Workspace() string { return effect.value.workspace }
-
 // Spec returns a detached supervision specification.
 func (effect Effect) Spec() supervision.Spec {
 	result := effect.value.spec

@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 
 	campaignmodule "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
@@ -20,6 +21,7 @@ type simulationRecorder struct {
 	actions       map[supervision.ActionToken]simulationInFlightAction
 	actionWake    chan struct{}
 	causalMutex   sync.Mutex
+	activeEffect  campaignmodule.Effect
 	runtimeCuts   []simulationRecordedRuntimeCut
 	runtimeError  error
 	runtimeState  processruntime.Replay
@@ -125,19 +127,39 @@ func (recorder *simulationRecorder) recordRuntime(
 
 type simulationCampaignRecorder struct{ recorder *simulationRecorder }
 
-func (recorder simulationCampaignRecorder) enter() func() { return recorder.recorder.enter() }
+func (recorder simulationCampaignRecorder) Enter() func() { return recorder.recorder.enter() }
 
-func (recorder simulationCampaignRecorder) reserve() uint64 {
+func (recorder simulationCampaignRecorder) Reserve() uint64 {
 	return recorder.recorder.reserveCampaign()
 }
 
-func (recorder simulationCampaignRecorder) publish(
+func (recorder simulationCampaignRecorder) Publish(
 	reservation uint64,
 	event campaignmodule.Event,
 	projection campaignmodule.Projection,
 	effects []campaignmodule.Effect,
 ) {
 	recorder.recorder.recordCampaign(reservation, event, projection, effects)
+}
+
+func (recorder simulationCampaignRecorder) Execute(effect campaignmodule.Effect) func() {
+	recorder.recorder.causalMutex.Lock()
+	if !recorder.recorder.activeEffect.IsZero() {
+		recorder.recorder.causalMutex.Unlock()
+		panic("simulation recorder campaign effects overlap")
+	}
+	recorder.recorder.activeEffect = effect
+	recorder.recorder.causalMutex.Unlock()
+
+	return func() {
+		recorder.recorder.causalMutex.Lock()
+		if !recorder.recorder.activeEffect.Equal(effect) {
+			recorder.recorder.causalMutex.Unlock()
+			panic("simulation recorder campaign effect completion is stale")
+		}
+		recorder.recorder.activeEffect = campaignmodule.Effect{}
+		recorder.recorder.causalMutex.Unlock()
+	}
 }
 
 func (recorder *simulationRecorder) reserveCampaign() uint64 {
@@ -194,6 +216,12 @@ func (recorder *simulationRecorder) runtimeSource(record simulationRecord) simul
 	if source := recorder.runtimeActionSource(record); source.kind != 0 {
 		return source
 	}
+	recorder.causalMutex.Lock()
+	effect := recorder.activeEffect
+	recorder.causalMutex.Unlock()
+	if !effect.IsZero() {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
+	}
 	if record.runtimeCut.Operation() == processruntime.RegisterCampaignOperation {
 		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: 1}
 	}
@@ -239,6 +267,12 @@ func (recorder *simulationRecorder) campaignSource(payload campaignmodule.Fact) 
 	}); source.kind != 0 {
 		return source
 	}
+	recorder.causalMutex.Lock()
+	effect := recorder.activeEffect
+	recorder.causalMutex.Unlock()
+	if !effect.IsZero() && effect.Enables(payload) {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
+	}
 	return simulationCausalSource{}
 }
 
@@ -257,6 +291,16 @@ func (recorder *simulationRecorder) supervisorSource(fact supervision.Fact) simu
 	}
 	if token, found := fact.CausalEffect(); found {
 		return simulationCausalSource{kind: supervisionActionSource, identity: uint64(token)}
+	}
+	recorder.causalMutex.Lock()
+	effect := recorder.activeEffect
+	recorder.causalMutex.Unlock()
+	if fact.Kind() == supervision.ProspectiveRegisteredFact && !effect.IsZero() {
+		if request, ok := effect.SupervisionRequest(); ok {
+			if _, launches := request.Prospective(time.Time{}, time.Time{}); launches {
+				return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
+			}
+		}
 	}
 	return simulationCausalSource{}
 }

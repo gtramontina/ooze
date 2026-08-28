@@ -17,7 +17,12 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 		}
 		var next []campaignEffect
 		for _, effect := range effects {
+			complete := func() {}
+			if runner.conformance != nil {
+				complete = runner.conformance.Execute(Effect{value: effect})
+			}
 			next = append(next, runner.execute(effect, request)...)
+			complete()
 		}
 		effects = next
 		if len(effects) == 0 && runner.pending != 0 {
@@ -39,11 +44,23 @@ func proposesTerminal(effects []campaignEffect) bool {
 }
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
+	leave := func() {}
+	reservation := uint64(0)
+	if runner.conformance != nil {
+		leave = runner.conformance.Enter()
+		defer leave()
+		reservation = runner.conformance.Reserve()
+	}
 	previous := runner.state
 	machine, transition := (Machine{state: runner.state}).Apply(Fact{payload: payload})
 	runner.state = machine.state
 	runner.nextEvent = transition.event.value.id
 	effects := transition.effects
+	if runner.conformance != nil {
+		runner.conformance.Publish(
+			reservation, transition.Event(), transition.Projection(), transition.Effects(),
+		)
+	}
 	runner.publishProgress(payload, previous, runner.state)
 
 	return effects

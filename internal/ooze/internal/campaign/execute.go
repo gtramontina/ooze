@@ -12,6 +12,14 @@ import (
 // TemporaryDirectory supplies fresh campaign artifact locations.
 type TemporaryDirectory interface{ New() string }
 
+// Conformance records accepted campaign cuts and the effects they authorize.
+type Conformance interface {
+	Enter() func()
+	Reserve() uint64
+	Publish(uint64, Event, Projection, []Effect)
+	Execute(Effect) func()
+}
+
 // Configuration fixes one campaign execution.
 type Configuration struct {
 	Identity        string
@@ -29,8 +37,9 @@ type Configuration struct {
 
 // Executor interprets campaign effects through one process runtime and supervision system.
 type Executor struct {
-	runtime  *processruntime.Runtime
-	attempts managedAttemptSystem
+	runtime     *processruntime.Runtime
+	attempts    managedAttemptSystem
+	conformance Conformance
 }
 
 // NewExecutor constructs campaign execution over native supervision.
@@ -48,6 +57,20 @@ func NewExecutorWithSystem(runtime *processruntime.Runtime, system supervision.S
 		panic("campaign process runtime is required")
 	}
 	return &Executor{runtime: runtime, attempts: newManagedAttemptSystem(system)}
+}
+
+// NewConformingExecutorWithSystem constructs campaign execution with owner-cut conformance recording.
+func NewConformingExecutorWithSystem(
+	runtime *processruntime.Runtime,
+	system supervision.System,
+	conformance Conformance,
+) *Executor {
+	if conformance == nil {
+		panic("campaign conformance recorder is required")
+	}
+	executor := NewExecutorWithSystem(runtime, system)
+	executor.conformance = conformance
+	return executor
 }
 
 // Emergency settles one runtime-wide fatal epoch through supervision.
@@ -123,7 +146,7 @@ func (executor *Executor) Execute(configuration Configuration) Result {
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: executor.runtime, repository: configuration.Repository,
 		temporaryDirectory: configuration.TemporaryDir, attempts: executor.attempts,
-		observe: configuration.Observe,
+		observe: configuration.Observe, conformance: executor.conformance,
 	})
 	result := runner.run(managedCampaignRequest{
 		identity: campaignIdentity(configuration.Identity), lineage: configuration.Lineage,

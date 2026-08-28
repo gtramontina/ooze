@@ -43,6 +43,7 @@ type managedCampaignConstruction struct {
 	temporaryDirectory managedTemporaryDirectoryFactory
 	attempts           managedAttemptSystem
 	observe            func(ManagedProgress)
+	conformance        Conformance
 }
 
 type managedCampaignRequest struct {

@@ -220,7 +220,11 @@ func TestMachineRunsOneBaselineAndOnePrimaryPerMutant(t *testing.T) {
 	t.Run("fans out primaries only after the baseline settles", func(t *testing.T) {
 		assert.Equal(t, campaign.PrimaryAttempt, primaries[0].AttemptRole())
 		assert.Equal(t, campaign.PrimaryAttempt, primaries[1].AttemptRole())
-		assert.Equal(t, "snapshot-a", primaries[0].Snapshot())
+		request, ok := primaries[0].ArtifactRequest()
+		require.True(t, ok)
+		_, snapshot, ok := request.Workspace()
+		require.True(t, ok)
+		assert.Equal(t, "snapshot-a", snapshot)
 	})
 
 	first := harness.launch(primaries[0], "workspace-a")
