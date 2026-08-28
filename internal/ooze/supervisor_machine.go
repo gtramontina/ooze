@@ -111,24 +111,28 @@ func (projection supervisionProjection) Equal(other supervisionProjection) bool 
 	return reflect.DeepEqual(projection, other)
 }
 
+func (projection supervisionProjection) Quiescent() bool {
+	return len(projection.value.attempts) == 0 && !projection.value.emergency.active
+}
+
 func (projection supervisionProjection) BoundaryDistance(
 	fact supervisionFact,
 	origins []supervisionEffect,
 ) int {
-	index := slices.IndexFunc(projection.attempts, func(attempt supervisionAttemptState) bool {
+	index := slices.IndexFunc(projection.value.attempts, func(attempt supervisionAttemptState) bool {
 		return attempt.generation == fact.generation
 	})
 	var boundary supervisionInstant
 	switch fact.kind {
 	case supervisorLaunchCompleted, supervisorLaunchBoundary:
 		if index >= 0 {
-			boundary = projection.attempts[index].launchBy
+			boundary = projection.value.attempts[index].launchBy
 		}
 	case supervisorRunningObserved:
 		if fact.running != nil && fact.running.exitRecheck.performed {
 			boundary = fact.running.exitRecheck.at
 		} else if index >= 0 {
-			boundary = projection.attempts[index].deadlineAt
+			boundary = projection.value.attempts[index].deadlineAt
 		}
 	case supervisorDrainCompleted:
 		if fact.drain != nil {
@@ -642,7 +646,7 @@ func cloneSupervisionEffects(effects []supervisionEffect) []supervisionEffect {
 }
 
 func cloneSupervisionProjection(projection supervisionProjection) supervisionProjection {
-	projection.attempts = append([]supervisionAttemptState(nil), projection.attempts...)
+	projection.value.attempts = append([]supervisionAttemptState(nil), projection.value.attempts...)
 
 	return projection
 }

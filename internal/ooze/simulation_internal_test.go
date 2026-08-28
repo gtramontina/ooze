@@ -121,7 +121,7 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 		supervisorStopAdmissionSealed, supervisorReleaseCompleted, supervisorRuntimeCompleted,
 	}
 	assert.Equal(t, wantSupervisorKinds, supervisorKinds, "supervisor lifecycle=%v, want %v", supervisorKinds, wantSupervisorKinds)
-	assert.EqualValues(t, 0, len(explored.world.supervisor.attempts), "terminal world is not quiescent: %#v", explored.world)
+	assert.True(t, explored.world.supervisor.Quiescent(), "terminal world is not quiescent: %#v", explored.world)
 	assert.EqualValues(t, 0, explored.world.runtime.CampaignCount(), "terminal world is not quiescent: %#v", explored.world)
 
 	replayed := ReplayLegal(explored.trace)

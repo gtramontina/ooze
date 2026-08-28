@@ -74,7 +74,7 @@ func TestSupervisorMachineProjectionDoesNotExposeReducerState(t *testing.T) {
 
 	projection := machine.Projection()
 	want := cloneSupervisionProjection(projection)
-	projection.attempts[0].attempt = "corrupted"
+	projection.value.attempts[0].attempt = "corrupted"
 
 	assert.True(t, machine.Projection().Equal(want))
 	assert.False(t, machine.Projection().Equal(projection))

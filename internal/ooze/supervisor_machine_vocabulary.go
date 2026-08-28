@@ -156,6 +156,10 @@ type supervisionAttemptState struct {
 }
 
 type supervisionProjection struct {
+	value supervisionProjectionValue
+}
+
+type supervisionProjectionValue struct {
 	nextAction supervisorActionToken
 	attempts   []supervisionAttemptState
 	emergency  struct {
@@ -490,14 +494,14 @@ func (value supervisionTerminalEvidence) production() supervisorTerminalEvidence
 }
 
 func supervisionProjectionFromState(value supervisorState) supervisionProjection {
-	state := supervisionProjection{nextAction: value.nextAction}
-	state.emergency.active = value.emergency.active
-	state.emergency.at = supervisionInstantFromTime(value.emergency.at)
-	state.emergency.drainBy = supervisionInstantFromTime(value.emergency.drainBy)
-	state.emergency.pendingAction = value.emergency.pendingAction
-	state.attempts = make([]supervisionAttemptState, len(value.attempts))
+	state := supervisionProjection{value: supervisionProjectionValue{nextAction: value.nextAction}}
+	state.value.emergency.active = value.emergency.active
+	state.value.emergency.at = supervisionInstantFromTime(value.emergency.at)
+	state.value.emergency.drainBy = supervisionInstantFromTime(value.emergency.drainBy)
+	state.value.emergency.pendingAction = value.emergency.pendingAction
+	state.value.attempts = make([]supervisionAttemptState, len(value.attempts))
 	for index, attempt := range value.attempts {
-		state.attempts[index] = supervisionAttemptState{
+		state.value.attempts[index] = supervisionAttemptState{
 			generation: attempt.generation, attempt: attempt.attempt, profile: attempt.profile,
 			commandDeadline: supervisionDurationFromTime(attempt.commandDeadline),
 			registeredAt:    supervisionInstantFromTime(attempt.registeredAt), launchBy: supervisionInstantFromTime(attempt.launchBy),
