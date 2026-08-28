@@ -25,7 +25,7 @@ type Configuration struct {
 	MutationTimeout time.Duration
 	Viruses         []viruses.Virus
 	Observe         func(ManagedProgress)
-	Observer        Observer
+	Recorder        Recorder
 }
 
 // Executor interprets campaign effects through one process runtime and supervision system.
@@ -95,6 +95,7 @@ type AttemptEvidence struct {
 // AttemptKind identifies one campaign attempt outcome.
 type AttemptKind uint8
 
+// Campaign attempt outcomes.
 const (
 	AttemptSettled AttemptKind = iota + 1
 	AttemptDeadline
@@ -123,7 +124,7 @@ func (executor *Executor) Execute(configuration Configuration) Result {
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: executor.runtime, repository: configuration.Repository,
 		temporaryDirectory: configuration.TemporaryDir, attempts: executor.attempts,
-		observe: configuration.Observe, observer: configuration.Observer,
+		observe: configuration.Observe, recorder: configuration.Recorder,
 	})
 	result := runner.run(managedCampaignRequest{
 		identity: campaignIdentity(configuration.Identity), lineage: configuration.Lineage,

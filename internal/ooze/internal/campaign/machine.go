@@ -28,6 +28,7 @@ type Fact struct{ payload campaignEventPayload }
 // FactKind identifies one campaign-domain input.
 type FactKind uint8
 
+// Campaign fact kinds.
 const (
 	RegisteredFact FactKind = iota + 1
 	SnapshotEstablishedFact
@@ -69,6 +70,7 @@ type Effect struct{ value campaignEffect }
 // EffectKind identifies a normalized campaign effect.
 type EffectKind uint8
 
+// Campaign effect kinds.
 const (
 	RegisterEffect EffectKind = iota + 1
 	EstablishSnapshotEffect
@@ -89,6 +91,7 @@ const (
 // AttemptRole identifies one attempt's role in a campaign.
 type AttemptRole uint8
 
+// Campaign attempt roles.
 const (
 	BaselineAttempt AttemptRole = iota + 1
 	PrimaryAttempt
@@ -191,6 +194,7 @@ func (effect Effect) RuntimeCut(definition Definition) (processruntime.Cut, bool
 // ResourceKind identifies a campaign-owned resource.
 type ResourceKind uint8
 
+// Campaign-owned resource kinds.
 const (
 	RegistrationResource ResourceKind = iota + 1
 	SnapshotResource
@@ -203,6 +207,7 @@ const (
 // OutcomeKind identifies a terminal campaign outcome.
 type OutcomeKind uint8
 
+// Terminal campaign outcome kinds.
 const (
 	NoMutantsOutcome OutcomeKind = iota + 1
 	CompletedOutcome

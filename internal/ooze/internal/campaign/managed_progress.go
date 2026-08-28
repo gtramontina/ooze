@@ -3,6 +3,7 @@ package campaign
 // ManagedProgressKind identifies one campaign-domain observation for the root package.
 type ManagedProgressKind uint8
 
+// Managed campaign progress kinds.
 const (
 	ManagedCampaignStarted ManagedProgressKind = iota + 1
 	ManagedCatalogueDiscovered

@@ -11,11 +11,14 @@ type (
 	campaignLineage   = processruntime.Lineage
 	attemptIdentity   = supervision.Identity
 	attemptGeneration = processruntime.Generation
-	Profile           = processruntime.Profile
 	fatalEpochID      uint64
 	campaignToken     = processruntime.Campaign
 )
 
+// Profile selects automatic or serial campaign execution.
+type Profile = processruntime.Profile
+
+// Campaign execution profiles.
 const (
 	AutomaticProfile = processruntime.AutomaticProfile
 	SerialProfile    = processruntime.SerialProfile
