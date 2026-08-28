@@ -851,8 +851,7 @@ type supervisionEmergencyPlan struct {
 	returning  []attemptGeneration
 }
 
-// PlanEmergency snapshots the obligations at an emergency cut.
-func (machine *Machine) PlanEmergency(
+func (machine *Machine) planEmergency(
 	at, drainBy time.Time,
 	drainEpoch time.Duration,
 	launchEvidence []supervisionEmergencyEvidence,
@@ -901,18 +900,15 @@ func (machine *Machine) PlanEmergency(
 	return plan, true
 }
 
-// RootRequests returns the roots that require an independent snapshot.
-func (plan supervisionEmergencyPlan) RootRequests() []supervisionEmergencyRootRequest {
+func (plan supervisionEmergencyPlan) rootRequests() []supervisionEmergencyRootRequest {
 	return append([]supervisionEmergencyRootRequest(nil), plan.roots...)
 }
 
-// ReturningLaunches returns prospective callbacks crossing the emergency cut.
-func (plan supervisionEmergencyPlan) ReturningLaunches() []attemptGeneration {
+func (plan supervisionEmergencyPlan) returningLaunches() []attemptGeneration {
 	return append([]attemptGeneration(nil), plan.returning...)
 }
 
-// DeterministicRootEvidence returns root evidence already fixed at the cut.
-func (plan supervisionEmergencyPlan) DeterministicRootEvidence() []supervisionEmergencyEvidence {
+func (plan supervisionEmergencyPlan) deterministicRootEvidence() []supervisionEmergencyEvidence {
 	evidence := make([]supervisionEmergencyEvidence, len(plan.roots))
 	for index, request := range plan.roots {
 		evidence[index] = supervisionEmergencyEvidence{
@@ -924,8 +920,7 @@ func (plan supervisionEmergencyPlan) DeterministicRootEvidence() []supervisionEm
 	return evidence
 }
 
-// PrepareEmergencyPlan combines fixed and independently observed root evidence.
-func (machine *Machine) PrepareEmergencyPlan(
+func (machine *Machine) prepareEmergencyPlan(
 	plan supervisionEmergencyPlan,
 	rootEvidence []supervisionEmergencyEvidence,
 ) (Fact, bool) {
@@ -972,12 +967,12 @@ func (machine *Machine) DeterministicEmergencyFact(
 			at = attempt.lastEventAt
 		}
 	}
-	plan, ready := machine.PlanEmergency(at, at.Add(drainEpoch), drainEpoch, nil)
+	plan, ready := machine.planEmergency(at, at.Add(drainEpoch), drainEpoch, nil)
 	if !ready {
 		return Fact{}, false
 	}
 
-	return machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
+	return machine.prepareEmergencyPlan(plan, plan.deterministicRootEvidence())
 }
 
 func (machine *Machine) emergencySettlementFact(

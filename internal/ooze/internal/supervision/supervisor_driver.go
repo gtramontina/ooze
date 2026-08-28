@@ -1279,19 +1279,19 @@ func (driver *Driver) emergencyDrain(request EmergencyRequest) SweepResult {
 		}
 		launchEvidence = append(launchEvidence, item)
 	}
-	plan, ready := driver.machine.PlanEmergency(request.At, request.DrainBy, driver.drainEpoch, launchEvidence)
+	plan, ready := driver.machine.planEmergency(request.At, request.DrainBy, driver.drainEpoch, launchEvidence)
 	if !ready {
 		driver.mutex.Unlock()
 		invariant(supervisorDriverOperation, "emergency plan is not enabled")
 	}
 	returning := make(map[attemptGeneration]struct{})
-	for _, generation := range plan.ReturningLaunches() {
+	for _, generation := range plan.returningLaunches() {
 		if !driver.requireAttempt(generation).preempted {
 			returning[generation] = struct{}{}
 		}
 	}
-	rootEvidence := make([]supervisionEmergencyEvidence, 0, len(plan.RootRequests()))
-	for _, root := range plan.RootRequests() {
+	rootEvidence := make([]supervisionEmergencyEvidence, 0, len(plan.rootRequests()))
+	for _, root := range plan.rootRequests() {
 		if driver.recheckRoot == nil {
 			if root.required {
 				driver.mutex.Unlock()
@@ -1312,7 +1312,7 @@ func (driver *Driver) emergencyDrain(request EmergencyRequest) SweepResult {
 			},
 		})
 	}
-	fact, ready := driver.machine.PrepareEmergencyPlan(plan, rootEvidence)
+	fact, ready := driver.machine.prepareEmergencyPlan(plan, rootEvidence)
 	if !ready {
 		driver.mutex.Unlock()
 		invariant(supervisorDriverOperation, "emergency evidence is not enabled")
