@@ -1,12 +1,12 @@
 package ooze
 
 import (
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"strconv"
 	"time"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 const baselineBootstrapDeadline = 10 * time.Minute

@@ -1,12 +1,12 @@
 package ooze
 
 import (
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"sort"
 	"sync"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 type simulationRecorder struct {

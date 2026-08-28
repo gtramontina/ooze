@@ -358,16 +358,27 @@ const (
 )
 
 const (
-	AttemptRegisteredEvent           EventKind = supervisionAttemptRegistered
-	LaunchResolvedEvent              EventKind = supervisionLaunchResolved
-	LaunchBoundaryReachedEvent       EventKind = supervisionLaunchBoundaryReached
-	EmergencyStartedEvent            EventKind = supervisionEmergencyStartedEvent
-	RunningEvidenceAcceptedEvent     EventKind = supervisionRunningEvidenceAccepted
-	DrainEvidenceAcceptedEvent       EventKind = supervisionDrainEvidenceAccepted
-	OutputAcceptedEvent              EventKind = supervisionOutputAccepted
-	StopAdmissionClosedEvent         EventKind = supervisionStopAdmissionClosed
-	DomainReleasedEvent              EventKind = supervisionDomainReleased
-	RuntimeReceiptAcceptedEvent      EventKind = supervisionRuntimeReceiptAccepted
+	// AttemptRegisteredEvent records prospective launch registration.
+	AttemptRegisteredEvent EventKind = supervisionAttemptRegistered
+	// LaunchResolvedEvent records launch-boundary evidence.
+	LaunchResolvedEvent EventKind = supervisionLaunchResolved
+	// LaunchBoundaryReachedEvent records an unresolved launch deadline.
+	LaunchBoundaryReachedEvent EventKind = supervisionLaunchBoundaryReached
+	// EmergencyStartedEvent records a global emergency cut.
+	EmergencyStartedEvent EventKind = supervisionEmergencyStartedEvent
+	// RunningEvidenceAcceptedEvent records accepted running evidence.
+	RunningEvidenceAcceptedEvent EventKind = supervisionRunningEvidenceAccepted
+	// DrainEvidenceAcceptedEvent records accepted drainage evidence.
+	DrainEvidenceAcceptedEvent EventKind = supervisionDrainEvidenceAccepted
+	// OutputAcceptedEvent records immutable output capture.
+	OutputAcceptedEvent EventKind = supervisionOutputAccepted
+	// StopAdmissionClosedEvent records closed stop admission.
+	StopAdmissionClosedEvent EventKind = supervisionStopAdmissionClosed
+	// DomainReleasedEvent records native-domain release.
+	DomainReleasedEvent EventKind = supervisionDomainReleased
+	// RuntimeReceiptAcceptedEvent records accepted runtime custody.
+	RuntimeReceiptAcceptedEvent EventKind = supervisionRuntimeReceiptAccepted
+	// EmergencySettlementAcceptedEvent records accepted global settlement.
 	EmergencySettlementAcceptedEvent EventKind = supervisionEmergencySettlementAccepted
 )
 
@@ -405,9 +416,13 @@ const (
 type LaunchOutcome uint8
 
 const (
+	// LaunchReleasedBeforeBoundary places release before LaunchBy.
 	LaunchReleasedBeforeBoundary LaunchOutcome = iota
+	// LaunchReleasedAtBoundary places release exactly at LaunchBy.
 	LaunchReleasedAtBoundary
+	// LaunchReleasedAfterBoundary places release after LaunchBy.
 	LaunchReleasedAfterBoundary
+	// LaunchProvenNotReleased proves release did not occur.
 	LaunchProvenNotReleased
 )
 
@@ -415,10 +430,15 @@ const (
 type RunningOutcome uint8
 
 const (
+	// RunningPassed reports successful root exit.
 	RunningPassed RunningOutcome = iota
+	// RunningFailed reports unsuccessful root exit.
 	RunningFailed
+	// RunningAtDeadline reports evidence exactly at the command deadline.
 	RunningAtDeadline
+	// RunningFuse reports a descendant fuse crossing.
 	RunningFuse
+	// RunningAfterDeadline reports evidence after the command deadline.
 	RunningAfterDeadline
 )
 
@@ -426,9 +446,13 @@ const (
 type StopDisposition uint8
 
 const (
+	// StopAbsent reports an unknown generation.
 	StopAbsent StopDisposition = iota
+	// StopNotReady reports a known generation outside stop admission.
 	StopNotReady
+	// StopReady reports a generation that accepts a stop fact.
 	StopReady
+	// StopResolved reports a generation whose stop intent is already fixed.
 	StopResolved
 )
 
@@ -436,8 +460,11 @@ const (
 type CompletionPosition uint8
 
 const (
+	// CompletionBeforeBoundary places completion before its bound.
 	CompletionBeforeBoundary CompletionPosition = iota
+	// CompletionAtBoundary places completion exactly at its bound.
 	CompletionAtBoundary
+	// CompletionAfterBoundary places completion after its bound.
 	CompletionAfterBoundary
 )
 

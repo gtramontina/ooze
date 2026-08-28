@@ -61,16 +61,27 @@ const (
 )
 
 const (
-	ProspectiveRegisteredFact        FactKind = supervisorProspectiveRegistered
-	LaunchCompletedFact              FactKind = supervisorLaunchCompleted
-	LaunchBoundaryFact               FactKind = supervisorLaunchBoundary
-	EmergencyStartedFact             FactKind = supervisorEmergencyStarted
-	RunningObservedFact              FactKind = supervisorRunningObserved
-	DrainCompletedFact               FactKind = supervisorDrainCompleted
-	OutputCompletedFact              FactKind = supervisorOutputCompleted
-	StopAdmissionSealedFact          FactKind = supervisorStopAdmissionSealed
-	ReleaseCompletedFact             FactKind = supervisorReleaseCompleted
-	RuntimeCompletedFact             FactKind = supervisorRuntimeCompleted
+	// ProspectiveRegisteredFact registers prospective launch custody.
+	ProspectiveRegisteredFact FactKind = supervisorProspectiveRegistered
+	// LaunchCompletedFact carries native launch completion.
+	LaunchCompletedFact FactKind = supervisorLaunchCompleted
+	// LaunchBoundaryFact carries the serialized launch deadline cut.
+	LaunchBoundaryFact FactKind = supervisorLaunchBoundary
+	// EmergencyStartedFact carries a global emergency cut.
+	EmergencyStartedFact FactKind = supervisorEmergencyStarted
+	// RunningObservedFact carries correlated running evidence.
+	RunningObservedFact FactKind = supervisorRunningObserved
+	// DrainCompletedFact carries correlated drainage evidence.
+	DrainCompletedFact FactKind = supervisorDrainCompleted
+	// OutputCompletedFact carries immutable output capture.
+	OutputCompletedFact FactKind = supervisorOutputCompleted
+	// StopAdmissionSealedFact closes explicit stop admission.
+	StopAdmissionSealedFact FactKind = supervisorStopAdmissionSealed
+	// ReleaseCompletedFact carries domain-release evidence.
+	ReleaseCompletedFact FactKind = supervisorReleaseCompleted
+	// RuntimeCompletedFact carries process-runtime custody evidence.
+	RuntimeCompletedFact FactKind = supervisorRuntimeCompleted
+	// EmergencySettlementCompletedFact carries exact global settlement.
 	EmergencySettlementCompletedFact FactKind = supervisorEmergencySettlementCompleted
 )
 
@@ -104,24 +115,43 @@ const (
 )
 
 const (
-	LaunchNativeEffect               EffectKind = supervisorLaunchNative
-	PublishNotReleasedEffect         EffectKind = supervisorPublishNotReleased
-	PublishOwnedEffect               EffectKind = supervisorPublishOwned
-	RevokeLaunchReleaseEffect        EffectKind = supervisorRevokeLaunchRelease
-	PublishLaunchUnconfirmedEffect   EffectKind = supervisorPublishLaunchUnconfirmed
-	CloseProspectiveEffect           EffectKind = supervisorCloseProspective
-	AdoptOwnedEffect                 EffectKind = supervisorAdoptOwned
-	ForceOwnedEffect                 EffectKind = supervisorForceOwned
-	WaitRootEffect                   EffectKind = supervisorWaitRoot
-	SampleRunningEffect              EffectKind = supervisorSampleRunning
-	ObserveEmptinessEffect           EffectKind = supervisorObserveEmptiness
-	CaptureOutputEffect              EffectKind = supervisorCaptureOutput
-	SealStopAdmissionEffect          EffectKind = supervisorSealStopAdmission
-	ReleaseDomainEffect              EffectKind = supervisorReleaseDomain
-	TransferResidualCustodyEffect    EffectKind = supervisorTransferResidualCustody
-	SettleRuntimeEffect              EffectKind = supervisorSettleRuntime
-	DeliverTerminalEffect            EffectKind = supervisorDeliverTerminal
-	SettleEmergencyEffect            EffectKind = supervisorSettleEmergency
+	// LaunchNativeEffect requests native launch.
+	LaunchNativeEffect EffectKind = supervisorLaunchNative
+	// PublishNotReleasedEffect publishes proven non-release.
+	PublishNotReleasedEffect EffectKind = supervisorPublishNotReleased
+	// PublishOwnedEffect publishes caller ownership.
+	PublishOwnedEffect EffectKind = supervisorPublishOwned
+	// RevokeLaunchReleaseEffect revokes an unresolved release.
+	RevokeLaunchReleaseEffect EffectKind = supervisorRevokeLaunchRelease
+	// PublishLaunchUnconfirmedEffect publishes unresolved prospective custody.
+	PublishLaunchUnconfirmedEffect EffectKind = supervisorPublishLaunchUnconfirmed
+	// CloseProspectiveEffect closes proven prospective custody.
+	CloseProspectiveEffect EffectKind = supervisorCloseProspective
+	// AdoptOwnedEffect transfers late released custody.
+	AdoptOwnedEffect EffectKind = supervisorAdoptOwned
+	// ForceOwnedEffect requests forced native drainage.
+	ForceOwnedEffect EffectKind = supervisorForceOwned
+	// WaitRootEffect requests root completion evidence.
+	WaitRootEffect EffectKind = supervisorWaitRoot
+	// SampleRunningEffect requests descendant census evidence.
+	SampleRunningEffect EffectKind = supervisorSampleRunning
+	// ObserveEmptinessEffect requests authoritative emptiness evidence.
+	ObserveEmptinessEffect EffectKind = supervisorObserveEmptiness
+	// CaptureOutputEffect requests bounded output capture.
+	CaptureOutputEffect EffectKind = supervisorCaptureOutput
+	// SealStopAdmissionEffect closes explicit stop admission.
+	SealStopAdmissionEffect EffectKind = supervisorSealStopAdmission
+	// ReleaseDomainEffect releases native-domain resources.
+	ReleaseDomainEffect EffectKind = supervisorReleaseDomain
+	// TransferResidualCustodyEffect transfers undrained custody to the runtime.
+	TransferResidualCustodyEffect EffectKind = supervisorTransferResidualCustody
+	// SettleRuntimeEffect settles terminal runtime custody.
+	SettleRuntimeEffect EffectKind = supervisorSettleRuntime
+	// DeliverTerminalEffect publishes terminal evidence.
+	DeliverTerminalEffect EffectKind = supervisorDeliverTerminal
+	// SettleEmergencyEffect requests exact global runtime settlement.
+	SettleEmergencyEffect EffectKind = supervisorSettleEmergency
+	// DeliverEmergencySettlementEffect publishes the global settlement.
 	DeliverEmergencySettlementEffect EffectKind = supervisorDeliverEmergencySettlement
 )
 

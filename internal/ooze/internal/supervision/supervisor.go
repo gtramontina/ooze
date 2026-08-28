@@ -52,7 +52,9 @@ func (s Spec) Snapshot() Spec { return s.snapshot() }
 type Residual uint8
 
 const (
+	// ProspectiveUnresolved retains unresolved pre-ownership custody.
 	ProspectiveUnresolved Residual = iota + 1
+	// OwnedUndrained retains unresolved owned custody.
 	OwnedUndrained
 )
 
@@ -138,7 +140,9 @@ type ExecutionData struct {
 type BoundFired uint8
 
 const (
+	// NoBoundFired reports terminal evidence before any configured bound.
 	NoBoundFired BoundFired = iota
+	// CommandDeadlineFired reports an inclusive command-deadline trip.
 	CommandDeadlineFired
 )
 
@@ -213,10 +217,15 @@ type Stopped struct{ ExecutionData }
 type Cause uint8
 
 const (
+	// CensusFailed reports unavailable running or drainage census evidence.
 	CensusFailed Cause = iota + 1
+	// WaitFailed reports unavailable root-wait evidence.
 	WaitFailed
+	// TerminationControlFailed reports native termination failure.
 	TerminationControlFailed
+	// OutputCaptureFailed reports incomplete output capture.
 	OutputCaptureFailed
+	// ReleaseFailed reports native-domain release failure.
 	ReleaseFailed
 )
 

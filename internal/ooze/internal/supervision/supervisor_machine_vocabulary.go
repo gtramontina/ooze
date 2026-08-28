@@ -11,15 +11,19 @@ import (
 type Profile = processruntime.Profile
 
 const (
+	// AutomaticProfile enables descendant sampling and automatic deadline policy.
 	AutomaticProfile = processruntime.AutomaticProfile
-	SerialProfile    = processruntime.SerialProfile
+	// SerialProfile enables serial command-deadline policy.
+	SerialProfile = processruntime.SerialProfile
 )
 
 // LaunchFailure classifies a proven pre-release failure.
 type LaunchFailure uint8
 
 const (
+	// LaunchFailed reports an ordinary pre-release launch failure.
 	LaunchFailed LaunchFailure = iota + 1
+	// LaunchResourceExhausted reports proven pre-release resource exhaustion.
 	LaunchResourceExhausted
 )
 
