@@ -52,6 +52,28 @@ func TestSimulationFourOperationContract(t *testing.T) {
 		assert.NoError(t, replayed.Failure())
 		assert.Equal(t, violation.FailureKey(), replayed.FailureKey())
 	})
+
+	t.Run("definition is sealed from caller mutation", func(t *testing.T) {
+		command := []string{"test"}
+		environment := []string{"MODE=original"}
+		sealed := simulation.NewDefinition(campaign.Definition{
+			Identity: "campaign-sealed", Lineage: 2, Command: command, Env: environment,
+			Profile: processruntime.AutomaticProfile, Peers: 1,
+		}, 1, nil)
+		command[0] = "changed"
+		environment[0] = "MODE=changed"
+
+		got := simulation.Explore(sealed, nil)
+		want := simulation.Explore(simulation.NewDefinition(campaign.Definition{
+			Identity: "campaign-sealed", Lineage: 2, Command: []string{"test"}, Env: []string{"MODE=original"},
+			Profile: processruntime.AutomaticProfile, Peers: 1,
+		}, 1, nil), nil)
+
+		require.NoError(t, got.Failure())
+		require.NoError(t, want.Failure())
+		assert.True(t, got.SameWorld(want))
+		assert.NoError(t, simulation.ReplayLegal(got.Trace()).Failure())
+	})
 }
 
 func TestSimulationRetainsLateTerminalNeededForCampaignCleanup(t *testing.T) {

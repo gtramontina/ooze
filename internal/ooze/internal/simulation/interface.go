@@ -23,6 +23,8 @@ type MalformedFact struct{ value simulationMalformedFact }
 
 // NewDefinition constructs a deterministic simulation definition.
 func NewDefinition(definition campaign.Definition, capacity int, catalogue []string) Definition {
+	definition.Command = slices.Clone(definition.Command)
+	definition.Env = slices.Clone(definition.Env)
 	return Definition{value: simulationDefinition{
 		campaign: definition, capacity: capacity, catalogue: slices.Clone(catalogue),
 	}}
