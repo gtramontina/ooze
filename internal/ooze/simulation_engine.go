@@ -665,10 +665,11 @@ func (engine *simulationEngine) applySupervisorFact(
 	}
 	if fact.kind == supervisorEmergencyStarted && source.kind == simulationOwnerDeliverySource {
 		at := fact.at.production()
-		evidence := engine.machine.DeterministicEmergencyEvidence(at)
-		prepared, ready := engine.machine.PrepareEmergency(
-			at, at.Add(5*time.Second), 5*time.Second, evidence,
-		)
+		plan, ready := engine.machine.PlanEmergency(at, at.Add(5*time.Second), 5*time.Second, nil)
+		if !ready {
+			return fmt.Errorf("simulation emergency fact is not enabled")
+		}
+		prepared, ready := engine.machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
 		if !ready {
 			return fmt.Errorf("simulation emergency fact is not enabled")
 		}
@@ -906,9 +907,10 @@ func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
 	if machine == nil {
 		machine = newSupervisorMachine()
 	}
-	_, ready := machine.PrepareEmergency(
-		at, at.Add(5*time.Second), 5*time.Second, machine.DeterministicEmergencyEvidence(at),
-	)
+	plan, ready := machine.PlanEmergency(at, at.Add(5*time.Second), 5*time.Second, nil)
+	if ready {
+		_, ready = machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
+	}
 
 	return ready
 }

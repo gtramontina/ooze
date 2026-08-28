@@ -121,10 +121,11 @@ func TestSupervisorMachinePreparesEmergencyFromOwnedState(t *testing.T) {
 	))
 
 	t.Run("before the launch boundary", func(t *testing.T) {
-		fact, ready := machine.PrepareEmergency(
-			registeredAt, registeredAt.Add(5*time.Second), 5*time.Second,
-			machine.DeterministicEmergencyEvidence(registeredAt),
+		plan, ready := machine.PlanEmergency(
+			registeredAt, registeredAt.Add(5*time.Second), 5*time.Second, nil,
 		)
+		require.True(t, ready)
+		fact, ready := machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
 
 		require.True(t, ready)
 		assert.Equal(t, supervisorEmergencyStarted, fact.kind)
@@ -135,9 +136,9 @@ func TestSupervisorMachinePreparesEmergencyFromOwnedState(t *testing.T) {
 
 	t.Run("after an unresolved launch boundary", func(t *testing.T) {
 		at := registeredAt.Add(time.Second + time.Nanosecond)
-		_, ready := machine.PrepareEmergency(
-			at, registeredAt.Add(5*time.Second), 5*time.Second, machine.DeterministicEmergencyEvidence(at),
-		)
+		plan, planned := machine.PlanEmergency(at, registeredAt.Add(5*time.Second), 5*time.Second, nil)
+		require.True(t, planned)
+		_, ready := machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
 
 		assert.False(t, ready)
 	})

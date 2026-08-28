@@ -551,21 +551,117 @@ type supervisionEmergencyEvidence struct {
 	root       supervisionEmergencyRootEvidence
 }
 
-func (machine *supervisorMachine) DeterministicEmergencyEvidence(at time.Time) []supervisionEmergencyEvidence {
-	if machine == nil {
-		return nil
+type supervisionEmergencyRootRequest struct {
+	generation attemptGeneration
+	required   bool
+}
+
+type supervisionEmergencyPlan struct {
+	at         time.Time
+	drainBy    time.Time
+	drainEpoch time.Duration
+	projection supervisionProjection
+	evidence   []supervisionEmergencyEvidence
+	roots      []supervisionEmergencyRootRequest
+	returning  []attemptGeneration
+}
+
+func (machine *supervisorMachine) PlanEmergency(
+	at, drainBy time.Time,
+	drainEpoch time.Duration,
+	launchEvidence []supervisionEmergencyEvidence,
+) (supervisionEmergencyPlan, bool) {
+	if machine == nil || !machine.AcceptsEmergencyRequest() || drainEpoch <= 0 {
+		return supervisionEmergencyPlan{}, false
 	}
-	evidence := make([]supervisionEmergencyEvidence, 0, len(machine.state.attempts))
-	for _, attempt := range machine.state.attempts {
-		item := supervisionEmergencyEvidence{generation: attempt.generation}
-		if (attempt.phase == supervisorRunning && !at.Before(attempt.deadlineAt)) ||
-			attempt.phase == supervisorLaunchEstablishing {
-			item.root = supervisionEmergencyRootEvidence{checked: true, at: at}
+	completionByGeneration := make(map[attemptGeneration]supervisionEmergencyEvidence, len(launchEvidence))
+	for _, evidence := range launchEvidence {
+		if evidence.generation == 0 || machine.state.attemptIndex(evidence.generation) < 0 ||
+			completionByGeneration[evidence.generation].generation != 0 {
+			return supervisionEmergencyPlan{}, false
 		}
-		evidence = append(evidence, item)
+		completionByGeneration[evidence.generation] = evidence
+	}
+	plan := supervisionEmergencyPlan{
+		at: at, drainBy: drainBy, drainEpoch: drainEpoch, projection: machine.Projection(),
+		evidence: make([]supervisionEmergencyEvidence, 0, len(machine.state.attempts)),
+	}
+	for _, attempt := range machine.state.attempts {
+		if attempt.phase == supervisorLaunchClosedNotReleased {
+			continue
+		}
+		evidence := supervisionEmergencyEvidence{}
+		switch attempt.phase {
+		case supervisorLaunchEstablishing, supervisorLaunchReportedUnconfirmed:
+			evidence = completionByGeneration[attempt.generation]
+		}
+		evidence.generation = attempt.generation
+		plan.evidence = append(plan.evidence, evidence)
+		switch attempt.phase {
+		case supervisorLaunchEstablishing:
+			plan.returning = append(plan.returning, attempt.generation)
+			if evidence.completion != nil && evidence.completion.kind == supervisorLaunchReleased {
+				plan.roots = append(plan.roots, supervisionEmergencyRootRequest{
+					generation: attempt.generation, required: true,
+				})
+			}
+		case supervisorRunning:
+			plan.roots = append(plan.roots, supervisionEmergencyRootRequest{
+				generation: attempt.generation, required: !at.Before(attempt.deadlineAt),
+			})
+		}
+	}
+
+	return plan, true
+}
+
+func (plan supervisionEmergencyPlan) RootRequests() []supervisionEmergencyRootRequest {
+	return append([]supervisionEmergencyRootRequest(nil), plan.roots...)
+}
+
+func (plan supervisionEmergencyPlan) ReturningLaunches() []attemptGeneration {
+	return append([]attemptGeneration(nil), plan.returning...)
+}
+
+func (plan supervisionEmergencyPlan) DeterministicRootEvidence() []supervisionEmergencyEvidence {
+	evidence := make([]supervisionEmergencyEvidence, len(plan.roots))
+	for index, request := range plan.roots {
+		evidence[index] = supervisionEmergencyEvidence{
+			generation: request.generation,
+			root:       supervisionEmergencyRootEvidence{checked: true, at: plan.at},
+		}
 	}
 
 	return evidence
+}
+
+func (machine *supervisorMachine) PrepareEmergencyPlan(
+	plan supervisionEmergencyPlan,
+	rootEvidence []supervisionEmergencyEvidence,
+) (supervisionFact, bool) {
+	if machine == nil || !machine.Projection().Equal(plan.projection) {
+		return supervisionFact{}, false
+	}
+	evidence := append([]supervisionEmergencyEvidence(nil), plan.evidence...)
+	for _, root := range rootEvidence {
+		index := slices.IndexFunc(evidence, func(item supervisionEmergencyEvidence) bool {
+			return item.generation == root.generation
+		})
+		if index < 0 || !root.root.checked {
+			return supervisionFact{}, false
+		}
+		evidence[index].root = root.root
+	}
+	for _, request := range plan.roots {
+		index := slices.IndexFunc(evidence, func(item supervisionEmergencyEvidence) bool {
+			return item.generation == request.generation
+		})
+		if request.required && (index < 0 || !evidence[index].root.checked) {
+			return supervisionFact{}, false
+		}
+	}
+
+	return machine.prepareEmergency(plan.at, plan.drainBy, plan.drainEpoch, evidence)
 }
 
 func (machine *supervisorMachine) AcceptsEmergencyRequest() bool {
@@ -621,7 +717,7 @@ func (machine *supervisorMachine) RuntimeReceiptFact(
 	}), true
 }
 
-func (machine *supervisorMachine) PrepareEmergency(
+func (machine *supervisorMachine) prepareEmergency(
 	at, drainBy time.Time,
 	drainEpoch time.Duration,
 	evidence []supervisionEmergencyEvidence,

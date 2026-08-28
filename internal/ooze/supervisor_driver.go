@@ -1187,74 +1187,50 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 	driver.emergencyStarted = true
 	preempted := driver.preemptReservedLaunchesLocked(request)
 	stateSnapshot := driver.supervisorState()
-	evidence := make([]supervisionEmergencyEvidence, 0, len(stateSnapshot.attempts))
-	returning := make(map[attemptGeneration]struct{})
+	launchEvidence := make([]supervisionEmergencyEvidence, 0, len(stateSnapshot.attempts))
 	for _, state := range stateSnapshot.attempts {
-		if state.phase == supervisorLaunchClosedNotReleased {
+		attempt := driver.requireAttempt(state.generation)
+		item := supervisionEmergencyEvidence{generation: state.generation}
+		if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
+			!attempt.launchEvent.at.After(request.At) {
+			item.completion = attempt.launchEvent.completion
+		}
+		launchEvidence = append(launchEvidence, item)
+	}
+	plan, ready := driver.machine.PlanEmergency(request.At, request.DrainBy, driver.drainEpoch, launchEvidence)
+	if !ready {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "emergency plan is not enabled")
+	}
+	returning := make(map[attemptGeneration]struct{})
+	for _, generation := range plan.ReturningLaunches() {
+		if !driver.requireAttempt(generation).preempted {
+			returning[generation] = struct{}{}
+		}
+	}
+	rootEvidence := make([]supervisionEmergencyEvidence, 0, len(plan.RootRequests()))
+	for _, root := range plan.RootRequests() {
+		if driver.recheckRoot == nil {
+			if root.required {
+				driver.mutex.Unlock()
+				invariant(supervisorDriverOperation, "emergency root evidence is required")
+			}
 			continue
 		}
-		item := supervisionEmergencyEvidence{generation: state.generation}
-		switch state.phase {
-		case supervisorLaunchEstablishing:
-			attempt := driver.requireAttempt(state.generation)
-			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
-				!attempt.launchEvent.at.After(request.At) {
-				item.completion = attempt.launchEvent.completion
-				if attempt.launchEvent.completion.kind == supervisorLaunchReleased {
-					if driver.recheckRoot == nil {
-						driver.mutex.Unlock()
-						invariant(supervisorDriverOperation, "released prospective emergency lacks a root completion cell")
-					}
-					status, completedAt, observed, err := driver.recheckRoot(state.generation)
-					if err != nil {
-						driver.mutex.Unlock()
-						invariant(supervisorDriverOperation, "released prospective root snapshot failed")
-					}
-					item.root = supervisionEmergencyRootEvidence{
-						checked: true, observed: observed, at: completedAt,
-						exitCode: status.Code, exitSignal: status.Signal,
-					}
-				}
-			}
-			if !attempt.preempted {
-				returning[state.generation] = struct{}{}
-			}
-		case supervisorLaunchReportedUnconfirmed:
-			attempt := driver.requireAttempt(state.generation)
-			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
-				!attempt.launchEvent.at.After(request.At) {
-				item.completion = attempt.launchEvent.completion
-			}
-		case supervisorRunning:
-			deadlineReached := !request.At.Before(state.deadlineAt)
-			if driver.recheckRoot == nil {
-				if deadlineReached {
-					driver.mutex.Unlock()
-					invariant(supervisorDriverOperation, "owned deadline emergency lacks a root completion cell")
-				}
-			} else {
-				status, completedAt, observed, err := driver.recheckRoot(state.generation)
-				if err != nil {
-					driver.mutex.Unlock()
-					invariant(supervisorDriverOperation, "owned emergency root snapshot failed")
-				}
-				item.root = supervisionEmergencyRootEvidence{
-					checked: true, observed: observed, at: completedAt,
-					exitCode: status.Code, exitSignal: status.Signal,
-				}
-			}
-		case supervisorIntentLatched:
-		case supervisorClosingProspective, supervisorLaunchOwned, supervisorCapturingOutput,
-			supervisorSealingStopAdmission, supervisorReleasingDomain,
-			supervisorTransferringResidualCustody, supervisorSettlingRuntime,
-			supervisorAwaitingEmergencySettlement:
-		default:
+		status, completedAt, observed, err := driver.recheckRoot(root.generation)
+		if err != nil {
 			driver.mutex.Unlock()
-			invariant(supervisorDriverOperation, "attempt phase has no emergency snapshot")
+			invariant(supervisorDriverOperation, "emergency root snapshot failed")
 		}
-		evidence = append(evidence, item)
+		rootEvidence = append(rootEvidence, supervisionEmergencyEvidence{
+			generation: root.generation,
+			root: supervisionEmergencyRootEvidence{
+				checked: true, observed: observed, at: completedAt,
+				exitCode: status.Code, exitSignal: status.Signal,
+			},
+		})
 	}
-	fact, ready := driver.machine.PrepareEmergency(request.At, request.DrainBy, driver.drainEpoch, evidence)
+	fact, ready := driver.machine.PrepareEmergencyPlan(plan, rootEvidence)
 	if !ready {
 		driver.mutex.Unlock()
 		invariant(supervisorDriverOperation, "emergency evidence is not enabled")
