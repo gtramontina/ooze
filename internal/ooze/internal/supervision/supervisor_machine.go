@@ -307,8 +307,7 @@ func (fact Fact) RewriteCorrelated(before, after Fact) Fact {
 	return rewritten
 }
 
-// OwnerCutObserver receives accepted supervision transitions and effect completion.
-type OwnerCutObserver interface {
+type ownerCutObserver interface {
 	Enter() func()
 	Publish(OwnerCutReservation, Fact, Event, Projection, []Effect)
 	Complete(Effect)
@@ -1457,7 +1456,7 @@ func (effect Effect) TerminalObservation() (processruntime.Observation, bool) {
 	return terminalObservationFromEffect(effect), true
 }
 
-// runtimeReceiptFact converts a process-runtime receipt into the correlated supervision fact.
+// RuntimeReceiptFactFor converts a process-runtime receipt into its correlated fact.
 func (machine *Machine) RuntimeReceiptFactFor(effect Effect, receipt processruntime.Receipt) (Fact, bool) {
 	return machine.runtimeReceiptFact(effect, normalizedSupervisorRuntimeReceipt(receipt))
 }
@@ -1533,6 +1532,7 @@ func cloneSupervisionProjection(projection Projection) Projection {
 	return projection
 }
 
+// ProspectiveRegistration creates canonical prospective launch evidence.
 func ProspectiveRegistration(
 	generation attemptGeneration,
 	attempt attemptIdentity,

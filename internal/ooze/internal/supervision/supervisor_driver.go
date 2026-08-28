@@ -58,7 +58,7 @@ type System interface {
 
 type supervisorDriverConstruction struct {
 	runtime          *processruntime.Runtime
-	observer         OwnerCutObserver
+	observer         ownerCutObserver
 	ownerSequence    *OwnerCutSequence
 	now              func() time.Time
 	launchBoundary   func(time.Time) <-chan time.Time
@@ -125,7 +125,7 @@ type driver struct {
 	emergencyDeferred []supervisorAction
 	emergencyReceipt  processruntime.EmergencySettlement
 	emergencyReady    bool
-	observer          OwnerCutObserver
+	observer          ownerCutObserver
 	ownerSequence     *OwnerCutSequence
 	localSequence     OwnerCutSequence
 	ownerCuts         []ownerCut
@@ -234,7 +234,7 @@ func waitForSupervisorLaunchBoundary(launchBy time.Time) <-chan time.Time {
 	return time.After(time.Until(launchBy))
 }
 
-func (driver *driver) ownerObserver() OwnerCutObserver {
+func (driver *driver) ownerObserver() ownerCutObserver {
 	if driver.observer == nil {
 		return noopObserver{}
 	}
