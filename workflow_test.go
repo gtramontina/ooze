@@ -296,7 +296,7 @@ func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 	testJob := workflowJob(t, ".github/workflows/ci.yml", "test")
 	requireContract(t, testJob, "CI production simulation contract",
 		`name: "🎲 Production deterministic simulation"`,
-		`devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze`,
+		`devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze/internal/simulation`,
 	)
 }
 

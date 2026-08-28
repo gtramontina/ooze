@@ -1,4 +1,4 @@
-package ooze
+package simulation
 
 import (
 	"slices"

@@ -1,4 +1,4 @@
-package ooze
+package simulation
 
 import "github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 

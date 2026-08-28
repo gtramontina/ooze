@@ -1,4 +1,4 @@
-package ooze
+package simulation
 
 import (
 	"fmt"
@@ -640,8 +640,8 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 	return engine.applySupervisorFact(move.source, fact)
 }
 
-func simulationBaselineMutationDeadline(duration time.Duration, peers int, profile Profile) time.Duration {
-	plan, err := NewMutationAttemptPlan(MutationAttemptPlanInput{
+func simulationBaselineMutationDeadline(duration time.Duration, peers int, profile processruntime.Profile) time.Duration {
+	plan, err := campaignmodule.NewMutationAttemptPlan(campaignmodule.MutationAttemptPlanInput{
 		BaselineDuration: duration, Peers: peers, Profile: profile,
 	})
 	if err != nil {

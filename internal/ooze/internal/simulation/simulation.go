@@ -1,4 +1,4 @@
-package ooze
+package simulation
 
 import (
 	"fmt"
@@ -198,13 +198,14 @@ const (
 )
 
 type ViolationResult struct {
+	trace     simulationTrace
 	world     simulationWorld
 	invariant runtimeInvariantViolation
 	key       FailureKey
 	failure   error
 }
 
-func Explore(definition simulationDefinition, choices simulationChoiceSource) SimulationResult {
+func explore(definition simulationDefinition, choices simulationChoiceSource) SimulationResult {
 	if values, ok := choices.(simulationChoiceBytes); ok {
 		choices = &simulationChoiceCursor{values: slices.Clone(values)}
 	}
@@ -261,7 +262,7 @@ func simulationCampaignRecord(
 	}
 }
 
-func ReplayLegal(trace simulationTrace) SimulationResult {
+func replayLegal(trace simulationTrace) SimulationResult {
 	return simulationReplayLegal(trace, true)
 }
 
@@ -787,8 +788,8 @@ func simulationCausalCampaignPayload(recorded, derived campaignmodule.Fact) camp
 	return derived.WithRecordedEvidence(recorded)
 }
 
-func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) (result ViolationResult) {
-	legal := ReplayLegal(prefix)
+func replayViolation(prefix simulationTrace, malformed simulationMalformedFact) (result ViolationResult) {
+	legal := replayLegal(prefix)
 	if legal.failure != nil {
 		return ViolationResult{failure: fmt.Errorf("legal prefix: %w", legal.failure)}
 	}
@@ -942,7 +943,7 @@ func simulationEmergencySweep(runtime processruntime.Replay, closure runtimeClos
 	return resolutions
 }
 
-func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
+func shrink(trace simulationTrace, key FailureKey) simulationTrace {
 	shrunk := simulationCloneTrace(trace)
 	for {
 		before := simulationTraceShrinkMeasure(shrunk)
@@ -957,7 +958,7 @@ func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
 
 func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace {
 	if key.kind == simulationLivenessFailureKind {
-		return simulationShrinkLivenessWith(trace, key, Explore)
+		return simulationShrinkLivenessWith(trace, key, explore)
 	}
 	if trace.malformed == nil && key.kind != simulationReplayFailureKind {
 		panic("simulation shrink requires a reproducible failure")
@@ -999,14 +1000,14 @@ func simulationShrinkOnce(trace simulationTrace, key FailureKey) simulationTrace
 		},
 	})
 	if key.kind == simulationReplayFailureKind {
-		first := ReplayLegal(shrunk)
-		second := ReplayLegal(shrunk)
+		first := replayLegal(shrunk)
+		second := replayLegal(shrunk)
 		if first.failure == nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
 			panic("simulation shrink did not retain a deterministic failure")
 		}
 	} else {
-		first := ReplayViolation(shrunk, *shrunk.malformed)
-		second := ReplayViolation(shrunk, *shrunk.malformed)
+		first := replayViolation(shrunk, *shrunk.malformed)
+		second := replayViolation(shrunk, *shrunk.malformed)
 		if first.failure != nil || !reflect.DeepEqual(first.key, key) || !reflect.DeepEqual(first, second) {
 			panic("simulation shrink did not retain a deterministic failure")
 		}
@@ -1229,12 +1230,12 @@ func simulationExploreShrinkCandidateWithChoices(
 	definition simulationDefinition,
 	choices simulationChoiceSource,
 ) (simulationTrace, bool) {
-	explored := Explore(definition, choices)
+	explored := explore(definition, choices)
 	if explored.failure != nil {
 		return simulationTrace{}, false
 	}
 	candidate := explored.trace
-	replayFailure := ReplayLegal(trace)
+	replayFailure := replayLegal(trace)
 	if len(trace.records) == 0 {
 		candidate.records = nil
 	} else {
@@ -1384,11 +1385,11 @@ func simulationCloneTrace(trace simulationTrace) simulationTrace {
 
 func simulationPreservesFailure(trace simulationTrace, key FailureKey) bool {
 	if key.kind == simulationReplayFailureKind {
-		result := ReplayLegal(trace)
+		result := replayLegal(trace)
 
 		return result.failure != nil && reflect.DeepEqual(result.key, key)
 	}
-	result := ReplayViolation(trace, *trace.malformed)
+	result := replayViolation(trace, *trace.malformed)
 
 	return result.failure == nil && reflect.DeepEqual(result.key, key)
 }
