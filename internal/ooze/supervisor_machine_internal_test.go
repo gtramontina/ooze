@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSupervisorMachinePublishesAcceptedFactsAndEffects(t *testing.T) {
+func TestSupervisorMachinePublishesDomainEventsAndEffects(t *testing.T) {
 	registeredAt := time.Unix(100, 0)
 	fact := supervisorEvent{
 		kind: supervisorProspectiveRegistered, generation: 1, attempt: "mutant-1",
@@ -20,7 +20,9 @@ func TestSupervisorMachinePublishesAcceptedFactsAndEffects(t *testing.T) {
 
 	_, transition := machine.Apply(supervisionFactFromEvent(fact))
 
-	assert.Equal(t, supervisionFactFromEvent(fact), transition.Event().Fact())
+	assert.Equal(t, supervisionAttemptRegistered, transition.Event().kind)
+	assert.Equal(t, attemptGeneration(1), transition.Event().generation)
+	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().attempt)
 	require.Len(t, transition.Effects(), 1)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
 	assert.Equal(t, attemptGeneration(1), transition.Effects()[0].generation)
@@ -36,13 +38,10 @@ func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 	machine := newSupervisorMachine()
 	_, transition := machine.Apply(supervisionFactFromEvent(fact))
 
-	event := transition.Event()
 	effects := transition.Effects()
-	corrupted := event.Fact()
-	corrupted.attempt = "corrupted"
 	effects[0].kind = supervisorDeliverTerminal
 
-	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().Fact().attempt)
+	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().attempt)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
 }
 
@@ -59,7 +58,7 @@ func TestSupervisorMachineCanForkWithoutSharingState(t *testing.T) {
 	right, rightTransition := machine.Apply(supervisionFactFromEvent(fact))
 
 	assert.Equal(t, left.snapshot(), right.snapshot())
-	assert.Equal(t, leftTransition.Event().Fact(), rightTransition.Event().Fact())
+	assert.Equal(t, leftTransition.Event(), rightTransition.Event())
 	assert.Equal(t, leftTransition.Effects(), rightTransition.Effects())
 	assert.Empty(t, machine.snapshot().attempts)
 }
@@ -87,7 +86,7 @@ func TestSupervisorMachineUsesCanonicalDomainVocabulary(t *testing.T) {
 
 	machine, transition := newSupervisorMachine().Apply(fact)
 
-	assert.Equal(t, fact, transition.Event().Fact())
+	assert.Equal(t, supervisionAttemptRegistered, transition.Event().kind)
 	require.Len(t, transition.Effects(), 1)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
 	assert.Equal(t, machine.Projection(), transition.Projection())

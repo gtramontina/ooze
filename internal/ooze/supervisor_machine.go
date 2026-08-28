@@ -12,8 +12,27 @@ type supervisorTransition struct {
 	state   supervisionProjection
 }
 
+type supervisionEventKind uint8
+
+const (
+	supervisionAttemptRegistered supervisionEventKind = iota + 1
+	supervisionLaunchResolved
+	supervisionLaunchBoundaryReached
+	supervisionEmergencyStartedEvent
+	supervisionRunningEvidenceAccepted
+	supervisionDrainEvidenceAccepted
+	supervisionOutputAccepted
+	supervisionStopAdmissionClosed
+	supervisionDomainReleased
+	supervisionRuntimeReceiptAccepted
+	supervisionEmergencySettlementAccepted
+)
+
 type supervisorDomainEvent struct {
-	fact supervisionFact
+	kind       supervisionEventKind
+	generation attemptGeneration
+	attempt    attemptIdentity
+	at         supervisionInstant
 }
 
 func newSupervisorMachine() *supervisorMachine {
@@ -30,7 +49,7 @@ func (machine *supervisorMachine) Apply(fact supervisionFact) (*supervisorMachin
 	projection := supervisionProjectionFromState(next)
 
 	return newSupervisorMachineFrom(next), supervisorTransition{
-		event:   supervisorDomainEvent{fact: accepted},
+		event:   supervisionEventFromFact(accepted),
 		effects: supervisionEffectsFromActions(actions),
 		state:   projection,
 	}
@@ -118,11 +137,7 @@ func (machine *supervisorMachine) PrepareEmergency(at, drainBy time.Time) (super
 }
 
 func (transition supervisorTransition) Event() supervisorDomainEvent {
-	return supervisorDomainEvent{fact: cloneSupervisionFact(transition.event.fact)}
-}
-
-func (event supervisorDomainEvent) Fact() supervisionFact {
-	return cloneSupervisionFact(event.fact)
+	return transition.event
 }
 
 func (transition supervisorTransition) Effects() []supervisionEffect {
@@ -233,4 +248,34 @@ func supervisionProspectiveRegistration(
 		kind: supervisorProspectiveRegistered, generation: generation, attempt: attempt,
 		at: registeredAt, launchBy: launchBy, profile: profile, commandDeadline: commandDeadline,
 	})
+}
+
+func supervisionEventFromFact(fact supervisionFact) supervisorDomainEvent {
+	kind := supervisionEventKind(0)
+	switch fact.kind {
+	case supervisorProspectiveRegistered:
+		kind = supervisionAttemptRegistered
+	case supervisorLaunchCompleted:
+		kind = supervisionLaunchResolved
+	case supervisorLaunchBoundary:
+		kind = supervisionLaunchBoundaryReached
+	case supervisorEmergencyStarted:
+		kind = supervisionEmergencyStartedEvent
+	case supervisorRunningObserved:
+		kind = supervisionRunningEvidenceAccepted
+	case supervisorDrainCompleted:
+		kind = supervisionDrainEvidenceAccepted
+	case supervisorOutputCompleted:
+		kind = supervisionOutputAccepted
+	case supervisorStopAdmissionSealed:
+		kind = supervisionStopAdmissionClosed
+	case supervisorReleaseCompleted:
+		kind = supervisionDomainReleased
+	case supervisorRuntimeCompleted:
+		kind = supervisionRuntimeReceiptAccepted
+	case supervisorEmergencySettlementCompleted:
+		kind = supervisionEmergencySettlementAccepted
+	}
+
+	return supervisorDomainEvent{kind: kind, generation: fact.generation, attempt: fact.attempt, at: fact.at}
 }

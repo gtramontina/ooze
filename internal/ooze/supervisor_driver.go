@@ -455,9 +455,10 @@ func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisor
 		driver.machine = newSupervisorMachine()
 	}
 	reservation := driver.recorder.reserve(supervisionAuthority)
+	fact := supervisionFactFromEvent(event)
 	var transition supervisorTransition
-	driver.machine, transition = driver.machine.Apply(supervisionFactFromEvent(event))
-	accepted := transition.Event().Fact().production()
+	driver.machine, transition = driver.machine.Apply(fact)
+	accepted := fact.production()
 	actions := transition.actions()
 	driver.recorder.recordSupervisor(reservation, accepted, driver.machine.Projection(), actions)
 

@@ -766,9 +766,10 @@ func (engine *simulationEngine) applySupervisor(
 	if engine.machine == nil {
 		engine.machine = newSupervisorMachine()
 	}
+	fact := supervisionFactFromEvent(event)
 	var transition supervisorTransition
-	engine.machine, transition = engine.machine.Apply(supervisionFactFromEvent(event))
-	accepted := transition.Event().Fact()
+	engine.machine, transition = engine.machine.Apply(fact)
+	accepted := fact
 	effects := transition.Effects()
 	record := simulationRecord{
 		authority: supervisionAuthority, source: source,
