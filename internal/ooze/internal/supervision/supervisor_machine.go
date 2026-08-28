@@ -959,6 +959,27 @@ func (machine *Machine) AcceptsEmergencyRequest() bool {
 	return machine != nil && !machine.state.emergency.active
 }
 
+// DeterministicEmergencyFact returns an emergency fact with deterministic root evidence.
+func (machine *Machine) DeterministicEmergencyFact(
+	at time.Time,
+	drainEpoch time.Duration,
+) (Fact, bool) {
+	if machine == nil || drainEpoch <= 0 {
+		return Fact{}, false
+	}
+	for _, attempt := range machine.state.attempts {
+		if attempt.lastEventAt.After(at) {
+			at = attempt.lastEventAt
+		}
+	}
+	plan, ready := machine.PlanEmergency(at, at.Add(drainEpoch), drainEpoch, nil)
+	if !ready {
+		return Fact{}, false
+	}
+
+	return machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
+}
+
 func (machine *Machine) emergencySettlementFact(
 	effect Effect,
 	acknowledged []attemptGeneration,

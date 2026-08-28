@@ -449,12 +449,8 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			attempt: launch.attempt, generation: launch.generation,
 			result: launchResult, receipt: campaignReceipt(processed),
 		})
-		if action.Kind() == supervision.PublishLaunchUnconfirmedEffect && result.runtimeClosureInProgress &&
-			engine.machine.AcceptsEmergencyRequest() && !engine.hasPendingSupervisorEmergency() {
-			emergencyAt := action.OccurredAt().Add(time.Nanosecond)
-			engine.enqueueSupervisorFact(
-				sequence, engine.machine.EmergencyRequest(emergencyAt, emergencyAt.Add(5*time.Second)),
-			)
+		if action.Kind() == supervision.PublishLaunchUnconfirmedEffect && result.runtimeClosureInProgress {
+			engine.enqueueEmergency(sequence, action.OccurredAt().Add(time.Nanosecond))
 		}
 	case supervision.CloseProspectiveEffect:
 		observation, _, ready := action.LaunchObservation()
@@ -506,10 +502,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		}
 		engine.enqueueSupervisorFact(sequence, fact)
 		if wasOpen {
-			emergencyAt := action.OccurredAt().Add(time.Nanosecond)
-			engine.enqueueSupervisorFact(
-				sequence, engine.machine.EmergencyRequest(emergencyAt, emergencyAt.Add(5*time.Second)),
-			)
+			engine.enqueueEmergency(sequence, action.OccurredAt().Add(time.Nanosecond))
 		}
 	case supervision.SettleEmergencyEffect:
 		resolutions, ready := action.EmergencyResolutions()
@@ -680,11 +673,7 @@ func (engine *simulationEngine) applySupervisorFact(
 	}
 	if fact.Kind() == supervision.EmergencyStartedFact && source.kind == simulationOwnerDeliverySource {
 		at := fact.OccurredAt()
-		plan, ready := engine.machine.PlanEmergency(at, at.Add(5*time.Second), 5*time.Second, nil)
-		if !ready {
-			return fmt.Errorf("simulation emergency fact is not enabled")
-		}
-		prepared, ready := engine.machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
+		prepared, ready := engine.machine.DeterministicEmergencyFact(at, 5*time.Second)
 		if !ready {
 			return fmt.Errorf("simulation emergency fact is not enabled")
 		}
@@ -796,6 +785,13 @@ func (engine *simulationEngine) enqueueSupervisorFact(sequence uint64, fact supe
 		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: sequence},
 		supervisorDelivery: &fact,
 	})
+}
+
+func (engine *simulationEngine) enqueueEmergency(sequence uint64, at time.Time) {
+	if !engine.machine.AcceptsEmergencyRequest() || engine.hasPendingSupervisorEmergency() {
+		return
+	}
+	engine.enqueueSupervisorFact(sequence, engine.machine.EmergencyRequest(at, at.Add(5*time.Second)))
 }
 
 func (engine simulationEngine) enabledMoves() []simulationEngineMove {
@@ -922,10 +918,7 @@ func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
 	if machine == nil {
 		machine = supervision.NewMachine()
 	}
-	plan, ready := machine.PlanEmergency(at, at.Add(5*time.Second), 5*time.Second, nil)
-	if ready {
-		_, ready = machine.PrepareEmergencyPlan(plan, plan.DeterministicRootEvidence())
-	}
+	_, ready := machine.DeterministicEmergencyFact(at, 5*time.Second)
 
 	return ready
 }

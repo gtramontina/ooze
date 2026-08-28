@@ -2427,6 +2427,14 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	})
 }
 
+func TestSimulationQueuesOnlyOnePendingEmergencyEpoch(t *testing.T) {
+	definition, choices := simulationFuzzInput([]byte("X12002"))
+
+	result := Explore(definition, choices)
+
+	assert.Nil(t, result.failure)
+}
+
 func simulationRecordedActionSummary(trace simulationTrace) []string {
 	var summary []string
 	for _, record := range trace.records {
