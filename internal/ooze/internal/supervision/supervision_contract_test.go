@@ -70,7 +70,6 @@ type supervisionBoundary struct {
 func (*supervisionBoundary) Prepare(supervision.Generation, supervision.Spec) {}
 
 func (boundary *supervisionBoundary) Execute(
-	machine *supervision.Machine,
 	effect supervision.Effect,
 ) (supervision.Fact, bool) {
 	switch effect.Kind() {

@@ -17,7 +17,7 @@ const nominalSupervisorFuseCadence = 50 * time.Millisecond
 // SystemBoundary executes native process operations requested by supervision.
 type SystemBoundary interface {
 	Prepare(Generation, Spec)
-	Execute(*Machine, Effect) (Fact, bool)
+	Execute(Effect) (Fact, bool)
 	RecheckRoot(Generation) (ExitStatus, time.Time, bool, error)
 	SampleRunning(Generation) (bool, uint64, error)
 	ReadOutput(uint64) string
@@ -185,10 +185,7 @@ func (driver *Driver) executeSystem(action supervisorAction) *supervisorEvent {
 	if driver.boundary == nil {
 		return driver.execute(action)
 	}
-	driver.mutex.Lock()
-	machine := driver.machine.Fork()
-	driver.mutex.Unlock()
-	fact, ready := driver.boundary.Execute(machine, supervisionEffectFromAction(action))
+	fact, ready := driver.boundary.Execute(supervisionEffectFromAction(action))
 	if !ready {
 		invariant(supervisorDriverOperation, "system boundary rejected an enabled effect")
 	}

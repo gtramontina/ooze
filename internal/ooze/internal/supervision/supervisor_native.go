@@ -108,7 +108,7 @@ func (executor *supervisorNativeExecutor) Prepare(generation Generation, spec Sp
 	executor.prepare(attemptGeneration(generation), spec)
 }
 
-func (executor *supervisorNativeExecutor) Execute(_ *Machine, effect Effect) (Fact, bool) {
+func (executor *supervisorNativeExecutor) Execute(effect Effect) (Fact, bool) {
 	event := executor.execute(effect.production())
 	if event == nil {
 		return Fact{}, true
