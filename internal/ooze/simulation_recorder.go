@@ -20,7 +20,6 @@ type simulationRecorder struct {
 	actions       map[supervision.ActionToken]simulationInFlightAction
 	actionWake    chan struct{}
 	causalMutex   sync.Mutex
-	activeEffect  campaignmodule.Effect
 	runtimeCuts   []simulationRecordedRuntimeCut
 	runtimeError  error
 	runtimeState  processruntime.Replay
@@ -101,29 +100,6 @@ func (recorder *simulationRecorder) reserve(authority simulationAuthority) simul
 	return simulationReservation{sequence: recorder.next.Add(1), authority: authority}
 }
 
-func (recorder *simulationRecorder) executeEffect(effect campaignmodule.Effect) func() {
-	if recorder == nil {
-		return func() {}
-	}
-	recorder.causalMutex.Lock()
-	if recorder.activeEffect.ID() != 0 {
-		recorder.causalMutex.Unlock()
-		panic("simulation recorder campaign effects overlap")
-	}
-	recorder.activeEffect = effect
-	recorder.causalMutex.Unlock()
-
-	return func() {
-		recorder.causalMutex.Lock()
-		if recorder.activeEffect.ID() != effect.ID() {
-			recorder.causalMutex.Unlock()
-			panic("simulation recorder campaign effect completion is stale")
-		}
-		recorder.activeEffect = campaignmodule.Effect{}
-		recorder.causalMutex.Unlock()
-	}
-}
-
 func (recorder *simulationRecorder) recordRuntime(
 	reservation simulationReservation,
 	record simulationRecord,
@@ -147,33 +123,29 @@ func (recorder *simulationRecorder) recordRuntime(
 	recorder.causalMutex.Unlock()
 }
 
-type simulationCampaignObserver struct{ recorder *simulationRecorder }
+type simulationCampaignRecorder struct{ recorder *simulationRecorder }
 
-func (observer simulationCampaignObserver) Enter() func() { return observer.recorder.enter() }
+func (recorder simulationCampaignRecorder) enter() func() { return recorder.recorder.enter() }
 
-func (observer simulationCampaignObserver) Reserve() campaignmodule.CutReservation {
-	return observer.recorder.reserveCampaign()
+func (recorder simulationCampaignRecorder) reserve() uint64 {
+	return recorder.recorder.reserveCampaign()
 }
 
-func (observer simulationCampaignObserver) BeginEffect(effect campaignmodule.Effect) func() {
-	return observer.recorder.executeEffect(effect)
-}
-
-func (observer simulationCampaignObserver) Publish(
-	reservation campaignmodule.CutReservation,
+func (recorder simulationCampaignRecorder) publish(
+	reservation uint64,
 	event campaignmodule.Event,
 	projection campaignmodule.Projection,
 	effects []campaignmodule.Effect,
 ) {
-	observer.recorder.recordCampaign(reservation, event, projection, effects)
+	recorder.recorder.recordCampaign(reservation, event, projection, effects)
 }
 
-func (recorder *simulationRecorder) reserveCampaign() campaignmodule.CutReservation {
-	return campaignmodule.CutReservation(recorder.reserve(simulationCampaignAuthority).sequence)
+func (recorder *simulationRecorder) reserveCampaign() uint64 {
+	return recorder.reserve(simulationCampaignAuthority).sequence
 }
 
 func (recorder *simulationRecorder) recordCampaign(
-	reservation campaignmodule.CutReservation,
+	reservation uint64,
 	event campaignmodule.Event,
 	projection campaignmodule.Projection,
 	effects []campaignmodule.Effect,
@@ -225,12 +197,6 @@ func (recorder *simulationRecorder) runtimeSource(record simulationRecord) simul
 	if source := recorder.runtimeActionSource(record); source.kind != 0 {
 		return source
 	}
-	recorder.causalMutex.Lock()
-	effect := recorder.activeEffect
-	recorder.causalMutex.Unlock()
-	if effect.ID() != 0 {
-		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
-	}
 	if record.runtimeCut.Operation() == processruntime.RegisterCampaignOperation {
 		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: 1}
 	}
@@ -276,13 +242,6 @@ func (recorder *simulationRecorder) campaignSource(payload campaignmodule.Fact) 
 	}); source.kind != 0 {
 		return source
 	}
-	recorder.causalMutex.Lock()
-	effect := recorder.activeEffect
-	recorder.causalMutex.Unlock()
-	if effect.ID() != 0 && simulationEffectEnablesExternalFact(effect, payload) {
-		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
-	}
-
 	return simulationCausalSource{}
 }
 
@@ -302,13 +261,6 @@ func (recorder *simulationRecorder) supervisorSource(fact supervision.Fact) simu
 	if token, found := fact.CausalEffect(); found {
 		return simulationCausalSource{kind: supervisionActionSource, identity: uint64(token)}
 	}
-	recorder.causalMutex.Lock()
-	effect := recorder.activeEffect
-	recorder.causalMutex.Unlock()
-	if fact.Kind() == supervision.ProspectiveRegisteredFact && effect.Kind() == campaignEffectLaunchAttempt {
-		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
-	}
-
 	return simulationCausalSource{}
 }
 

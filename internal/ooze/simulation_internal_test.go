@@ -1525,7 +1525,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		Profile: AutomaticProfile, Peers: 1,
 	}
 	campaign, _ := campaignmodule.NewMachine(definition)
-	observer := simulationCampaignObserver{recorder: recorder}
+	observer := simulationCampaignRecorder{recorder: recorder}
 	machine := supervision.NewMachine()
 
 	registration := shell.RegisterCampaign(definition.Lineage)
@@ -1589,7 +1589,7 @@ func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
 		Identity: "campaign-conformance", Lineage: 71, Command: []string{"test"},
 		Profile: AutomaticProfile, Peers: 2,
 	})
-	_, _ = applyRecordedCampaign(simulationCampaignObserver{recorder: recorder}, campaign,
+	_, _ = applyRecordedCampaign(simulationCampaignRecorder{recorder: recorder}, campaign,
 		campaignmodule.Registered(firstRegistration))
 	machine := supervision.NewMachine()
 
@@ -1741,7 +1741,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 		Identity: "campaign-action-barrier", Lineage: 511, Command: []string{"test"},
 		Profile: AutomaticProfile, Peers: 1,
 	})
-	_, _ = applyRecordedCampaign(simulationCampaignObserver{recorder: recorder}, campaign,
+	_, _ = applyRecordedCampaign(simulationCampaignRecorder{recorder: recorder}, campaign,
 		campaignmodule.Registered(registration))
 	machine := supervision.NewMachine()
 	action := supervision.MalformedEffect(supervision.LaunchNativeEffect)
@@ -1777,7 +1777,7 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 		Profile: AutomaticProfile, Peers: 1,
 	}
 	campaign, _ := campaignmodule.NewMachine(definition)
-	observer := simulationCampaignObserver{recorder: recorder}
+	observer := simulationCampaignRecorder{recorder: recorder}
 	machine := supervision.NewMachine()
 	cut := func() { _, _ = recorder.quiescent(shell, machine) }
 
@@ -1838,7 +1838,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 		Profile: AutomaticProfile, Peers: 1,
 	}
 	campaign, _ := campaignmodule.NewMachine(definition)
-	observer := simulationCampaignObserver{recorder: recorder}
+	observer := simulationCampaignRecorder{recorder: recorder}
 	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
 	machine := supervision.NewMachine()
 	registration := shell.RegisterCampaign(definition.Lineage)
@@ -1886,7 +1886,7 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 		Identity: "campaign-projection", Lineage: 71, Command: []string{"test"},
 		Profile: AutomaticProfile, Peers: 1,
 	})
-	_, _ = applyRecordedCampaign(simulationCampaignObserver{recorder: recorder}, campaign,
+	_, _ = applyRecordedCampaign(simulationCampaignRecorder{recorder: recorder}, campaign,
 		campaignmodule.Registered(registration))
 	machine := supervision.NewMachine()
 
@@ -2025,7 +2025,7 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 		Profile: AutomaticProfile, Peers: 1,
 	}
 	campaign, _ := campaignmodule.NewMachine(definition)
-	observer := simulationCampaignObserver{recorder: recorder}
+	observer := simulationCampaignRecorder{recorder: recorder}
 	machine := supervision.NewMachine()
 	registration := shell.RegisterCampaign(definition.Lineage)
 	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.Registered(registration))
@@ -2040,15 +2040,15 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 }
 
 func applyRecordedCampaign(
-	observer simulationCampaignObserver,
+	observer simulationCampaignRecorder,
 	machine campaignmodule.Machine,
 	fact campaignmodule.Fact,
 ) (campaignmodule.Machine, campaignmodule.Transition) {
-	leave := observer.Enter()
+	leave := observer.enter()
 	defer leave()
-	reservation := observer.Reserve()
+	reservation := observer.reserve()
 	next, transition := machine.Apply(fact)
-	observer.Publish(reservation, transition.Event(), transition.Projection(), transition.Effects())
+	observer.publish(reservation, transition.Event(), transition.Projection(), transition.Effects())
 	return next, transition
 }
 

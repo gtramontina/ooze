@@ -17,9 +17,7 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 		}
 		var next []campaignEffect
 		for _, effect := range effects {
-			complete := beginRecordedEffect(runner.recorder, effect)
 			next = append(next, runner.execute(effect, request)...)
-			complete()
 		}
 		effects = next
 		if len(effects) == 0 && runner.pending != 0 {
@@ -41,15 +39,11 @@ func proposesTerminal(effects []campaignEffect) bool {
 }
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
-	leaveRecorder := enterRecorder(runner.recorder)
-	defer leaveRecorder()
-	reservation := reserveRecorder(runner.recorder)
 	previous := runner.state
 	machine, transition := (Machine{state: runner.state}).Apply(Fact{payload: payload})
 	runner.state = machine.state
 	runner.nextEvent = transition.event.value.id
 	effects := transition.effects
-	publishRecorder(runner.recorder, reservation, transition)
 	runner.publishProgress(payload, previous, runner.state)
 
 	return effects

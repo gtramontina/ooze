@@ -2,6 +2,7 @@ package campaign_test
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -17,6 +18,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestManagedCampaignConfigurationContainsOnlyExecutionInputs(t *testing.T) {
+	configuration := reflect.TypeOf(campaign.Configuration{})
+	_, exposesRecorder := configuration.FieldByName("Recorder")
+
+	assert.False(t, exposesRecorder)
+}
 
 func TestManagedCampaignEmptyCatalogueRunsNoCommands(t *testing.T) {
 	repository := &managedMemoryRepository{}

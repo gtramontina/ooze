@@ -25,7 +25,6 @@ type Configuration struct {
 	MutationTimeout time.Duration
 	Viruses         []viruses.Virus
 	Observe         func(ManagedProgress)
-	Recorder        Recorder
 }
 
 // Executor interprets campaign effects through one process runtime and supervision system.
@@ -124,7 +123,7 @@ func (executor *Executor) Execute(configuration Configuration) Result {
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: executor.runtime, repository: configuration.Repository,
 		temporaryDirectory: configuration.TemporaryDir, attempts: executor.attempts,
-		observe: configuration.Observe, recorder: configuration.Recorder,
+		observe: configuration.Observe,
 	})
 	result := runner.run(managedCampaignRequest{
 		identity: campaignIdentity(configuration.Identity), lineage: configuration.Lineage,
