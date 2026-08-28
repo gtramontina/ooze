@@ -16,17 +16,38 @@ const nominalSupervisorFuseCadence = 50 * time.Millisecond
 
 // SystemBoundary executes native process operations requested by supervision.
 type SystemBoundary interface {
+	// Now returns the current supervision instant.
 	Now() time.Time
+	// AwaitLaunch reports when a launch deadline is ready.
 	AwaitLaunch(time.Time) <-chan time.Time
+	// AwaitCommand reports when a command deadline is ready.
 	AwaitCommand(time.Time) <-chan time.Time
+	// SampleTicks returns running-census ticks and their cancellation function.
 	SampleTicks() (<-chan time.Time, func())
+	// Prepare allocates native state before launch.
 	Prepare(Generation, Spec)
+	// Execute performs one requested supervision effect.
 	Execute(Effect) (Fact, bool)
+	// RecheckRoot reads root completion at a deadline boundary.
 	RecheckRoot(Generation) (ExitStatus, time.Time, bool, error)
+	// SampleRunning reads the current live-member count.
 	SampleRunning(Generation) (bool, uint64, error)
+	// ReadOutput resolves immutable captured output.
 	ReadOutput(uint64) string
+	// ReadDiagnostic resolves an immutable diagnostic.
 	ReadDiagnostic(uint64) error
+	// RecordDiagnostic stores an immutable diagnostic.
 	RecordDiagnostic(error) uint64
+}
+
+// System owns supervised attempt lifecycles around one process runtime.
+type System interface {
+	ReserveLaunch(*processruntime.StartCell, Spec)
+	DiscardLaunch(*processruntime.StartCell)
+	Launch(processruntime.PreparedStart, Spec) ObservedLaunch
+	Wait(Generation, *OwnedAttempt) ObservedTerminal
+	Stop(*OwnedAttempt)
+	EmergencyDrain(EmergencyRequest) (SweepResult, processruntime.EmergencySettlement)
 }
 
 type supervisorDriverConstruction struct {
@@ -72,8 +93,7 @@ type supervisorDrivenAttempt struct {
 	receiptReady    bool
 }
 
-// Driver serializes supervision facts and executes their effects.
-type Driver struct {
+type driver struct {
 	mutex             sync.Mutex
 	machine           *Machine
 	runtime           *processruntime.Runtime
@@ -105,13 +125,13 @@ type Driver struct {
 	ownerCuts         []ownerCut
 }
 
-// NewDriver constructs supervision around a native system boundary.
-func NewDriver(
+// New constructs supervision around a system boundary.
+func New(
 	runtime *processruntime.Runtime,
 	launchProgress time.Duration,
 	drainEpoch time.Duration,
 	boundary SystemBoundary,
-) (*Driver, error) {
+) (System, error) {
 	if boundary == nil {
 		return nil, errors.New("supervision system boundary is required")
 	}
@@ -145,7 +165,7 @@ func NewDriver(
 	return driver, nil
 }
 
-func newSupervisorDriver(construction supervisorDriverConstruction) *Driver {
+func newSupervisorDriver(construction supervisorDriverConstruction) *driver {
 	if construction.runtime == nil || construction.now == nil || construction.launchProgress <= 0 ||
 		construction.drainEpoch <= 0 || construction.execute == nil || construction.readOutput == nil {
 		panic("supervisor driver construction is incomplete")
@@ -171,7 +191,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *Driver {
 	if observer == nil {
 		observer = noopObserver{}
 	}
-	return &Driver{
+	return &driver{
 		machine: NewMachine(),
 		runtime: construction.runtime, now: construction.now,
 		launchBoundary: launchBoundary, commandBoundary: commandBoundary, sampleTicks: sampleTicks,
@@ -188,7 +208,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *Driver {
 	}
 }
 
-func (driver *Driver) executeSystem(action supervisorAction) *supervisorEvent {
+func (driver *driver) executeSystem(action supervisorAction) *supervisorEvent {
 	if driver.boundary == nil {
 		return driver.execute(action)
 	}
@@ -208,7 +228,7 @@ func waitForSupervisorLaunchBoundary(launchBy time.Time) <-chan time.Time {
 	return time.After(time.Until(launchBy))
 }
 
-func (driver *Driver) ownerObserver() OwnerCutObserver {
+func (driver *driver) ownerObserver() OwnerCutObserver {
 	if driver.observer == nil {
 		return noopObserver{}
 	}
@@ -216,7 +236,7 @@ func (driver *Driver) ownerObserver() OwnerCutObserver {
 	return driver.observer
 }
 
-func (driver *Driver) reserveOwnerCut() OwnerCutReservation {
+func (driver *driver) reserveOwnerCut() OwnerCutReservation {
 	sequence := driver.ownerSequence
 	if sequence == nil {
 		sequence = &driver.localSequence
@@ -225,28 +245,12 @@ func (driver *Driver) reserveOwnerCut() OwnerCutReservation {
 	return OwnerCutReservation(sequence.Add(1))
 }
 
-func (driver *Driver) completeOwnerEffect(action supervisorAction) {
+func (driver *driver) completeOwnerEffect(action supervisorAction) {
 	defer func() { _ = recover() }()
 	driver.ownerObserver().Complete(supervisionEffectFromAction(action))
 }
 
-func newDrivenSupervisorForTest(
-	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart,
-	driver *Driver,
-) *supervisor {
-	if driver == nil {
-		panic("driven supervisor requires a driver")
-	}
-	supervisor := newSupervisorForTest(installStart, driver.launch)
-	supervisor.reserveLaunch = driver.reserveLaunch
-	supervisor.discardLaunch = driver.discardLaunch
-	supervisor.driveLaunch = driver.launchInstalled
-	supervisor.emergencyDrain = driver.emergencyDrain
-
-	return supervisor
-}
-
-func (driver *Driver) launchInstalled(start processruntime.PreparedStart, spec Spec) LaunchResult {
+func (driver *driver) launchInstalled(start processruntime.PreparedStart, spec Spec) LaunchResult {
 	return driver.launchManaged(start, spec).result
 }
 
@@ -268,20 +272,20 @@ func (observed ObservedLaunch) Result() LaunchResult { return observed.result }
 func (observed ObservedLaunch) Receipt() processruntime.Receipt { return observed.receipt }
 
 // ReserveLaunch records an inert launch before runtime start commitment.
-func (driver *Driver) ReserveLaunch(cell *processruntime.StartCell, spec Spec) {
+func (driver *driver) ReserveLaunch(cell *processruntime.StartCell, spec Spec) {
 	driver.reserveLaunch(cell, spec)
 }
 
 // DiscardLaunch removes an inert launch that runtime start commitment rejected.
-func (driver *Driver) DiscardLaunch(cell *processruntime.StartCell) { driver.discardLaunch(cell) }
+func (driver *driver) DiscardLaunch(cell *processruntime.StartCell) { driver.discardLaunch(cell) }
 
 // Launch starts one runtime-authorized attempt.
-func (driver *Driver) Launch(start processruntime.PreparedStart, spec Spec) ObservedLaunch {
+func (driver *driver) Launch(start processruntime.PreparedStart, spec Spec) ObservedLaunch {
 	observed := driver.launchManaged(start, spec)
 	return ObservedLaunch(observed)
 }
 
-func (driver *Driver) launchManaged(start processruntime.PreparedStart, spec Spec) launchObservationResult {
+func (driver *driver) launchManaged(start processruntime.PreparedStart, spec Spec) launchObservationResult {
 	var actions []supervisorAction
 	var launchObservation processruntime.Observation
 	var receipt processruntime.Receipt
@@ -302,7 +306,29 @@ func (driver *Driver) launchManaged(start processruntime.PreparedStart, spec Spe
 	return launchObservationResult{result: published, receipt: receipt}
 }
 
-func (driver *Driver) reserveLaunch(cell *processruntime.StartCell, spec Spec) {
+func brokerLaunchObservation(result LaunchResult) processruntime.Observation {
+	switch result := result.(type) {
+	case Owned:
+		if result.Attempt != nil {
+			return processruntime.Owned()
+		}
+	case NotReleased:
+		switch result.Kind {
+		case LaunchFailed:
+			return processruntime.NotReleased(false)
+		case LaunchResourceExhausted:
+			return processruntime.NotReleased(true)
+		}
+	case LaunchUnconfirmed:
+		if result.Residual == ProspectiveUnresolved {
+			return processruntime.LaunchUnconfirmed()
+		}
+	}
+
+	return processruntime.Observation{}
+}
+
+func (driver *driver) reserveLaunch(cell *processruntime.StartCell, spec Spec) {
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 	_, duplicated := driver.reservations[cell]
@@ -312,7 +338,7 @@ func (driver *Driver) reserveLaunch(cell *processruntime.StartCell, spec Spec) {
 	driver.reservations[cell] = spec
 }
 
-func (driver *Driver) discardLaunch(cell *processruntime.StartCell) {
+func (driver *driver) discardLaunch(cell *processruntime.StartCell) {
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 	if _, reserved := driver.reservations[cell]; !reserved || cell.InstalledGeneration() != 0 {
@@ -321,7 +347,7 @@ func (driver *Driver) discardLaunch(cell *processruntime.StartCell) {
 	delete(driver.reservations, cell)
 }
 
-func (driver *Driver) stageLaunch(
+func (driver *driver) stageLaunch(
 	start processruntime.PreparedStart,
 	spec Spec,
 ) (processruntime.Observation, []supervisorAction, processruntime.Receipt, bool) {
@@ -450,7 +476,7 @@ func (driver *Driver) stageLaunch(
 	}
 }
 
-func (driver *Driver) finishLaunchReturn(
+func (driver *driver) finishLaunchReturn(
 	generation attemptGeneration,
 	actions []supervisorAction,
 ) LaunchResult {
@@ -483,7 +509,7 @@ func (driver *Driver) finishLaunchReturn(
 	return published
 }
 
-func (driver *Driver) requireLaunchWake(generation attemptGeneration) <-chan struct{} {
+func (driver *driver) requireLaunchWake(generation attemptGeneration) <-chan struct{} {
 	driver.mutex.Lock()
 	wake := driver.requireAttempt(generation).launchWake
 	driver.mutex.Unlock()
@@ -491,7 +517,7 @@ func (driver *Driver) requireLaunchWake(generation attemptGeneration) <-chan str
 	return wake
 }
 
-func (driver *Driver) executeLaunch(action supervisorAction) {
+func (driver *driver) executeLaunch(action supervisorAction) {
 	defer driver.completeOwnerEffect(action)
 	event := driver.executeSystem(action)
 	if event == nil || event.completion == nil {
@@ -553,7 +579,7 @@ func launchObservation(completion *supervisorLaunchCompletion) processruntime.Ob
 	return processruntime.Observation{}
 }
 
-func (driver *Driver) launch(generation attemptGeneration, spec Spec) LaunchResult {
+func (driver *driver) launch(generation attemptGeneration, spec Spec) LaunchResult {
 	registeredAt := driver.now()
 	driver.mutex.Lock()
 	if generation == 0 || driver.attempts[generation] != nil {
@@ -581,7 +607,7 @@ func (driver *Driver) launch(generation attemptGeneration, spec Spec) LaunchResu
 	return result
 }
 
-func (driver *Driver) reduce(event supervisorEvent) []supervisorAction {
+func (driver *driver) reduce(event supervisorEvent) []supervisorAction {
 	leaveRecorder := driver.ownerObserver().Enter()
 	driver.mutex.Lock()
 	actions := driver.reduceLocked(event)
@@ -592,7 +618,7 @@ func (driver *Driver) reduce(event supervisorEvent) []supervisorAction {
 	return actions
 }
 
-func (driver *Driver) reduceLocked(event supervisorEvent) []supervisorAction {
+func (driver *driver) reduceLocked(event supervisorEvent) []supervisorAction {
 	if driver.machine == nil {
 		driver.machine = NewMachine()
 	}
@@ -611,7 +637,7 @@ func (driver *Driver) reduceLocked(event supervisorEvent) []supervisorAction {
 	return actions
 }
 
-func (driver *Driver) publishOwnerCuts() {
+func (driver *driver) publishOwnerCuts() {
 	driver.mutex.Lock()
 	cuts := append([]ownerCut(nil), driver.ownerCuts...)
 	driver.ownerCuts = nil
@@ -624,7 +650,7 @@ func (driver *Driver) publishOwnerCuts() {
 	}
 }
 
-func (driver *Driver) apply(event supervisorEvent) {
+func (driver *driver) apply(event supervisorEvent) {
 	actions := driver.reduce(event)
 	for _, action := range actions {
 		driver.run(action)
@@ -632,7 +658,7 @@ func (driver *Driver) apply(event supervisorEvent) {
 	driver.startEligibleMonitors()
 }
 
-func (driver *Driver) run(action supervisorAction) {
+func (driver *driver) run(action supervisorAction) {
 	switch action.kind {
 	case supervisorLaunchNative, supervisorWaitRoot, supervisorSampleRunning,
 		supervisorDeliverTerminal, supervisorDeliverEmergencySettlement:
@@ -686,7 +712,7 @@ func (driver *Driver) run(action supervisorAction) {
 	}
 }
 
-func (driver *Driver) publishLaunchUnconfirmed(action supervisorAction) {
+func (driver *driver) publishLaunchUnconfirmed(action supervisorAction) {
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 	attempt := driver.requireAttempt(action.generation)
@@ -696,7 +722,7 @@ func (driver *Driver) publishLaunchUnconfirmed(action supervisorAction) {
 	attempt.launchResult = LaunchUnconfirmed{Residual: ProspectiveUnresolved}
 }
 
-func (driver *Driver) closeProspective(action supervisorAction) {
+func (driver *driver) closeProspective(action supervisorAction) {
 	receipt := driver.runtime.Observe(action.generation, launchObservationFromAction(action))
 	completion := supervisorRuntimeCompletion{
 		generation: action.generation,
@@ -709,7 +735,7 @@ func (driver *Driver) closeProspective(action supervisorAction) {
 	})
 }
 
-func (driver *Driver) adoptOwned(action supervisorAction) {
+func (driver *driver) adoptOwned(action supervisorAction) {
 	driver.runtime.Observe(action.generation, processruntime.Owned())
 }
 
@@ -728,7 +754,7 @@ func launchObservationFromEffect(effect Effect) processruntime.Observation {
 	return launchObservation(completion.production())
 }
 
-func (driver *Driver) executeAction(action supervisorAction) {
+func (driver *driver) executeAction(action supervisorAction) {
 	event := driver.executeSystem(action)
 	if event == nil {
 		invariant(supervisorDriverOperation, "native action returned no completion")
@@ -736,7 +762,7 @@ func (driver *Driver) executeAction(action supervisorAction) {
 	driver.apply(*event)
 }
 
-func (driver *Driver) publishOwned(action supervisorAction) {
+func (driver *driver) publishOwned(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
 	if attempt.owned != nil || attempt.launchResult != nil {
@@ -751,7 +777,7 @@ func (driver *Driver) publishOwned(action supervisorAction) {
 	driver.mutex.Unlock()
 }
 
-func (driver *Driver) publishNotReleased(action supervisorAction) {
+func (driver *driver) publishNotReleased(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
 	if attempt.launchResult != nil {
@@ -778,7 +804,7 @@ func (driver *Driver) publishNotReleased(action supervisorAction) {
 	driver.mutex.Unlock()
 }
 
-func (driver *Driver) rememberMonitor(action supervisorAction, sample bool) {
+func (driver *driver) rememberMonitor(action supervisorAction, sample bool) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
 	if sample {
@@ -797,7 +823,7 @@ func (driver *Driver) rememberMonitor(action supervisorAction, sample bool) {
 	driver.mutex.Unlock()
 }
 
-func (driver *Driver) startEligibleMonitors() {
+func (driver *driver) startEligibleMonitors() {
 	type monitorStart struct {
 		wait, sample supervisorAction
 		deadline     time.Time
@@ -826,7 +852,7 @@ func (driver *Driver) startEligibleMonitors() {
 	}
 }
 
-func (driver *Driver) monitor(
+func (driver *driver) monitor(
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
 	deadlineAt time.Time,
@@ -843,7 +869,7 @@ func (driver *Driver) monitor(
 	driver.waitThroughDeadline(waitAction, sampleAction, deadlineAt)
 }
 
-func (driver *Driver) wait(generation attemptGeneration) Terminal {
+func (driver *driver) wait(generation attemptGeneration) Terminal {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(generation)
 	if attempt.waitStarted || !attempt.monitorStarted {
@@ -857,7 +883,7 @@ func (driver *Driver) wait(generation attemptGeneration) Terminal {
 	return <-terminal
 }
 
-func (driver *Driver) waitThroughDeadline(
+func (driver *driver) waitThroughDeadline(
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
 	deadlineAt time.Time,
@@ -935,7 +961,7 @@ func (driver *Driver) waitThroughDeadline(
 	}
 }
 
-func (driver *Driver) applyDeadlineBoundary(
+func (driver *driver) applyDeadlineBoundary(
 	waited <-chan *supervisorEvent,
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
@@ -967,7 +993,7 @@ func (driver *Driver) applyDeadlineBoundary(
 	})
 }
 
-func (driver *Driver) readyRunningFactsThroughDeadline(
+func (driver *driver) readyRunningFactsThroughDeadline(
 	waited <-chan *supervisorEvent,
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
@@ -997,7 +1023,7 @@ func (driver *Driver) readyRunningFactsThroughDeadline(
 	}
 }
 
-func (driver *Driver) applyReadyWaitAndSample(
+func (driver *driver) applyReadyWaitAndSample(
 	event *supervisorEvent,
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
@@ -1017,7 +1043,7 @@ func (driver *Driver) applyReadyWaitAndSample(
 	}
 }
 
-func (driver *Driver) correlateWaitCompletion(
+func (driver *driver) correlateWaitCompletion(
 	event *supervisorEvent,
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
@@ -1032,7 +1058,7 @@ func (driver *Driver) correlateWaitCompletion(
 	event.running.sampleAction = sampleAction.token
 }
 
-func (driver *Driver) runningSampleFacts(
+func (driver *driver) runningSampleFacts(
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
 	at time.Time,
@@ -1059,7 +1085,7 @@ func (driver *Driver) runningSampleFacts(
 	return facts
 }
 
-func (driver *Driver) applyRunningSampleFacts(
+func (driver *driver) applyRunningSampleFacts(
 	waitAction supervisorAction,
 	sampleAction supervisorAction,
 	at time.Time,
@@ -1084,7 +1110,7 @@ func (driver *Driver) applyRunningSampleFacts(
 	return terminalReady
 }
 
-func (driver *Driver) applyMonitorEvent(event supervisorEvent) {
+func (driver *driver) applyMonitorEvent(event supervisorEvent) {
 	leaveRecorder := driver.ownerObserver().Enter()
 	recorderReleased := false
 	defer func() {
@@ -1108,7 +1134,7 @@ func (driver *Driver) applyMonitorEvent(event supervisorEvent) {
 	driver.startEligibleMonitors()
 }
 
-func (driver *Driver) stop(generation attemptGeneration, request StopRequest) {
+func (driver *driver) stop(generation attemptGeneration, request StopRequest) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(generation)
 	index := driver.machine.state.attemptIndex(generation)
@@ -1145,7 +1171,7 @@ func (driver *Driver) stop(generation attemptGeneration, request StopRequest) {
 	}
 }
 
-func (driver *Driver) sealStopAdmission(action supervisorAction) {
+func (driver *driver) sealStopAdmission(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
 	owned := attempt.owned
@@ -1168,7 +1194,7 @@ func (driver *Driver) sealStopAdmission(action supervisorAction) {
 	})
 }
 
-func (driver *Driver) settleRuntime(action supervisorAction) {
+func (driver *driver) settleRuntime(action supervisorAction) {
 	receipt := driver.runtime.Observe(action.generation, terminalObservation(action.terminal))
 	driver.recordRuntimeReceipt(action.generation, receipt)
 	completion := supervisorRuntimeCompletion{
@@ -1197,7 +1223,7 @@ func normalizedSupervisorRuntimeReceipt(receipt processruntime.Receipt) supervis
 	return 0
 }
 
-func (driver *Driver) transferResidualCustody(action supervisorAction) {
+func (driver *driver) transferResidualCustody(action supervisorAction) {
 	receipt := driver.runtime.Observe(action.generation, processruntime.DrainUnconfirmed())
 	driver.recordRuntimeReceipt(action.generation, receipt)
 	if receipt.SettlementAcknowledged() || receipt.ConfirmationProvisional() ||
@@ -1245,7 +1271,7 @@ func terminalObservationFromEffect(effect Effect) processruntime.Observation {
 	return terminalObservation(evidence.production())
 }
 
-func (driver *Driver) deliverTerminal(action supervisorAction) {
+func (driver *driver) deliverTerminal(action supervisorAction) {
 	driver.mutex.Lock()
 	attempt := driver.requireAttempt(action.generation)
 	terminal := publicTerminal(action.terminal, driver.readOutput, driver.readDiagnostic, action.runtimeKind)
@@ -1259,7 +1285,7 @@ func (driver *Driver) deliverTerminal(action supervisorAction) {
 	delivery <- terminal
 }
 
-func (driver *Driver) recordRuntimeReceipt(generation attemptGeneration, receipt processruntime.Receipt) {
+func (driver *driver) recordRuntimeReceipt(generation attemptGeneration, receipt processruntime.Receipt) {
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 	attempt := driver.requireAttempt(generation)
@@ -1288,19 +1314,19 @@ func (observed ObservedTerminal) Terminal() Terminal { return observed.terminal 
 func (observed ObservedTerminal) Receipt() processruntime.Receipt { return observed.receipt }
 
 // Wait joins one owned attempt and returns its exact terminal receipt.
-func (driver *Driver) Wait(generation Generation, owned *OwnedAttempt) ObservedTerminal {
+func (driver *driver) Wait(generation Generation, owned *OwnedAttempt) ObservedTerminal {
 	observed := driver.waitManaged(generation, owned)
 	return ObservedTerminal(observed)
 }
 
 // Stop requests bounded drainage for one owned attempt.
-func (driver *Driver) Stop(owned *OwnedAttempt) {
+func (driver *driver) Stop(owned *OwnedAttempt) {
 	at := driver.now()
 	owned.Stop(StopRequest{At: at, DrainBy: at.Add(driver.drainEpoch)})
 }
 
 // EmergencyDrain closes and drains every supervised obligation.
-func (driver *Driver) EmergencyDrain(request EmergencyRequest) (SweepResult, processruntime.EmergencySettlement) {
+func (driver *driver) EmergencyDrain(request EmergencyRequest) (SweepResult, processruntime.EmergencySettlement) {
 	result := driver.emergencyDrain(request)
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
@@ -1310,15 +1336,7 @@ func (driver *Driver) EmergencyDrain(request EmergencyRequest) (SweepResult, pro
 	return result, driver.emergencyReceipt
 }
 
-// Snapshot returns a detached machine and its immutable projection at one owner cut.
-func (driver *Driver) Snapshot() (*Machine, Projection) {
-	driver.mutex.Lock()
-	defer driver.mutex.Unlock()
-	machine := driver.machine.Fork()
-	return machine, machine.Projection()
-}
-
-func (driver *Driver) waitManaged(
+func (driver *driver) waitManaged(
 	generation attemptGeneration,
 	owned *OwnedAttempt,
 ) terminalObservationResult {
@@ -1338,7 +1356,7 @@ func (driver *Driver) waitManaged(
 	return terminalObservationResult{terminal: terminal, receipt: receipt}
 }
 
-func (driver *Driver) emergencyDrain(request EmergencyRequest) SweepResult {
+func (driver *driver) emergencyDrain(request EmergencyRequest) SweepResult {
 	leaveRecorder := driver.ownerObserver().Enter()
 	recorderReleased := false
 	defer func() {
@@ -1450,7 +1468,7 @@ func (driver *Driver) emergencyDrain(request EmergencyRequest) SweepResult {
 	return <-driver.emergency
 }
 
-func (driver *Driver) preemptReservedLaunchesLocked(request EmergencyRequest) []attemptGeneration {
+func (driver *driver) preemptReservedLaunchesLocked(request EmergencyRequest) []attemptGeneration {
 	type reservation struct {
 		generation attemptGeneration
 		cell       *processruntime.StartCell
@@ -1510,7 +1528,7 @@ func snapshotsCompletion(
 	return nil
 }
 
-func (driver *Driver) executeEmergency(action supervisorAction) {
+func (driver *driver) executeEmergency(action supervisorAction) {
 	executor := supervisorEmergencyExecutor{
 		settleEmergency: func(sweep emergencySweep) emergencySettlement {
 			settled := driver.runtime.SettleEmergency(processRuntimeResolutions(sweep))
@@ -1537,7 +1555,7 @@ func (driver *Driver) executeEmergency(action supervisorAction) {
 	}
 }
 
-func (driver *Driver) deliverEmergencySettlement(residuals []supervisorEmergencyResidual) {
+func (driver *driver) deliverEmergencySettlement(residuals []supervisorEmergencyResidual) {
 	if len(residuals) == 0 {
 		driver.emergency <- SweepDrained{}
 
@@ -1706,7 +1724,7 @@ func infrastructureCause(kind supervisorTerminalKind) Cause {
 	}
 }
 
-func (driver *Driver) requireAttempt(generation attemptGeneration) *supervisorDrivenAttempt {
+func (driver *driver) requireAttempt(generation attemptGeneration) *supervisorDrivenAttempt {
 	attempt := driver.attempts[generation]
 	if generation == 0 || attempt == nil {
 		invariant(supervisorDriverOperation, "attempt generation is stale or unknown")

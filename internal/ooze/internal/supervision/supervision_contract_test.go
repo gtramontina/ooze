@@ -52,10 +52,16 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 
 		const callers = 12
 		terminals := make(chan supervision.Terminal, callers)
+		var stops sync.WaitGroup
+		stops.Add(callers)
 		for range callers {
 			go func() { terminals <- driver.Wait(start.Generation(), owned.Attempt).Terminal() }()
-			go driver.Stop(owned.Attempt)
+			go func() {
+				defer stops.Done()
+				driver.Stop(owned.Attempt)
+			}()
 		}
+		stops.Wait()
 		close(boundary.wait)
 		for range callers {
 			_, stopped := (<-terminals).(supervision.Stopped)
@@ -101,12 +107,9 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 		unconfirmed, ok := observed.Result().(supervision.LaunchUnconfirmed)
 		require.True(t, ok)
 		assert.Equal(t, supervision.ProspectiveUnresolved, unconfirmed.Residual)
-		_, beforeCompletion := driver.Snapshot()
 		close(boundary.launchGate)
 		require.Eventually(t, func() bool {
-			_, afterCompletion := driver.Snapshot()
-
-			return boundary.completedLaunch() && !afterCompletion.Equal(beforeCompletion)
+			return boundary.completedLaunch()
 		}, time.Second, time.Millisecond)
 		assert.True(t, runtime.EmergencySettlementRequired())
 		at := boundary.Now().Add(time.Nanosecond)
@@ -265,7 +268,7 @@ func TestSupervisionConcurrentPublicLifecycle(t *testing.T) {
 		diagnostics: make(map[uint64]error),
 	}
 	close(boundary.wait)
-	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
+	driver, err := supervision.New(runtime, 2*time.Second, 3*time.Second, boundary)
 	require.NoError(t, err)
 
 	type launch struct {
@@ -516,14 +519,14 @@ func (boundary *supervisionBoundary) record(err error) uint64 {
 
 func supervisionContractAttempt(
 	t *testing.T,
-) (*processruntime.Runtime, *supervision.Driver, *supervisionBoundary, processruntime.PreparedStart, supervision.Spec) {
+) (*processruntime.Runtime, supervision.System, *supervisionBoundary, processruntime.PreparedStart, supervision.Spec) {
 	return supervisionContractAttemptWithProfile(t, supervision.SerialProfile)
 }
 
 func supervisionContractAttemptWithProfile(
 	t *testing.T,
 	profile supervision.Profile,
-) (*processruntime.Runtime, *supervision.Driver, *supervisionBoundary, processruntime.PreparedStart, supervision.Spec) {
+) (*processruntime.Runtime, supervision.System, *supervisionBoundary, processruntime.PreparedStart, supervision.Spec) {
 	t.Helper()
 	runtime := processruntime.New(1)
 	registration := runtime.RegisterCampaign(1)
@@ -546,7 +549,7 @@ func supervisionContractAttemptWithProfile(
 		awaitedCommand: make(chan time.Time, 1), diagnostics: make(map[uint64]error),
 		prepared: make(chan struct{}, 1),
 	}
-	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
+	driver, err := supervision.New(runtime, 2*time.Second, 3*time.Second, boundary)
 	require.NoError(t, err)
 	spec := supervision.Spec{
 		Attempt: request.Request().Attempt, Command: []string{"contract"},

@@ -86,7 +86,7 @@ func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T
 	fixture := newRunningReducerFixture(t, SerialProfile)
 	reentered := make(chan struct{})
 	returned := make(chan struct{})
-	driver := &Driver{
+	driver := &driver{
 		machine: newMachineFrom(fixture.state), observer: recorder, ownerSequence: &recorder.next,
 		execute: func(supervisorAction) *supervisorEvent {
 			leaveRecorder := recorder.enter()
@@ -128,7 +128,7 @@ func TestSupervisorDriverPublishesOwnerCutsOutsideItsLock(t *testing.T) {
 	observer := &blockingSupervisionObserver{
 		started: make(chan struct{}), release: make(chan struct{}),
 	}
-	driver := &Driver{machine: NewMachine(), observer: observer}
+	driver := &driver{machine: NewMachine(), observer: observer}
 	done := make(chan struct{})
 	go func() {
 		driver.reduce(supervisorEvent{

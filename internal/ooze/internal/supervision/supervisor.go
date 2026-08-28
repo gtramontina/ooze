@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
 // Spec describes one supervised command.
@@ -79,117 +77,6 @@ func (LaunchUnconfirmed) launchResult() {}
 
 // ErrUnsupportedPlatform reports missing native supervision support.
 var ErrUnsupportedPlatform = errors.New("managed attempts are unsupported on this platform")
-
-type supervisorConstruction struct {
-	supported    bool
-	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart
-	launchNative func(attemptGeneration, Spec) LaunchResult
-}
-
-type supervisor struct {
-	installStart   func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart
-	launchNative   func(attemptGeneration, Spec) LaunchResult
-	reserveLaunch  func(*processruntime.StartCell, Spec)
-	discardLaunch  func(*processruntime.StartCell)
-	driveLaunch    func(processruntime.PreparedStart, Spec) LaunchResult
-	emergencyDrain func(EmergencyRequest) SweepResult
-}
-
-func constructSupervisor(construction supervisorConstruction) (*supervisor, error) {
-	if !construction.supported {
-		return nil, ErrUnsupportedPlatform
-	}
-	if construction.installStart == nil || construction.launchNative == nil {
-		return nil, errors.New("supervisor construction requires start and native launch plumbing")
-	}
-
-	return &supervisor{
-		installStart: construction.installStart,
-		launchNative: construction.launchNative,
-	}, nil
-}
-
-func newSupervisorForTest(
-	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart,
-	launchNative func(attemptGeneration, Spec) LaunchResult,
-) *supervisor {
-	supervisor, err := constructSupervisor(supervisorConstruction{
-		supported: true, installStart: installStart, launchNative: launchNative,
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	return supervisor
-}
-
-// Launch commits process-runtime custody before invoking native launch.
-func (s *supervisor) Launch(spec Spec) LaunchResult {
-	if err := spec.validate(); err != nil {
-		panic(err)
-	}
-	snapshot := spec.snapshot()
-	pendingStart := processruntime.NewStartCell()
-	if s.reserveLaunch != nil {
-		s.reserveLaunch(pendingStart, snapshot)
-	}
-	start := s.installStart(attemptIdentity(snapshot.Attempt), pendingStart)
-	if start.Generation() == 0 && s.discardLaunch != nil {
-		s.discardLaunch(pendingStart)
-	}
-	if s.driveLaunch != nil {
-		return s.driveLaunch(start, snapshot)
-	}
-	var result LaunchResult
-	observed := start.Launch(func(generation processruntime.Generation) processruntime.Observation {
-		result = s.launchNative(generation, snapshot)
-
-		return brokerLaunchObservation(result)
-	})
-	start.Observe(observed)
-
-	return result
-}
-
-// EmergencyDrain joins one bounded global drainage epoch.
-func (s *supervisor) EmergencyDrain(request EmergencyRequest) SweepResult {
-	if err := request.validate(); err != nil {
-		panic(err)
-	}
-	if s.emergencyDrain == nil {
-		panic("supervisor emergency drain plumbing is absent")
-	}
-
-	return s.emergencyDrain(request)
-}
-
-func brokerLaunchObservation(result LaunchResult) processruntime.Observation {
-	switch result := result.(type) {
-	case Owned:
-		if result.Attempt == nil {
-			return processruntime.Observation{}
-		}
-
-		return processruntime.Owned()
-	case NotReleased:
-		switch result.Kind {
-		case LaunchFailed:
-			return processruntime.NotReleased(false)
-		case LaunchResourceExhausted:
-			return processruntime.NotReleased(true)
-		default:
-			return processruntime.Observation{}
-		}
-	case LaunchUnconfirmed:
-		if result.Residual != ProspectiveUnresolved {
-			return processruntime.Observation{}
-		}
-
-		return processruntime.LaunchUnconfirmed()
-	default:
-		return processruntime.Observation{}
-	}
-}
 
 // EmergencyRequest bounds one global drainage epoch.
 type EmergencyRequest struct {

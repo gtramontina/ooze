@@ -83,12 +83,20 @@ type supervisorNativeExecutor struct {
 	domainEmpty      func(nativePlatformState, int) (bool, error)
 }
 
-// NewNativeDriver constructs the platform supervision driver.
-func NewNativeDriver(
+// NewNative constructs supervision around the native platform boundary.
+func NewNative(
 	runtime *processruntime.Runtime,
 	launchProgress time.Duration,
 	drainEpoch time.Duration,
-) (*Driver, error) {
+) (System, error) {
+	return newNativeDriver(runtime, launchProgress, drainEpoch)
+}
+
+func newNativeDriver(
+	runtime *processruntime.Runtime,
+	launchProgress time.Duration,
+	drainEpoch time.Duration,
+) (*driver, error) {
 	if !nativeSupervisorSupported() {
 		return nil, ErrUnsupportedPlatform
 	}
@@ -101,7 +109,12 @@ func NewNativeDriver(
 		readOutputFile:   readNativeOutput,
 	}
 
-	return NewDriver(runtime, launchProgress, drainEpoch, executor)
+	system, err := New(runtime, launchProgress, drainEpoch, executor)
+	if err != nil {
+		return nil, err
+	}
+
+	return system.(*driver), nil
 }
 
 func (executor *supervisorNativeExecutor) Prepare(generation Generation, spec Spec) {

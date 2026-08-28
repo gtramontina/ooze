@@ -1,11 +1,11 @@
 package ooze
 
 import (
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"sync"
 	"time"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 const (
@@ -14,13 +14,13 @@ const (
 )
 
 type nativeManagedAttemptSystem struct {
-	driver          *supervision.Driver
+	driver          supervision.System
 	emergencyOnce   sync.Once
 	emergencyResult managedObservedEmergency
 }
 
 func newNativeManagedAttemptSystem(runtime *processruntime.Runtime) (*nativeManagedAttemptSystem, error) {
-	driver, err := supervision.NewNativeDriver(runtime, managedLaunchProgress, managedDrainEpoch)
+	driver, err := supervision.NewNative(runtime, managedLaunchProgress, managedDrainEpoch)
 	if err != nil {
 		return nil, err
 	}

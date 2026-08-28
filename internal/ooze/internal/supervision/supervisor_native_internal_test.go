@@ -18,9 +18,9 @@ func newNativeSupervisorDriverForTest(
 	runtime *processRuntimeShell,
 	launchProgress time.Duration,
 	drainEpoch time.Duration,
-) *Driver {
+) *driver {
 	t.Helper()
-	driver, err := NewNativeDriver(runtime, launchProgress, drainEpoch)
+	driver, err := newNativeDriver(runtime, launchProgress, drainEpoch)
 	require.NoError(t, err, "construct native supervisor driver: %v", err)
 
 	return driver
