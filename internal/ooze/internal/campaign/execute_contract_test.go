@@ -135,11 +135,14 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: 2 * time.Second}},
 		supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 	}}
-	result := executeManagedCampaign(processruntime.New(2), attempts, campaign.Configuration{
+	recorder := &recordingCampaignConformance{}
+	var observed []campaign.Event
+	result := campaign.NewConformingExecutorWithSystem(processruntime.New(2), attempts, recorder).Execute(campaign.Configuration{
 		Identity: "campaign-a", Lineage: 11, Repository: repository,
 		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
 		Profile: processruntime.AutomaticProfile, Peers: 2,
 		Viruses: []viruses.Virus{integerincrement.New()},
+		Observe: func(event campaign.Event) { observed = append(observed, event) },
 	})
 
 	require.Equal(t, campaign.ManagedCompleted, result.Outcome)
@@ -150,6 +153,21 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 	for _, spec := range attempts.specs {
 		assert.True(t, slices.Contains(spec.Env, "GOMAXPROCS=1"), "automatic spec environment = %#v", spec.Env)
 	}
+	require.Len(t, observed, len(recorder.events))
+	for index, event := range observed {
+		assert.True(t, event.Equal(recorder.events[index]), "observer event %d differs from its recorded owner cut", index)
+	}
+	assert.Contains(t, observedMutationLabels(observed), "source.go → Integer Increment")
+}
+
+func observedMutationLabels(events []campaign.Event) []string {
+	var labels []string
+	for _, event := range events {
+		if label, ok := event.MutationLabel(); ok {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 func TestManagedCampaignReportsBaselineAbortCause(t *testing.T) {
@@ -464,6 +482,29 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 func executeManagedCampaign(runtime *processruntime.Runtime, attempts supervision.System, configuration campaign.Configuration) campaign.Result {
 	return campaign.NewExecutorWithSystem(runtime, attempts).Execute(configuration)
 }
+
+type recordingCampaignConformance struct {
+	next   uint64
+	events []campaign.Event
+}
+
+func (*recordingCampaignConformance) Enter() func() { return func() {} }
+
+func (recorder *recordingCampaignConformance) Reserve() uint64 {
+	recorder.next++
+	return recorder.next
+}
+
+func (recorder *recordingCampaignConformance) Publish(
+	_ uint64,
+	event campaign.Event,
+	_ campaign.Projection,
+	_ []campaign.Effect,
+) {
+	recorder.events = append(recorder.events, event)
+}
+
+func (*recordingCampaignConformance) BeginEffect(campaign.Effect) func() { return func() {} }
 
 type managedMemoryRepository struct {
 	files            []*gosourcefile.GoSourceFile

@@ -36,7 +36,7 @@ type Configuration struct {
 	Peers           int
 	MutationTimeout time.Duration
 	Viruses         []viruses.Virus
-	Observe         func(ManagedProgress)
+	Observe         func(Event)
 }
 
 // Executor interprets campaign effects through one process runtime and supervision system.

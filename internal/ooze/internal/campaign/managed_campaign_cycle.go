@@ -50,8 +50,8 @@ func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []cam
 		defer leave()
 		reservation = runner.conformance.Reserve()
 	}
-	previous := runner.state
-	machine, transition := (Machine{state: runner.state}).Apply(Fact{payload: payload})
+	fact := Fact{payload: payload, label: runner.eventMutationLabel(payload)}
+	machine, transition := (Machine{state: runner.state}).Apply(fact)
 	runner.state = machine.state
 	runner.nextEvent = transition.event.value.id
 	effects := transition.effects
@@ -60,7 +60,31 @@ func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []cam
 			reservation, transition.Event(), transition.Projection(), transition.Effects(),
 		)
 	}
-	runner.publishProgress(payload, previous, runner.state)
+	if runner.observe != nil {
+		runner.observe(transition.Event())
+	}
 
 	return effects
+}
+
+func (runner *managedCampaignRunner) eventMutationLabel(payload campaignEventPayload) string {
+	attempt := Fact{payload: payload}.Attempt()
+	attemptAt := runner.state.attemptIndex(attemptIdentity(attempt))
+	if attemptAt < 0 {
+		return ""
+	}
+	mutant := runner.state.attempts[attemptAt].mutant
+	if mutant != "" {
+		return runner.mutationLabel(mutant)
+	}
+	return ""
+}
+
+func (runner *managedCampaignRunner) mutationLabel(identity mutantIdentity) string {
+	mutation := runner.mutations[identity]
+	if mutation == nil {
+		panic("managed progress mutation is missing")
+	}
+
+	return mutation.Label()
 }

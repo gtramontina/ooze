@@ -15,17 +15,21 @@ func TestExecutePublishesAndReleasesAnEmptyCatalogue(t *testing.T) {
 	executor := campaign.NewExecutorWithSystem(runtime, unusedAttemptSystem{})
 	repository := &emptyRepository{}
 	directories := &temporaryDirectories{}
-	var events []campaign.ManagedProgressKind
+	var events []campaign.EventKind
 
 	result := executor.Execute(campaign.Configuration{
 		Identity: "campaign-a", Lineage: 11, Repository: repository, TemporaryDir: directories,
 		Command: []string{"go", "test", "./..."}, Profile: processruntime.AutomaticProfile, Peers: 2,
-		Observe: func(event campaign.ManagedProgress) { events = append(events, event.Kind) },
+		Observe: func(event campaign.Event) { events = append(events, event.Kind()) },
 	})
 
 	assert.Equal(t, campaign.ManagedNoMutants, result.Outcome)
-	assert.Equal(t, []campaign.ManagedProgressKind{
-		campaign.ManagedCampaignStarted, campaign.ManagedCatalogueDiscovered,
+	assert.Equal(t, []campaign.EventKind{
+		campaign.CampaignRegisteredEvent,
+		campaign.SnapshotEstablishedEvent,
+		campaign.CatalogueDiscoveredEvent,
+		campaign.ResourceSettledEvent,
+		campaign.TerminalCommittedEvent,
 	}, events)
 	assert.Equal(t, []string{"workspace-1"}, repository.removed)
 }

@@ -207,7 +207,10 @@ func admissionDeliveryFacts(deliveries []processruntime.Admission) []Fact {
 }
 
 // Fact is an immutable campaign input.
-type Fact struct{ payload campaignEventPayload }
+type Fact struct {
+	payload campaignEventPayload
+	label   string
+}
 
 // Transition contains the normalized event, effects, and projection produced by one accepted fact.
 type Transition struct {
@@ -221,6 +224,32 @@ type Event struct {
 	value    campaignEvent
 	previous campaignState
 }
+
+// EventKind identifies one accepted campaign fact.
+type EventKind uint8
+
+// Campaign event kinds.
+const (
+	CampaignRegisteredEvent EventKind = iota + 1
+	SnapshotEstablishedEvent
+	CatalogueDiscoveredEvent
+	CampaignPreparationFailedEvent
+	ResourceSettledEvent
+	ResourceSettlementFailedEvent
+	TerminalCommittedEvent
+	WorkspaceMaterializedEvent
+	WorkspaceMaterializationFailedEvent
+	AdmissionGrantedEvent
+	AdmissionCancelledEvent
+	AdmissionRejectedEvent
+	StartCommittedEvent
+	AttemptLaunchedEvent
+	AttemptTerminalEvent
+	ConfirmationBarrierBoundEvent
+	GrantReturnAcknowledgedEvent
+	RuntimeEmergencySettledEvent
+	RuntimeEmergencyStartedEvent
+)
 
 // Effect is an immutable normalized campaign effect.
 type Effect struct{ value campaignEffect }
@@ -540,13 +569,141 @@ func (projection Projection) Definition() Definition {
 func (projection Projection) Fork() Machine { return Machine{state: projection.state.clone()} }
 
 // Event returns the fact carried by the event.
-func (event Event) Fact() Fact { return Fact{payload: event.value.payload} }
+func (event Event) Fact() Fact { return Fact{payload: event.value.payload, label: event.value.label} }
+
+// Kind returns the accepted campaign fact kind.
+func (event Event) Kind() EventKind {
+	switch event.value.payload.(type) {
+	case campaignRegisteredEvent:
+		return CampaignRegisteredEvent
+	case snapshotEstablishedEvent:
+		return SnapshotEstablishedEvent
+	case catalogueDiscoveredEvent:
+		return CatalogueDiscoveredEvent
+	case campaignPreparationFailedEvent:
+		return CampaignPreparationFailedEvent
+	case resourceSettledEvent:
+		return ResourceSettledEvent
+	case resourceSettlementFailedEvent:
+		return ResourceSettlementFailedEvent
+	case terminalCommittedEvent:
+		return TerminalCommittedEvent
+	case workspaceMaterializedEvent:
+		return WorkspaceMaterializedEvent
+	case workspaceMaterializationFailedEvent:
+		return WorkspaceMaterializationFailedEvent
+	case admissionGrantedEvent:
+		return AdmissionGrantedEvent
+	case admissionCancelledEvent:
+		return AdmissionCancelledEvent
+	case admissionRejectedEvent:
+		return AdmissionRejectedEvent
+	case startCommittedEvent:
+		return StartCommittedEvent
+	case attemptLaunchEvent:
+		return AttemptLaunchedEvent
+	case attemptTerminalEvent:
+		return AttemptTerminalEvent
+	case confirmationBarrierBoundEvent:
+		return ConfirmationBarrierBoundEvent
+	case grantReturnAcknowledgedEvent:
+		return GrantReturnAcknowledgedEvent
+	case runtimeEmergencySettledEvent:
+		return RuntimeEmergencySettledEvent
+	case runtimeEmergencyStartedEvent:
+		return RuntimeEmergencyStartedEvent
+	default:
+		return 0
+	}
+}
+
+// CatalogueSize returns the discovered mutant count when present.
+func (event Event) CatalogueSize() (int, bool) {
+	discovered, ok := event.value.payload.(catalogueDiscoveredEvent)
+	return len(discovered.mutants), ok
+}
+
+// AttemptRole returns the role of the attempt named by the event.
+func (event Event) AttemptRole() (AttemptRole, bool) {
+	attempt, ok := event.attempt()
+	return AttemptRole(attempt.kind), ok
+}
+
+// MutationLabel returns the mutation label named by the event when present.
+func (event Event) MutationLabel() (string, bool) {
+	attempt, ok := event.attempt()
+	return event.value.label, ok && attempt.mutant != ""
+}
+
+// LaunchOwned reports whether an attempt launch established owned custody.
+func (event Event) LaunchOwned() bool {
+	launched, ok := event.value.payload.(attemptLaunchEvent)
+	return ok && launched.result.kind == campaignLaunchOwned
+}
+
+// AttemptPassed returns baseline settlement evidence when present.
+func (event Event) AttemptPassed() (bool, bool) {
+	_, ok := event.value.payload.(attemptTerminalEvent)
+	if !ok {
+		return false, false
+	}
+	attempt, found := event.attempt()
+	if !found || attempt.kind != campaignAttemptBaseline {
+		return false, false
+	}
+	return event.value.baselinePassed, true
+}
+
+// MutationOutcome returns a newly attributable mutant outcome when present.
+func (event Event) MutationOutcome() (ManagedMutationOutcome, bool) {
+	attempt, ok := event.attempt()
+	if !ok || attempt.mutant == "" {
+		return 0, false
+	}
+	if event.value.mutationOutcome == 0 {
+		return 0, false
+	}
+	return presentManagedMutation(event.value.mutationOutcome), true
+}
+
+// TerminalOutcome returns campaign terminal evidence when present.
+func (event Event) TerminalOutcome() (OutcomeKind, bool) {
+	if event.Kind() != TerminalCommittedEvent {
+		return 0, false
+	}
+	switch event.value.terminalOutcome {
+	case campaignTerminalNoMutants:
+		return NoMutantsOutcome, true
+	case campaignTerminalCompleted:
+		return CompletedOutcome, true
+	case campaignTerminalAborted:
+		return AbortedOutcome, true
+	default:
+		return 0, false
+	}
+}
+
+func (event Event) attempt() (campaignAttempt, bool) {
+	attempt := event.Fact().Attempt()
+	if attempt == "" {
+		return campaignAttempt{}, false
+	}
+	attemptAt := event.previous.attemptIndex(attemptIdentity(attempt))
+	if attemptAt < 0 {
+		return campaignAttempt{}, false
+	}
+	return event.previous.attempts[attemptAt], true
+}
 
 // WithFact returns the same event identity carrying replacement campaign input.
 func (event Event) WithFact(fact Fact) Event {
 	value := event.value
 	value.payload = fact.payload
-	return Event{value: value}
+	value.label = fact.label
+	value.baselinePassed = false
+	value.mutationOutcome = 0
+	value.terminalOutcome = 0
+	return Event{value: value, previous: event.previous}
 }
 
 // Equal reports whether two events carry the same immutable value.
@@ -555,7 +712,9 @@ func (event Event) Equal(other Event) bool { return reflect.DeepEqual(event.valu
 // Canonical returns a capability-free event with logical artifact identities.
 func (event Event) Canonical() Event {
 	value := event.value
-	value.payload = Fact{payload: value.payload}.Canonical().payload
+	canonical := Fact{payload: value.payload, label: value.label}.Canonical()
+	value.payload = canonical.payload
+	value.label = canonical.label
 	identity := event.previous.definition.identity
 	logicalSnapshot := snapshotIdentity("snapshot:" + string(identity))
 	switch payload := value.payload.(type) {
@@ -583,7 +742,7 @@ func (event Event) Canonical() Event {
 		payload.identity = canonicalResourceIdentity(payload.kind, payload.identity, event.previous)
 		value.payload = payload
 	}
-	return Event{value: value}
+	return Event{value: value, previous: event.previous}
 }
 
 // Canonical returns the fact without process-runtime authority.
@@ -628,7 +787,7 @@ func (fact Fact) Canonical() Fact {
 		event.settlement.owner = campaignToken{}
 		payload = event
 	}
-	return Fact{payload: payload}
+	return Fact{payload: payload, label: fact.label}
 }
 
 func canonicalCampaignAdmission(admission campaignAdmission) campaignAdmission {
@@ -678,7 +837,7 @@ func (fact Fact) Name() string {
 func (fact Fact) IsZero() bool { return fact.payload == nil }
 
 // Equal reports whether two facts carry the same immutable value.
-func (fact Fact) Equal(other Fact) bool { return reflect.DeepEqual(fact.payload, other.payload) }
+func (fact Fact) Equal(other Fact) bool { return reflect.DeepEqual(fact, other) }
 
 // Complexity returns the semantic payload size used by deterministic shrinking.
 func (fact Fact) Complexity() int {
@@ -840,10 +999,10 @@ func (fact Fact) WithResourceIdentity(identity string) Fact {
 	switch value := fact.payload.(type) {
 	case resourceSettledEvent:
 		value.identity = identity
-		return Fact{payload: value}
+		return Fact{payload: value, label: fact.label}
 	case resourceSettlementFailedEvent:
 		value.identity = identity
-		return Fact{payload: value}
+		return Fact{payload: value, label: fact.label}
 	default:
 		panic("campaign fact has no resource identity")
 	}
@@ -956,9 +1115,9 @@ func NewMachine(definition Definition) (Machine, Transition) {
 // Apply accepts one campaign fact and returns its normalized effects.
 func (machine Machine) Apply(fact Fact) (Machine, Transition) {
 	state, effects := advanceCampaign(machine.state, campaignEvent{
-		id: campaignEventID(len(machine.state.trace) + 1), payload: fact.payload,
+		id: campaignEventID(len(machine.state.trace) + 1), payload: fact.payload, label: fact.label,
 	})
-	event := campaignEvent{id: campaignEventID(len(machine.state.trace) + 1), payload: fact.payload}
+	event := campaignEvent{id: campaignEventID(len(machine.state.trace) + 1), payload: fact.payload, label: fact.label}
 	return Machine{state: state}, transitionFrom(machine.state, state, event, effects)
 }
 
@@ -1068,14 +1227,46 @@ func (machine Machine) EmergencyRequested() bool {
 }
 
 func transitionFrom(previous, state campaignState, event campaignEvent, effects []campaignEffect) Transition {
+	event = enrichCampaignEvent(previous, state, event)
 	return Transition{
 		event: Event{value: event, previous: previous.clone()}, effects: effects,
 		projection: Projection{state: state.clone()},
 	}
 }
 
+func enrichCampaignEvent(previous, state campaignState, event campaignEvent) campaignEvent {
+	terminal, terminalEvent := event.payload.(attemptTerminalEvent)
+	if terminalEvent {
+		attemptAt := previous.attemptIndex(terminal.attempt)
+		if attemptAt >= 0 {
+			attempt := previous.attempts[attemptAt]
+			if attempt.kind == campaignAttemptBaseline {
+				event.baselinePassed = state.baselineEvidence.passed
+			} else if mutantAt := state.mutantIndex(attempt.mutant); mutantAt >= 0 {
+				previousAt := previous.mutantIndex(attempt.mutant)
+				if previousAt >= 0 && previous.mutants[previousAt].result == 0 {
+					event.mutationOutcome = state.mutants[mutantAt].result
+				}
+			}
+		}
+	}
+	if _, committed := event.payload.(terminalCommittedEvent); committed {
+		switch state.outcome.(type) {
+		case noMutantsOutcome:
+			event.terminalOutcome = campaignTerminalNoMutants
+		case completedOutcome:
+			event.terminalOutcome = campaignTerminalCompleted
+		case abortedOutcome:
+			event.terminalOutcome = campaignTerminalAborted
+		}
+	}
+	return event
+}
+
 // Event returns the normalized event represented by this fact.
-func (fact Fact) Event() Event { return Event{value: campaignEvent{payload: fact.payload}} }
+func (fact Fact) Event() Event {
+	return Event{value: campaignEvent{payload: fact.payload, label: fact.label}}
+}
 
 // Registered records process-runtime campaign registration.
 func Registered(registration processruntime.Registration) Fact {
@@ -1226,18 +1417,19 @@ func (fact Fact) WithConfirmationQueueCompleted(result processruntime.QueueResul
 		panic("campaign confirmation completion requires a terminal fact")
 	}
 	event.receipt.confirmationQueueDrained = result.Decision() == processruntime.ConfirmationQueueCompleted
-	return Fact{payload: event}
+	return Fact{payload: event, label: fact.label}
 }
 
 // WithRecordedEvidence preserves authoritative evidence carried only by the recorded fact.
 func (fact Fact) WithRecordedEvidence(recorded Fact) Fact {
 	derived, derivedOK := fact.payload.(attemptTerminalEvent)
 	authority, recordedOK := recorded.payload.(attemptTerminalEvent)
-	if !derivedOK || !recordedOK {
-		return fact
+	if derivedOK && recordedOK {
+		derived.resolvedMutationDeadline = authority.resolvedMutationDeadline
+		fact.payload = derived
 	}
-	derived.resolvedMutationDeadline = authority.resolvedMutationDeadline
-	return Fact{payload: derived}
+	fact.label = recorded.label
+	return fact
 }
 
 // ResolvedMutationDeadline returns the mutation deadline retained by terminal evidence.

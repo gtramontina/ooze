@@ -211,7 +211,7 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
-			if configuration.Observe != nil {
+			if configuration.Observe != nil && presented.Outcome == ManagedCleanupUnconfirmed {
 				configuration.Observe(terminalManagedProgress(presented.Outcome))
 			}
 			return
@@ -265,9 +265,11 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 		Command: configuration.Command, Environment: configuration.Environment,
 		Profile: configuration.Profile, Peers: process.capacity,
 		MutationTimeout: configuration.MutationTimeout, Viruses: configuration.Viruses,
-		Observe: func(progress campaign.ManagedProgress) {
+		Observe: func(event campaign.Event) {
 			if configuration.Observe != nil {
-				configuration.Observe(presentManagedProgress(progress))
+				if progress, observable := presentManagedProgress(event); observable {
+					configuration.Observe(progress)
+				}
 			}
 		},
 	})

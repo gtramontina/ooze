@@ -194,8 +194,12 @@ type campaignEventPayload interface {
 }
 
 type campaignEvent struct {
-	id      campaignEventID
-	payload campaignEventPayload
+	id              campaignEventID
+	payload         campaignEventPayload
+	label           string
+	baselinePassed  bool
+	mutationOutcome mutantResultKind
+	terminalOutcome campaignTerminalKind
 }
 
 type campaignRegisteredEvent struct{ registration campaignRegistration }

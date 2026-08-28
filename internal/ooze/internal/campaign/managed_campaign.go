@@ -42,7 +42,7 @@ type managedCampaignConstruction struct {
 	repository         Repository
 	temporaryDirectory managedTemporaryDirectoryFactory
 	attempts           managedAttemptSystem
-	observe            func(ManagedProgress)
+	observe            func(Event)
 	conformance        Conformance
 }
 
