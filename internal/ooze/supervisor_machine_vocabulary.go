@@ -177,7 +177,7 @@ type supervisionEmergencySnapshot struct {
 }
 
 type supervisionFact struct {
-	kind                supervisorEventKind
+	kind                supervisionFactKind
 	generation          attemptGeneration
 	attempt             attemptIdentity
 	at                  supervisionInstant
@@ -197,7 +197,7 @@ type supervisionFact struct {
 }
 
 type supervisionEffect struct {
-	kind             supervisorActionKind
+	kind             supervisionEffectKind
 	generation       attemptGeneration
 	token            supervisorActionToken
 	at               supervisionInstant

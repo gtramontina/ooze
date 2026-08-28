@@ -36,7 +36,9 @@ const (
 	supervisorClosingProspective
 )
 
-type supervisorEventKind uint8
+type supervisionFactKind uint8
+
+type supervisorEventKind = supervisionFactKind
 
 const (
 	supervisorProspectiveRegistered supervisorEventKind = iota + 1
@@ -52,7 +54,9 @@ const (
 	supervisorEmergencySettlementCompleted
 )
 
-type supervisorActionKind uint8
+type supervisionEffectKind uint8
+
+type supervisorActionKind = supervisionEffectKind
 
 const (
 	supervisorLaunchNative supervisorActionKind = iota + 1
