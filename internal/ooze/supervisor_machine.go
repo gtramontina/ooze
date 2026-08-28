@@ -70,10 +70,32 @@ const (
 
 type supervisorDomainEvent struct {
 	kind       supervisionEventKind
+	outcome    supervisionEventOutcome
 	generation attemptGeneration
 	attempt    attemptIdentity
 	at         supervisionInstant
 }
+
+type supervisionEventOutcome uint8
+
+const (
+	supervisionNoEventOutcome supervisionEventOutcome = iota
+	supervisionLaunchReleasedEvent
+	supervisionLaunchNotReleasedEvent
+	supervisionLaunchUnconfirmedEvent
+	supervisionRunningRootExitEvent
+	supervisionRunningFuseEvent
+	supervisionRunningDeadlineEvent
+	supervisionRunningStopEvent
+	supervisionRunningEmergencyEvent
+	supervisionRunningFailureEvent
+	supervisionDrainForcedEvent
+	supervisionDrainEmptyEvent
+	supervisionDrainResidualEvent
+	supervisionRuntimeAcknowledgedEvent
+	supervisionRuntimeProvisionalEvent
+	supervisionRuntimeClosurePendingEvent
+)
 
 type supervisionLaunchOutcome uint8
 
@@ -125,7 +147,7 @@ func (machine *supervisorMachine) Apply(fact supervisionFact) (*supervisorMachin
 	projection := supervisionProjectionFromState(next)
 
 	return newSupervisorMachineFrom(next), supervisorTransition{
-		event:   supervisionEventFromFact(accepted),
+		event:   supervisionEventFromTransition(accepted, next),
 		effects: supervisionEffectsFromActions(actions),
 		state:   projection,
 	}
@@ -701,21 +723,69 @@ func supervisionProspectiveRegistration(
 	})
 }
 
-func supervisionEventFromFact(fact supervisionFact) supervisorDomainEvent {
+func supervisionEventFromTransition(fact supervisionFact, state supervisorState) supervisorDomainEvent {
 	kind := supervisionEventKind(0)
+	outcome := supervisionNoEventOutcome
 	switch fact.kind {
 	case supervisorProspectiveRegistered:
 		kind = supervisionAttemptRegistered
 	case supervisorLaunchCompleted:
 		kind = supervisionLaunchResolved
+		if fact.completion != nil {
+			switch fact.completion.kind {
+			case supervisorLaunchReleased:
+				outcome = supervisionLaunchReleasedEvent
+			case supervisorLaunchProvenNotReleased:
+				outcome = supervisionLaunchNotReleasedEvent
+			case supervisorLaunchReleaseUnconfirmed:
+				outcome = supervisionLaunchUnconfirmedEvent
+			}
+		}
 	case supervisorLaunchBoundary:
 		kind = supervisionLaunchBoundaryReached
+		if fact.completion != nil {
+			switch fact.completion.kind {
+			case supervisorLaunchReleased:
+				outcome = supervisionLaunchReleasedEvent
+			case supervisorLaunchProvenNotReleased:
+				outcome = supervisionLaunchNotReleasedEvent
+			case supervisorLaunchReleaseUnconfirmed:
+				outcome = supervisionLaunchUnconfirmedEvent
+			}
+		}
 	case supervisorEmergencyStarted:
 		kind = supervisionEmergencyStartedEvent
 	case supervisorRunningObserved:
 		kind = supervisionRunningEvidenceAccepted
+		index := state.attemptIndex(fact.generation)
+		if index >= 0 {
+			switch state.attempts[index].intent.kind {
+			case supervisorIntentRootExit:
+				outcome = supervisionRunningRootExitEvent
+			case supervisorIntentFuse:
+				outcome = supervisionRunningFuseEvent
+			case supervisorIntentDeadline:
+				outcome = supervisionRunningDeadlineEvent
+			case supervisorIntentStop:
+				outcome = supervisionRunningStopEvent
+			case supervisorIntentRuntimeEmergency:
+				outcome = supervisionRunningEmergencyEvent
+			case supervisorIntentObservationFailure:
+				outcome = supervisionRunningFailureEvent
+			}
+		}
 	case supervisorDrainCompleted:
 		kind = supervisionDrainEvidenceAccepted
+		if fact.drain != nil {
+			switch fact.drain.kind {
+			case supervisorDrainForceCompleted:
+				outcome = supervisionDrainForcedEvent
+			case supervisorDrainObservedEmpty:
+				outcome = supervisionDrainEmptyEvent
+			case supervisorDrainObservedResidual:
+				outcome = supervisionDrainResidualEvent
+			}
+		}
 	case supervisorOutputCompleted:
 		kind = supervisionOutputAccepted
 	case supervisorStopAdmissionSealed:
@@ -724,9 +794,29 @@ func supervisionEventFromFact(fact supervisionFact) supervisorDomainEvent {
 		kind = supervisionDomainReleased
 	case supervisorRuntimeCompleted:
 		kind = supervisionRuntimeReceiptAccepted
+		if fact.runtime != nil {
+			switch fact.runtime.kind {
+			case supervisorRuntimeAcknowledged:
+				outcome = supervisionRuntimeAcknowledgedEvent
+			case supervisorRuntimeProvisionalDeadline:
+				outcome = supervisionRuntimeProvisionalEvent
+			case supervisorRuntimeClosurePending:
+				outcome = supervisionRuntimeClosurePendingEvent
+			}
+		}
 	case supervisorEmergencySettlementCompleted:
 		kind = supervisionEmergencySettlementAccepted
 	}
 
-	return supervisorDomainEvent{kind: kind, generation: fact.generation, attempt: fact.attempt, at: fact.at}
+	attempt := fact.attempt
+	if attempt == "" {
+		index := state.attemptIndex(fact.generation)
+		if index >= 0 {
+			attempt = state.attempts[index].attempt
+		}
+	}
+
+	return supervisorDomainEvent{
+		kind: kind, outcome: outcome, generation: fact.generation, attempt: attempt, at: fact.at,
+	}
 }

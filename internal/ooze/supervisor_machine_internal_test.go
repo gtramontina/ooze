@@ -270,6 +270,7 @@ func runningSupervisorMachine(t *testing.T, profile Profile) (*supervisorMachine
 	require.True(t, ok)
 	require.Len(t, facts, 1)
 	machine, transition = machine.Apply(facts[0])
+	assert.Equal(t, supervisionLaunchReleasedEvent, transition.Event().outcome)
 
 	return machine, transition.Effects()
 }

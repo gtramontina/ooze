@@ -761,7 +761,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			for _, effect := range supervisionEffects {
 				actionKinds[effect.token] = effect.kind
 			}
-			if !reflect.DeepEqual(supervisorMachine.Projection(), record.supervisorState) ||
+			if !supervisorMachine.Projection().Equal(record.supervisorState) ||
 				!reflect.DeepEqual(transition.Effects(), record.supervisorActions) {
 				return simulationReplayDivergenceFailure(
 					trace, supervisionDivergence, "supervisor transition diverged at record %d", index,
