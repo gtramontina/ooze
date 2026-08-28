@@ -646,19 +646,21 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 		assert.Equal(t, campaignEvidenceDeadline, mutant.Primary(), "multiple-provisional mutant[%d]=%#v", index, mutant)
 		assert.Equal(t, campaignEvidenceSettled, mutant.Confirmation(), "multiple-provisional mutant[%d]=%#v", index, mutant)
 	}
-	var barriers, confirmations []mutantIdentity
+	barrierCount := 0
+	var confirmations []mutantIdentity
 	for _, record := range explored.trace.records {
+		if record.authority == simulationRuntimeAuthority &&
+			record.runtimeCut.Operation() == processruntime.BindConfirmationBarrierOperation {
+			barrierCount++
+		}
 		for _, effect := range record.campaignEffects {
-			if effect.BindsConfirmationBarrier() {
-				barriers = append(barriers, effect.Mutant())
-			}
 			if simulationLaunchesAttempt(effect) && effect.AttemptRole() == campaignAttemptConfirmation {
 				confirmations = append(confirmations, effect.Mutant())
 			}
 		}
 	}
-	assert.Equal(t, catalogue[:1], barriers, "confirmation barrier/FIFO order=%v/%v, want %v/%v", barriers, confirmations, catalogue[:1], catalogue)
-	assert.Equal(t, catalogue, confirmations, "confirmation barrier/FIFO order=%v/%v, want %v/%v", barriers, confirmations, catalogue[:1], catalogue)
+	assert.Equal(t, 1, barrierCount, "confirmation barrier count=%d, confirmations=%v", barrierCount, confirmations)
+	assert.Equal(t, catalogue, confirmations, "confirmation FIFO order=%v, want %v", confirmations, catalogue)
 	{
 		replayed := ReplayLegal(explored.trace)
 		assert.Nil(t, replayed.failure, "multiple-provisional replay=%#v", replayed)

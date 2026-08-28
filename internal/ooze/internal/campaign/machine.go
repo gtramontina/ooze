@@ -37,11 +37,6 @@ type ArtifactRequest struct{ effect Effect }
 // SupervisionRequest is one opaque attempt-supervision request emitted by a campaign.
 type SupervisionRequest struct{ effect Effect }
 
-// BindsConfirmationBarrier reports whether the effect closes a confirmation queue around one attempt.
-func (effect Effect) BindsConfirmationBarrier() bool {
-	return effect.value.kind == campaignEffectBindConfirmationBarrier
-}
-
 // BindRuntime retains the executable authority outside pure campaign state.
 func BindRuntime(registration processruntime.Registration) RuntimeBinding {
 	return RuntimeBinding{campaign: registration.Campaign()}
