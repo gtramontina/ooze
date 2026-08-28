@@ -9,13 +9,6 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
-type Profile = processruntime.Profile
-
-const (
-	AutomaticProfile = processruntime.AutomaticProfile
-	SerialProfile    = processruntime.SerialProfile
-)
-
 type Spec struct {
 	Attempt  string
 	Command  []string
@@ -48,13 +41,6 @@ func (s Spec) snapshot() Spec {
 
 	return s
 }
-
-type LaunchFailure uint8
-
-const (
-	LaunchFailed LaunchFailure = iota + 1
-	LaunchResourceExhausted
-)
 
 type Residual uint8
 
@@ -187,11 +173,6 @@ func brokerLaunchObservation(result LaunchResult) attemptObservation {
 	default:
 		return nil
 	}
-}
-
-type StopRequest struct {
-	At      time.Time
-	DrainBy time.Time
 }
 
 type EmergencyRequest struct {

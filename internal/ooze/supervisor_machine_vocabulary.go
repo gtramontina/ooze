@@ -3,7 +3,28 @@ package ooze
 import (
 	"slices"
 	"time"
+
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
+
+type Profile = processruntime.Profile
+
+const (
+	AutomaticProfile = processruntime.AutomaticProfile
+	SerialProfile    = processruntime.SerialProfile
+)
+
+type LaunchFailure uint8
+
+const (
+	LaunchFailed LaunchFailure = iota + 1
+	LaunchResourceExhausted
+)
+
+type StopRequest struct {
+	At      time.Time
+	DrainBy time.Time
+}
 
 type supervisionInstant struct {
 	set        bool
