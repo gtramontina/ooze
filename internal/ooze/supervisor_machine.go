@@ -3,6 +3,7 @@ package ooze
 import (
 	"reflect"
 	"slices"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,17 +13,21 @@ type supervisorMachine struct {
 
 type supervisionOwnerCutReservation uint64
 
+type supervisionOwnerCutSequence struct {
+	atomic.Uint64
+}
+
 type supervisionOwnerCut struct {
 	reservation supervisionOwnerCutReservation
 	fact        supervisionFact
+	event       supervisorDomainEvent
 	projection  supervisionProjection
 	effects     []supervisionEffect
 }
 
 type supervisionOwnerCutObserver interface {
 	Enter() func()
-	Reserve() supervisionOwnerCutReservation
-	Publish(supervisionOwnerCutReservation, supervisionFact, supervisionProjection, []supervisionEffect)
+	Publish(supervisionOwnerCutReservation, supervisionFact, supervisorDomainEvent, supervisionProjection, []supervisionEffect)
 	Complete(supervisionEffect)
 }
 
@@ -32,13 +37,10 @@ func (supervisionNoopObserver) Enter() func() {
 	return func() {}
 }
 
-func (supervisionNoopObserver) Reserve() supervisionOwnerCutReservation {
-	return 0
-}
-
 func (supervisionNoopObserver) Publish(
 	supervisionOwnerCutReservation,
 	supervisionFact,
+	supervisorDomainEvent,
 	supervisionProjection,
 	[]supervisionEffect,
 ) {
@@ -628,71 +630,6 @@ func (transition supervisorTransition) actions() []supervisorAction {
 	}
 
 	return actions
-}
-
-func cloneSupervisorEvent(event supervisorEvent) supervisorEvent {
-	if event.completion != nil {
-		completion := *event.completion
-		event.completion = &completion
-	}
-	if event.running != nil {
-		running := *event.running
-		running.facts = append([]supervisorRunningFact(nil), running.facts...)
-		event.running = &running
-	}
-	if event.drain != nil {
-		drain := *event.drain
-		event.drain = &drain
-	}
-	if event.output != nil {
-		output := *event.output
-		event.output = &output
-	}
-	if event.seal != nil {
-		seal := *event.seal
-		event.seal = &seal
-	}
-	if event.release != nil {
-		release := *event.release
-		event.release = &release
-	}
-	if event.runtime != nil {
-		runtime := *event.runtime
-		event.runtime = &runtime
-	}
-	if event.emergencySettlement != nil {
-		settlement := *event.emergencySettlement
-		settlement.acknowledged = append([]attemptGeneration(nil), settlement.acknowledged...)
-		settlement.residuals = append([]supervisorEmergencyResolution(nil), settlement.residuals...)
-		event.emergencySettlement = &settlement
-	}
-	if event.emergencySnapshots != nil {
-		event.emergencySnapshots = append([]supervisorEmergencySnapshot(nil), event.emergencySnapshots...)
-		for index := range event.emergencySnapshots {
-			snapshot := &event.emergencySnapshots[index]
-			if snapshot.completion != nil {
-				completion := *snapshot.completion
-				snapshot.completion = &completion
-			}
-			if snapshot.running != nil {
-				running := *snapshot.running
-				running.facts = append([]supervisorRunningFact(nil), running.facts...)
-				snapshot.running = &running
-			}
-		}
-	}
-
-	return event
-}
-
-func cloneSupervisorActions(actions []supervisorAction) []supervisorAction {
-	cloned := append([]supervisorAction(nil), actions...)
-	for index := range cloned {
-		cloned[index].resolutions = append([]supervisorEmergencyResolution(nil), cloned[index].resolutions...)
-		cloned[index].residuals = append([]supervisorEmergencyResidual(nil), cloned[index].residuals...)
-	}
-
-	return cloned
 }
 
 func cloneSupervisionFact(fact supervisionFact) supervisionFact {

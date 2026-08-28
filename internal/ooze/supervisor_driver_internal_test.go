@@ -712,7 +712,7 @@ func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T
 	reentered := make(chan struct{})
 	returned := make(chan struct{})
 	driver := &supervisorDriver{
-		machine: newSupervisorMachineFrom(fixture.state), observer: recorder,
+		machine: newSupervisorMachineFrom(fixture.state), observer: recorder, ownerSequence: &recorder.next,
 		execute: func(supervisorAction) *supervisorEvent {
 			leaveRecorder := recorder.enter()
 			leaveRecorder()
@@ -1292,8 +1292,8 @@ func TestSupervisorDriverPublishesOwnerCutsOutsideItsLock(t *testing.T) {
 	locked := make(chan struct{})
 	go func() {
 		driver.mutex.Lock()
+		locked <- struct{}{}
 		driver.mutex.Unlock()
-		close(locked)
 	}()
 
 	select {
@@ -1316,13 +1316,10 @@ func (*blockingSupervisionObserver) Enter() func() {
 	return func() {}
 }
 
-func (*blockingSupervisionObserver) Reserve() supervisionOwnerCutReservation {
-	return 1
-}
-
 func (observer *blockingSupervisionObserver) Publish(
 	supervisionOwnerCutReservation,
 	supervisionFact,
+	supervisorDomainEvent,
 	supervisionProjection,
 	[]supervisionEffect,
 ) {

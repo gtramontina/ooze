@@ -16,6 +16,7 @@ const nominalSupervisorFuseCadence = 50 * time.Millisecond
 type supervisorDriverConstruction struct {
 	runtime          *processruntime.Runtime
 	observer         supervisionOwnerCutObserver
+	ownerSequence    *supervisionOwnerCutSequence
 	now              func() time.Time
 	launchBoundary   func(time.Time) <-chan time.Time
 	commandBoundary  func(time.Time) <-chan time.Time
@@ -81,6 +82,8 @@ type supervisorDriver struct {
 	emergencyReceipt  processruntime.EmergencySettlement
 	emergencyReady    bool
 	observer          supervisionOwnerCutObserver
+	ownerSequence     *supervisionOwnerCutSequence
+	localSequence     supervisionOwnerCutSequence
 	ownerCuts         []supervisionOwnerCut
 }
 
@@ -123,6 +126,7 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		reservations:     make(map[*processruntime.StartCell]Spec),
 		emergency:        make(chan SweepResult, 1),
 		observer:         observer,
+		ownerSequence:    construction.ownerSequence,
 	}
 }
 
@@ -136,6 +140,15 @@ func (driver *supervisorDriver) ownerObserver() supervisionOwnerCutObserver {
 	}
 
 	return driver.observer
+}
+
+func (driver *supervisorDriver) reserveOwnerCut() supervisionOwnerCutReservation {
+	sequence := driver.ownerSequence
+	if sequence == nil {
+		sequence = &driver.localSequence
+	}
+
+	return supervisionOwnerCutReservation(sequence.Add(1))
 }
 
 func newDrivenSupervisorForTest(
@@ -473,7 +486,7 @@ func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisor
 	if driver.machine == nil {
 		driver.machine = newSupervisorMachine()
 	}
-	reservation := driver.ownerObserver().Reserve()
+	reservation := driver.reserveOwnerCut()
 	fact := supervisionFactFromEvent(event)
 	var transition supervisorTransition
 	driver.machine, transition = driver.machine.Apply(fact)
@@ -481,7 +494,8 @@ func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisor
 	actions := transition.actions()
 	driver.ownerCuts = append(driver.ownerCuts, supervisionOwnerCut{
 		reservation: reservation, fact: supervisionFactFromEvent(accepted),
-		projection: driver.machine.Projection(), effects: supervisionEffectsFromActions(actions),
+		event: transition.Event(), projection: driver.machine.Projection(),
+		effects: supervisionEffectsFromActions(actions),
 	})
 
 	return actions
@@ -493,7 +507,10 @@ func (driver *supervisorDriver) publishOwnerCuts() {
 	driver.ownerCuts = nil
 	driver.mutex.Unlock()
 	for _, cut := range cuts {
-		driver.ownerObserver().Publish(cut.reservation, cut.fact, cut.projection, cut.effects)
+		func() {
+			defer func() { _ = recover() }()
+			driver.ownerObserver().Publish(cut.reservation, cut.fact, cut.event, cut.projection, cut.effects)
+		}()
 	}
 }
 

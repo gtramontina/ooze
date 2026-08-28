@@ -4,7 +4,6 @@ import (
 	"slices"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
@@ -12,7 +11,7 @@ import (
 type simulationRecorder struct {
 	gate         sync.RWMutex
 	mutex        sync.Mutex
-	next         atomic.Uint64
+	next         supervisionOwnerCutSequence
 	records      []simulationRecord
 	barriers     []simulationQuiescentBarrier
 	actionMutex  sync.Mutex
@@ -74,19 +73,16 @@ func (recorder *simulationRecorder) Enter() func() {
 	return recorder.enter()
 }
 
-func (recorder *simulationRecorder) Reserve() supervisionOwnerCutReservation {
-	return supervisionOwnerCutReservation(recorder.reserve(supervisionAuthority).sequence)
-}
-
 func (recorder *simulationRecorder) Publish(
 	reservation supervisionOwnerCutReservation,
 	fact supervisionFact,
+	event supervisorDomainEvent,
 	projection supervisionProjection,
 	effects []supervisionEffect,
 ) {
 	recorder.recordSupervisor(
 		simulationReservation{sequence: uint64(reservation), authority: supervisionAuthority},
-		fact.production(), projection, supervisorActionsFromEffects(effects),
+		fact.production(), event, projection, supervisorActionsFromEffects(effects),
 	)
 }
 
@@ -179,6 +175,7 @@ func (recorder *simulationRecorder) recordCampaign(
 func (recorder *simulationRecorder) recordSupervisor(
 	reservation simulationReservation,
 	event supervisorEvent,
+	domainEvent supervisorDomainEvent,
 	state supervisionProjection,
 	actions []supervisorAction,
 ) {
@@ -189,9 +186,10 @@ func (recorder *simulationRecorder) recordSupervisor(
 	source := recorder.supervisorSource(event)
 	recorder.append(simulationRecord{
 		sequence: reservation.sequence, authority: reservation.authority, source: source,
-		supervisorEvent:   supervisionFactFromEvent(event),
-		supervisorState:   state,
-		supervisorActions: supervisionEffectsFromActions(actions),
+		supervisorEvent:       supervisionFactFromEvent(event),
+		supervisorDomainEvent: domainEvent,
+		supervisorState:       state,
+		supervisorActions:     supervisionEffectsFromActions(actions),
 	})
 }
 

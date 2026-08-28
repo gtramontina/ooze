@@ -1607,7 +1607,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
@@ -1665,7 +1665,7 @@ func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
 		profile: AutomaticProfile, peers: 2,
 	})
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 
 	assert.PanicsWithError(t, "process runtime event diverged", func() {
 		recorder.quiescent(runner, runtime, driver)
@@ -1780,7 +1780,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 		profile: AutomaticProfile, peers: 1,
 	})
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 	action := supervisorAction{kind: supervisorLaunchNative, token: 71, generation: 9}
 	recorder.recordSupervisorActions([]supervisorAction{action})
 
@@ -1815,7 +1815,7 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 	cut := func() { _, _ = recorder.quiescent(runner, shell, driver) }
 
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
@@ -1865,7 +1865,8 @@ func TestSimulationRecorderReplaysNonEmptyManagedCampaignAtQuiescence(t *testing
 		return now
 	}
 	driver := newSupervisorDriver(supervisorDriverConstruction{
-		runtime: shell, observer: recorder, now: tick, launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		runtime: shell, observer: recorder, ownerSequence: &recorder.next,
+		now: tick, launchProgress: time.Second, drainEpoch: 5 * time.Second,
 		launchBoundary: func(time.Time) <-chan time.Time { return make(chan time.Time) },
 		prepare: func(generation attemptGeneration, spec Spec) {
 			clockMutex.Lock()
@@ -2016,7 +2017,7 @@ func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
@@ -2060,7 +2061,7 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 		profile: AutomaticProfile, peers: 1,
 	})
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 
 	trace, _ := recorder.quiescent(runner, shell, driver)
 	{
@@ -2167,7 +2168,7 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 	}
 	campaign, _ := beginCampaign(definition)
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
 	runner.advance(campaignRegisteredEvent{registration: registration})
 	runner.advance(snapshotEstablishedEvent{snapshot: "/private/repository/snapshot-937"})
@@ -2180,7 +2181,7 @@ func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing
 
 func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 	recorder := newSimulationRecorder()
-	driver := &supervisorDriver{observer: recorder}
+	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 	sourceLocation := time.FixedZone("private-host-zone", 9*60*60)
 	registeredAt := time.Date(2026, 8, 26, 1, 2, 3, 4, sourceLocation)
 	driver.reduce(supervisorEvent{

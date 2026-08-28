@@ -14,29 +14,7 @@ const (
 	settleEmergencyOperation = "settle emergency"
 )
 
-type simulationInstant struct {
-	set        bool
-	unixSecond int64
-	nanosecond int32
-}
-
 type simulationDuration int64
-
-func simulationTraceInstant(value time.Time) simulationInstant {
-	if value.IsZero() {
-		return simulationInstant{}
-	}
-
-	return simulationInstant{set: true, unixSecond: value.Unix(), nanosecond: int32(value.Nanosecond())}
-}
-
-func (instant simulationInstant) production() time.Time {
-	if !instant.set {
-		return time.Time{}
-	}
-
-	return time.Unix(instant.unixSecond, int64(instant.nanosecond)).UTC()
-}
 
 func simulationTraceDuration(value time.Duration) simulationDuration {
 	return simulationDuration(value)
@@ -136,9 +114,10 @@ type simulationRecord struct {
 	runtimeCorruption *processruntime.CorruptedCut
 	runtimeState      simulationRuntimeState
 
-	supervisorEvent   supervisionFact
-	supervisorState   supervisionProjection
-	supervisorActions []supervisionEffect
+	supervisorEvent       supervisionFact
+	supervisorDomainEvent supervisorDomainEvent
+	supervisorState       supervisionProjection
+	supervisorActions     []supervisionEffect
 }
 
 type simulationWorld struct {
@@ -761,7 +740,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			for _, effect := range supervisionEffects {
 				actionKinds[effect.token] = effect.kind
 			}
-			if !supervisorMachine.Projection().Equal(record.supervisorState) ||
+			if transition.Event() != record.supervisorDomainEvent ||
+				!supervisorMachine.Projection().Equal(record.supervisorState) ||
 				!reflect.DeepEqual(transition.Effects(), record.supervisorActions) {
 				return simulationReplayDivergenceFailure(
 					trace, supervisionDivergence, "supervisor transition diverged at record %d", index,
@@ -951,7 +931,8 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 	case supervisionAuthority:
 		machine := world.machine.Fork()
 		machine, transition := machine.Apply(record.supervisorEvent)
-		if !machine.Projection().Equal(record.supervisorState) ||
+		if transition.Event() != record.supervisorDomainEvent ||
+			!machine.Projection().Equal(record.supervisorState) ||
 			!reflect.DeepEqual(transition.Effects(), record.supervisorActions) {
 			return simulationWorld{}, fmt.Errorf("supervisor owner cut diverged")
 		}

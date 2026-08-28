@@ -696,9 +696,10 @@ func (engine *simulationEngine) applySupervisorFact(
 	effects := transition.Effects()
 	record := simulationRecord{
 		authority: supervisionAuthority, source: source,
-		supervisorEvent:   accepted,
-		supervisorState:   engine.machine.Projection(),
-		supervisorActions: effects,
+		supervisorEvent:       accepted,
+		supervisorDomainEvent: transition.Event(),
+		supervisorState:       engine.machine.Projection(),
+		supervisorActions:     effects,
 	}
 	engine.append(record)
 	engine.enqueueActions(effects)
