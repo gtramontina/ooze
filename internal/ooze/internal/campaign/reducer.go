@@ -144,7 +144,7 @@ const (
 type campaignDrainIntent struct {
 	kind         campaignDrainIntentKind
 	provisionals []mutantIdentity
-	cause        string
+	cause        AbortCause
 	epoch        fatalEpochID
 }
 
@@ -428,7 +428,7 @@ type completedOutcome struct {
 	singleAdmissionFallback bool
 }
 type abortedOutcome struct {
-	cause                   string
+	cause                   AbortCause
 	mutants                 []mutantResult
 	total                   int
 	baseline                campaignAttemptEvidence
@@ -625,7 +625,7 @@ func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaign
 			campaignInvariant("register", "registration rejection is invalid")
 		}
 		state.obligations = nil
-		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "campaign registration rejected"}
+		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: AbortCampaignRegistration}
 		state.outcome = abortedOutcome{cause: state.drain.cause}
 
 		return state, nil
@@ -649,9 +649,10 @@ func (state campaignState) onPreparationFailed(
 		campaignInvariant("prepare", "preparation failure is invalid")
 	}
 	state.phase = campaignDraining
-	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	state.drain = campaignDrainIntent{kind: campaignDrainAbort}
 	switch event.stage {
 	case campaignPreparingSnapshot:
+		state.drain.cause = AbortSnapshotMaterialization
 		if state.snapshot != "" {
 			campaignInvariant("prepare", "snapshot failure arrived after establishment")
 		}
@@ -664,6 +665,7 @@ func (state campaignState) onPreparationFailed(
 
 		return state.proposeTerminal()
 	case campaignPreparingCatalogue:
+		state.drain.cause = AbortCatalogueDiscovery
 		if state.snapshot == "" || state.catalogueKnown {
 			campaignInvariant("prepare", "catalogue failure is stale")
 		}
@@ -812,7 +814,12 @@ func (state campaignState) onResourceSettlementFailed(
 	state.obligations = slices.Delete(state.obligations, index, index+1)
 	state.artifactResidue = append(state.artifactResidue, event.identity)
 	state.phase = campaignDraining
-	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	state.drain = campaignDrainIntent{kind: campaignDrainAbort}
+	if event.kind == campaignResourceWorkspace {
+		state.drain.cause = AbortWorkspaceCleanup
+	} else {
+		state.drain.cause = AbortSnapshotCleanup
+	}
 	if event.kind == campaignResourceWorkspace {
 		attemptAt := slices.IndexFunc(state.attempts, func(attempt campaignAttempt) bool {
 			return attempt.workspace == event.identity && attempt.stage == campaignAttemptSettled
@@ -845,7 +852,7 @@ func (state campaignState) onTerminalCommitted(event terminalCommittedEvent) (ca
 		}
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{
-			kind: campaignDrainRuntimeEmergency, cause: "fatal closure won terminal commitment",
+			kind: campaignDrainRuntimeEmergency, cause: AbortFatalEpoch,
 			epoch: event.result.epoch,
 		}
 		state.candidate = campaignTerminalCandidate{}
@@ -971,7 +978,7 @@ func (state campaignState) onWorkspaceMaterializationFailed(
 	}
 	state.attempts = slices.Delete(state.attempts, attemptAt, attemptAt+1)
 	state.phase = campaignDraining
-	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: event.cause}
+	state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: AbortWorkspaceMaterialization}
 	effects := state.abortOutstandingAttempts("")
 	if len(state.attempts) == 0 {
 		return state.releaseSnapshot(campaignTerminalAborted)
@@ -1074,7 +1081,7 @@ func (state campaignState) onAdmissionRejected(
 		}
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{
-			kind: campaignDrainRuntimeEmergency, cause: event.cause, epoch: event.result.fatalEpoch,
+			kind: campaignDrainRuntimeEmergency, cause: AbortFatalEpoch, epoch: event.result.fatalEpoch,
 		}
 		effects = state.abortOutstandingAttempts(event.attempt)
 	} else if state.drain.kind == 0 {
@@ -1276,7 +1283,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 			})
 		}
 		state.phase = campaignDraining
-		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "attempt was not released"}
+		state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: AbortAttemptNotReleased}
 		effects := state.abortOutstandingAttempts(event.attempt)
 		effects = append(effects, campaignEffect{
 			kind: campaignEffectReleaseWorkspace, attempt: event.attempt,
@@ -1292,7 +1299,7 @@ func (state campaignState) onAttemptLaunch(event attemptLaunchEvent) (campaignSt
 		}
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{
-			kind: campaignDrainRuntimeEmergency, cause: "prospective launch unresolved",
+			kind: campaignDrainRuntimeEmergency, cause: AbortProspectiveLaunch,
 			epoch: event.receipt.fatalEpoch,
 		}
 		var effects []campaignEffect
@@ -1323,7 +1330,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		})
 		state.phase = campaignDraining
 		state.drain = campaignDrainIntent{
-			kind: campaignDrainRuntimeEmergency, cause: "execution-domain drainage unconfirmed",
+			kind: campaignDrainRuntimeEmergency, cause: AbortDrainageUnconfirmed,
 			epoch: event.receipt.fatalEpoch,
 		}
 		var effects []campaignEffect
@@ -1394,13 +1401,13 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		case supervision.Stopped:
 			if state.drain.kind != campaignDrainAbort && state.drain.kind != campaignDrainRuntimeEmergency {
 				state.phase = campaignDraining
-				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary stopped"}
+				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: AbortPrimaryStopped}
 				transitionEffects = state.abortOutstandingAttempts(event.attempt)
 			}
 		case supervision.Infrastructure:
 			if state.drain.kind != campaignDrainAbort && state.drain.kind != campaignDrainRuntimeEmergency {
 				state.phase = campaignDraining
-				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "primary infrastructure uncertainty"}
+				state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: AbortPrimaryInfrastructure}
 				transitionEffects = state.abortOutstandingAttempts(event.attempt)
 			}
 		default:
@@ -1440,7 +1447,7 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 		case supervision.Infrastructure:
 			resolvedConfirmation = false
 			state.phase = campaignDraining
-			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: "confirmation infrastructure uncertainty"}
+			state.drain = campaignDrainIntent{kind: campaignDrainAbort, cause: AbortConfirmationInfrastructure}
 			state.drain.provisionals = nil
 		default:
 			campaignInvariant("observe confirmation terminal", "confirmation terminal is invalid")
@@ -1467,28 +1474,28 @@ func (state campaignState) onAttemptTerminal(event attemptTerminalEvent) (campai
 	return state.emitAll(effects)
 }
 
-func campaignBaselineAbortCause(terminal supervision.Terminal) string {
+func campaignBaselineAbortCause(terminal supervision.Terminal) AbortCause {
 	switch observed := terminal.(type) {
 	case supervision.Settled:
-		return "baseline did not pass"
+		return AbortBaselineFailed
 	case supervision.Tripped:
 		switch observed.Trip.(type) {
 		case supervision.AutomaticDeadlineTrip, supervision.SerialDeadlineTrip:
-			return "baseline command deadline fired"
+			return AbortBaselineDeadline
 		case supervision.FuseTrip:
-			return "baseline process fuse fired"
+			return AbortBaselineFuse
 		default:
 			campaignInvariant("observe baseline terminal", "baseline trip kind is invalid")
 		}
 	case supervision.Stopped:
-		return "baseline was stopped"
+		return AbortBaselineStopped
 	case supervision.Infrastructure:
-		return "baseline infrastructure uncertainty"
+		return AbortBaselineInfrastructure
 	default:
 		campaignInvariant("observe baseline terminal", "baseline terminal kind is invalid")
 	}
 
-	return ""
+	return 0
 }
 
 func campaignAttemptEvidenceFromTerminal(terminal supervision.Terminal, confirmationProvisional bool) campaignAttemptEvidence {
@@ -1674,7 +1681,7 @@ func (state campaignState) onRuntimeEmergencyStarted(
 	}
 	state.phase = campaignDraining
 	state.drain = campaignDrainIntent{
-		kind: campaignDrainRuntimeEmergency, cause: "process runtime emergency", epoch: event.closure.epoch,
+		kind: campaignDrainRuntimeEmergency, cause: AbortProcessEmergency, epoch: event.closure.epoch,
 	}
 	state.candidate = campaignTerminalCandidate{}
 
