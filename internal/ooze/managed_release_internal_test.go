@@ -3,9 +3,94 @@ package ooze
 import (
 	"testing"
 
+	"github.com/gtramontina/ooze/internal/gosourcefile"
 	"github.com/gtramontina/ooze/internal/ooze/internal/campaign"
+	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
+	"github.com/gtramontina/ooze/viruses"
+	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestManagedReleaseNormalizesSupervisionInvariantAndSettlesFatalRuntime(t *testing.T) {
+	runtime := processruntime.New(1)
+	executor := campaign.NewExecutorWithSystem(runtime, supervisionViolationSystem{runtime: runtime})
+	process := managedProcess{capacity: 1, runtime: runtime, executor: executor}
+
+	result := process.release(ManagedReleaseConfiguration{
+		Lineage: 1, Repository: invariantRepository{}, TemporaryDir: &invariantTemporaryDirectory{},
+		Command: []string{"test"}, Profile: AutomaticProfile,
+		Viruses: []viruses.Virus{integerincrement.New()},
+	})
+
+	require.Equal(t, ManagedInvariantViolation, result.Outcome)
+	require.NotNil(t, result.Invariant)
+	assert.Equal(t, "reduce supervisor", result.Invariant.Operation)
+	assert.Equal(t, "prospective registration is incomplete or duplicated", result.Invariant.Reason)
+	assert.NotZero(t, runtime.FatalEpoch())
+	assert.False(t, runtime.EmergencySettlementRequired())
+}
+
+type supervisionViolationSystem struct{ runtime *processruntime.Runtime }
+
+func (system supervisionViolationSystem) ReserveLaunch(*processruntime.StartCell, supervision.Spec) {
+	_, _ = supervision.NewMachine().Apply(
+		supervision.CorrelatedMalformedFact(supervision.ProspectiveRegisteredFact, 0),
+	)
+}
+
+func (supervisionViolationSystem) DiscardLaunch(*processruntime.StartCell) {
+	panic("unexpected discarded launch")
+}
+
+func (supervisionViolationSystem) Launch(processruntime.PreparedStart, supervision.Spec) supervision.ObservedLaunch {
+	panic("unexpected launch")
+}
+
+func (supervisionViolationSystem) Wait(supervision.Generation, *supervision.OwnedAttempt) supervision.ObservedTerminal {
+	panic("unexpected wait")
+}
+
+func (supervisionViolationSystem) Stop(*supervision.OwnedAttempt) { panic("unexpected stop") }
+
+func (system supervisionViolationSystem) EmergencyDrain(supervision.EmergencyRequest) (
+	supervision.SweepResult,
+	processruntime.EmergencySettlement,
+) {
+	return supervision.SweepDrained{}, system.runtime.SettleEmergency(nil)
+}
+
+type invariantRepository struct{}
+
+func (invariantRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return []*gosourcefile.GoSourceFile{
+		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+	}
+}
+
+func (invariantRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+	return invariantTemporaryRepository{path: path}
+}
+
+type invariantTemporaryRepository struct{ path string }
+
+func (repository invariantTemporaryRepository) Root() string { return repository.path }
+func (invariantTemporaryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
+	return invariantRepository{}.ListGoSourceFiles()
+}
+func (invariantTemporaryRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+	return invariantTemporaryRepository{path: path}
+}
+func (invariantTemporaryRepository) Overwrite(string, []byte) {}
+func (invariantTemporaryRepository) Remove()                  {}
+
+type invariantTemporaryDirectory struct{ next int }
+
+func (directory *invariantTemporaryDirectory) New() string {
+	directory.next++
+	return "workspace"
+}
 
 func TestManagedCleanupFailureRetainsOrderedResidualEvidence(t *testing.T) {
 	result := presentManagedRelease(campaign.Result{

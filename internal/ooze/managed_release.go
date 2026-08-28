@@ -11,6 +11,7 @@ import (
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"github.com/gtramontina/ooze/viruses"
 )
 
@@ -217,11 +218,15 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 		}
 		violation, ok := recovered.(campaign.Violation)
 		runtimeViolation, runtimeFailed := recovered.(processruntime.Violation)
-		if !ok && !runtimeFailed {
+		supervisionViolation, supervisionFailed := recovered.(supervision.Violation)
+		if !ok && !runtimeFailed && !supervisionFailed {
 			panic(recovered)
 		}
 		invariant := &ManagedInvariantEvidence{}
-		if runtimeFailed {
+		if supervisionFailed {
+			invariant.Operation = supervisionViolation.Operation()
+			invariant.Reason = supervisionViolation.Reason()
+		} else if runtimeFailed {
 			invariant.Operation = runtimeViolation.Operation()
 			invariant.Reason = runtimeViolation.Reason()
 		} else {
