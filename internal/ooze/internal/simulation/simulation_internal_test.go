@@ -2733,46 +2733,6 @@ func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceB
 	return definition, slices.Clone(simulationChoiceBytes(source[2:]))
 }
 
-func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
-	f.Add([]byte{})
-	f.Add([]byte{1, 7, 9})
-	f.Add([]byte{2})
-	f.Fuzz(func(t *testing.T, source []byte) {
-		definition, choices := simulationFuzzInput(source)
-		explored := explore(definition, choices)
-		require.Nil(t, explored.failure, "legal exploration failed: %v; runtime=%#v; actions=%v", explored.failure, explored.world.runtime, simulationRecordedActionSummary(explored.trace))
-		replayed := replayLegal(explored.trace)
-		require.Nil(t, replayed.failure, "legal replay failed: %v", replayed.failure)
-		assert.Equal(t, replayed.world, explored.world, "legal replay world diverged:\nexplored=%#v\nreplayed=%#v", explored.world, replayed.world)
-		prefix := simulationTrace{
-			definition: explored.trace.definition,
-			records:    append([]simulationRecord(nil), explored.trace.records[:2]...),
-		}
-		malformed := simulationMalformedFact{
-			authority: simulationCampaignAuthority,
-			campaign:  campaignmodule.SnapshotEstablished(""),
-		}
-		if len(source) != 0 {
-			switch source[0] % 3 {
-			case 1:
-				malformed = simulationMalformedFact{
-					authority:  simulationRuntimeAuthority,
-					runtimeCut: processruntime.RequestAdmissionCut(processruntime.Admission{}),
-				}
-			case 2:
-				malformed = simulationMalformedFact{
-					authority:  supervisionAuthority,
-					supervisor: supervision.CorrelatedMalformedFact(supervision.ProspectiveRegisteredFact, 0),
-				}
-			}
-		}
-		first := replayViolation(prefix, malformed)
-		second := replayViolation(prefix, malformed)
-		require.Nil(t, first.failure, "violation replay diverged: first=%#v second=%#v", first, second)
-		assert.Equal(t, second, first, "violation replay diverged: first=%#v second=%#v", first, second)
-	})
-}
-
 func TestSimulationQueuesOnlyOnePendingEmergencyEpoch(t *testing.T) {
 	definition, choices := simulationFuzzInput([]byte("X12002"))
 

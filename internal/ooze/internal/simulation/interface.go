@@ -123,3 +123,8 @@ func (result ViolationResult) Failure() error { return result.failure }
 
 // FailureKey returns the invariant's semantic identity.
 func (result ViolationResult) FailureKey() FailureKey { return result.key }
+
+// SameWorld reports whether two violations reached the same canonical world.
+func (result ViolationResult) SameWorld(other ViolationResult) bool {
+	return reflect.DeepEqual(result.world, other.world)
+}

@@ -134,6 +134,7 @@ type simulationWorld struct {
 	machine      *supervision.Machine
 }
 
+// SimulationResult is the outcome of legal exploration or replay.
 type SimulationResult struct {
 	trace   simulationTrace
 	world   simulationWorld
@@ -156,6 +157,7 @@ const (
 	simulationReplayFailureKind
 )
 
+// FailureKey identifies one simulation failure independent of diagnostics.
 type FailureKey struct {
 	property   string
 	kind       simulationFailureKind
@@ -197,6 +199,7 @@ const (
 	supervisionDivergence
 )
 
+// ViolationResult is the outcome of replaying one malformed fact.
 type ViolationResult struct {
 	trace     simulationTrace
 	world     simulationWorld
