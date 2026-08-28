@@ -818,7 +818,7 @@ func (machine Machine) SupersedesFact(fact Fact) bool {
 func (machine Machine) SupersedesEffect(effect Effect) bool {
 	switch effect.value.kind {
 	case campaignEffectCancelAdmission, campaignEffectRequestStartCommitment:
-		return !machine.EffectPending(effect)
+		return !machine.effectPending(effect)
 	default:
 		return false
 	}
@@ -1048,8 +1048,7 @@ func (machine Machine) Accepts(fact Fact) (accepted bool) {
 	return true
 }
 
-// EffectPending reports whether an emitted effect still owns actionable campaign work.
-func (machine Machine) EffectPending(effect Effect) bool {
+func (machine Machine) effectPending(effect Effect) bool {
 	if effect.value.attempt == "" {
 		return true
 	}

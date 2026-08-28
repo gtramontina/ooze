@@ -120,9 +120,6 @@ func (violation Violation) Operation() string { return violation.operation }
 // Reason returns the invariant reason.
 func (violation Violation) Reason() string { return violation.reason }
 
-// Phase returns the campaign phase at rejection.
-func (violation Violation) Phase() uint8 { return violation.phase }
-
 // PhaseName returns the campaign phase at rejection.
 func (violation Violation) PhaseName() string {
 	switch campaignPhase(violation.phase) {
