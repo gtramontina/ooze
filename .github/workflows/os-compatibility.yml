@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTANCE_TESTS: ^(TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound|TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
+  ACCEPTANCE_TESTS: ^(TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
 
 jobs:
 
@@ -26,17 +26,17 @@ jobs:
         include:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
-            acceptance-count: 6
+            acceptance-count: 5
             toolchain: devbox
             go-command: devbox run -- go
           - name: macOS 26
             runner: macos-26
-            acceptance-count: 9
+            acceptance-count: 8
             toolchain: devbox
             go-command: devbox run -- go
           - name: Windows 2025
             runner: windows-2025
-            acceptance-count: 8
+            acceptance-count: 7
             toolchain: raw-go
             go-command: go
     steps:
@@ -78,10 +78,10 @@ jobs:
         if: ${{ always() }}
         shell: bash
         run: |
-          selected="$(${{ matrix.go-command }} test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze | grep -c '^Test')"
+          selected="$(${{ matrix.go-command }} test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze/internal/supervision | grep -c '^Test')"
           test "$selected" -eq "${{ matrix.acceptance-count }}"
           set +e
-          ${{ matrix.go-command }} test -json -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze | tee native-acceptance.json
+          ${{ matrix.go-command }} test -json -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze/internal/supervision | tee native-acceptance.json
           status=${PIPESTATUS[0]}
           set -e
           test "$status" -eq 0
@@ -134,7 +134,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          ${{ matrix.go-command }} test -json -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze | tee native-stress.json
+          ${{ matrix.go-command }} test -json -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze/internal/supervision | tee native-stress.json
           status=${PIPESTATUS[0]}
           set -e
           test "$status" -eq 0

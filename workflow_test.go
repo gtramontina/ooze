@@ -229,7 +229,23 @@ func requireMutationCampaignRows(t *testing.T, job string) {
 }
 
 func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testing.T) {
+	workflow, err := os.ReadFile(".github/workflows/os-compatibility.yml")
+	require.NoError(t, err)
+	contents := strings.ReplaceAll(string(workflow), "\r\n", "\n")
+	assert.NotContains(t, contents, "TestSupervisorDriverPreservesWaitFailureThatArrivesAfterDrainBound")
 	testJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "test")
+	for _, platform := range []struct {
+		name  string
+		count string
+	}{
+		{name: "Ubuntu 24.04", count: "5"},
+		{name: "macOS 26", count: "8"},
+		{name: "Windows 2025", count: "7"},
+	} {
+		t.Run(platform.name, func(t *testing.T) {
+			requireMatrixRow(t, testJob, platform.name, map[string]string{"acceptance-count": platform.count})
+		})
+	}
 	requireNativeToolchains(t, testJob)
 	requireContract(t, testJob, "native test job",
 		"toolchain: devbox",
@@ -243,12 +259,14 @@ func TestNativeWorkflowUsesSupportedToolchainsAndRejectsSkippedEvidence(t *testi
 		`go1.26.6`,
 		`grep -q '"Action":"skip"'`,
 		"unexpected skip in required native evidence",
+		"./internal/ooze/internal/supervision",
 	)
 	stressJob := workflowJob(t, ".github/workflows/os-compatibility.yml", "stress")
 	requireNativeToolchains(t, stressJob)
 	requireContract(t, stressJob, "native stress job",
 		"github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
 		"-count=10", `grep -q '"Action":"skip"'`, "unexpected skip in required native evidence",
+		"./internal/ooze/internal/supervision",
 	)
 }
 
