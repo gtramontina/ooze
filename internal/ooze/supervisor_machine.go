@@ -399,57 +399,144 @@ func (machine *supervisorMachine) CompletionFact(
 	}
 }
 
-func (machine *supervisorMachine) EmergencyActive() bool {
-	return machine != nil && machine.state.emergency.active
+type supervisionEmergencyRootEvidence struct {
+	checked    bool
+	observed   bool
+	at         time.Time
+	exitCode   int
+	exitSignal int
 }
 
-func (machine *supervisorMachine) PendingEmergencyAction() supervisorPendingAction {
-	if machine == nil {
-		return supervisorPendingAction{}
-	}
-
-	return machine.state.emergency.pendingAction
+type supervisionEmergencyEvidence struct {
+	generation attemptGeneration
+	completion *supervisorLaunchCompletion
+	root       supervisionEmergencyRootEvidence
 }
 
-func (machine *supervisorMachine) Attempt(generation attemptGeneration) (supervisionAttemptState, bool) {
+func (machine *supervisorMachine) DeterministicEmergencyEvidence(at time.Time) []supervisionEmergencyEvidence {
 	if machine == nil {
-		return supervisionAttemptState{}, false
+		return nil
 	}
-	projection := machine.Projection()
-	for _, attempt := range projection.attempts {
-		if attempt.generation == generation {
-			return attempt, true
+	evidence := make([]supervisionEmergencyEvidence, 0, len(machine.state.attempts))
+	for _, attempt := range machine.state.attempts {
+		item := supervisionEmergencyEvidence{generation: attempt.generation}
+		if (attempt.phase == supervisorRunning && !at.Before(attempt.deadlineAt)) ||
+			attempt.phase == supervisorLaunchEstablishing {
+			item.root = supervisionEmergencyRootEvidence{checked: true, at: at}
 		}
+		evidence = append(evidence, item)
 	}
 
-	return supervisionAttemptState{}, false
+	return evidence
 }
 
-func (machine *supervisorMachine) PrepareEmergency(at, drainBy time.Time) (supervisionFact, bool) {
+func (machine *supervisorMachine) AcceptsEmergencyRequest() bool {
+	return machine != nil && !machine.state.emergency.active
+}
+
+func (machine *supervisorMachine) EmergencySettlementFact(
+	effect supervisionEffect,
+	acknowledged []attemptGeneration,
+	residuals []supervisorEmergencyResolution,
+) (supervisionFact, bool) {
+	if machine == nil || effect.kind != supervisorSettleEmergency ||
+		machine.state.emergency.pendingAction.kind != supervisorSettleEmergency ||
+		machine.state.emergency.pendingAction.token != effect.token {
+		return supervisionFact{}, false
+	}
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorEmergencySettlementCompleted,
+		emergencySettlement: &supervisorEmergencySettlementCompletion{
+			action:       machine.state.emergency.pendingAction,
+			acknowledged: append([]attemptGeneration(nil), acknowledged...),
+			residuals:    append([]supervisorEmergencyResolution(nil), residuals...),
+		},
+	}), true
+}
+
+func (machine *supervisorMachine) PrepareEmergency(
+	at, drainBy time.Time,
+	drainEpoch time.Duration,
+	evidence []supervisionEmergencyEvidence,
+) (supervisionFact, bool) {
+	if machine == nil || machine.state.emergency.active || drainEpoch <= 0 {
+		return supervisionFact{}, false
+	}
 	state := machine.state
 	for _, attempt := range state.attempts {
 		if attempt.lastEventAt.After(at) {
 			at = attempt.lastEventAt
 		}
 	}
-	for _, attempt := range state.attempts {
-		if attempt.phase == supervisorLaunchEstablishing && at.After(attempt.launchBy) {
+	byGeneration := make(map[attemptGeneration]supervisionEmergencyEvidence, len(evidence))
+	for _, item := range evidence {
+		if item.generation == 0 || state.attemptIndex(item.generation) < 0 {
 			return supervisionFact{}, false
 		}
+		if _, found := byGeneration[item.generation]; found {
+			return supervisionFact{}, false
+		}
+		byGeneration[item.generation] = item
 	}
 	snapshots := make([]supervisorEmergencySnapshot, 0, len(state.attempts))
 	for _, attempt := range state.attempts {
 		if attempt.phase == supervisorLaunchClosedNotReleased {
 			continue
 		}
-		snapshot := supervisorEmergencySnapshot{generation: attempt.generation}
+		item := byGeneration[attempt.generation]
+		if attempt.phase == supervisorLaunchEstablishing && at.After(attempt.launchBy) && item.completion == nil {
+			return supervisionFact{}, false
+		}
+		snapshot := supervisorEmergencySnapshot{generation: attempt.generation, completion: item.completion}
+		if attempt.phase == supervisorLaunchEstablishing && item.completion != nil &&
+			item.completion.kind == supervisorLaunchReleased {
+			if !item.root.checked {
+				return supervisionFact{}, false
+			}
+			recheckAt := at
+			if item.root.observed {
+				recheckAt = item.root.at
+			}
+			snapshot.running = &supervisorRunningBundle{
+				generation: attempt.generation,
+				exitRecheck: supervisorExitRecheck{
+					performed: true, observed: item.root.observed, at: recheckAt,
+					action: attempt.launchAction, code: item.root.exitCode, signal: item.root.exitSignal,
+				},
+			}
+			deadlineAt := item.completion.at.Add(attempt.commandDeadline)
+			selectedAt := time.Time{}
+			if item.root.observed && !item.root.at.After(deadlineAt) {
+				selectedAt = item.root.at
+			} else if !at.Before(deadlineAt) {
+				selectedAt = deadlineAt
+			}
+			if !selectedAt.IsZero() {
+				snapshot.running.drainBy = selectedAt.Add(drainEpoch)
+			}
+		}
 		if attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched {
 			snapshot.running = &supervisorRunningBundle{
 				generation: attempt.generation, waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
 			}
+			if item.root.checked && item.root.observed && !item.root.at.After(at) {
+				snapshot.running.facts = append(snapshot.running.facts, supervisorRunningFact{
+					generation: attempt.generation, action: attempt.waitAction,
+					kind: supervisorRunningRootExited, at: item.root.at,
+					exitCode: item.root.exitCode, exitSignal: item.root.exitSignal,
+				})
+			}
 			if attempt.phase == supervisorRunning && !at.Before(attempt.deadlineAt) {
+				if !item.root.checked {
+					return supervisionFact{}, false
+				}
 				snapshot.running.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt}
-				snapshot.running.drainBy = attempt.deadlineAt.Add(5 * time.Second)
+				if item.root.observed && !item.root.at.After(attempt.deadlineAt) {
+					snapshot.running.exitRecheck.observed = true
+					snapshot.running.exitRecheck.code = item.root.exitCode
+					snapshot.running.exitRecheck.signal = item.root.exitSignal
+				}
+				snapshot.running.drainBy = attempt.deadlineAt.Add(drainEpoch)
 			}
 		}
 		snapshots = append(snapshots, snapshot)

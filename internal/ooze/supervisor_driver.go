@@ -1132,18 +1132,19 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 	driver.emergencyStarted = true
 	preempted := driver.preemptReservedLaunchesLocked(request)
 	stateSnapshot := driver.supervisorState()
-	snapshots := make([]supervisorEmergencySnapshot, 0, len(stateSnapshot.attempts))
+	evidence := make([]supervisionEmergencyEvidence, 0, len(stateSnapshot.attempts))
 	returning := make(map[attemptGeneration]struct{})
 	for _, state := range stateSnapshot.attempts {
 		if state.phase == supervisorLaunchClosedNotReleased {
 			continue
 		}
-		snapshot := supervisorEmergencySnapshot{generation: state.generation}
+		item := supervisionEmergencyEvidence{generation: state.generation}
 		switch state.phase {
 		case supervisorLaunchEstablishing:
 			attempt := driver.requireAttempt(state.generation)
 			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
 				!attempt.launchEvent.at.After(request.At) {
+				item.completion = attempt.launchEvent.completion
 				if attempt.launchEvent.completion.kind == supervisorLaunchReleased {
 					if driver.recheckRoot == nil {
 						driver.mutex.Unlock()
@@ -1154,29 +1155,11 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 						driver.mutex.Unlock()
 						invariant(supervisorDriverOperation, "released prospective root snapshot failed")
 					}
-					recheckAt := request.At
-					if observed {
-						recheckAt = completedAt
-					}
-					snapshot.running = &supervisorRunningBundle{
-						generation: state.generation,
-						exitRecheck: supervisorExitRecheck{
-							performed: true, observed: observed, at: recheckAt,
-							action: state.launchAction, code: status.Code, signal: status.Signal,
-						},
-					}
-					deadlineAt := attempt.launchEvent.completion.at.Add(state.commandDeadline)
-					selectedAt := time.Time{}
-					if observed && !completedAt.After(deadlineAt) {
-						selectedAt = completedAt
-					} else if !request.At.Before(deadlineAt) {
-						selectedAt = deadlineAt
-					}
-					if !selectedAt.IsZero() {
-						snapshot.running.drainBy = selectedAt.Add(driver.drainEpoch)
+					item.root = supervisionEmergencyRootEvidence{
+						checked: true, observed: observed, at: completedAt,
+						exitCode: status.Code, exitSignal: status.Signal,
 					}
 				}
-				snapshot.completion = attempt.launchEvent.completion
 			}
 			if !attempt.preempted {
 				returning[state.generation] = struct{}{}
@@ -1185,14 +1168,9 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 			attempt := driver.requireAttempt(state.generation)
 			if attempt.launchEvent != nil && attempt.launchEvent.completion != nil &&
 				!attempt.launchEvent.at.After(request.At) {
-				snapshot.completion = attempt.launchEvent.completion
+				item.completion = attempt.launchEvent.completion
 			}
 		case supervisorRunning:
-			running := &supervisorRunningBundle{
-				generation:   state.generation,
-				waitAction:   state.waitAction,
-				sampleAction: state.sampleAction,
-			}
 			deadlineReached := !request.At.Before(state.deadlineAt)
 			if driver.recheckRoot == nil {
 				if deadlineReached {
@@ -1205,47 +1183,12 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 					driver.mutex.Unlock()
 					invariant(supervisorDriverOperation, "owned emergency root snapshot failed")
 				}
-				rootThroughCut := observed && !completedAt.After(request.At)
-				if rootThroughCut {
-					running.facts = append(running.facts, supervisorRunningFact{
-						generation: state.generation,
-						action:     state.waitAction,
-						kind:       supervisorRunningRootExited,
-						at:         completedAt,
-						exitCode:   status.Code,
-						exitSignal: status.Signal,
-					})
-				}
-				selectedAt := time.Time{}
-				if rootThroughCut {
-					selectedAt = completedAt
-				}
-				if deadlineReached {
-					rootThroughDeadline := observed && !completedAt.After(state.deadlineAt)
-					running.exitRecheck = supervisorExitRecheck{
-						performed: true,
-						observed:  rootThroughDeadline,
-						at:        state.deadlineAt,
-					}
-					if rootThroughDeadline {
-						running.exitRecheck.code = status.Code
-						running.exitRecheck.signal = status.Signal
-					}
-					if selectedAt.IsZero() || state.deadlineAt.Before(selectedAt) {
-						selectedAt = state.deadlineAt
-					}
-				}
-				if !selectedAt.IsZero() {
-					running.drainBy = selectedAt.Add(driver.drainEpoch)
+				item.root = supervisionEmergencyRootEvidence{
+					checked: true, observed: observed, at: completedAt,
+					exitCode: status.Code, exitSignal: status.Signal,
 				}
 			}
-			snapshot.running = running
 		case supervisorIntentLatched:
-			snapshot.running = &supervisorRunningBundle{
-				generation:   state.generation,
-				waitAction:   state.waitAction,
-				sampleAction: state.sampleAction,
-			}
 		case supervisorClosingProspective, supervisorLaunchOwned, supervisorCapturingOutput,
 			supervisorSealingStopAdmission, supervisorReleasingDomain,
 			supervisorTransferringResidualCustody, supervisorSettlingRuntime,
@@ -1254,12 +1197,16 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 			driver.mutex.Unlock()
 			invariant(supervisorDriverOperation, "attempt phase has no emergency snapshot")
 		}
-		snapshots = append(snapshots, snapshot)
+		evidence = append(evidence, item)
 	}
-	actions := driver.reduceLocked(supervisorEvent{
-		kind: supervisorEmergencyStarted, at: request.At, drainBy: request.DrainBy,
-		emergencySnapshots: snapshots,
-	})
+	fact, ready := driver.machine.PrepareEmergency(request.At, request.DrainBy, driver.drainEpoch, evidence)
+	if !ready {
+		driver.mutex.Unlock()
+		invariant(supervisorDriverOperation, "emergency evidence is not enabled")
+	}
+	event := fact.production()
+	snapshots := event.emergencySnapshots
+	actions := driver.reduceLocked(event)
 	remaining := make([]supervisorAction, 0, len(actions))
 	for _, action := range actions {
 		if _, ok := returning[action.generation]; ok {

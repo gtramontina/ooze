@@ -446,7 +446,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			result: launchResult, receipt: campaignReceipt(processed),
 		})
 		if action.kind == supervisorPublishLaunchUnconfirmed && result.runtimeClosureInProgress &&
-			!engine.machine.EmergencyActive() && !engine.hasPendingSupervisorEmergency() {
+			engine.machine.AcceptsEmergencyRequest() && !engine.hasPendingSupervisorEmergency() {
 			emergencyAt := action.at.production().Add(time.Nanosecond)
 			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
@@ -527,13 +527,11 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			authority: simulationRuntimeAuthority, source: move.source,
 			runtimeState: simulationTraceRuntimeState(engine.runtime),
 		})
-		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
-			kind: supervisorEmergencySettlementCompleted,
-			emergencySettlement: &supervisorEmergencySettlementCompletion{
-				action:       engine.machine.PendingEmergencyAction(),
-				acknowledged: acknowledged, residuals: residuals,
-			},
-		})
+		fact, ready := engine.machine.EmergencySettlementFact(action, acknowledged, residuals)
+		if !ready {
+			return fmt.Errorf("simulation emergency settlement is not enabled")
+		}
+		engine.enqueueSupervisorFact(sequence, fact)
 	case supervisorDeliverEmergencySettlement:
 		return engine.applyCampaign(move.source, runtimeEmergencySettledEvent{
 			epoch: engine.emergency.epoch, settlement: campaignSettlementValue(engine.emergency),
@@ -673,7 +671,10 @@ func (engine *simulationEngine) applySupervisor(
 	event supervisorEvent,
 ) error {
 	if event.kind == supervisorEmergencyStarted && source.kind == simulationOwnerDeliverySource {
-		fact, ready := engine.machine.PrepareEmergency(event.at, event.at.Add(5*time.Second))
+		evidence := engine.machine.DeterministicEmergencyEvidence(event.at)
+		fact, ready := engine.machine.PrepareEmergency(
+			event.at, event.at.Add(5*time.Second), 5*time.Second, evidence,
+		)
 		if !ready {
 			return fmt.Errorf("simulation emergency fact is not enabled")
 		}
@@ -791,6 +792,10 @@ func (engine *simulationEngine) enqueueAdmissionDeliveries(
 
 func (engine *simulationEngine) enqueueSupervisorDelivery(sequence uint64, event supervisorEvent) {
 	fact := supervisionFactFromEvent(event)
+	engine.enqueueSupervisorFact(sequence, fact)
+}
+
+func (engine *simulationEngine) enqueueSupervisorFact(sequence uint64, fact supervisionFact) {
 	engine.pending = append(engine.pending, simulationEngineMove{
 		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: sequence},
 		supervisorDelivery: &fact,
@@ -921,7 +926,9 @@ func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
 	if machine == nil {
 		machine = newSupervisorMachine()
 	}
-	_, ready := machine.PrepareEmergency(at, at.Add(5*time.Second))
+	_, ready := machine.PrepareEmergency(
+		at, at.Add(5*time.Second), 5*time.Second, machine.DeterministicEmergencyEvidence(at),
+	)
 
 	return ready
 }
