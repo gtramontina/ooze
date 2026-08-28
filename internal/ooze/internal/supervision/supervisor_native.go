@@ -101,13 +101,42 @@ func NewNativeDriver(
 		readOutputFile:   readNativeOutput,
 	}
 
-	return newSupervisorDriver(supervisorDriverConstruction{
-		runtime: runtime, now: time.Now, launchProgress: launchProgress, drainEpoch: drainEpoch,
-		prepare: executor.prepare, execute: executor.execute,
-		recheckRoot: executor.recheckRoot, sampleRunning: executor.sampleRunning,
-		readOutput: executor.readOutput, readDiagnostic: executor.readDiagnostic,
-		recordDiagnostic: executor.recordDiagnostic,
-	}), nil
+	return NewDriver(runtime, launchProgress, drainEpoch, executor)
+}
+
+func (executor *supervisorNativeExecutor) Prepare(generation Generation, spec Spec) {
+	executor.prepare(attemptGeneration(generation), spec)
+}
+
+func (executor *supervisorNativeExecutor) Execute(_ *Machine, effect Effect) (Fact, bool) {
+	event := executor.execute(effect.production())
+	if event == nil {
+		return Fact{}, true
+	}
+
+	return supervisionFactFromEvent(*event), true
+}
+
+func (executor *supervisorNativeExecutor) RecheckRoot(
+	generation Generation,
+) (ExitStatus, time.Time, bool, error) {
+	return executor.recheckRoot(attemptGeneration(generation))
+}
+
+func (executor *supervisorNativeExecutor) SampleRunning(generation Generation) (bool, uint64, error) {
+	return executor.sampleRunning(attemptGeneration(generation))
+}
+
+func (executor *supervisorNativeExecutor) ReadOutput(ref uint64) string {
+	return executor.readOutput(supervisorOutputRef(ref))
+}
+
+func (executor *supervisorNativeExecutor) ReadDiagnostic(ref uint64) error {
+	return executor.readDiagnostic(supervisorDiagnosticRef(ref))
+}
+
+func (executor *supervisorNativeExecutor) RecordDiagnostic(err error) uint64 {
+	return uint64(executor.recordDiagnostic(err))
 }
 
 func (executor *supervisorNativeExecutor) prepare(generation attemptGeneration, spec Spec) {

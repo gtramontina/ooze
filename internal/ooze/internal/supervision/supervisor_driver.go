@@ -2,6 +2,7 @@ package supervision
 
 import (
 	"cmp"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -12,6 +13,17 @@ import (
 const supervisorDriverOperation = "drive supervisor"
 
 const nominalSupervisorFuseCadence = 50 * time.Millisecond
+
+// SystemBoundary executes native process operations requested by supervision.
+type SystemBoundary interface {
+	Prepare(Generation, Spec)
+	Execute(*Machine, Effect) (Fact, bool)
+	RecheckRoot(Generation) (ExitStatus, time.Time, bool, error)
+	SampleRunning(Generation) (bool, uint64, error)
+	ReadOutput(uint64) string
+	ReadDiagnostic(uint64) error
+	RecordDiagnostic(error) uint64
+}
 
 type supervisorDriverConstruction struct {
 	runtime          *processruntime.Runtime
@@ -74,6 +86,7 @@ type Driver struct {
 	readOutput        func(supervisorOutputRef) string
 	readDiagnostic    func(supervisorDiagnosticRef) error
 	recordDiagnostic  func(error) supervisorDiagnosticRef
+	boundary          SystemBoundary
 	attempts          map[attemptGeneration]*supervisorDrivenAttempt
 	reservations      map[*processruntime.StartCell]Spec
 	emergency         chan SweepResult
@@ -86,6 +99,43 @@ type Driver struct {
 	ownerSequence     *OwnerCutSequence
 	localSequence     OwnerCutSequence
 	ownerCuts         []ownerCut
+}
+
+// NewDriver constructs supervision around a native system boundary.
+func NewDriver(
+	runtime *processruntime.Runtime,
+	launchProgress time.Duration,
+	drainEpoch time.Duration,
+	boundary SystemBoundary,
+) (*Driver, error) {
+	if boundary == nil {
+		return nil, errors.New("supervision system boundary is required")
+	}
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: runtime, now: time.Now, launchProgress: launchProgress, drainEpoch: drainEpoch,
+		execute: func(supervisorAction) *supervisorEvent {
+			panic("system boundary was not installed")
+		},
+		prepare: func(generation attemptGeneration, spec Spec) {
+			boundary.Prepare(Generation(generation), spec)
+		},
+		recheckRoot: func(generation attemptGeneration) (ExitStatus, time.Time, bool, error) {
+			return boundary.RecheckRoot(Generation(generation))
+		},
+		sampleRunning: func(generation attemptGeneration) (bool, uint64, error) {
+			return boundary.SampleRunning(Generation(generation))
+		},
+		readOutput: func(ref supervisorOutputRef) string { return boundary.ReadOutput(uint64(ref)) },
+		readDiagnostic: func(ref supervisorDiagnosticRef) error {
+			return boundary.ReadDiagnostic(uint64(ref))
+		},
+		recordDiagnostic: func(err error) supervisorDiagnosticRef {
+			return supervisorDiagnosticRef(boundary.RecordDiagnostic(err))
+		},
+	})
+	driver.boundary = boundary
+
+	return driver, nil
 }
 
 func newSupervisorDriver(construction supervisorDriverConstruction) *Driver {
@@ -129,6 +179,25 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *Driver {
 		observer:         observer,
 		ownerSequence:    construction.ownerSequence,
 	}
+}
+
+func (driver *Driver) executeSystem(action supervisorAction) *supervisorEvent {
+	if driver.boundary == nil {
+		return driver.execute(action)
+	}
+	driver.mutex.Lock()
+	machine := driver.machine.Fork()
+	driver.mutex.Unlock()
+	fact, ready := driver.boundary.Execute(machine, supervisionEffectFromAction(action))
+	if !ready {
+		invariant(supervisorDriverOperation, "system boundary rejected an enabled effect")
+	}
+	if fact.Kind() == 0 {
+		return nil
+	}
+	event := fact.production()
+
+	return &event
 }
 
 func waitForSupervisorLaunchBoundary(launchBy time.Time) <-chan time.Time {
@@ -420,7 +489,7 @@ func (driver *Driver) requireLaunchWake(generation attemptGeneration) <-chan str
 
 func (driver *Driver) executeLaunch(action supervisorAction) {
 	defer driver.completeOwnerEffect(action)
-	event := driver.execute(action)
+	event := driver.executeSystem(action)
 	if event == nil || event.completion == nil {
 		invariant(supervisorDriverOperation, "native launch returned no completion")
 	}
@@ -568,7 +637,7 @@ func (driver *Driver) run(action supervisorAction) {
 	}
 	switch action.kind {
 	case supervisorRevokeLaunchRelease:
-		if event := driver.execute(action); event != nil {
+		if event := driver.executeSystem(action); event != nil {
 			invariant(supervisorDriverOperation, "launch release revocation returned a completion")
 		}
 	case supervisorPublishLaunchUnconfirmed:
@@ -656,7 +725,7 @@ func launchObservationFromEffect(effect Effect) processruntime.Observation {
 }
 
 func (driver *Driver) executeAction(action supervisorAction) {
-	event := driver.execute(action)
+	event := driver.executeSystem(action)
 	if event == nil {
 		invariant(supervisorDriverOperation, "native action returned no completion")
 	}
@@ -790,7 +859,7 @@ func (driver *Driver) waitThroughDeadline(
 	deadlineAt time.Time,
 ) {
 	waited := make(chan *supervisorEvent, 1)
-	go func() { waited <- driver.execute(waitAction) }()
+	go func() { waited <- driver.executeSystem(waitAction) }()
 	deadline := driver.commandBoundary(deadlineAt)
 	var samples <-chan time.Time
 	if sampleAction.token != 0 {

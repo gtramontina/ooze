@@ -650,6 +650,20 @@ func (machine *Machine) LaunchFacts(
 	return facts, true
 }
 
+// LaunchReleasedFact returns release evidence correlated with this launch effect.
+func (effect Effect) LaunchReleasedFact(at time.Time) (Fact, bool) {
+	if effect.kind != supervisorLaunchNative || at.IsZero() {
+		return Fact{}, false
+	}
+	completion := supervisorLaunchCompletion{
+		generation: effect.generation, action: effect.token, at: at, kind: supervisorLaunchReleased,
+	}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorLaunchCompleted, generation: effect.generation, at: at, completion: &completion,
+	}), true
+}
+
 // RunningFact returns canonical evidence for correlated monitor effects.
 func (machine *Machine) RunningFact(
 	wait Effect,
@@ -712,6 +726,69 @@ func (machine *Machine) RunningFact(
 		kind: supervisorRunningObserved, generation: wait.generation, at: observedAt,
 		drainBy: drainBy, running: bundle,
 	}), true
+}
+
+// RootExitFact returns root-exit evidence correlated with this wait effect.
+func (effect Effect) RootExitFact(
+	at time.Time,
+	status ExitStatus,
+) (Fact, bool) {
+	if effect.kind != supervisorWaitRoot || at.IsZero() {
+		return Fact{}, false
+	}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorRunningObserved, generation: effect.generation, at: at,
+		drainBy: at.Add(5 * time.Second),
+		running: &supervisorRunningBundle{
+			generation: effect.generation, waitAction: effect.token,
+			facts: []supervisorRunningFact{{
+				generation: effect.generation, action: effect.token,
+				kind: supervisorRunningRootExited, at: at,
+				exitCode: status.Code, exitSignal: status.Signal,
+			}},
+		},
+	}), true
+}
+
+// SystemCompletionFact returns successful native completion evidence for this effect.
+func (effect Effect) SystemCompletionFact(at time.Time) (Fact, bool) {
+	if at.IsZero() {
+		return Fact{}, false
+	}
+	pending := supervisorPendingAction{kind: effect.kind, token: effect.token}
+	switch effect.kind {
+	case supervisorForceOwned:
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorDrainCompleted, generation: effect.generation, at: at,
+			drain: &supervisorDrainCompletion{
+				generation: effect.generation, action: pending, at: at, kind: supervisorDrainForceCompleted,
+			},
+		}), true
+	case supervisorObserveEmptiness:
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorDrainCompleted, generation: effect.generation, at: at,
+			drain: &supervisorDrainCompletion{
+				generation: effect.generation, action: pending, at: at, kind: supervisorDrainObservedEmpty,
+			},
+		}), true
+	case supervisorCaptureOutput:
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorOutputCompleted, generation: effect.generation, at: at,
+			output: &supervisorOutputCompletion{
+				generation: effect.generation, action: pending, at: at, ref: 1,
+			},
+		}), true
+	case supervisorReleaseDomain:
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorReleaseCompleted, generation: effect.generation, at: at,
+			release: &supervisorReleaseCompletion{
+				generation: effect.generation, action: pending, at: at,
+			},
+		}), true
+	default:
+		return Fact{}, false
+	}
 }
 
 // StopFact returns the canonical stop request allowed by current state.
