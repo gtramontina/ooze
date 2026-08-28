@@ -77,9 +77,9 @@ func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *te
 	machine, transition := machine.Apply(campaign.CatalogueDiscovered("snapshot-a", []string{"mutant-a"}))
 	machine, transition = machine.Apply(campaign.WorkspaceMaterialized(transition.Effects()[0], "workspace-a"))
 	request := transition.Effects()[0]
-	requestCut, ok := binding.Cut(request, definition)
+	runtimeRequest, ok := binding.RuntimeRequest(request, definition)
 	require.True(t, ok)
-	runtime, admitted := runtime.Apply(requestCut)
+	runtime, admitted := runtime.Apply(runtimeRequest.Cut())
 	require.Len(t, admitted.Admission().Deliveries(), 1)
 	machine, _ = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 	runtime, closed := runtime.Apply(processruntime.CloseCut("test closure"))
@@ -87,7 +87,7 @@ func TestCanonicalCampaignProjectionDoesNotRetainGrantedAdmissionAuthority(t *te
 	fork := machine.Projection().Canonical().Fork()
 	_, transition = fork.Apply(campaign.RuntimeEmergencyStarted(closed.Closure()).Canonical())
 	require.Equal(t, []testEffectKind{returnAdmissionEffect}, effectKinds(transition.Effects()))
-	_, ok = binding.Cut(transition.Effects()[0], definition)
+	_, ok = binding.RuntimeRequest(transition.Effects()[0], definition)
 	assert.False(t, ok)
 	_ = runtime
 }
@@ -112,16 +112,16 @@ func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 		machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
 		require.Equal(t, []testEffectKind{requestAdmissionEffect}, effectKinds(transition.Effects()))
 		request := transition.Effects()[0]
-		cut, ok := binding.Cut(request, definition)
+		runtimeRequest, ok := binding.RuntimeRequest(request, definition)
 		require.True(t, ok)
-		runtime, admitted := runtime.Apply(cut)
+		runtime, admitted := runtime.Apply(runtimeRequest.Cut())
 		require.Len(t, admitted.Admission().Deliveries(), 1)
 		machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 		require.Equal(t, []testEffectKind{requestStartCommitmentEffect}, effectKinds(transition.Effects()))
 		start := transition.Effects()[0]
-		cut, ok = binding.Cut(start, definition)
+		runtimeRequest, ok = binding.RuntimeRequest(start, definition)
 		require.True(t, ok)
-		_, started := runtime.Apply(cut)
+		_, started := runtime.Apply(runtimeRequest.Cut())
 		machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
 		require.Equal(t, []testEffectKind{launchAttemptEffect}, effectKinds(transition.Effects()))
 		assert.Equal(t, 10*time.Minute, transition.Effects()[0].Spec().Deadline)
@@ -181,14 +181,14 @@ func TestMachineRetainsRecordedMutationDeadline(t *testing.T) {
 	materialize := transition.Effects()[0]
 	machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
 	request := transition.Effects()[0]
-	cut, ok := binding.Cut(request, definition)
+	runtimeRequest, ok := binding.RuntimeRequest(request, definition)
 	require.True(t, ok)
-	runtime, admitted := runtime.Apply(cut)
+	runtime, admitted := runtime.Apply(runtimeRequest.Cut())
 	machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 	start := transition.Effects()[0]
-	cut, ok = binding.Cut(start, definition)
+	runtimeRequest, ok = binding.RuntimeRequest(start, definition)
 	require.True(t, ok)
-	runtime, started := runtime.Apply(cut)
+	runtime, started := runtime.Apply(runtimeRequest.Cut())
 	machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
 	launch := transition.Effects()[0]
 	runtime, owned := runtime.Apply(processruntime.ObserveAttemptCut(

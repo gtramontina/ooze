@@ -99,10 +99,10 @@ func (harness *campaignMachineHarness) advance(fact campaign.Fact) []campaign.Ef
 
 func (harness *campaignMachineHarness) applyRuntime(effect campaign.Effect) processruntime.ReplayResult {
 	harness.t.Helper()
-	cut, ok := harness.runtimeBinding.Cut(effect, harness.definition)
+	request, ok := harness.runtimeBinding.RuntimeRequest(effect, harness.definition)
 	require.True(harness.t, ok)
 	var result processruntime.ReplayResult
-	harness.runtime, result = harness.runtime.Apply(cut)
+	harness.runtime, result = harness.runtime.Apply(request.Cut())
 	return result
 }
 

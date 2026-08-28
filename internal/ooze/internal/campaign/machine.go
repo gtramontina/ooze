@@ -44,7 +44,7 @@ func BindRuntime(registration processruntime.Registration) RuntimeBinding {
 
 // RuntimeRequest returns the process-runtime request represented by an effect.
 func (binding RuntimeBinding) RuntimeRequest(effect Effect, definition Definition) (RuntimeRequest, bool) {
-	cut, ok := binding.Cut(effect, definition)
+	cut, ok := binding.runtimeCut(effect, definition)
 	return RuntimeRequest{effect: effect, cut: cut}, ok
 }
 
@@ -379,8 +379,7 @@ func (effect Effect) CompletesConfirmationQueue() bool {
 	return effect.value.completesConfirmationQueue
 }
 
-// Cut returns the process-runtime input represented by a campaign effect.
-func (binding RuntimeBinding) Cut(effect Effect, definition Definition) (processruntime.Cut, bool) {
+func (binding RuntimeBinding) runtimeCut(effect Effect, definition Definition) (processruntime.Cut, bool) {
 	switch effect.value.kind {
 	case campaignEffectRegister:
 		return processruntime.RegisterCampaignCut(definition.Lineage), true
