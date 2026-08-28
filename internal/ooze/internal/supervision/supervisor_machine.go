@@ -812,6 +812,21 @@ func (effect Effect) SystemCompletionFact(at time.Time) (Fact, bool) {
 	}
 }
 
+// DrainResidualFact returns authoritative residual evidence for this census effect.
+func (effect Effect) DrainResidualFact(at time.Time) (Fact, bool) {
+	if effect.kind != supervisorObserveEmptiness || at.IsZero() {
+		return Fact{}, false
+	}
+	pending := supervisorPendingAction{kind: effect.kind, token: effect.token}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorDrainCompleted, generation: effect.generation, at: at,
+		drain: &supervisorDrainCompletion{
+			generation: effect.generation, action: pending, at: at, kind: supervisorDrainObservedResidual,
+		},
+	}), true
+}
+
 // StopFact returns the canonical stop request allowed by current state.
 func (machine *Machine) StopFact(generation attemptGeneration) (
 	Fact,

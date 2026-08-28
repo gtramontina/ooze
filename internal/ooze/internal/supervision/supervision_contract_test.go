@@ -96,6 +96,34 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 		assert.True(t, drained)
 		assert.NotZero(t, settlement.Epoch())
 	})
+
+	t.Run("residual custody reaches wait and emergency sweep", func(t *testing.T) {
+		runtime, driver, boundary, start, spec := supervisionContractAttempt(t)
+		defer close(boundary.wait)
+		boundary.mutex.Lock()
+		boundary.residual = true
+		boundary.mutex.Unlock()
+		launched := driver.Launch(start, spec)
+		owned, ok := launched.Result().(supervision.Owned)
+		require.True(t, ok)
+
+		driver.Stop(owned.Attempt)
+		terminal := driver.Wait(start.Generation(), owned.Attempt)
+		unconfirmed, ok := terminal.Terminal().(supervision.DrainUnconfirmed)
+		require.True(t, ok)
+		assert.Equal(t, supervision.OwnedUndrained, unconfirmed.Residual)
+		assert.True(t, runtime.EmergencySettlementRequired())
+		at := boundary.Now().Add(time.Nanosecond)
+		sweep, settlement := driver.EmergencyDrain(supervision.EmergencyRequest{
+			At: at, DrainBy: at.Add(time.Second),
+		})
+		residuals, ok := sweep.(supervision.SweepUnconfirmed)
+		require.True(t, ok)
+		assert.Equal(t, []supervision.ResidualRef{{
+			Attempt: spec.Attempt, Kind: supervision.OwnedUndrained,
+		}}, residuals.Residuals())
+		assert.NotZero(t, settlement.Epoch())
+	})
 }
 
 type supervisionBoundary struct {
@@ -107,6 +135,7 @@ type supervisionBoundary struct {
 	mutex             sync.Mutex
 	now               time.Time
 	launchCompleted   bool
+	residual          bool
 }
 
 func (boundary *supervisionBoundary) Now() time.Time {
@@ -179,6 +208,14 @@ func (boundary *supervisionBoundary) Execute(
 		return effect.RootExitFact(boundary.Now(), supervision.ExitStatus{})
 	case supervision.ForceOwnedEffect, supervision.ObserveEmptinessEffect,
 		supervision.CaptureOutputEffect, supervision.ReleaseDomainEffect:
+		boundary.mutex.Lock()
+		residual := boundary.residual
+		boundary.mutex.Unlock()
+		if residual && effect.Kind() == supervision.ObserveEmptinessEffect {
+			boundary.setNow(effect.DrainBy())
+
+			return effect.DrainResidualFact(effect.DrainBy())
+		}
 		return effect.SystemCompletionFact(boundary.Now())
 	default:
 		return supervision.Fact{}, false
