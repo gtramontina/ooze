@@ -32,7 +32,7 @@ func TestSimulationFourOperationContract(t *testing.T) {
 		require.NoError(t, explored.Failure())
 
 		violation := simulation.ReplayViolation(
-			explored.Trace().Prefix(0),
+			explored.Trace(),
 			simulation.MalformedRuntime(processruntime.RequestAdmissionCut(processruntime.Admission{})),
 		)
 		assert.NoError(t, violation.Failure())
@@ -43,7 +43,7 @@ func TestSimulationFourOperationContract(t *testing.T) {
 		explored := simulation.Explore(definition, nil)
 		require.NoError(t, explored.Failure())
 		violation := simulation.ReplayViolation(
-			explored.Trace().Prefix(0),
+			explored.Trace(),
 			simulation.MalformedRuntime(processruntime.RequestAdmissionCut(processruntime.Admission{})),
 		)
 
@@ -54,31 +54,28 @@ func TestSimulationFourOperationContract(t *testing.T) {
 	})
 }
 
+func TestSimulationRetainsLateTerminalNeededForCampaignCleanup(t *testing.T) {
+	definition, choices := simulationInput([]byte("22000000110000010AX12"))
+
+	result := simulation.Explore(definition, choices)
+
+	assert.NoError(t, result.Failure())
+}
+
+func TestSimulationQueuesOnlyOnePendingEmergencyEpoch(t *testing.T) {
+	definition, choices := simulationInput([]byte("X12002"))
+
+	result := simulation.Explore(definition, choices)
+
+	assert.NoError(t, result.Failure())
+}
+
 func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{1, 7, 9})
 	f.Add([]byte{2})
 	f.Fuzz(func(t *testing.T, source []byte) {
-		capacity := 1
-		mutants := 0
-		if len(source) != 0 {
-			mutants = 1 + int(source[0]%3)
-		}
-		if len(source) > 1 {
-			capacity = 1 + int(source[1]%3)
-		}
-		catalogue := make([]string, mutants)
-		for index := range catalogue {
-			catalogue[index] = fmt.Sprintf("mutant-%d", index+1)
-		}
-		definition := simulation.NewDefinition(campaign.Definition{
-			Identity: "campaign-fuzz", Lineage: 61, Command: []string{"test"},
-			Profile: processruntime.AutomaticProfile, Peers: capacity,
-		}, capacity, catalogue)
-		var choices simulation.Choices
-		if len(source) > 2 {
-			choices = source[2:]
-		}
+		definition, choices := simulationInput(source)
 
 		explored := simulation.Explore(definition, choices)
 		require.NoError(t, explored.Failure())
@@ -99,11 +96,36 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 				)
 			}
 		}
-		first := simulation.ReplayViolation(explored.Trace().Prefix(2), malformed)
-		second := simulation.ReplayViolation(explored.Trace().Prefix(2), malformed)
+		first := simulation.ReplayViolation(explored.Trace(), malformed)
+		second := simulation.ReplayViolation(explored.Trace(), malformed)
 		require.NoError(t, first.Failure())
 		require.NoError(t, second.Failure())
 		assert.Equal(t, first.FailureKey(), second.FailureKey())
 		assert.True(t, first.SameWorld(second))
 	})
+}
+
+func simulationInput(source []byte) (simulation.Definition, simulation.Choices) {
+	capacity := 1
+	mutants := 0
+	if len(source) != 0 {
+		mutants = 1 + int(source[0]%3)
+	}
+	if len(source) > 1 {
+		capacity = 1 + int(source[1]%3)
+	}
+	catalogue := make([]string, mutants)
+	for index := range catalogue {
+		catalogue[index] = fmt.Sprintf("mutant-%d", index+1)
+	}
+	definition := simulation.NewDefinition(campaign.Definition{
+		Identity: "campaign-fuzz", Lineage: 61, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: capacity,
+	}, capacity, catalogue)
+	var choices simulation.Choices
+	if len(source) > 2 {
+		choices = source[2:]
+	}
+
+	return definition, choices
 }

@@ -88,16 +88,6 @@ func (result SimulationResult) SameWorld(other SimulationResult) bool {
 	return reflect.DeepEqual(result.world, other.world)
 }
 
-// Prefix returns the accepted prefix ending before index.
-func (trace Trace) Prefix(index int) Trace {
-	cloned := simulationCloneTrace(trace.value)
-	cloned.records = slices.Clone(cloned.records[:index])
-	cloned.barriers = slices.DeleteFunc(cloned.barriers, func(barrier simulationQuiescentBarrier) bool {
-		return barrier.afterSequence > uint64(index)
-	})
-	return Trace{value: cloned}
-}
-
 // LegalPrefix removes the malformed input from a violation trace.
 func (trace Trace) LegalPrefix() Trace {
 	cloned := simulationCloneTrace(trace.value)

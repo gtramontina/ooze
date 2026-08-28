@@ -2543,14 +2543,6 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 	assert.EqualValues(t, 10, moves[0].action.Token(), "enabled runtime custody actions=%#v, want token 10 only", moves)
 }
 
-func TestSimulationEmergencySettlementRetainsLateTerminalNeededForCampaignCleanup(t *testing.T) {
-	definition, choices := simulationFuzzInput([]byte("22000000110000010AX12"))
-	result := explore(definition, choices)
-	require.NoErrorf(t, result.failure, "phase=%s obligations=%v failed=%t",
-		result.world.campaign.Projection().PhaseName(), result.world.campaign.Projection().Obligations(),
-		result.world.campaign.Failed())
-}
-
 func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {
 	completion := supervision.CorrelatedMalformedFact(supervision.RuntimeCompletedFact, 2)
 	engine := simulationEngine{
@@ -2731,28 +2723,6 @@ func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceB
 	}
 
 	return definition, slices.Clone(simulationChoiceBytes(source[2:]))
-}
-
-func TestSimulationQueuesOnlyOnePendingEmergencyEpoch(t *testing.T) {
-	definition, choices := simulationFuzzInput([]byte("X12002"))
-
-	result := explore(definition, choices)
-
-	assert.Nil(t, result.failure)
-}
-
-func simulationRecordedActionSummary(trace simulationTrace) []string {
-	var summary []string
-	for _, record := range trace.records {
-		for _, action := range record.supervisorActions {
-			summary = append(summary, fmt.Sprintf(
-				"record=%d kind=%d generation=%d token=%d",
-				record.sequence, action.Kind(), action.Generation(), action.Token(),
-			))
-		}
-	}
-
-	return summary
 }
 
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
