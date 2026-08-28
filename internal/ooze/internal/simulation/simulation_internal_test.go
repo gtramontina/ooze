@@ -2725,6 +2725,26 @@ func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceB
 	return definition, slices.Clone(simulationChoiceBytes(source[2:]))
 }
 
+func TestSimulationViolationReplaySelectsTheLatestActivePrefix(t *testing.T) {
+	definition, choices := simulationFuzzInput([]byte("active-prefix"))
+	explored := explore(definition, choices)
+	require.NoError(t, explored.failure)
+	require.True(t, explored.world.campaign.Projection().Settled())
+
+	prefix, ok := simulationViolationPrefix(explored.trace)
+	require.True(t, ok)
+	replayed := replayLegal(prefix)
+	require.NoError(t, replayed.failure)
+	assert.False(t, replayed.world.campaign.Projection().Settled())
+
+	next := simulationCloneTrace(explored.trace)
+	next.records = slices.Clone(next.records[:len(prefix.records)+1])
+	next.barriers = slices.DeleteFunc(next.barriers, func(barrier simulationQuiescentBarrier) bool {
+		return barrier.afterSequence > uint64(len(next.records))
+	})
+	assert.True(t, replayLegal(next).world.campaign.Projection().Settled())
+}
+
 func simulationAuthorities(trace simulationTrace) []simulationAuthority {
 	authorities := make([]simulationAuthority, 0, len(trace.records))
 	for _, record := range trace.records {

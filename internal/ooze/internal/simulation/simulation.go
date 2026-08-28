@@ -1,6 +1,7 @@
 package simulation
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -10,6 +11,8 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
+
+var errNoActiveViolationPrefix = errors.New("simulation trace has no active legal prefix")
 
 const (
 	observeOperation         = "observe attempt"
@@ -851,6 +854,22 @@ func replayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	}
 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
+}
+
+func simulationViolationPrefix(trace simulationTrace) (simulationTrace, bool) {
+	for index := len(trace.records); index >= 0; index-- {
+		candidate := simulationCloneTrace(trace)
+		candidate.records = slices.Clone(candidate.records[:index])
+		candidate.barriers = slices.DeleteFunc(candidate.barriers, func(barrier simulationQuiescentBarrier) bool {
+			return barrier.afterSequence > uint64(index)
+		})
+		candidate.malformed = nil
+		replayed := replayLegal(candidate)
+		if replayed.failure == nil && !replayed.world.campaign.Projection().Settled() {
+			return candidate, true
+		}
+	}
+	return simulationTrace{}, false
 }
 
 func simulationAdvanceRuntimeGuarded(

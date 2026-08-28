@@ -40,10 +40,14 @@ func ReplayLegal(trace Trace) SimulationResult {
 	return replayLegal(simulationCloneTrace(trace.value))
 }
 
-// ReplayViolation applies one malformed fact after a legal prefix.
+// ReplayViolation applies one malformed fact at the latest active point in a legal trace.
 func ReplayViolation(prefix Trace, malformed MalformedFact) ViolationResult {
-	result := replayViolation(simulationCloneTrace(prefix.value), malformed.value)
-	result.trace = simulationCloneTrace(prefix.value)
+	selected, ok := simulationViolationPrefix(prefix.value)
+	if !ok {
+		return ViolationResult{failure: errNoActiveViolationPrefix}
+	}
+	result := replayViolation(selected, malformed.value)
+	result.trace = simulationCloneTrace(selected)
 	result.trace.malformed = &malformed.value
 	return result
 }
@@ -103,23 +107,6 @@ func (trace Trace) Malformed() MalformedFact {
 		return MalformedFact{}
 	}
 	return MalformedFact{value: *trace.value.malformed}
-}
-
-// ActivePrefix returns the latest replayable prefix before campaign settlement.
-func (trace Trace) ActivePrefix() (Trace, bool) {
-	for index := len(trace.value.records); index >= 0; index-- {
-		candidate := simulationCloneTrace(trace.value)
-		candidate.records = slices.Clone(candidate.records[:index])
-		candidate.barriers = slices.DeleteFunc(candidate.barriers, func(barrier simulationQuiescentBarrier) bool {
-			return barrier.afterSequence > uint64(index)
-		})
-		candidate.malformed = nil
-		replayed := replayLegal(candidate)
-		if replayed.failure == nil && !replayed.world.campaign.Projection().Settled() {
-			return Trace{value: candidate}, true
-		}
-	}
-	return Trace{}, false
 }
 
 // Trace returns the violated trace.
