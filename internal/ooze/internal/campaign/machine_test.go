@@ -48,6 +48,21 @@ func TestMachineCommitsAnEmptyCatalogueWithoutLaunchingAnAttempt(t *testing.T) {
 	})
 }
 
+func TestCanonicalCampaignEventDoesNotRetainRuntimeAuthority(t *testing.T) {
+	definition := campaign.Definition{
+		Identity: "campaign-a", Lineage: 11, Command: []string{"test"},
+		Profile: processruntime.SerialProfile, Peers: 1,
+	}
+	runtime := processruntime.NewReplay(1)
+	runtime, registered := runtime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
+	machine, _ := campaign.NewMachine(definition)
+	_, registration := machine.Apply(campaign.Registered(registered.Registration()))
+
+	fresh, _ := campaign.NewMachine(definition)
+	assert.False(t, fresh.Accepts(registration.Event().Canonical().Fact()))
+	_ = runtime
+}
+
 func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 	definition := campaign.Definition{
 		Identity: "campaign-a", Lineage: 11, Command: []string{"go", "test"},

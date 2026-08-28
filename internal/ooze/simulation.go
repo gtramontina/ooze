@@ -620,7 +620,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				delivered = campaignmodule.Fact{}
 				for candidateAt, candidate := range candidates {
 					candidate = simulationCausalCampaignPayload(payload, candidate)
-					if !payload.Equal(candidate) {
+					if !payload.Equal(candidate.Canonical()) {
 						continue
 					}
 					delivered = candidate
@@ -635,12 +635,15 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			if !delivered.IsZero() {
 				delivered = simulationCausalCampaignPayload(payload, delivered)
 			}
-			if !delivered.IsZero() && !payload.Equal(delivered) {
+			if !delivered.IsZero() && !payload.Equal(delivered.Canonical()) {
 				return simulationReplayFailure(
 					trace, simulationReplayCausalityFailure,
 					"causal campaign fact diverged at record %d: got=%#v want=%#v",
 					index, delivered, payload,
 				)
+			}
+			if !delivered.IsZero() {
+				payload = delivered
 			}
 			if delivered.IsZero() {
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {

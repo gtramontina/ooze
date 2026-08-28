@@ -349,6 +349,7 @@ func (event Event) Equal(other Event) bool { return reflect.DeepEqual(event.valu
 // Canonical returns a capability-free event with logical artifact identities.
 func (event Event) Canonical() Event {
 	value := event.value
+	value.payload = Fact{payload: value.payload}.Canonical().payload
 	identity := event.previous.definition.identity
 	logicalSnapshot := snapshotIdentity("snapshot:" + string(identity))
 	switch payload := value.payload.(type) {
@@ -377,6 +378,70 @@ func (event Event) Canonical() Event {
 		value.payload = payload
 	}
 	return Event{value: value}
+}
+
+// Canonical returns the fact without process-runtime authority.
+func (fact Fact) Canonical() Fact {
+	payload := fact.payload
+	switch event := payload.(type) {
+	case campaignRegisteredEvent:
+		event.registration.token = campaignToken{}
+		payload = event
+	case admissionGrantedEvent:
+		event.grant = canonicalCampaignAdmission(event.grant)
+		payload = event
+	case admissionCancelledEvent:
+		event.request = canonicalCampaignAdmission(event.request)
+		event.result.request = canonicalCampaignAdmission(event.result.request)
+		payload = event
+	case admissionRejectedEvent:
+		event.result.request = canonicalCampaignAdmission(event.result.request)
+		payload = event
+	case startCommittedEvent:
+		event.grant = canonicalCampaignAdmission(event.grant)
+		payload = event
+	case attemptLaunchEvent:
+		event.receipt = canonicalRuntimeReceipt(event.receipt)
+		payload = event
+	case attemptTerminalEvent:
+		event.receipt = canonicalRuntimeReceipt(event.receipt)
+		payload = event
+	case confirmationBarrierBoundEvent:
+		event.result.request = canonicalCampaignAdmission(event.result.request)
+		event.result.deliveries = canonicalCampaignAdmissions(event.result.deliveries)
+		payload = event
+	case grantReturnAcknowledgedEvent:
+		event.grant = canonicalCampaignAdmission(event.grant)
+		event.result.request = canonicalCampaignAdmission(event.result.request)
+		payload = event
+	case runtimeEmergencyStartedEvent:
+		event.closure.cancelledWaiting = canonicalCampaignAdmissions(event.closure.cancelledWaiting)
+		event.closure.compensatedGrants = canonicalCampaignAdmissions(event.closure.compensatedGrants)
+		payload = event
+	case runtimeEmergencySettledEvent:
+		event.settlement.owner = campaignToken{}
+		payload = event
+	}
+	return Fact{payload: payload}
+}
+
+func canonicalCampaignAdmission(admission campaignAdmission) campaignAdmission {
+	admission.campaign = campaignToken{}
+	return admission
+}
+
+func canonicalCampaignAdmissions(admissions []campaignAdmission) []campaignAdmission {
+	result := slices.Clone(admissions)
+	for index := range result {
+		result[index] = canonicalCampaignAdmission(result[index])
+	}
+	return result
+}
+
+func canonicalRuntimeReceipt(receipt campaignRuntimeReceipt) campaignRuntimeReceipt {
+	receipt.cancelledWaiting = canonicalCampaignAdmissions(receipt.cancelledWaiting)
+	receipt.compensatedGrants = canonicalCampaignAdmissions(receipt.compensatedGrants)
+	return receipt
 }
 
 func canonicalResourceIdentity(kind campaignResourceKind, identity string, state campaignState) string {
