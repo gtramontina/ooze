@@ -9,25 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSupervisorMachinePublishesDomainEventsAndEffects(t *testing.T) {
-	registeredAt := time.Unix(100, 0)
-	fact := supervisorEvent{
-		kind: supervisorProspectiveRegistered, generation: 1, attempt: "mutant-1",
-		at: registeredAt, launchBy: registeredAt.Add(time.Second),
-		profile: AutomaticProfile, commandDeadline: time.Minute,
-	}
-	machine := NewMachine()
-
-	_, transition := machine.Apply(supervisionFactFromEvent(fact))
-
-	assert.Equal(t, supervisionAttemptRegistered, transition.Event().kind)
-	assert.Equal(t, attemptGeneration(1), transition.Event().generation)
-	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().attempt)
-	require.Len(t, transition.Effects(), 1)
-	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
-	assert.Equal(t, attemptGeneration(1), transition.Effects()[0].generation)
-}
-
 func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 	registeredAt := time.Unix(100, 0)
 	fact := supervisorEvent{
@@ -43,24 +24,6 @@ func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 
 	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().attempt)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
-}
-
-func TestSupervisorMachineCanForkWithoutSharingState(t *testing.T) {
-	registeredAt := time.Unix(100, 0)
-	fact := supervisorEvent{
-		kind: supervisorProspectiveRegistered, generation: 1, attempt: "mutant-1",
-		at: registeredAt, launchBy: registeredAt.Add(time.Second),
-		profile: AutomaticProfile, commandDeadline: time.Minute,
-	}
-	machine := NewMachine()
-
-	left, leftTransition := machine.Apply(supervisionFactFromEvent(fact))
-	right, rightTransition := machine.Apply(supervisionFactFromEvent(fact))
-
-	assert.Equal(t, left.snapshot(), right.snapshot())
-	assert.Equal(t, leftTransition.Event(), rightTransition.Event())
-	assert.Equal(t, leftTransition.Effects(), rightTransition.Effects())
-	assert.Empty(t, machine.snapshot().attempts)
 }
 
 func TestSupervisorMachineProjectionDoesNotExposeReducerState(t *testing.T) {
@@ -80,31 +43,15 @@ func TestSupervisorMachineProjectionDoesNotExposeReducerState(t *testing.T) {
 	assert.False(t, machine.Projection().Equal(projection))
 }
 
-func TestSupervisorProjectionMeasuresItsOwnFactBoundary(t *testing.T) {
-	registeredAt := time.Unix(100, 0)
-	machine, transition := NewMachine().Apply(ProspectiveRegistration(
-		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
-	))
-	launch := effectOfKind(t, transition.Effects(), supervisorLaunchNative)
-	facts, ok := machine.LaunchFacts(launch, LaunchReleasedBeforeBoundary)
-	require.True(t, ok)
-	machine, _ = machine.Apply(facts[0])
-
-	assert.Equal(t, 1, machine.Projection().BoundaryDistance(facts[0], []Effect{launch}))
-}
-
-func TestSupervisorMachineUsesCanonicalDomainVocabulary(t *testing.T) {
+func TestSupervisorMachinePublishedValuesRemainCapabilityFree(t *testing.T) {
 	registeredAt := time.Unix(100, 0)
 	fact := ProspectiveRegistration(
 		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
 	)
 
-	machine, transition := NewMachine().Apply(fact)
+	_, transition := NewMachine().Apply(fact)
 
-	assert.Equal(t, supervisionAttemptRegistered, transition.Event().kind)
 	require.Len(t, transition.Effects(), 1)
-	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
-	assert.Equal(t, machine.Projection(), transition.Projection())
 	for name, value := range map[string]any{
 		"fact": fact, "effect": transition.Effects()[0], "projection": transition.Projection(),
 	} {
@@ -144,7 +91,7 @@ func TestSupervisorMachinePreparesEmergencyFromOwnedState(t *testing.T) {
 	})
 }
 
-func TestSupervisorMachineProducesLaunchFactsFromItsOwnEffect(t *testing.T) {
+func TestSupervisorMachineLaunchFactsRetainOpaqueCompletionKind(t *testing.T) {
 	registeredAt := time.Unix(100, 0)
 	machine, transition := NewMachine().Apply(ProspectiveRegistration(
 		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
@@ -155,33 +102,24 @@ func TestSupervisorMachineProducesLaunchFactsFromItsOwnEffect(t *testing.T) {
 	tests := []struct {
 		name       string
 		outcome    LaunchOutcome
-		wantKinds  []supervisorEventKind
-		wantAt     []time.Time
+		wantFacts  int
 		wantLaunch supervisorLaunchCompletionKind
 	}{
 		{
 			name: "released before boundary", outcome: LaunchReleasedBeforeBoundary,
-			wantKinds:  []supervisorEventKind{supervisorLaunchCompleted},
-			wantAt:     []time.Time{registeredAt.Add(time.Second - time.Nanosecond)},
-			wantLaunch: supervisorLaunchReleased,
+			wantFacts: 1, wantLaunch: supervisorLaunchReleased,
 		},
 		{
 			name: "released at boundary", outcome: LaunchReleasedAtBoundary,
-			wantKinds:  []supervisorEventKind{supervisorLaunchBoundary},
-			wantAt:     []time.Time{registeredAt.Add(time.Second)},
-			wantLaunch: supervisorLaunchReleased,
+			wantFacts: 1, wantLaunch: supervisorLaunchReleased,
 		},
 		{
 			name: "released after boundary", outcome: LaunchReleasedAfterBoundary,
-			wantKinds:  []supervisorEventKind{supervisorLaunchBoundary, supervisorLaunchCompleted},
-			wantAt:     []time.Time{registeredAt.Add(time.Second), registeredAt.Add(time.Second + time.Nanosecond)},
-			wantLaunch: supervisorLaunchReleased,
+			wantFacts: 2, wantLaunch: supervisorLaunchReleased,
 		},
 		{
 			name: "proven not released", outcome: LaunchProvenNotReleased,
-			wantKinds:  []supervisorEventKind{supervisorLaunchCompleted},
-			wantAt:     []time.Time{registeredAt.Add(time.Second - time.Nanosecond)},
-			wantLaunch: supervisorLaunchProvenNotReleased,
+			wantFacts: 1, wantLaunch: supervisorLaunchProvenNotReleased,
 		},
 	}
 	for _, test := range tests {
@@ -189,11 +127,7 @@ func TestSupervisorMachineProducesLaunchFactsFromItsOwnEffect(t *testing.T) {
 			facts, ok := machine.LaunchFacts(launch, test.outcome)
 
 			require.True(t, ok)
-			require.Len(t, facts, len(test.wantKinds))
-			for index := range facts {
-				assert.Equal(t, test.wantKinds[index], facts[index].kind)
-				assert.True(t, test.wantAt[index].Equal(facts[index].at.production()))
-			}
+			require.Len(t, facts, test.wantFacts)
 			require.NotNil(t, facts[len(facts)-1].completion)
 			assert.Equal(t, test.wantLaunch, facts[len(facts)-1].completion.kind)
 		})
@@ -228,18 +162,6 @@ func TestSupervisorMachineProducesRunningFactsFromItsOwnEffects(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSupervisorMachineOwnsStopAdmission(t *testing.T) {
-	machine, _ := runningSupervisorMachine(t, AutomaticProfile)
-
-	fact, disposition := machine.StopFact(1)
-
-	assert.Equal(t, StopReady, disposition)
-	assert.Equal(t, supervisorRunningObserved, fact.kind)
-	require.NotNil(t, fact.running)
-	require.Len(t, fact.running.facts, 1)
-	assert.Equal(t, supervisorRunningStopRequested, fact.running.facts[0].kind)
 }
 
 func TestSupervisorMachineProducesCompletionFactsFromItsOwnEffect(t *testing.T) {

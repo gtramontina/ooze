@@ -162,11 +162,30 @@ func TestMachineDerivesFactsFromPublishedEffects(t *testing.T) {
 		name      string
 		outcome   supervision.LaunchOutcome
 		wantKinds []supervision.FactKind
+		wantAt    []time.Time
 	}{
-		{name: "before boundary", outcome: supervision.LaunchReleasedBeforeBoundary, wantKinds: []supervision.FactKind{supervision.LaunchCompletedFact}},
-		{name: "at boundary", outcome: supervision.LaunchReleasedAtBoundary, wantKinds: []supervision.FactKind{supervision.LaunchBoundaryFact}},
-		{name: "after boundary", outcome: supervision.LaunchReleasedAfterBoundary, wantKinds: []supervision.FactKind{supervision.LaunchBoundaryFact, supervision.LaunchCompletedFact}},
-		{name: "not released", outcome: supervision.LaunchProvenNotReleased, wantKinds: []supervision.FactKind{supervision.LaunchCompletedFact}},
+		{
+			name: "before boundary", outcome: supervision.LaunchReleasedBeforeBoundary,
+			wantKinds: []supervision.FactKind{supervision.LaunchCompletedFact},
+			wantAt:    []time.Time{registeredAt.Add(time.Second - time.Nanosecond)},
+		},
+		{
+			name: "at boundary", outcome: supervision.LaunchReleasedAtBoundary,
+			wantKinds: []supervision.FactKind{supervision.LaunchBoundaryFact},
+			wantAt:    []time.Time{registeredAt.Add(time.Second)},
+		},
+		{
+			name: "after boundary", outcome: supervision.LaunchReleasedAfterBoundary,
+			wantKinds: []supervision.FactKind{supervision.LaunchBoundaryFact, supervision.LaunchCompletedFact},
+			wantAt: []time.Time{
+				registeredAt.Add(time.Second), registeredAt.Add(time.Second + time.Nanosecond),
+			},
+		},
+		{
+			name: "not released", outcome: supervision.LaunchProvenNotReleased,
+			wantKinds: []supervision.FactKind{supervision.LaunchCompletedFact},
+			wantAt:    []time.Time{registeredAt.Add(time.Second - time.Nanosecond)},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			facts, ok := machine.LaunchFacts(launch, test.outcome)
@@ -174,6 +193,7 @@ func TestMachineDerivesFactsFromPublishedEffects(t *testing.T) {
 			require.Len(t, facts, len(test.wantKinds))
 			for index := range facts {
 				assert.Equal(t, test.wantKinds[index], facts[index].Kind())
+				assert.True(t, test.wantAt[index].Equal(facts[index].OccurredAt()))
 			}
 		})
 	}
@@ -191,6 +211,19 @@ func TestMachineDerivesFactsFromPublishedEffects(t *testing.T) {
 	stop, disposition := machine.StopFact(1)
 	assert.Equal(t, supervision.StopReady, disposition)
 	assert.Equal(t, supervision.RunningObservedFact, stop.Kind())
+}
+
+func TestMachineProjectionMeasuresItsFactBoundary(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	machine, transition := supervision.NewMachine().Apply(supervision.ProspectiveRegistration(
+		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), supervision.AutomaticProfile, time.Minute,
+	))
+	launch := supervisionEffect(t, transition.Effects(), supervision.LaunchNativeEffect)
+	facts, ok := machine.LaunchFacts(launch, supervision.LaunchReleasedBeforeBoundary)
+	require.True(t, ok)
+	machine, _ = machine.Apply(facts[0])
+
+	assert.Equal(t, 1, machine.Projection().BoundaryDistance(facts[0], []supervision.Effect{launch}))
 }
 
 func supervisionEffect(
