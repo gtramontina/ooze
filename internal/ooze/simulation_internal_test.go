@@ -2402,22 +2402,12 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 	assert.EqualValues(t, 10, moves[0].action.Token(), "enabled runtime custody actions=%#v, want token 10 only", moves)
 }
 
-func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing.T) {
-	release := simulationEffect(t, simulationFatalTrace(t), campaignEffectEstablishSnapshot)
-	engine := simulationEngine{pending: []simulationEngineMove{
-		{
-			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-			action: supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, 2, 10),
-		},
-		{
-			source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(release.ID())},
-			effect: release,
-		},
-	}}
-
-	engine.retireCampaignTerminals()
-	require.Len(t, engine.pending, 1, "pending work after emergency terminal retirement=%#v", engine.pending)
-	assert.EqualValues(t, release.ID(), engine.pending[0].effect.ID(), "pending work after emergency terminal retirement=%#v", engine.pending)
+func TestSimulationEmergencySettlementRetainsLateTerminalNeededForCampaignCleanup(t *testing.T) {
+	definition, choices := simulationFuzzInput([]byte("22000000110000010AX12"))
+	result := Explore(definition, choices)
+	require.NoErrorf(t, result.failure, "phase=%s obligations=%v failed=%t",
+		result.world.campaign.Projection().PhaseName(), result.world.campaign.Projection().Obligations(),
+		result.world.campaign.Failed())
 }
 
 func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {

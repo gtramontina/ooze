@@ -502,20 +502,11 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		}
 		engine.enqueueSupervisorFact(sequence, fact)
 	case supervision.DeliverTerminalEffect:
-		launch := engine.launches[action.Generation()]
-		receipt := engine.receipts[action.Generation()]
-		terminal, ready := action.Terminal("")
+		event, ready := engine.campaignTerminalFact(action)
 		if !ready {
 			return fmt.Errorf("simulation terminal delivery is not enabled")
 		}
-		deadline := time.Duration(0)
-		if launch.AttemptRole() == campaignAttemptBaseline {
-			deadline = simulationBaselineMutationDeadline(
-				simulationTerminalExecutionData(terminal).CommandDuration, engine.definition.campaign.Peers,
-				engine.definition.campaign.Profile,
-			)
-		}
-		event := campaignmodule.AttemptTerminal(launch, terminal, receipt, deadline)
+		launch := engine.launches[action.Generation()]
 		if launch.CompletesConfirmationQueue() {
 			processed := engine.applyRuntime(processruntime.CompleteConfirmationQueueCut(engine.registration.Campaign())).Queue()
 			completed := runtimeQueueResult(processed)
@@ -539,6 +530,23 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	}
 
 	return nil
+}
+
+func (engine simulationEngine) campaignTerminalFact(action supervision.Effect) (campaignmodule.Fact, bool) {
+	launch, launched := engine.launches[action.Generation()]
+	receipt, observed := engine.receipts[action.Generation()]
+	terminal, ready := action.Terminal("")
+	if !launched || !observed || !ready {
+		return campaignmodule.Fact{}, false
+	}
+	deadline := time.Duration(0)
+	if launch.AttemptRole() == campaignAttemptBaseline {
+		deadline = simulationBaselineMutationDeadline(
+			simulationTerminalExecutionData(terminal).CommandDuration, engine.definition.campaign.Peers,
+			engine.definition.campaign.Profile,
+		)
+	}
+	return campaignmodule.AttemptTerminal(launch, terminal, receipt, deadline), true
 }
 
 func (engine *simulationEngine) applyCampaign(
@@ -568,6 +576,10 @@ func (engine *simulationEngine) applyCampaign(
 func (engine *simulationEngine) retireSupersededAdmissionWork() {
 	for index := 0; index < len(engine.pending); {
 		move := engine.pending[index]
+		if !move.delivery.IsZero() && !simulationAdmissionDelivery(move.delivery.Kind()) {
+			index++
+			continue
+		}
 		if move.delivery.IsZero() && move.effect.Kind() != campaignEffectCancelAdmission &&
 			move.effect.Kind() != campaignEffectRequestStartCommitment {
 			index++
@@ -582,6 +594,17 @@ func (engine *simulationEngine) retireSupersededAdmissionWork() {
 	}
 }
 
+func simulationAdmissionDelivery(kind campaignmodule.FactKind) bool {
+	switch kind {
+	case campaignmodule.AdmissionGrantedFact, campaignmodule.AdmissionCancelledFact,
+		campaignmodule.AdmissionRejectedFact, campaignmodule.StartCommittedFact,
+		campaignmodule.GrantReturnAcknowledgedFact:
+		return true
+	default:
+		return false
+	}
+}
+
 func (engine *simulationEngine) retireCampaignTerminals() {
 	for index := 0; index < len(engine.pending); {
 		move := engine.pending[index]
@@ -590,8 +613,8 @@ func (engine *simulationEngine) retireCampaignTerminals() {
 			index++
 			continue
 		}
-		receipt, observed := engine.receipts[move.action.Generation()]
-		if observed && !receipt.RuntimeClosureInProgress() {
+		fact, ready := engine.campaignTerminalFact(move.action)
+		if !ready || engine.campaign.Accepts(fact) {
 			index++
 			continue
 		}
@@ -774,7 +797,8 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 			continue
 		}
 		if move.delivery.Kind() == campaignmodule.AttemptTerminalFact &&
-			move.delivery.RuntimeClosureInProgress() && engine.campaignEmergencyRequested() {
+			move.delivery.RuntimeClosureInProgress() && engine.campaignEmergencyRequested() &&
+			(engine.emergency.Epoch() == 0 || engine.hasPendingEmergencySettlementDelivery()) {
 			continue
 		}
 		if move.delivery.ProvenNotReleased() && move.delivery.RuntimeClosureInProgress() &&
@@ -870,6 +894,13 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 	}
 
 	return moves
+}
+
+func (engine simulationEngine) hasPendingEmergencySettlementDelivery() bool {
+	return slices.ContainsFunc(engine.pending, func(move simulationEngineMove) bool {
+		return move.source.kind == supervisionActionSource &&
+			move.action.Kind() == supervision.DeliverEmergencySettlementEffect
+	})
 }
 
 func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
