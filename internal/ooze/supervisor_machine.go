@@ -48,6 +48,41 @@ func (machine *supervisorMachine) Projection() supervisionProjection {
 	return supervisionProjectionFromState(machine.state)
 }
 
+func (machine *supervisorMachine) PrepareEmergency(at, drainBy time.Time) (supervisionFact, bool) {
+	state := machine.state
+	for _, attempt := range state.attempts {
+		if attempt.lastEventAt.After(at) {
+			at = attempt.lastEventAt
+		}
+	}
+	for _, attempt := range state.attempts {
+		if attempt.phase == supervisorLaunchEstablishing && at.After(attempt.launchBy) {
+			return supervisionFact{}, false
+		}
+	}
+	snapshots := make([]supervisorEmergencySnapshot, 0, len(state.attempts))
+	for _, attempt := range state.attempts {
+		if attempt.phase == supervisorLaunchClosedNotReleased {
+			continue
+		}
+		snapshot := supervisorEmergencySnapshot{generation: attempt.generation}
+		if attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched {
+			snapshot.running = &supervisorRunningBundle{
+				generation: attempt.generation, waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
+			}
+			if attempt.phase == supervisorRunning && !at.Before(attempt.deadlineAt) {
+				snapshot.running.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt}
+				snapshot.running.drainBy = attempt.deadlineAt.Add(5 * time.Second)
+			}
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorEmergencyStarted, at: at, drainBy: drainBy, emergencySnapshots: snapshots,
+	}), true
+}
+
 func (transition supervisorTransition) Event() supervisorDomainEvent {
 	return supervisorDomainEvent{fact: cloneSupervisionFact(transition.event.fact)}
 }

@@ -99,3 +99,28 @@ func TestSupervisorMachineUsesCanonicalDomainVocabulary(t *testing.T) {
 		})
 	}
 }
+
+func TestSupervisorMachinePreparesEmergencyFromOwnedState(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	machine, _ := newSupervisorMachine().Apply(supervisionProspectiveRegistration(
+		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
+	))
+
+	t.Run("before the launch boundary", func(t *testing.T) {
+		fact, ready := machine.PrepareEmergency(registeredAt, registeredAt.Add(5*time.Second))
+
+		require.True(t, ready)
+		assert.Equal(t, supervisorEmergencyStarted, fact.kind)
+		assert.Equal(t, simulationTraceInstant(registeredAt), fact.at)
+		require.Len(t, fact.emergencySnapshots, 1)
+		assert.Equal(t, attemptGeneration(1), fact.emergencySnapshots[0].generation)
+	})
+
+	t.Run("after an unresolved launch boundary", func(t *testing.T) {
+		_, ready := machine.PrepareEmergency(
+			registeredAt.Add(time.Second+time.Nanosecond), registeredAt.Add(5*time.Second),
+		)
+
+		assert.False(t, ready)
+	})
+}

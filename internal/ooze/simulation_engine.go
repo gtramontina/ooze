@@ -105,6 +105,7 @@ func simulationExploreEngine(
 	campaign, effects := beginCampaign(definition.campaign)
 	engine := simulationEngine{
 		definition: definition, campaign: campaign, runtime: processruntime.NewReplay(definition.capacity),
+		machine:  newSupervisorMachine(),
 		trace:    simulationTrace{definition: definition},
 		launches: make(map[attemptGeneration]campaignEffect),
 		receipts: make(map[attemptGeneration]observationResult),
@@ -755,9 +756,11 @@ func (engine *simulationEngine) applySupervisor(
 	event supervisorEvent,
 ) error {
 	if event.kind == supervisorEmergencyStarted && source.kind == simulationOwnerDeliverySource {
-		event.at = simulationEmergencyAt(engine.supervisor, event.at)
-		event.drainBy = event.at.Add(5 * time.Second)
-		event.emergencySnapshots = simulationEmergencySnapshots(engine.supervisor, event.at)
+		fact, ready := engine.machine.PrepareEmergency(event.at, event.at.Add(5*time.Second))
+		if !ready {
+			return fmt.Errorf("simulation emergency fact is not enabled")
+		}
+		event = fact.production()
 	}
 	if engine.machine == nil {
 		engine.machine = newSupervisorMachineFrom(engine.supervisor)
@@ -938,7 +941,7 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 		if move.source.kind == simulationOwnerDeliverySource && move.supervisorDelivery != nil &&
 			move.supervisorDelivery.kind == supervisorEmergencyStarted &&
 			(!engine.campaignEmergencyRequested() ||
-				!simulationEmergencyCutReady(engine.supervisor, move.supervisorDelivery.at) ||
+				!engine.supervisorEmergencyReady(move.supervisorDelivery.at) ||
 				!engine.emergencyCampaignCutReady()) {
 			continue
 		}
@@ -1021,6 +1024,16 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 	}
 
 	return moves
+}
+
+func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
+	machine := engine.machine
+	if machine == nil {
+		machine = newSupervisorMachineFrom(engine.supervisor)
+	}
+	_, ready := machine.PrepareEmergency(at, at.Add(5*time.Second))
+
+	return ready
 }
 
 func (engine simulationEngine) supervisorAcceptsStop(generation attemptGeneration) bool {
@@ -1205,27 +1218,6 @@ func simulationCampaignAttemptMutant(state campaignState, identity attemptIdenti
 	panic("simulation campaign attempt is absent")
 }
 
-func simulationEmergencyAt(state supervisorState, at time.Time) time.Time {
-	for _, attempt := range state.attempts {
-		if attempt.lastEventAt.After(at) {
-			at = attempt.lastEventAt
-		}
-	}
-
-	return at
-}
-
-func simulationEmergencyCutReady(state supervisorState, at time.Time) bool {
-	at = simulationEmergencyAt(state, at)
-	for _, attempt := range state.attempts {
-		if attempt.phase == supervisorLaunchEstablishing && at.After(attempt.launchBy) {
-			return false
-		}
-	}
-
-	return true
-}
-
 func (engine simulationEngine) emergencyCampaignCutReady() bool {
 	for _, move := range engine.pending {
 		if move.source.kind == simulationCampaignEffectSource &&
@@ -1305,28 +1297,4 @@ func (engine simulationEngine) campaignEmergencyRequested() bool {
 	_, requested := engine.campaign.runtimeEmergencySettlementRequest()
 
 	return requested
-}
-
-func simulationEmergencySnapshots(state supervisorState, at time.Time) []supervisorEmergencySnapshot {
-	snapshots := make([]supervisorEmergencySnapshot, 0, len(state.attempts))
-	for _, attempt := range state.attempts {
-		if attempt.phase == supervisorLaunchClosedNotReleased {
-			continue
-		}
-		snapshot := supervisorEmergencySnapshot{generation: attempt.generation}
-		if attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched {
-			snapshot.running = &supervisorRunningBundle{
-				generation: attempt.generation, waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
-			}
-			if attempt.phase == supervisorRunning && !at.Before(attempt.deadlineAt) {
-				snapshot.running.exitRecheck = supervisorExitRecheck{
-					performed: true, at: attempt.deadlineAt,
-				}
-				snapshot.running.drainBy = attempt.deadlineAt.Add(5 * time.Second)
-			}
-		}
-		snapshots = append(snapshots, snapshot)
-	}
-
-	return snapshots
 }
