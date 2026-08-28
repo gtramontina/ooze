@@ -17,7 +17,7 @@ func TestSupervisorMachinePublishesAcceptedFactsAndEffects(t *testing.T) {
 	}
 	machine := newSupervisorMachine()
 
-	transition := machine.Apply(fact)
+	_, transition := machine.Apply(fact)
 
 	assert.Equal(t, fact, transition.Event().Fact())
 	require.Len(t, transition.Effects(), 1)
@@ -33,7 +33,7 @@ func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 		profile: AutomaticProfile, commandDeadline: time.Minute,
 	}
 	machine := newSupervisorMachine()
-	transition := machine.Apply(fact)
+	_, transition := machine.Apply(fact)
 
 	event := transition.Event()
 	effects := transition.Effects()
@@ -43,4 +43,22 @@ func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 
 	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().Fact().attempt)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
+}
+
+func TestSupervisorMachineCanForkWithoutSharingState(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	fact := supervisorEvent{
+		kind: supervisorProspectiveRegistered, generation: 1, attempt: "mutant-1",
+		at: registeredAt, launchBy: registeredAt.Add(time.Second),
+		profile: AutomaticProfile, commandDeadline: time.Minute,
+	}
+	machine := newSupervisorMachine()
+
+	left, leftTransition := machine.Apply(fact)
+	right, rightTransition := machine.Apply(fact)
+
+	assert.Equal(t, left.snapshot(), right.snapshot())
+	assert.Equal(t, leftTransition.Event().Fact(), rightTransition.Event().Fact())
+	assert.Equal(t, leftTransition.Effects(), rightTransition.Effects())
+	assert.Empty(t, machine.snapshot().attempts)
 }

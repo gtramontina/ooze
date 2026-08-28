@@ -21,12 +21,11 @@ func newSupervisorMachineFrom(state supervisorState) *supervisorMachine {
 	return &supervisorMachine{state: cloneSupervisorState(state)}
 }
 
-func (machine *supervisorMachine) Apply(fact supervisorEvent) supervisorTransition {
+func (machine *supervisorMachine) Apply(fact supervisorEvent) (*supervisorMachine, supervisorTransition) {
 	fact = cloneSupervisorEvent(fact)
 	next, effects := reduceSupervisor(machine.state, fact)
-	machine.state = next
 
-	return supervisorTransition{
+	return newSupervisorMachineFrom(next), supervisorTransition{
 		event:   supervisorDomainEvent{fact: fact},
 		effects: cloneSupervisorActions(effects),
 	}

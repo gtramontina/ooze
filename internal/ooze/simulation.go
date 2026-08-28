@@ -722,7 +722,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				}
 				effects = remaining
 			}
-			transition := supervisorMachine.Apply(event)
+			var transition supervisorTransition
+			supervisorMachine, transition = supervisorMachine.Apply(event)
 			actions := transition.Effects()
 			supervisor = supervisorMachine.snapshot()
 			for _, action := range actions {
@@ -917,7 +918,7 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 		world.runtime = simulationTraceRuntimeState(state)
 	case simulationSupervisorAuthority:
 		machine := newSupervisorMachineFrom(world.supervisor)
-		transition := machine.Apply(record.supervisorEvent.production())
+		machine, transition := machine.Apply(record.supervisorEvent.production())
 		actions := transition.Effects()
 		state := machine.snapshot()
 		if !reflect.DeepEqual(simulationTraceSupervisorState(state), record.supervisorState) ||
@@ -1083,7 +1084,7 @@ func simulationAdvanceSupervisorGuarded(
 	}()
 
 	machine := newSupervisorMachineFrom(state)
-	_ = machine.Apply(event)
+	_, _ = machine.Apply(event)
 }
 
 func simulationSettleInvariantCleanup(runtime *processruntime.Replay, violation runtimeInvariantViolation) {
