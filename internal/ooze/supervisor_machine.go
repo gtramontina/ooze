@@ -63,6 +63,14 @@ const (
 	supervisionStopResolved
 )
 
+type supervisionCompletionPosition uint8
+
+const (
+	supervisionCompletionBeforeBoundary supervisionCompletionPosition = iota
+	supervisionCompletionAtBoundary
+	supervisionCompletionAfterBoundary
+)
+
 func newSupervisorMachine() *supervisorMachine {
 	return &supervisorMachine{}
 }
@@ -248,6 +256,78 @@ func (machine *supervisorMachine) StopFact(generation attemptGeneration) (
 		return supervisionFact{}, supervisionStopResolved
 	default:
 		return supervisionFact{}, supervisionStopNotReady
+	}
+}
+
+func (machine *supervisorMachine) CompletionFact(
+	effect supervisionEffect,
+	position supervisionCompletionPosition,
+) (supervisionFact, bool) {
+	if machine == nil {
+		return supervisionFact{}, false
+	}
+	index := machine.state.attemptIndex(effect.generation)
+	if index < 0 {
+		return supervisionFact{}, false
+	}
+	attempt := machine.state.attempts[index]
+	pending := supervisorPendingAction{kind: effect.kind, token: effect.token}
+	normalize := func(at time.Time) time.Time {
+		if attempt.lastEventAt.After(at) {
+			return attempt.lastEventAt
+		}
+
+		return at
+	}
+	switch effect.kind {
+	case supervisorForceOwned:
+		at := normalize(effect.at.production().Add(time.Nanosecond))
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorDrainCompleted, generation: effect.generation, at: at,
+			drain: &supervisorDrainCompletion{
+				generation: effect.generation, action: pending, at: at, kind: supervisorDrainForceCompleted,
+			},
+		}), true
+	case supervisorObserveEmptiness:
+		drainBy := effect.drainBy.production()
+		at := drainBy.Add(-time.Nanosecond)
+		kind := supervisorDrainObservedEmpty
+		if position == supervisionCompletionAtBoundary || position == supervisionCompletionAfterBoundary {
+			at = drainBy
+			kind = supervisorDrainObservedResidual
+		}
+		if position == supervisionCompletionAfterBoundary {
+			at = drainBy.Add(time.Nanosecond)
+		}
+		at = normalize(at)
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorDrainCompleted, generation: effect.generation, at: at,
+			drain: &supervisorDrainCompletion{
+				generation: effect.generation, action: pending, at: at, kind: kind,
+			},
+		}), true
+	case supervisorCaptureOutput:
+		at := normalize(effect.at.production())
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorOutputCompleted, generation: effect.generation, at: at,
+			output: &supervisorOutputCompletion{
+				generation: effect.generation, action: pending, at: at, ref: 1,
+			},
+		}), true
+	case supervisorSealStopAdmission:
+		at := normalize(effect.at.production())
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorStopAdmissionSealed, generation: effect.generation, at: at,
+			seal: &supervisorStopSealCompletion{generation: effect.generation, action: pending, at: at},
+		}), true
+	case supervisorReleaseDomain:
+		at := normalize(effect.at.production())
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorReleaseCompleted, generation: effect.generation, at: at,
+			release: &supervisorReleaseCompletion{generation: effect.generation, action: pending, at: at},
+		}), true
+	default:
+		return supervisionFact{}, false
 	}
 }
 

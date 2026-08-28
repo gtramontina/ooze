@@ -56,11 +56,11 @@ const (
 	simulationRunningAfterDeadline = supervisionRunningAfterDeadline
 )
 
-type simulationDrainVariant uint8
+type simulationDrainVariant = supervisionCompletionPosition
 
 const (
-	simulationDrainAtBoundary simulationDrainVariant = iota + 1
-	simulationDrainAfterBoundary
+	simulationDrainAtBoundary    = supervisionCompletionAtBoundary
+	simulationDrainAfterBoundary = supervisionCompletionAfterBoundary
 )
 
 type simulationEngine struct {
@@ -480,64 +480,14 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		return nil
 	case supervisorWaitRoot, supervisorSampleRunning:
 		return engine.applyHealthyRunning(move)
-	case supervisorForceOwned:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production().Add(time.Nanosecond))
-		completion := supervisorDrainCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token},
-			at:         at, kind: supervisorDrainForceCompleted,
+	case supervisorForceOwned, supervisorObserveEmptiness, supervisorCaptureOutput,
+		supervisorSealStopAdmission, supervisorReleaseDomain:
+		fact, ready := engine.machine.CompletionFact(action, move.variant.drain)
+		if !ready {
+			return fmt.Errorf("simulation completion is not enabled for action %d", action.kind)
 		}
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
-		})
-	case supervisorObserveEmptiness:
-		drainBy := action.drainBy.production()
-		at := drainBy.Add(-time.Nanosecond)
-		kind := supervisorDrainObservedEmpty
-		if move.variant.drain == simulationDrainAtBoundary ||
-			move.variant.drain == simulationDrainAfterBoundary {
-			at = drainBy
-			kind = supervisorDrainObservedResidual
-		}
-		if move.variant.drain == simulationDrainAfterBoundary {
-			at = drainBy.Add(time.Nanosecond)
-		}
-		at = simulationCompletionAt(engine.machine.Projection(), action.generation, at)
-		completion := supervisorDrainCompletion{
-			generation: action.generation,
-			action:     supervisorPendingAction{kind: action.kind, token: action.token},
-			at:         at, kind: kind,
-		}
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
-		})
-	case supervisorCaptureOutput:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production())
-		completion := supervisorOutputCompletion{
-			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
-			at: at, ref: 1,
-		}
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorOutputCompleted, generation: action.generation, at: at, output: &completion,
-		})
-	case supervisorSealStopAdmission:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production())
-		completion := supervisorStopSealCompletion{
-			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
-			at: at,
-		}
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorStopAdmissionSealed, generation: action.generation, at: at, seal: &completion,
-		})
-	case supervisorReleaseDomain:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production())
-		completion := supervisorReleaseCompletion{
-			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
-			at: at,
-		}
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorReleaseCompleted, generation: action.generation, at: at, release: &completion,
-		})
+
+		return engine.applySupervisorFact(move.source, fact)
 	case supervisorTransferResidualCustody:
 		wasOpen := engine.runtime.Projection().Open()
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processruntime.DrainUnconfirmed())).Receipt()
@@ -1113,41 +1063,6 @@ func (engine simulationEngine) liveSources() []simulationCausalSource {
 		sources[index] = move.source
 	}
 	return sources
-}
-
-func supervisionAttempt(state supervisionProjection, generation attemptGeneration) supervisionAttemptState {
-	attempt, found := supervisionAttemptIfPresent(state, generation)
-	if found {
-		return attempt
-	}
-	panic("simulation supervisor attempt is absent")
-}
-
-func supervisionAttemptIfPresent(
-	state supervisionProjection,
-	generation attemptGeneration,
-) (supervisionAttemptState, bool) {
-	for _, attempt := range state.attempts {
-		if attempt.generation == generation {
-			return attempt, true
-		}
-	}
-
-	return supervisionAttemptState{}, false
-}
-
-func simulationCompletionAt(
-	state supervisionProjection,
-	generation attemptGeneration,
-	at time.Time,
-) time.Time {
-	attempt := supervisionAttempt(state, generation)
-	lastEventAt := attempt.lastEventAt.production()
-	if lastEventAt.After(at) {
-		return lastEventAt
-	}
-
-	return at
 }
 
 func simulationCampaignAttemptMutant(state campaignState, identity attemptIdentity) mutantIdentity {

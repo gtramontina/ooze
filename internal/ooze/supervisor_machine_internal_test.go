@@ -222,6 +222,24 @@ func TestSupervisorMachineOwnsStopAdmission(t *testing.T) {
 	assert.Equal(t, supervisorRunningStopRequested, fact.running.facts[0].kind)
 }
 
+func TestSupervisorMachineProducesCompletionFactsFromItsOwnEffect(t *testing.T) {
+	machine, effects := runningSupervisorMachine(t, AutomaticProfile)
+	wait := effectOfKind(t, effects, supervisorWaitRoot)
+	sample := effectOfKind(t, effects, supervisorSampleRunning)
+	running, ok := machine.RunningFact(wait, sample, supervisionRunningFailed)
+	require.True(t, ok)
+	machine, transition := machine.Apply(running)
+	observe := effectOfKind(t, transition.Effects(), supervisorObserveEmptiness)
+
+	fact, ok := machine.CompletionFact(observe, supervisionCompletionBeforeBoundary)
+
+	require.True(t, ok)
+	assert.Equal(t, supervisorDrainCompleted, fact.kind)
+	require.NotNil(t, fact.drain)
+	assert.Equal(t, supervisorDrainObservedEmpty, fact.drain.kind)
+	assert.Equal(t, observe.token, fact.drain.action.token)
+}
+
 func runningSupervisorMachine(t *testing.T, profile Profile) (*supervisorMachine, []supervisionEffect) {
 	t.Helper()
 	registeredAt := time.Unix(100, 0)
