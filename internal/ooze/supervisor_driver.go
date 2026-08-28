@@ -151,6 +151,11 @@ func (driver *supervisorDriver) reserveOwnerCut() supervisionOwnerCutReservation
 	return supervisionOwnerCutReservation(sequence.Add(1))
 }
 
+func (driver *supervisorDriver) completeOwnerEffect(action supervisorAction) {
+	defer func() { _ = recover() }()
+	driver.ownerObserver().Complete(supervisionEffectFromAction(action))
+}
+
 func newDrivenSupervisorForTest(
 	installStart func(attemptIdentity, *processruntime.StartCell) processruntime.PreparedStart,
 	driver *supervisorDriver,
@@ -382,7 +387,7 @@ func (driver *supervisorDriver) requireLaunchWake(generation attemptGeneration) 
 }
 
 func (driver *supervisorDriver) executeLaunch(action supervisorAction) {
-	defer driver.ownerObserver().Complete(supervisionEffectFromAction(action))
+	defer driver.completeOwnerEffect(action)
 	event := driver.execute(action)
 	if event == nil || event.completion == nil {
 		invariant(supervisorDriverOperation, "native launch returned no completion")
@@ -535,7 +540,7 @@ func (driver *supervisorDriver) run(action supervisorAction) {
 	case supervisorLaunchNative, supervisorWaitRoot, supervisorSampleRunning,
 		supervisorDeliverTerminal, supervisorDeliverEmergencySettlement:
 	default:
-		defer driver.ownerObserver().Complete(supervisionEffectFromAction(action))
+		defer driver.completeOwnerEffect(action)
 	}
 	switch action.kind {
 	case supervisorRevokeLaunchRelease:
@@ -717,9 +722,9 @@ func (driver *supervisorDriver) monitor(
 	sampleAction supervisorAction,
 	deadlineAt time.Time,
 ) {
-	defer driver.ownerObserver().Complete(supervisionEffectFromAction(waitAction))
+	defer driver.completeOwnerEffect(waitAction)
 	if sampleAction.token != 0 {
-		defer driver.ownerObserver().Complete(supervisionEffectFromAction(sampleAction))
+		defer driver.completeOwnerEffect(sampleAction)
 	}
 	if driver.recheckRoot == nil {
 		driver.executeAction(waitAction)

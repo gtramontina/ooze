@@ -25,6 +25,80 @@ type supervisionOwnerCut struct {
 	effects     []supervisionEffect
 }
 
+type supervisionRegistration struct {
+	generation      attemptGeneration
+	attempt         attemptIdentity
+	profile         Profile
+	commandDeadline time.Duration
+}
+
+func (fact supervisionFact) Registration() (supervisionRegistration, bool) {
+	if fact.kind != supervisorProspectiveRegistered {
+		return supervisionRegistration{}, false
+	}
+
+	return supervisionRegistration{
+		generation: fact.generation, attempt: fact.attempt, profile: fact.profile,
+		commandDeadline: fact.commandDeadline.production(),
+	}, true
+}
+
+func (fact supervisionFact) StopGeneration() (attemptGeneration, bool) {
+	if fact.kind != supervisorRunningObserved || fact.running == nil {
+		return 0, false
+	}
+	for _, running := range fact.running.facts {
+		if running.kind == supervisorRunningStopRequested {
+			return fact.generation, true
+		}
+	}
+
+	return 0, false
+}
+
+func (fact supervisionFact) CausalEffect() (supervisorActionToken, bool) {
+	var token supervisorActionToken
+	switch fact.kind {
+	case supervisorLaunchCompleted, supervisorLaunchBoundary:
+		if fact.completion != nil {
+			token = fact.completion.action
+		}
+	case supervisorRunningObserved:
+		if fact.running != nil {
+			token = fact.running.waitAction
+			if token == 0 {
+				token = fact.running.sampleAction
+			}
+		}
+	case supervisorDrainCompleted:
+		if fact.drain != nil {
+			token = fact.drain.action.token
+		}
+	case supervisorOutputCompleted:
+		if fact.output != nil {
+			token = fact.output.action.token
+		}
+	case supervisorStopAdmissionSealed:
+		if fact.seal != nil {
+			token = fact.seal.action.token
+		}
+	case supervisorReleaseCompleted:
+		if fact.release != nil {
+			token = fact.release.action.token
+		}
+	case supervisorRuntimeCompleted:
+		if fact.runtime != nil {
+			token = fact.runtime.action.token
+		}
+	case supervisorEmergencySettlementCompleted:
+		if fact.emergencySettlement != nil {
+			token = fact.emergencySettlement.action.token
+		}
+	}
+
+	return token, token != 0
+}
+
 type supervisionOwnerCutObserver interface {
 	Enter() func()
 	Publish(supervisionOwnerCutReservation, supervisionFact, supervisorDomainEvent, supervisionProjection, []supervisionEffect)

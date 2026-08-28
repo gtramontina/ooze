@@ -704,11 +704,10 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			effects = append(effects, emitted...)
 		case supervisionAuthority:
 			fact := record.supervisorEvent
-			event := fact.production()
-			if record.supervisorEvent.kind == supervisorProspectiveRegistered {
+			if registration, registered := fact.Registration(); registered {
 				launchEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
 					return effect.kind == campaignEffectLaunchAttempt &&
-						supervisionRegistrationMatches(effect, event)
+						supervisionRegistrationMatches(effect, registration)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -716,15 +715,12 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"supervisor launch is not enabled at record %d", index,
 					)
 				}
-				activeLaunches[event.generation] = launchEffect
+				activeLaunches[registration.generation] = launchEffect
 				effects = remaining
 			}
-			if record.supervisorEvent.kind == supervisorRunningObserved && event.running != nil &&
-				slices.ContainsFunc(event.running.facts, func(fact supervisorRunningFact) bool {
-					return fact.kind == supervisorRunningStopRequested
-				}) {
+			if generation, stopped := fact.StopGeneration(); stopped {
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectStopAttempt && effect.generation == event.generation
+					return effect.kind == campaignEffectStopAttempt && effect.generation == generation
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -1653,9 +1649,9 @@ func simulationFailureKey(authority simulationAuthority, violation runtimeInvari
 	}
 }
 
-func supervisionRegistrationMatches(effect campaignEffect, event supervisorEvent) bool {
-	return event.generation == effect.generation && event.attempt == effect.attempt &&
-		event.profile == effect.spec.Profile && event.commandDeadline == effect.spec.Deadline
+func supervisionRegistrationMatches(effect campaignEffect, registration supervisionRegistration) bool {
+	return registration.generation == effect.generation && registration.attempt == effect.attempt &&
+		registration.profile == effect.spec.Profile && registration.commandDeadline == effect.spec.Deadline
 }
 
 func simulationEffectEnablesExternalFact(effect campaignEffect, payload campaignEventPayload) bool {

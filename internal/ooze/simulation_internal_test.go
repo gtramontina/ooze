@@ -1618,7 +1618,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 	actions := driver.reduce(event)
 	for _, action := range actions {
-		recorder.recordSupervisorAction(action)
+		recorder.recordSupervisorEffect(supervisionEffectFromAction(action))
 	}
 
 	trace, projection := recorder.quiescent(runner, shell, driver)
@@ -1743,14 +1743,14 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 	runtime, applied = runtime.Apply(processruntime.CommitStartCut(grant))
 	generation := applied.Start().Generation()
 	publish := supervisorAction{kind: supervisorPublishOwned, token: 11, generation: generation}
-	recorder.recordSupervisorActions([]supervisorAction{publish})
+	recorder.recordSupervisorEffects(supervisionEffectsFromActions([]supervisorAction{publish}))
 	launchReservation := recorder.reserve(simulationRuntimeAuthority)
 	runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Owned()))
 	recorder.recordRuntime(launchReservation, simulationRecord{runtimeCut: applied.RecordedCut()}, runtime)
-	recorder.recordSupervisorAction(publish)
+	recorder.recordSupervisorEffect(supervisionEffectFromAction(publish))
 
 	settle := supervisorAction{kind: supervisorSettleRuntime, token: 12, generation: generation}
-	recorder.recordSupervisorActions([]supervisorAction{settle})
+	recorder.recordSupervisorEffects(supervisionEffectsFromActions([]supervisorAction{settle}))
 	terminalReservation := recorder.reserve(simulationRuntimeAuthority)
 	runtime, applied = runtime.Apply(processruntime.ObserveAttemptCut(generation, processruntime.Settled(processruntime.AutomaticProfile, 0)))
 	recorder.recordRuntime(terminalReservation, simulationRecord{runtimeCut: applied.RecordedCut()}, runtime)
@@ -1761,9 +1761,9 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 		},
 		kind: supervisorRuntimeAcknowledged,
 	}
-	terminalSource := recorder.supervisorSource(supervisorEvent{
+	terminalSource := recorder.supervisorSource(supervisionFactFromEvent(supervisorEvent{
 		kind: supervisorRuntimeCompleted, generation: generation, runtime: &receipt,
-	})
+	}))
 	assert.Equal(t, simulationOwnerDeliverySource, terminalSource.kind, "runtime receipt source=%#v", terminalSource)
 	assert.Equal(t, terminalReservation.sequence, terminalSource.identity, "runtime receipt source=%#v", terminalSource)
 
@@ -1782,7 +1782,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
 	driver := &supervisorDriver{observer: recorder, ownerSequence: &recorder.next}
 	action := supervisorAction{kind: supervisorLaunchNative, token: 71, generation: 9}
-	recorder.recordSupervisorActions([]supervisorAction{action})
+	recorder.recordSupervisorEffects(supervisionEffectsFromActions([]supervisorAction{action}))
 
 	started := make(chan struct{})
 	completed := make(chan struct{})
