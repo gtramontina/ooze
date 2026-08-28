@@ -19,8 +19,7 @@ func TestSupervisorMachinePublishesAcceptedFactsAndEffects(t *testing.T) {
 
 	transition := machine.Apply(fact)
 
-	require.Len(t, transition.Events(), 1)
-	assert.Equal(t, fact, transition.Events()[0].Fact())
+	assert.Equal(t, fact, transition.Event().Fact())
 	require.Len(t, transition.Effects(), 1)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
 	assert.Equal(t, attemptGeneration(1), transition.Effects()[0].generation)
@@ -36,12 +35,12 @@ func TestSupervisorMachineTransitionIsImmutable(t *testing.T) {
 	machine := newSupervisorMachine()
 	transition := machine.Apply(fact)
 
-	events := transition.Events()
+	event := transition.Event()
 	effects := transition.Effects()
-	corrupted := events[0].Fact()
+	corrupted := event.Fact()
 	corrupted.attempt = "corrupted"
 	effects[0].kind = supervisorDeliverTerminal
 
-	assert.Equal(t, attemptIdentity("mutant-1"), transition.Events()[0].Fact().attempt)
+	assert.Equal(t, attemptIdentity("mutant-1"), transition.Event().Fact().attempt)
 	assert.Equal(t, supervisorLaunchNative, transition.Effects()[0].kind)
 }

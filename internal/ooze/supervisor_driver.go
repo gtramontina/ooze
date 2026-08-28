@@ -456,13 +456,10 @@ func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisor
 	}
 	reservation := driver.recorder.reserve(simulationSupervisorAuthority)
 	transition := driver.machine.Apply(event)
-	events := transition.Events()
+	accepted := transition.Event().Fact()
 	actions := transition.Effects()
-	if len(events) != 1 {
-		invariant(supervisorDriverOperation, "supervisor transition did not publish one accepted fact")
-	}
 	next := driver.machine.snapshot()
-	driver.recorder.recordSupervisor(reservation, event, next, actions)
+	driver.recorder.recordSupervisor(reservation, accepted, next, actions)
 
 	return actions
 }
