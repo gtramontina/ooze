@@ -15,7 +15,7 @@ const nominalSupervisorFuseCadence = 50 * time.Millisecond
 
 type supervisorDriverConstruction struct {
 	runtime          *processruntime.Runtime
-	recorder         *simulationRecorder
+	observer         supervisionOwnerCutObserver
 	now              func() time.Time
 	launchBoundary   func(time.Time) <-chan time.Time
 	commandBoundary  func(time.Time) <-chan time.Time
@@ -80,7 +80,8 @@ type supervisorDriver struct {
 	emergencyDeferred []supervisorAction
 	emergencyReceipt  processruntime.EmergencySettlement
 	emergencyReady    bool
-	recorder          *simulationRecorder
+	observer          supervisionOwnerCutObserver
+	ownerCuts         []supervisionOwnerCut
 }
 
 func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorDriver {
@@ -105,6 +106,10 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		}
 	}
 
+	observer := construction.observer
+	if observer == nil {
+		observer = supervisionNoopObserver{}
+	}
 	return &supervisorDriver{
 		machine: newSupervisorMachine(),
 		runtime: construction.runtime, now: construction.now,
@@ -117,12 +122,20 @@ func newSupervisorDriver(construction supervisorDriverConstruction) *supervisorD
 		attempts:         make(map[attemptGeneration]*supervisorDrivenAttempt),
 		reservations:     make(map[*processruntime.StartCell]Spec),
 		emergency:        make(chan SweepResult, 1),
-		recorder:         construction.recorder,
+		observer:         observer,
 	}
 }
 
 func waitForSupervisorLaunchBoundary(launchBy time.Time) <-chan time.Time {
 	return time.After(time.Until(launchBy))
+}
+
+func (driver *supervisorDriver) ownerObserver() supervisionOwnerCutObserver {
+	if driver.observer == nil {
+		return supervisionNoopObserver{}
+	}
+
+	return driver.observer
 }
 
 func newDrivenSupervisorForTest(
@@ -234,6 +247,7 @@ func (driver *supervisorDriver) stageLaunch(
 	}
 	driver.requireAttempt(generation).launchAction = actions[0]
 	driver.mutex.Unlock()
+	driver.publishOwnerCuts()
 	if driver.prepare != nil {
 		driver.prepare(generation, spec)
 	}
@@ -247,7 +261,7 @@ func (driver *supervisorDriver) stageLaunch(
 	for {
 		select {
 		case <-driver.requireLaunchWake(generation):
-			leaveRecorder := driver.recorder.enter()
+			leaveRecorder := driver.ownerObserver().Enter()
 			driver.mutex.Lock()
 			attempt := driver.requireAttempt(generation)
 			if attempt.launchResolved && len(attempt.launchReturn) != 0 {
@@ -273,14 +287,16 @@ func (driver *supervisorDriver) stageLaunch(
 				attempt.launchResolved = true
 				observation := launchObservation(event.completion)
 				driver.mutex.Unlock()
+				driver.publishOwnerCuts()
 				leaveRecorder()
 
 				return observation, publication, processruntime.Receipt{}, false
 			}
 			driver.mutex.Unlock()
+			driver.publishOwnerCuts()
 			leaveRecorder()
 		case <-boundary:
-			leaveRecorder := driver.recorder.enter()
+			leaveRecorder := driver.ownerObserver().Enter()
 			driver.mutex.Lock()
 			attempt := driver.requireAttempt(generation)
 			var completion *supervisorLaunchCompletion
@@ -303,6 +319,7 @@ func (driver *supervisorDriver) stageLaunch(
 				observation = launchObservation(completion)
 			}
 			driver.mutex.Unlock()
+			driver.publishOwnerCuts()
 			leaveRecorder()
 
 			return observation, publication, processruntime.Receipt{}, false
@@ -352,7 +369,7 @@ func (driver *supervisorDriver) requireLaunchWake(generation attemptGeneration) 
 }
 
 func (driver *supervisorDriver) executeLaunch(action supervisorAction) {
-	defer driver.recorder.recordSupervisorAction(action)
+	defer driver.ownerObserver().Complete(supervisionEffectFromAction(action))
 	event := driver.execute(action)
 	if event == nil || event.completion == nil {
 		invariant(supervisorDriverOperation, "native launch returned no completion")
@@ -442,27 +459,42 @@ func (driver *supervisorDriver) launch(generation attemptGeneration, spec Spec) 
 }
 
 func (driver *supervisorDriver) reduce(event supervisorEvent) []supervisorAction {
-	leaveRecorder := driver.recorder.enter()
-	defer leaveRecorder()
+	leaveRecorder := driver.ownerObserver().Enter()
 	driver.mutex.Lock()
-	defer driver.mutex.Unlock()
+	actions := driver.reduceLocked(event)
+	driver.mutex.Unlock()
+	driver.publishOwnerCuts()
+	leaveRecorder()
 
-	return driver.reduceLocked(event)
+	return actions
 }
 
 func (driver *supervisorDriver) reduceLocked(event supervisorEvent) []supervisorAction {
 	if driver.machine == nil {
 		driver.machine = newSupervisorMachine()
 	}
-	reservation := driver.recorder.reserve(supervisionAuthority)
+	reservation := driver.ownerObserver().Reserve()
 	fact := supervisionFactFromEvent(event)
 	var transition supervisorTransition
 	driver.machine, transition = driver.machine.Apply(fact)
 	accepted := fact.production()
 	actions := transition.actions()
-	driver.recorder.recordSupervisor(reservation, accepted, driver.machine.Projection(), actions)
+	driver.ownerCuts = append(driver.ownerCuts, supervisionOwnerCut{
+		reservation: reservation, fact: supervisionFactFromEvent(accepted),
+		projection: driver.machine.Projection(), effects: supervisionEffectsFromActions(actions),
+	})
 
 	return actions
+}
+
+func (driver *supervisorDriver) publishOwnerCuts() {
+	driver.mutex.Lock()
+	cuts := append([]supervisionOwnerCut(nil), driver.ownerCuts...)
+	driver.ownerCuts = nil
+	driver.mutex.Unlock()
+	for _, cut := range cuts {
+		driver.ownerObserver().Publish(cut.reservation, cut.fact, cut.projection, cut.effects)
+	}
 }
 
 func (driver *supervisorDriver) supervisorState() supervisorState {
@@ -486,7 +518,7 @@ func (driver *supervisorDriver) run(action supervisorAction) {
 	case supervisorLaunchNative, supervisorWaitRoot, supervisorSampleRunning,
 		supervisorDeliverTerminal, supervisorDeliverEmergencySettlement:
 	default:
-		defer driver.recorder.recordSupervisorAction(action)
+		defer driver.ownerObserver().Complete(supervisionEffectFromAction(action))
 	}
 	switch action.kind {
 	case supervisorRevokeLaunchRelease:
@@ -668,9 +700,9 @@ func (driver *supervisorDriver) monitor(
 	sampleAction supervisorAction,
 	deadlineAt time.Time,
 ) {
-	defer driver.recorder.recordSupervisorAction(waitAction)
+	defer driver.ownerObserver().Complete(supervisionEffectFromAction(waitAction))
 	if sampleAction.token != 0 {
-		defer driver.recorder.recordSupervisorAction(sampleAction)
+		defer driver.ownerObserver().Complete(supervisionEffectFromAction(sampleAction))
 	}
 	if driver.recheckRoot == nil {
 		driver.executeAction(waitAction)
@@ -922,7 +954,7 @@ func (driver *supervisorDriver) applyRunningSampleFacts(
 }
 
 func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
-	leaveRecorder := driver.recorder.enter()
+	leaveRecorder := driver.ownerObserver().Enter()
 	recorderReleased := false
 	defer func() {
 		if !recorderReleased {
@@ -945,6 +977,7 @@ func (driver *supervisorDriver) applyMonitorEvent(event supervisorEvent) {
 	}
 	actions := driver.reduceLocked(event)
 	driver.mutex.Unlock()
+	driver.publishOwnerCuts()
 	leaveRecorder()
 	recorderReleased = true
 	for _, action := range actions {
@@ -1117,7 +1150,7 @@ func (driver *supervisorDriver) waitManaged(
 }
 
 func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepResult {
-	leaveRecorder := driver.recorder.enter()
+	leaveRecorder := driver.ownerObserver().Enter()
 	recorderReleased := false
 	defer func() {
 		if !recorderReleased {
@@ -1238,6 +1271,7 @@ func (driver *supervisorDriver) emergencyDrain(request EmergencyRequest) SweepRe
 		}
 	}
 	driver.mutex.Unlock()
+	driver.publishOwnerCuts()
 	leaveRecorder()
 	recorderReleased = true
 	for _, generation := range preempted {

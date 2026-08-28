@@ -712,7 +712,7 @@ func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T
 	reentered := make(chan struct{})
 	returned := make(chan struct{})
 	driver := &supervisorDriver{
-		machine: newSupervisorMachineFrom(fixture.state), recorder: recorder,
+		machine: newSupervisorMachineFrom(fixture.state), observer: recorder,
 		execute: func(supervisorAction) *supervisorEvent {
 			leaveRecorder := recorder.enter()
 			leaveRecorder()
@@ -1273,6 +1273,64 @@ func TestSupervisorDriverDeliversOwnedAttemptWaitThroughPublicLifecycle(t *testi
 	}
 	assert.Equal(t, wantActions, executed, "native actions = %v, want %v", executed, wantActions)
 }
+
+func TestSupervisorDriverPublishesOwnerCutsOutsideItsLock(t *testing.T) {
+	observer := &blockingSupervisionObserver{
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	driver := &supervisorDriver{machine: newSupervisorMachine(), observer: observer}
+	done := make(chan struct{})
+	go func() {
+		driver.reduce(supervisorEvent{
+			kind: supervisorProspectiveRegistered, generation: 1, attempt: "attempt-a",
+			at: time.Unix(100, 0), launchBy: time.Unix(101, 0),
+			profile: AutomaticProfile, commandDeadline: time.Minute,
+		})
+		close(done)
+	}()
+	<-observer.started
+	locked := make(chan struct{})
+	go func() {
+		driver.mutex.Lock()
+		driver.mutex.Unlock()
+		close(locked)
+	}()
+
+	select {
+	case <-locked:
+	case <-time.After(100 * time.Millisecond):
+		close(observer.release)
+		<-done
+		require.Fail(t, "owner-cut observer ran while the supervisor lock was held")
+	}
+	close(observer.release)
+	<-done
+}
+
+type blockingSupervisionObserver struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (*blockingSupervisionObserver) Enter() func() {
+	return func() {}
+}
+
+func (*blockingSupervisionObserver) Reserve() supervisionOwnerCutReservation {
+	return 1
+}
+
+func (observer *blockingSupervisionObserver) Publish(
+	supervisionOwnerCutReservation,
+	supervisionFact,
+	supervisionProjection,
+	[]supervisionEffect,
+) {
+	close(observer.started)
+	<-observer.release
+}
+
+func (*blockingSupervisionObserver) Complete(supervisionEffect) {}
 
 func TestSupervisorDriverDeliversDrainUnconfirmedAndEmergencyResidual(t *testing.T) {
 	registeredAt := time.Unix(15_000, 0)

@@ -70,6 +70,30 @@ func (recorder *simulationRecorder) enter() func() {
 	return recorder.gate.RUnlock
 }
 
+func (recorder *simulationRecorder) Enter() func() {
+	return recorder.enter()
+}
+
+func (recorder *simulationRecorder) Reserve() supervisionOwnerCutReservation {
+	return supervisionOwnerCutReservation(recorder.reserve(supervisionAuthority).sequence)
+}
+
+func (recorder *simulationRecorder) Publish(
+	reservation supervisionOwnerCutReservation,
+	fact supervisionFact,
+	projection supervisionProjection,
+	effects []supervisionEffect,
+) {
+	recorder.recordSupervisor(
+		simulationReservation{sequence: uint64(reservation), authority: supervisionAuthority},
+		fact.production(), projection, supervisorActionsFromEffects(effects),
+	)
+}
+
+func (recorder *simulationRecorder) Complete(effect supervisionEffect) {
+	recorder.recordSupervisorAction(effect.production())
+}
+
 func (recorder *simulationRecorder) reserve(authority simulationAuthority) simulationReservation {
 	if recorder == nil {
 		return simulationReservation{}

@@ -10,6 +10,42 @@ type supervisorMachine struct {
 	state supervisorState
 }
 
+type supervisionOwnerCutReservation uint64
+
+type supervisionOwnerCut struct {
+	reservation supervisionOwnerCutReservation
+	fact        supervisionFact
+	projection  supervisionProjection
+	effects     []supervisionEffect
+}
+
+type supervisionOwnerCutObserver interface {
+	Enter() func()
+	Reserve() supervisionOwnerCutReservation
+	Publish(supervisionOwnerCutReservation, supervisionFact, supervisionProjection, []supervisionEffect)
+	Complete(supervisionEffect)
+}
+
+type supervisionNoopObserver struct{}
+
+func (supervisionNoopObserver) Enter() func() {
+	return func() {}
+}
+
+func (supervisionNoopObserver) Reserve() supervisionOwnerCutReservation {
+	return 0
+}
+
+func (supervisionNoopObserver) Publish(
+	supervisionOwnerCutReservation,
+	supervisionFact,
+	supervisionProjection,
+	[]supervisionEffect,
+) {
+}
+
+func (supervisionNoopObserver) Complete(supervisionEffect) {}
+
 type supervisorTransition struct {
 	event   supervisorDomainEvent
 	effects []supervisionEffect
