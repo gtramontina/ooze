@@ -178,6 +178,48 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 			assert.Equal(t, test.name+" failure", test.diagnostic(failure.Failures))
 		})
 	}
+
+	t.Run("automatic fuse wins from a running sample", func(t *testing.T) {
+		_, driver, boundary, start, spec := supervisionContractAttemptWithProfile(t, supervision.AutomaticProfile)
+		defer close(boundary.wait)
+		boundary.mutex.Lock()
+		boundary.samples = make(chan time.Time, 1)
+		boundary.live = 65
+		boundary.mutex.Unlock()
+		launched := driver.Launch(start, spec)
+		owned, ok := launched.Result().(supervision.Owned)
+		require.True(t, ok)
+
+		at := boundary.Now().Add(time.Second)
+		boundary.setNow(at)
+		boundary.samples <- at
+		terminal := driver.Wait(start.Generation(), owned.Attempt)
+		tripped, ok := terminal.Terminal().(supervision.Tripped)
+		require.True(t, ok)
+		fuse, ok := tripped.Trip.(supervision.FuseTrip)
+		require.True(t, ok)
+		assert.Equal(t, 65, fuse.Live)
+	})
+
+	t.Run("serial command deadline terminates without wait readiness", func(t *testing.T) {
+		_, driver, boundary, start, spec := supervisionContractAttempt(t)
+		defer close(boundary.wait)
+		boundary.mutex.Lock()
+		boundary.commandBoundary = make(chan time.Time, 1)
+		boundary.mutex.Unlock()
+		launched := driver.Launch(start, spec)
+		owned, ok := launched.Result().(supervision.Owned)
+		require.True(t, ok)
+
+		deadline := <-boundary.awaitedCommand
+		boundary.setNow(deadline)
+		boundary.commandBoundary <- deadline
+		terminal := driver.Wait(start.Generation(), owned.Attempt)
+		tripped, ok := terminal.Terminal().(supervision.Tripped)
+		require.True(t, ok)
+		_, serial := tripped.Trip.(supervision.SerialDeadlineTrip)
+		assert.True(t, serial)
+	})
 }
 
 func TestSupervisionConcurrentPublicLifecycle(t *testing.T) {
@@ -249,6 +291,10 @@ type supervisionBoundary struct {
 	drainResiduals    int
 	diagnostics       map[uint64]error
 	nextDiagnostic    uint64
+	commandBoundary   chan time.Time
+	awaitedCommand    chan time.Time
+	samples           chan time.Time
+	live              uint64
 }
 
 func (boundary *supervisionBoundary) Now() time.Time {
@@ -280,11 +326,26 @@ func (boundary *supervisionBoundary) AwaitLaunch(at time.Time) <-chan time.Time 
 	return time.After(time.Until(at))
 }
 
-func (*supervisionBoundary) AwaitCommand(at time.Time) <-chan time.Time {
+func (boundary *supervisionBoundary) AwaitCommand(at time.Time) <-chan time.Time {
+	boundary.mutex.Lock()
+	controlled := boundary.commandBoundary
+	boundary.mutex.Unlock()
+	if controlled != nil {
+		boundary.awaitedCommand <- at
+
+		return controlled
+	}
+
 	return time.After(time.Until(at))
 }
 
-func (*supervisionBoundary) SampleTicks() (<-chan time.Time, func()) {
+func (boundary *supervisionBoundary) SampleTicks() (<-chan time.Time, func()) {
+	boundary.mutex.Lock()
+	controlled := boundary.samples
+	boundary.mutex.Unlock()
+	if controlled != nil {
+		return controlled, func() {}
+	}
 	ticker := time.NewTicker(time.Hour)
 
 	return ticker.C, ticker.Stop
@@ -386,8 +447,11 @@ func (*supervisionBoundary) RecheckRoot(supervision.Generation) (supervision.Exi
 	return supervision.ExitStatus{}, time.Now(), false, nil
 }
 
-func (*supervisionBoundary) SampleRunning(supervision.Generation) (bool, uint64, error) {
-	return false, 0, nil
+func (boundary *supervisionBoundary) SampleRunning(supervision.Generation) (bool, uint64, error) {
+	boundary.mutex.Lock()
+	defer boundary.mutex.Unlock()
+
+	return true, boundary.live, nil
 }
 
 func (*supervisionBoundary) ReadOutput(uint64) string { return "contract output" }
@@ -413,26 +477,39 @@ func (boundary *supervisionBoundary) record(err error) uint64 {
 func supervisionContractAttempt(
 	t *testing.T,
 ) (*processruntime.Runtime, *supervision.Driver, *supervisionBoundary, processruntime.PreparedStart, supervision.Spec) {
+	return supervisionContractAttemptWithProfile(t, supervision.SerialProfile)
+}
+
+func supervisionContractAttemptWithProfile(
+	t *testing.T,
+	profile supervision.Profile,
+) (*processruntime.Runtime, *supervision.Driver, *supervisionBoundary, processruntime.PreparedStart, supervision.Spec) {
 	t.Helper()
 	runtime := processruntime.New(1)
 	registration := runtime.RegisterCampaign(1)
 	require.Equal(t, processruntime.CampaignRegistered, registration.Decision())
+	class := processruntime.SerialPrimaryAdmission
+	runtimeProfile := processruntime.SerialProfile
+	if profile == supervision.AutomaticProfile {
+		class = processruntime.SharedAdmission
+		runtimeProfile = processruntime.AutomaticProfile
+	}
 	request := runtime.RequestAdmission(processruntime.Admission{
 		Campaign: registration.Campaign(), Attempt: "contract",
-		Class: processruntime.SerialPrimaryAdmission, Profile: processruntime.SerialProfile,
+		Class: class, Profile: runtimeProfile,
 		Deadline: 5 * time.Second,
 	})
 	grant, received := request.Receive()
 	require.True(t, received)
 	boundary := &supervisionBoundary{
 		wait: make(chan struct{}), awaitedLaunch: make(chan time.Time, 1),
-		diagnostics: make(map[uint64]error),
+		awaitedCommand: make(chan time.Time, 1), diagnostics: make(map[uint64]error),
 	}
 	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
 	require.NoError(t, err)
 	spec := supervision.Spec{
 		Attempt: request.Request().Attempt, Command: []string{"contract"},
-		Dir: t.TempDir(), Profile: supervision.SerialProfile, Deadline: 5 * time.Second,
+		Dir: t.TempDir(), Profile: profile, Deadline: 5 * time.Second,
 	}
 	cell := processruntime.NewStartCell()
 	driver.ReserveLaunch(cell, spec)
