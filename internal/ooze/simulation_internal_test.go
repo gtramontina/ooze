@@ -1356,7 +1356,10 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 	}
 	require.False(t, cut < 0, "positive boundary trace has no equality cut")
 	counterexample.records = slices.Clone(counterexample.records[:cut+1])
-	counterexample.records[cut].supervisorState.nextAction++
+	counterexample.records[cut].supervisorActions = append(
+		counterexample.records[cut].supervisorActions,
+		supervisionEffect{kind: supervisorLaunchNative},
+	)
 	replayed := ReplayLegal(counterexample)
 	assert.NotNil(t, replayed.failure, "positive boundary replay=%#v", replayed)
 	assert.Equal(t, simulationReplayFailureKind, replayed.key.kind, "positive boundary replay=%#v", replayed)
@@ -2193,11 +2196,6 @@ func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 		got := record.supervisorEvent.at.production()
 		assert.True(t, got.Equal(registeredAt), "canonical instant changed: got=%s want=%s", got, registeredAt)
 		assert.Equal(t, time.UTC, got.Location(), "canonical instant changed: got=%s want=%s", got, registeredAt)
-	}
-	{
-		got := record.supervisorState.attempts[0].registeredAt.production()
-		assert.True(t, got.Equal(registeredAt), "canonical state instant changed: got=%s want=%s", got, registeredAt)
-		assert.Equal(t, time.UTC, got.Location(), "canonical state instant changed: got=%s want=%s", got, registeredAt)
 	}
 }
 

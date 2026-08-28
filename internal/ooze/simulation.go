@@ -951,7 +951,7 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 	case supervisionAuthority:
 		machine := world.machine.Fork()
 		machine, transition := machine.Apply(record.supervisorEvent)
-		if !reflect.DeepEqual(machine.Projection(), record.supervisorState) ||
+		if !machine.Projection().Equal(record.supervisorState) ||
 			!reflect.DeepEqual(transition.Effects(), record.supervisorActions) {
 			return simulationWorld{}, fmt.Errorf("supervisor owner cut diverged")
 		}
@@ -1422,63 +1422,16 @@ func simulationRecordPayloadRank(record simulationRecord) int {
 
 func simulationTraceBoundaryDistance(trace simulationTrace) int {
 	distance := 0
-	drainBy := make(map[supervisorActionToken]supervisionInstant)
+	var origins []supervisionEffect
 	for _, record := range trace.records {
-		for _, action := range record.supervisorActions {
-			if action.drainBy.set {
-				drainBy[action.token] = action.drainBy
-			}
-		}
+		origins = append(origins, record.supervisorActions...)
 		if record.authority != supervisionAuthority {
 			continue
 		}
-		event := record.supervisorEvent
-		attemptAt := slices.IndexFunc(record.supervisorState.attempts, func(attempt supervisionAttemptState) bool {
-			return attempt.generation == event.generation
-		})
-		if attemptAt >= 0 {
-			attempt := record.supervisorState.attempts[attemptAt]
-			switch event.kind {
-			case supervisorLaunchCompleted, supervisorLaunchBoundary:
-				distance += simulationInstantDistance(event.at, attempt.launchBy)
-			}
-		}
-		if event.kind == supervisorRunningObserved && event.running != nil {
-			boundary := supervisionInstant{}
-			if event.running.exitRecheck.performed {
-				boundary = event.running.exitRecheck.at
-			} else if attemptAt >= 0 {
-				boundary = record.supervisorState.attempts[attemptAt].deadlineAt
-			}
-			for _, fact := range event.running.facts {
-				distance += simulationInstantDistance(fact.at, boundary)
-			}
-		}
-		if event.kind == supervisorDrainCompleted && event.drain != nil {
-			distance += simulationInstantDistance(event.at, drainBy[event.drain.action.token])
-		}
+		distance += record.supervisorState.BoundaryDistance(record.supervisorEvent, origins)
 	}
 
 	return distance
-}
-
-func simulationInstantDistance(left, right supervisionInstant) int {
-	if !left.set || !right.set {
-		return 0
-	}
-	distance := left.production().Sub(right.production())
-	if distance == time.Duration(-1<<63) {
-		return int(^uint(0) >> 1)
-	}
-	if distance < 0 {
-		distance = -distance
-	}
-	maximum := int(^uint(0) >> 1)
-	if uint64(distance) > uint64(maximum) {
-		return maximum
-	}
-
-	return int(distance)
 }
 
 func simulationExploreShrinkCandidate(

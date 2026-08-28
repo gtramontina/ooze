@@ -1,6 +1,10 @@
 package ooze
 
-import "time"
+import (
+	"reflect"
+	"slices"
+	"time"
+)
 
 type supervisorMachine struct {
 	state supervisorState
@@ -101,6 +105,70 @@ func (machine *supervisorMachine) Projection() supervisionProjection {
 	}
 
 	return supervisionProjectionFromState(machine.state)
+}
+
+func (projection supervisionProjection) Equal(other supervisionProjection) bool {
+	return reflect.DeepEqual(projection, other)
+}
+
+func (projection supervisionProjection) BoundaryDistance(
+	fact supervisionFact,
+	origins []supervisionEffect,
+) int {
+	index := slices.IndexFunc(projection.attempts, func(attempt supervisionAttemptState) bool {
+		return attempt.generation == fact.generation
+	})
+	var boundary supervisionInstant
+	switch fact.kind {
+	case supervisorLaunchCompleted, supervisorLaunchBoundary:
+		if index >= 0 {
+			boundary = projection.attempts[index].launchBy
+		}
+	case supervisorRunningObserved:
+		if fact.running != nil && fact.running.exitRecheck.performed {
+			boundary = fact.running.exitRecheck.at
+		} else if index >= 0 {
+			boundary = projection.attempts[index].deadlineAt
+		}
+	case supervisorDrainCompleted:
+		if fact.drain != nil {
+			for _, origin := range origins {
+				if origin.token == fact.drain.action.token {
+					boundary = origin.drainBy
+					break
+				}
+			}
+		}
+	}
+	if fact.kind == supervisorRunningObserved && fact.running != nil {
+		distance := 0
+		for _, running := range fact.running.facts {
+			distance += supervisionInstantDistance(running.at, boundary)
+		}
+
+		return distance
+	}
+
+	return supervisionInstantDistance(fact.at, boundary)
+}
+
+func supervisionInstantDistance(left, right supervisionInstant) int {
+	if !left.set || !right.set {
+		return 0
+	}
+	distance := left.production().Sub(right.production())
+	if distance == time.Duration(-1<<63) {
+		return int(^uint(0) >> 1)
+	}
+	if distance < 0 {
+		distance = -distance
+	}
+	maximum := int(^uint(0) >> 1)
+	if uint64(distance) > uint64(maximum) {
+		return maximum
+	}
+
+	return int(distance)
 }
 
 func (machine *supervisorMachine) Fork() *supervisorMachine {

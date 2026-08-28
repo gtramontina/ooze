@@ -73,9 +73,24 @@ func TestSupervisorMachineProjectionDoesNotExposeReducerState(t *testing.T) {
 	machine, _ := newSupervisorMachine().Apply(supervisionFactFromEvent(fact))
 
 	projection := machine.Projection()
+	want := cloneSupervisionProjection(projection)
 	projection.attempts[0].attempt = "corrupted"
 
-	assert.Equal(t, attemptIdentity("mutant-1"), machine.Projection().attempts[0].attempt)
+	assert.True(t, machine.Projection().Equal(want))
+	assert.False(t, machine.Projection().Equal(projection))
+}
+
+func TestSupervisorProjectionMeasuresItsOwnFactBoundary(t *testing.T) {
+	registeredAt := time.Unix(100, 0)
+	machine, transition := newSupervisorMachine().Apply(supervisionProspectiveRegistration(
+		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), AutomaticProfile, time.Minute,
+	))
+	launch := effectOfKind(t, transition.Effects(), supervisorLaunchNative)
+	facts, ok := machine.LaunchFacts(launch, supervisionLaunchReleasedBeforeBoundary)
+	require.True(t, ok)
+	machine, _ = machine.Apply(facts[0])
+
+	assert.Equal(t, 1, machine.Projection().BoundaryDistance(facts[0], []supervisionEffect{launch}))
 }
 
 func TestSupervisorMachineUsesCanonicalDomainVocabulary(t *testing.T) {
