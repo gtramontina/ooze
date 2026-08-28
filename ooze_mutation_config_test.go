@@ -17,11 +17,11 @@ func TestSelfMutationCampaignSelectsOnePlatformCatalogue(t *testing.T) {
 		"internal/fsrepository/remove_unix.go",
 		"internal/fsrepository/remove_windows.go",
 		"internal/ignoredrepository/ignoredrepository.go",
-		"internal/ooze/managed_attempt_system.go",
-		"internal/ooze/managed_campaign.go",
-		"internal/ooze/managed_campaign_cycle.go",
-		"internal/ooze/managed_campaign_emergency.go",
-		"internal/ooze/managed_campaign_effects.go",
+		"internal/ooze/internal/campaign/managed_attempt_system.go",
+		"internal/ooze/internal/campaign/managed_campaign.go",
+		"internal/ooze/internal/campaign/managed_campaign_cycle.go",
+		"internal/ooze/internal/campaign/managed_campaign_emergency.go",
+		"internal/ooze/internal/campaign/managed_campaign_effects.go",
 	}
 	for _, test := range []struct {
 		name string
@@ -32,7 +32,7 @@ func TestSelfMutationCampaignSelectsOnePlatformCatalogue(t *testing.T) {
 		{name: "Windows", goos: "windows", want: portable},
 		{name: "Darwin", goos: "darwin", want: append(
 			append([]string(nil), portable...),
-			"internal/ooze/supervisor_native_darwin.go",
+			"internal/ooze/internal/supervision/supervisor_native_darwin.go",
 		)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -46,17 +46,17 @@ var selfMutationPortableProductionPaths = []string{
 	"internal/fsrepository/remove_unix.go",
 	"internal/fsrepository/remove_windows.go",
 	"internal/ignoredrepository/ignoredrepository.go",
-	"internal/ooze/managed_attempt_system.go",
-	"internal/ooze/managed_campaign.go",
-	"internal/ooze/managed_campaign_cycle.go",
-	"internal/ooze/managed_campaign_emergency.go",
-	"internal/ooze/managed_campaign_effects.go",
+	"internal/ooze/internal/campaign/managed_attempt_system.go",
+	"internal/ooze/internal/campaign/managed_campaign.go",
+	"internal/ooze/internal/campaign/managed_campaign_cycle.go",
+	"internal/ooze/internal/campaign/managed_campaign_emergency.go",
+	"internal/ooze/internal/campaign/managed_campaign_effects.go",
 }
 
 func selfMutationProductionPaths(goos string) []string {
 	paths := append([]string(nil), selfMutationPortableProductionPaths...)
 	if goos == "darwin" {
-		paths = append(paths, "internal/ooze/supervisor_native_darwin.go")
+		paths = append(paths, "internal/ooze/internal/supervision/supervisor_native_darwin.go")
 	}
 
 	return paths
@@ -71,7 +71,7 @@ func selfMutationOptions() []ooze.Option {
 		withSelfMutationProductionCatalogue(selfMutationProductionPaths(runtime.GOOS)),
 		ooze.WithTestCommand("gotestsum --format-hide-empty-pkg --max-fails=1 -- -failfast -skip=" +
 			selfMutationSubprocessSkip +
-			" ./internal/fsrepository ./internal/ignoredrepository ./internal/ooze"),
+			" ./internal/fsrepository ./internal/ignoredrepository ./internal/ooze ./internal/ooze/internal/campaign ./internal/ooze/internal/supervision"),
 		ooze.WithMinimumThreshold(0.5),
 	}
 }
@@ -172,9 +172,9 @@ func assertSelfMutationCatalogue(
 	}
 	for path := range allowed {
 		active := path != "internal/fsrepository/remove_windows.go" &&
-			path != "internal/ooze/supervisor_native_darwin.go"
+			path != "internal/ooze/internal/supervision/supervisor_native_darwin.go"
 		active = active || runtime.GOOS == "windows" && path == "internal/fsrepository/remove_windows.go"
-		active = active || runtime.GOOS == "darwin" && path == "internal/ooze/supervisor_native_darwin.go"
+		active = active || runtime.GOOS == "darwin" && path == "internal/ooze/internal/supervision/supervisor_native_darwin.go"
 		active = active && (runtime.GOOS != "windows" || path != "internal/fsrepository/remove_unix.go")
 		{
 			_, selected := seen[path]

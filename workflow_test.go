@@ -87,11 +87,14 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 		}
 		assert.NotContains(t, argument, `"`, "self-mutation subprocess argument contains literal quote characters: %q", argument)
 		if strings.HasPrefix(argument, "./") {
-			if argument == "./internal/ooze" {
+			switch argument {
+			case "./internal/ooze":
 				arguments = append(arguments,
-					"-run=^(TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement|TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged)$",
+					"-run=^(TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary|TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged)$",
 					argument,
 				)
+			case "./internal/ooze/internal/campaign":
+				arguments = append(arguments, argument)
 			}
 			continue
 		}
@@ -101,7 +104,7 @@ func TestSelfMutationSubprocessExecutesManagedCampaignFixture(t *testing.T) {
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "run self-mutation subprocess selection probe: %v\n%s", err, output)
 	fixtures := []string{
-		"TestManagedProcessReturnsInvariantPresentationAfterEmergencySettlement",
+		"TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary",
 		"TestMutationAttemptPlanUsesAbsoluteOverrideUnchanged",
 	}
 	for _, fixture := range fixtures {
