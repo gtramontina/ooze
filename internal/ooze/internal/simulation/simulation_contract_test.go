@@ -118,8 +118,11 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 				)
 			}
 		}
-		first := simulation.ReplayViolation(explored.Trace(), malformed)
-		second := simulation.ReplayViolation(explored.Trace(), malformed)
+		active, ok := explored.Trace().ActivePrefix()
+		require.True(t, ok)
+		require.NoError(t, simulation.ReplayLegal(active).Failure())
+		first := simulation.ReplayViolation(active, malformed)
+		second := simulation.ReplayViolation(active, malformed)
 		require.NoError(t, first.Failure())
 		require.NoError(t, second.Failure())
 		assert.Equal(t, first.FailureKey(), second.FailureKey())
