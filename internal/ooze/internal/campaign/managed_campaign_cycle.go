@@ -45,9 +45,14 @@ func proposesTerminal(effects []campaignEffect) bool {
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
 	reservation := uint64(0)
+	var leave func()
 	if runner.conformance != nil {
-		leave := runner.conformance.Enter()
-		defer leave()
+		leave = runner.conformance.Enter()
+		defer func() {
+			if leave != nil {
+				leave()
+			}
+		}()
 		reservation = runner.conformance.Reserve()
 	}
 	fact := Fact{payload: payload, label: runner.eventMutationLabel(payload)}
@@ -59,12 +64,20 @@ func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []cam
 		runner.conformance.Publish(
 			reservation, transition.Event(), transition.Projection(), transition.Effects(),
 		)
+		leave()
+		leave = nil
 	}
-	if runner.observe != nil {
-		runner.observe(transition.Event())
-	}
+	observeCampaignEvent(runner.observe, transition.Event())
 
 	return effects
+}
+
+func observeCampaignEvent(observe func(Event), event Event) {
+	if observe == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observe(event)
 }
 
 func (runner *managedCampaignRunner) eventMutationLabel(payload campaignEventPayload) string {

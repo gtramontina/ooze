@@ -160,6 +160,45 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 	assert.Contains(t, observedMutationLabels(observed), "source.go → Integer Increment")
 }
 
+func TestManagedCampaignObserverPanicDoesNotChangeResultOrTransitions(t *testing.T) {
+	type execution struct {
+		result campaign.Result
+		events []campaign.Event
+	}
+	run := func(observe func(campaign.Event)) execution {
+		repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+			gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+		}}
+		attempts := &managedAttemptFixture{terminals: []supervision.Terminal{
+			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: 2 * time.Second}},
+			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+		}}
+		recorder := &recordingCampaignConformance{}
+		result := campaign.NewConformingExecutorWithSystem(processruntime.New(2), attempts, recorder).Execute(campaign.Configuration{
+			Identity: "campaign-a", Lineage: 11, Repository: repository,
+			TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+			Profile: processruntime.AutomaticProfile, Peers: 2,
+			Viruses: []viruses.Virus{integerincrement.New()}, Observe: observe,
+		})
+
+		return execution{result: result, events: recorder.events}
+	}
+
+	want := run(nil)
+	panics := 0
+	got := run(func(campaign.Event) {
+		panics++
+		panic("observer failed")
+	})
+
+	assert.Equal(t, want.result, got.result)
+	require.Len(t, got.events, len(want.events))
+	assert.Equal(t, len(got.events), panics)
+	for index, event := range got.events {
+		assert.True(t, event.Equal(want.events[index]), "transition %d changed after observer panic", index)
+	}
+}
+
 func observedMutationLabels(events []campaign.Event) []string {
 	var labels []string
 	for _, event := range events {
