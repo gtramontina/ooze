@@ -22,6 +22,7 @@ func TestManagedReleaseNormalizesSupervisionInvariantAndSettlesFatalRuntime(t *t
 		Lineage: 1, Repository: invariantRepository{}, TemporaryDir: &invariantTemporaryDirectory{},
 		Command: []string{"test"}, Profile: AutomaticProfile,
 		Viruses: []viruses.Virus{integerincrement.New()},
+		Observe: func(ManagedProgress) { panic("observer failed") },
 	})
 
 	require.Equal(t, ManagedInvariantViolation, result.Outcome)
@@ -30,6 +31,34 @@ func TestManagedReleaseNormalizesSupervisionInvariantAndSettlesFatalRuntime(t *t
 	assert.Equal(t, "prospective registration is incomplete or duplicated", result.Invariant.Reason)
 	assert.NotZero(t, runtime.FatalEpoch())
 	assert.False(t, runtime.EmergencySettlementRequired())
+}
+
+func TestManagedTerminalProgressObserverPanicDoesNotReplaceResult(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		outcome ManagedOutcome
+	}{
+		{name: "cleanup unconfirmed", outcome: ManagedCleanupUnconfirmed},
+		{name: "invariant violation", outcome: ManagedInvariantViolation},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			observed := false
+			result := func() (result ManagedReleaseResult) {
+				result.Outcome = test.outcome
+				defer func() {
+					observeManagedProgress(func(ManagedProgress) {
+						observed = true
+						panic("observer failed")
+					}, terminalManagedProgress(test.outcome))
+				}()
+
+				return result
+			}()
+
+			assert.Equal(t, test.outcome, result.Outcome)
+			assert.True(t, observed)
+		})
+	}
 }
 
 type supervisionViolationSystem struct{ runtime *processruntime.Runtime }
