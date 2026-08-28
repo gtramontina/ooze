@@ -192,7 +192,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				return aborted && world.campaign.failure == nil
 			},
 			observe: func(trace simulationTrace) bool {
-				var launchBy simulationInstant
+				var launchBy supervisionInstant
 				for _, record := range trace.records {
 					if record.authority != supervisionAuthority {
 						continue
@@ -245,7 +245,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				return failed && world.runtime.Unconfirmed()
 			},
 			observe: func(trace simulationTrace) bool {
-				drainBy := make(map[supervisorActionToken]simulationInstant)
+				drainBy := make(map[supervisorActionToken]supervisionInstant)
 				for _, record := range trace.records {
 					for _, action := range record.supervisorActions {
 						if action.kind == supervisorObserveEmptiness {
@@ -1375,7 +1375,7 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 }
 
 func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
-	deadline := simulationTraceInstant(time.Unix(10, 0))
+	deadline := supervisionInstantFromTime(time.Unix(10, 0))
 	near := simulationTrace{
 		records: []simulationRecord{{
 			authority: supervisionAuthority,
@@ -1385,7 +1385,7 @@ func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
 					exitRecheck: supervisionExitRecheck{performed: true, at: deadline},
 					facts: []supervisionRunningFact{{
 						kind: supervisorRunningRootExited,
-						at:   simulationTraceInstant(time.Unix(10, 1)),
+						at:   supervisionInstantFromTime(time.Unix(10, 1)),
 					}},
 				},
 			},
@@ -1396,7 +1396,7 @@ func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
 	farRunning := *near.records[0].supervisorEvent.running
 	farRunning.facts = slices.Clone(farRunning.facts)
 	far.records[0].supervisorEvent.running = &farRunning
-	far.records[0].supervisorEvent.running.facts[0].at = simulationTraceInstant(time.Unix(10, 9))
+	far.records[0].supervisorEvent.running.facts[0].at = supervisionInstantFromTime(time.Unix(10, 9))
 	far.choices[0].selected = 0
 	assert.True(t, simulationShrinkMeasureLess(simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far)), "near/far shrink measures=%v/%v", simulationTraceShrinkMeasure(near), simulationTraceShrinkMeasure(far))
 
@@ -2269,8 +2269,8 @@ func TestSimulationFuzzInputDrivesSustainedLegalChoices(t *testing.T) {
 }
 
 func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
-	firstEvent := supervisorEvent{kind: supervisorRuntimeCompleted, generation: 1}
-	secondEvent := supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)}
+	firstEvent := supervisionFactFromEvent(supervisorEvent{kind: supervisorRuntimeCompleted, generation: 1})
+	secondEvent := supervisionFactFromEvent(supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)})
 	first := simulationEngineMove{
 		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
 		supervisorDelivery: &firstEvent,
@@ -2389,7 +2389,7 @@ func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing
 }
 
 func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {
-	completion := supervisorEvent{kind: supervisorRuntimeCompleted, generation: 2}
+	completion := supervisionFactFromEvent(supervisorEvent{kind: supervisorRuntimeCompleted, generation: 2})
 	engine := simulationEngine{
 		trace: simulationTrace{records: []simulationRecord{{
 			sequence: 19,
@@ -2446,7 +2446,7 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 }
 
 func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
-	emergency := supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)}
+	emergency := supervisionFactFromEvent(supervisorEvent{kind: supervisorEmergencyStarted, at: time.Unix(1, 0)})
 	start := startCommittedEvent{
 		attempt: "attempt-b",
 		result:  campaignStartResult{decision: processruntime.StartAccepted, generation: 4},

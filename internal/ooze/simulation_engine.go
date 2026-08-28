@@ -30,7 +30,7 @@ type simulationEngineMove struct {
 	attemptKind        campaignAttemptKind
 	mutant             mutantIdentity
 	delivery           campaignEventPayload
-	supervisorDelivery *supervisorEvent
+	supervisorDelivery *supervisionFact
 }
 
 type simulationMoveVariant struct {
@@ -229,7 +229,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	}
 	if move.source.kind == simulationOwnerDeliverySource {
 		if move.supervisorDelivery != nil {
-			return engine.applySupervisor(move.source, *move.supervisorDelivery)
+			return engine.applySupervisor(move.source, move.supervisorDelivery.production())
 		}
 		return fmt.Errorf("simulation owner delivery is absent")
 	}
@@ -903,9 +903,10 @@ func (engine *simulationEngine) enqueueAdmissionDeliveries(
 }
 
 func (engine *simulationEngine) enqueueSupervisorDelivery(sequence uint64, event supervisorEvent) {
+	fact := supervisionFactFromEvent(event)
 	engine.pending = append(engine.pending, simulationEngineMove{
 		source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: sequence},
-		supervisorDelivery: &event,
+		supervisorDelivery: &fact,
 	})
 }
 
@@ -940,7 +941,7 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 		if move.source.kind == simulationOwnerDeliverySource && move.supervisorDelivery != nil &&
 			move.supervisorDelivery.kind == supervisorEmergencyStarted &&
 			(!engine.campaignEmergencyRequested() ||
-				!engine.supervisorEmergencyReady(move.supervisorDelivery.at) ||
+				!engine.supervisorEmergencyReady(move.supervisorDelivery.at.production()) ||
 				!engine.emergencyCampaignCutReady()) {
 			continue
 		}

@@ -14,6 +14,38 @@ const (
 	settleEmergencyOperation = "settle emergency"
 )
 
+type simulationInstant struct {
+	set        bool
+	unixSecond int64
+	nanosecond int32
+}
+
+type simulationDuration int64
+
+func simulationTraceInstant(value time.Time) simulationInstant {
+	if value.IsZero() {
+		return simulationInstant{}
+	}
+
+	return simulationInstant{set: true, unixSecond: value.Unix(), nanosecond: int32(value.Nanosecond())}
+}
+
+func (instant simulationInstant) production() time.Time {
+	if !instant.set {
+		return time.Time{}
+	}
+
+	return time.Unix(instant.unixSecond, int64(instant.nanosecond)).UTC()
+}
+
+func simulationTraceDuration(value time.Duration) simulationDuration {
+	return simulationDuration(value)
+}
+
+func (duration simulationDuration) production() time.Duration {
+	return time.Duration(duration)
+}
+
 type simulationAuthority uint8
 
 const (
@@ -1390,7 +1422,7 @@ func simulationRecordPayloadRank(record simulationRecord) int {
 
 func simulationTraceBoundaryDistance(trace simulationTrace) int {
 	distance := 0
-	drainBy := make(map[supervisorActionToken]simulationInstant)
+	drainBy := make(map[supervisorActionToken]supervisionInstant)
 	for _, record := range trace.records {
 		for _, action := range record.supervisorActions {
 			if action.drainBy.set {
@@ -1412,7 +1444,7 @@ func simulationTraceBoundaryDistance(trace simulationTrace) int {
 			}
 		}
 		if event.kind == supervisorRunningObserved && event.running != nil {
-			boundary := simulationInstant{}
+			boundary := supervisionInstant{}
 			if event.running.exitRecheck.performed {
 				boundary = event.running.exitRecheck.at
 			} else if attemptAt >= 0 {
@@ -1430,7 +1462,7 @@ func simulationTraceBoundaryDistance(trace simulationTrace) int {
 	return distance
 }
 
-func simulationInstantDistance(left, right simulationInstant) int {
+func simulationInstantDistance(left, right supervisionInstant) int {
 	if !left.set || !right.set {
 		return 0
 	}

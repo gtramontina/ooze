@@ -111,7 +111,7 @@ func TestSupervisorMachinePreparesEmergencyFromOwnedState(t *testing.T) {
 
 		require.True(t, ready)
 		assert.Equal(t, supervisorEmergencyStarted, fact.kind)
-		assert.Equal(t, simulationTraceInstant(registeredAt), fact.at)
+		assert.Equal(t, supervisionInstantFromTime(registeredAt), fact.at)
 		require.Len(t, fact.emergencySnapshots, 1)
 		assert.Equal(t, attemptGeneration(1), fact.emergencySnapshots[0].generation)
 	})
