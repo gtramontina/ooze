@@ -1,13 +1,13 @@
 package ooze
 
 import (
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"github.com/gtramontina/ooze/viruses"
 )
 

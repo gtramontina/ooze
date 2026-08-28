@@ -42,11 +42,17 @@ type SystemBoundary interface {
 
 // System owns supervised attempt lifecycles around one process runtime.
 type System interface {
+	// ReserveLaunch records inert prospective custody before runtime commitment.
 	ReserveLaunch(*processruntime.StartCell, Spec)
+	// DiscardLaunch removes a reservation rejected by runtime commitment.
 	DiscardLaunch(*processruntime.StartCell)
+	// Launch drives one runtime-authorized launch.
 	Launch(processruntime.PreparedStart, Spec) ObservedLaunch
+	// Wait joins one owned attempt and its runtime receipt.
 	Wait(Generation, *OwnedAttempt) ObservedTerminal
+	// Stop records bounded explicit drainage.
 	Stop(*OwnedAttempt)
+	// EmergencyDrain closes all obligations through one bounded epoch.
 	EmergencyDrain(EmergencyRequest) (SweepResult, processruntime.EmergencySettlement)
 }
 

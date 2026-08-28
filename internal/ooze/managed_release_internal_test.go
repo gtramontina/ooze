@@ -1,11 +1,11 @@
 package ooze
 
 import (
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"testing"
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/gtramontina/ooze/viruses/loopbreak"
