@@ -5,12 +5,12 @@ import "sort"
 type simulationEnabledMove struct {
 	authority simulationAuthority
 	effect    campaignEffect
-	action    supervisorAction
+	action    supervisionEffect
 }
 
 func simulationEnabledMoves(
 	effects []campaignEffect,
-	actions []supervisorAction,
+	actions []supervisionEffect,
 	catalogue []mutantIdentity,
 ) []simulationEnabledMove {
 	ranks := make(map[mutantIdentity]int, len(catalogue))

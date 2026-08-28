@@ -113,7 +113,8 @@ type simulationWorld struct {
 	campaign     campaignState
 	runtime      simulationRuntimeState
 	runtimeState processruntime.Replay
-	supervisor   supervisorState
+	supervisor   supervisionProjection
+	machine      *supervisorMachine
 }
 
 type SimulationResult struct {
@@ -252,7 +253,6 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 
 	campaign, effects := beginCampaign(trace.definition.campaign)
 	runtime := processruntime.NewReplay(trace.definition.capacity)
-	supervisor := supervisorState{}
 	supervisorMachine := newSupervisorMachine()
 	var delivered campaignEventPayload
 	pendingDeliveries := make(map[simulationCausalSource][]campaignEventPayload)
@@ -726,7 +726,6 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			var transition supervisorTransition
 			supervisorMachine, transition = supervisorMachine.Apply(fact)
 			actions := transition.actions()
-			supervisor = supervisorMachine.snapshot()
 			for _, action := range actions {
 				actionKinds[action.token] = action.kind
 			}
@@ -801,7 +800,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			barrier := trace.barriers[barrierAt]
 			if !reflect.DeepEqual(simulationTraceCampaignState(campaign), barrier.campaign) ||
 				!reflect.DeepEqual(simulationTraceRuntimeState(runtime), barrier.runtime) ||
-				!reflect.DeepEqual(supervisionProjectionFromState(supervisor), barrier.supervisor) {
+				!reflect.DeepEqual(supervisorMachine.Projection(), barrier.supervisor) {
 				return simulationReplayFailure(
 					trace, simulationReplayQuiescenceFailure,
 					"quiescent world diverged after sequence %d", record.sequence,
@@ -834,7 +833,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		trace: trace,
 		world: simulationWorld{
 			campaign: campaign, runtime: simulationTraceRuntimeState(runtime), runtimeState: runtime,
-			supervisor: simulationProjectSupervisorState(supervisor),
+			supervisor: supervisorMachine.Projection(), machine: supervisorMachine,
 		},
 	}
 }
@@ -918,14 +917,14 @@ func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRec
 		world.runtimeState = state
 		world.runtime = simulationTraceRuntimeState(state)
 	case supervisionAuthority:
-		machine := newSupervisorMachineFrom(world.supervisor)
+		machine := world.machine.Fork()
 		machine, transition := machine.Apply(record.supervisorEvent)
-		state := machine.snapshot()
 		if !reflect.DeepEqual(machine.Projection(), record.supervisorState) ||
 			!reflect.DeepEqual(transition.Effects(), record.supervisorActions) {
 			return simulationWorld{}, fmt.Errorf("supervisor owner cut diverged")
 		}
-		world.supervisor = simulationProjectSupervisorState(state)
+		world.supervisor = machine.Projection()
+		world.machine = machine
 	default:
 		return simulationWorld{}, fmt.Errorf("commutation authority is invalid")
 	}
@@ -1032,7 +1031,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 			return state.ApplyMalformed(violation)
 		})
 	case supervisionAuthority:
-		simulationAdvanceSupervisorGuarded(&runtime, legal.world.supervisor, malformed.supervisor.production())
+		simulationAdvanceSupervisorGuarded(&runtime, legal.world.machine, malformed.supervisor)
 	}
 
 	return ViolationResult{failure: fmt.Errorf("malformed fact was accepted")}
@@ -1065,8 +1064,8 @@ func simulationAdvanceRuntimeGuarded(
 
 func simulationAdvanceSupervisorGuarded(
 	runtime *processruntime.Replay,
-	state supervisorState,
-	event supervisorEvent,
+	machine *supervisorMachine,
+	fact supervisionFact,
 ) {
 	defer func() {
 		recovered := recover()
@@ -1083,8 +1082,7 @@ func simulationAdvanceSupervisorGuarded(
 		panic(violation)
 	}()
 
-	machine := newSupervisorMachineFrom(state)
-	_, _ = machine.Apply(supervisionFactFromEvent(event))
+	_, _ = machine.Apply(fact)
 }
 
 func simulationSettleInvariantCleanup(runtime *processruntime.Replay, violation runtimeInvariantViolation) {

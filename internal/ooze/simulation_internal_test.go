@@ -40,10 +40,9 @@ func TestSimulationStopEligibilityUsesExplicitSupervisorPhases(t *testing.T) {
 		{name: "closing prospective", phase: supervisorClosingProspective, want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			engine := simulationEngine{supervisor: supervisorState{attempts: []supervisorAttemptState{{
-				generation: 1,
-				phase:      test.phase,
-			}}}}
+			engine := simulationEngine{machine: newSupervisorMachineFrom(supervisorState{
+				attempts: []supervisorAttemptState{{generation: 1, phase: test.phase}},
+			})}
 			assert.Equal(t, test.want, engine.supervisorAcceptsStop(1), "stop eligibility for phase %d", test.phase)
 		})
 	}
@@ -1636,14 +1635,14 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	wantCampaign, wantEffects := advanceCampaign(campaign, campaignEvent{
 		id: 1, payload: campaignRegisteredEvent{registration: wantRegistration},
 	})
-	wantSupervisor, wantActions := reduceSupervisor(supervisorState{}, event)
+	wantMachine, wantTransition := newSupervisorMachine().Apply(supervisionFactFromEvent(event))
 	wantProjection := simulationWorld{
 		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime),
-		supervisor: simulationProjectSupervisorState(wantSupervisor),
+		supervisor: wantMachine.Projection(), machine: wantMachine,
 	}
 	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
 	assert.Equal(t, wantEffects, trace.records[1].campaignEffects, "recorded ordered outputs diverged: %#v", trace.records)
-	assert.Equal(t, supervisionEffectsFromActions(wantActions), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
+	assert.Equal(t, wantTransition.Effects(), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
 }
 
 func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
@@ -1684,7 +1683,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 		afterSequence: trace.records[len(trace.records)-1].sequence,
 		campaign:      simulationTraceCampaignState(explored.world.campaign),
 		runtime:       explored.world.runtime,
-		supervisor:    supervisionProjectionFromState(explored.world.supervisor),
+		supervisor:    explored.world.supervisor,
 	}}
 	independent, causal := 0, 0
 	for index := 0; index+1 < len(trace.records); index++ {
@@ -2087,10 +2086,10 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 		{id: 4, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-b", mutant: "mutant-b"},
 		{id: 3, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-a", mutant: "mutant-a"},
 	}
-	actions := []supervisorAction{
+	actions := supervisionEffectsFromActions([]supervisorAction{
 		{kind: supervisorWaitRoot, generation: 3, token: 8},
 		{kind: supervisorSampleRunning, generation: 3, token: 7},
-	}
+	})
 
 	got := simulationEnabledMoves(effects, actions, []mutantIdentity{"mutant-a", "mutant-b"})
 	want := []simulationEnabledMove{
@@ -2308,7 +2307,7 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 		},
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-			action: supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10},
+			action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10}),
 		},
 	}}
 
@@ -2324,7 +2323,7 @@ func TestSimulationDisablesResidualTransferAfterRuntimeCustodyMoves(t *testing.T
 		runtime: runtime,
 		pending: []simulationEngineMove{{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 9},
-			action: supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9},
+			action: supervisionEffectFromAction(supervisorAction{kind: supervisorTransferResidualCustody, generation: 2, token: 9}),
 		}},
 	}
 
@@ -2358,11 +2357,11 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 		pending: []simulationEngineMove{
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-				action: supervisorAction{kind: supervisorSettleRuntime, generation: generation, token: 10},
+				action: supervisionEffectFromAction(supervisorAction{kind: supervisorSettleRuntime, generation: generation, token: 10}),
 			},
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 11},
-				action: supervisorAction{kind: supervisorSettleEmergency, token: 11},
+				action: supervisionEffectFromAction(supervisorAction{kind: supervisorSettleEmergency, token: 11}),
 			},
 		},
 	}
@@ -2376,7 +2375,7 @@ func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-			action: supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10},
+			action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverTerminal, generation: 2, token: 10}),
 		},
 		{
 			source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 12},
@@ -2403,7 +2402,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 			},
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 11},
-				action: supervisorAction{kind: supervisorSettleEmergency, token: 11},
+				action: supervisionEffectFromAction(supervisorAction{kind: supervisorSettleEmergency, token: 11}),
 			},
 		},
 	}
@@ -2416,7 +2415,7 @@ func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T)
 func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{{
 		source: simulationCausalSource{kind: supervisionActionSource, identity: 12},
-		action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 12},
+		action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 12}),
 	}}}
 
 	{
@@ -2436,7 +2435,7 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 			},
 			{
 				source: simulationCausalSource{kind: supervisionActionSource, identity: 20},
-				action: supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 20},
+				action: supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverEmergencySettlement, token: 20}),
 			},
 		},
 	}
@@ -2483,7 +2482,7 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 	}
 	launchAction := simulationEngineMove{
 		source: simulationCausalSource{kind: supervisionActionSource, identity: 21},
-		action: supervisorAction{kind: supervisorLaunchNative, generation: generation, token: 21},
+		action: supervisionEffectFromAction(supervisorAction{kind: supervisorLaunchNative, generation: generation, token: 21}),
 	}
 	tests := []struct {
 		name   string
@@ -2493,9 +2492,9 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 		{
 			"supervisor_launch_action_pending",
 			simulationEngine{
-				supervisor: supervisorState{attempts: []supervisorAttemptState{{
+				machine: newSupervisorMachineFrom(supervisorState{attempts: []supervisorAttemptState{{
 					generation: generation, phase: supervisorLaunchEstablishing,
-				}}},
+				}}}),
 				pending: []simulationEngineMove{launchAction, stop},
 			},
 		},
@@ -2527,11 +2526,11 @@ func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 26},
-			action: supervisorAction{kind: supervisorSealStopAdmission, generation: 4, token: 26},
+			action: supervisionEffectFromAction(supervisorAction{kind: supervisorSealStopAdmission, generation: 4, token: 26}),
 		},
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 27},
-			action: supervisorAction{kind: supervisorReleaseDomain, generation: 4, token: 27},
+			action: supervisionEffectFromAction(supervisorAction{kind: supervisorReleaseDomain, generation: 4, token: 27}),
 		},
 	}}
 

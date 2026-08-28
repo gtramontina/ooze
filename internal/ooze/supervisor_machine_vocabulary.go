@@ -541,6 +541,10 @@ func supervisionEffectsFromActions(values []supervisorAction) []supervisionEffec
 	return actions
 }
 
+func supervisionEffectFromAction(value supervisorAction) supervisionEffect {
+	return supervisionEffectsFromActions([]supervisorAction{value})[0]
+}
+
 func (value supervisionRunningIntent) production() supervisorRunningIntent {
 	return supervisorRunningIntent{
 		latched: value.latched, kind: value.kind,

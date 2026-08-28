@@ -5,7 +5,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
@@ -486,8 +485,8 @@ func (recorder *simulationRecorder) quiescent(
 
 	runtimeState := simulationTraceRuntimeState(recorder.runtimeState)
 	driver.mutex.Lock()
-	driverState := simulationProjectSupervisorState(driver.supervisorState())
 	supervisorState := driver.machine.Projection()
+	supervisorMachine := driver.machine.Fork()
 	driver.mutex.Unlock()
 	campaignState := simulationProjectCampaign(runner.state)
 	definition := campaignState.definition
@@ -517,7 +516,8 @@ func (recorder *simulationRecorder) quiescent(
 			},
 			records: records, barriers: barriers,
 		}, simulationWorld{
-			campaign: campaignState, runtime: runtimeState, supervisor: driverState,
+			campaign: campaignState, runtime: runtimeState,
+			supervisor: supervisorState, machine: supervisorMachine,
 		}
 }
 
@@ -633,40 +633,4 @@ func simulationLogicalSnapshot(campaign campaignIdentity) snapshotIdentity {
 
 func simulationLogicalWorkspace(attempt attemptIdentity) string {
 	return "workspace:" + string(attempt)
-}
-
-func simulationProjectSupervisorState(state supervisorState) supervisorState {
-	state = cloneSupervisorState(state)
-	state.emergency.at = simulationCanonicalTime(state.emergency.at)
-	state.emergency.drainBy = simulationCanonicalTime(state.emergency.drainBy)
-	for index := range state.attempts {
-		attempt := &state.attempts[index]
-		attempt.registeredAt = simulationCanonicalTime(attempt.registeredAt)
-		attempt.launchBy = simulationCanonicalTime(attempt.launchBy)
-		attempt.lastEventAt = simulationCanonicalTime(attempt.lastEventAt)
-		attempt.revokedAt = simulationCanonicalTime(attempt.revokedAt)
-		attempt.startedAt = simulationCanonicalTime(attempt.startedAt)
-		attempt.deadlineAt = simulationCanonicalTime(attempt.deadlineAt)
-		attempt.intent.at = simulationCanonicalTime(attempt.intent.at)
-		attempt.intent.drainBy = simulationCanonicalTime(attempt.intent.drainBy)
-		attempt.intent.stop = simulationProjectStop(attempt.intent.stop)
-		attempt.drain.effectiveDrainBy = simulationCanonicalTime(attempt.drain.effectiveDrainBy)
-	}
-
-	return state
-}
-
-func simulationProjectStop(stop StopRequest) StopRequest {
-	stop.At = simulationCanonicalTime(stop.At)
-	stop.DrainBy = simulationCanonicalTime(stop.DrainBy)
-
-	return stop
-}
-
-func simulationCanonicalTime(instant time.Time) time.Time {
-	if instant.IsZero() {
-		return time.Time{}
-	}
-
-	return time.Unix(0, instant.UnixNano()).UTC()
 }

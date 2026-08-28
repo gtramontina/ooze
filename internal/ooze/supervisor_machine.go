@@ -48,6 +48,40 @@ func (machine *supervisorMachine) Projection() supervisionProjection {
 	return supervisionProjectionFromState(machine.state)
 }
 
+func (machine *supervisorMachine) Fork() *supervisorMachine {
+	if machine == nil {
+		return newSupervisorMachine()
+	}
+
+	return newSupervisorMachineFrom(machine.state)
+}
+
+func (machine *supervisorMachine) EmergencyActive() bool {
+	return machine != nil && machine.state.emergency.active
+}
+
+func (machine *supervisorMachine) PendingEmergencyAction() supervisorPendingAction {
+	if machine == nil {
+		return supervisorPendingAction{}
+	}
+
+	return machine.state.emergency.pendingAction
+}
+
+func (machine *supervisorMachine) Attempt(generation attemptGeneration) (supervisionAttemptState, bool) {
+	if machine == nil {
+		return supervisionAttemptState{}, false
+	}
+	projection := machine.Projection()
+	for _, attempt := range projection.attempts {
+		if attempt.generation == generation {
+			return attempt, true
+		}
+	}
+
+	return supervisionAttemptState{}, false
+}
+
 func (machine *supervisorMachine) PrepareEmergency(at, drainBy time.Time) (supervisionFact, bool) {
 	state := machine.state
 	for _, attempt := range state.attempts {

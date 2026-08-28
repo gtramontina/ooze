@@ -25,7 +25,7 @@ type simulationCausalSource struct {
 type simulationEngineMove struct {
 	source             simulationCausalSource
 	effect             campaignEffect
-	action             supervisorAction
+	action             supervisionEffect
 	variant            simulationMoveVariant
 	attemptKind        campaignAttemptKind
 	mutant             mutantIdentity
@@ -67,7 +67,6 @@ type simulationEngine struct {
 	definition   simulationDefinition
 	campaign     campaignState
 	runtime      processruntime.Replay
-	supervisor   supervisorState
 	machine      *supervisorMachine
 	trace        simulationTrace
 	pending      []simulationEngineMove
@@ -148,7 +147,7 @@ func simulationExploreEngine(
 		trace: engine.trace,
 		world: simulationWorld{
 			campaign: engine.campaign, runtime: simulationTraceRuntimeState(engine.runtime), runtimeState: engine.runtime,
-			supervisor: simulationProjectSupervisorState(engine.supervisor),
+			supervisor: engine.machine.Projection(), machine: engine.machine,
 		},
 	}
 }
@@ -176,7 +175,7 @@ func simulationLivenessResult(engine simulationEngine, kind simulationLivenessKi
 		trace: engine.trace,
 		world: simulationWorld{
 			campaign: engine.campaign, runtime: simulationTraceRuntimeState(engine.runtime), runtimeState: engine.runtime,
-			supervisor: simulationProjectSupervisorState(engine.supervisor),
+			supervisor: engine.machine.Projection(), machine: engine.machine,
 		},
 		key: FailureKey{
 			property: "Explore", kind: simulationLivenessFailureKind,
@@ -345,7 +344,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			profile: move.effect.spec.Profile, commandDeadline: move.effect.spec.Deadline,
 		})
 	case campaignEffectStopAttempt:
-		attempt, found := supervisionAttemptIfPresent(engine.supervisor, move.effect.generation)
+		attempt, found := engine.machine.Attempt(move.effect.generation)
 		if !found {
 			if _, registered := engine.launches[move.effect.generation]; registered {
 				return nil
@@ -360,7 +359,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			attempt.phase != supervisorEmergencyDraining {
 			return fmt.Errorf("simulation stop effect reached phase %d before stop admission sealed", attempt.phase)
 		}
-		at := attempt.lastEventAt.Add(time.Nanosecond)
+		at := attempt.lastEventAt.production().Add(time.Nanosecond)
 		drainBy := at.Add(5 * time.Second)
 		return engine.applySupervisor(move.source, supervisorEvent{
 			kind: supervisorRunningObserved, generation: move.effect.generation, at: at, drainBy: drainBy,
@@ -412,26 +411,27 @@ func (engine *simulationEngine) applyRuntime(cut processruntime.Cut) processrunt
 }
 
 func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove) error {
-	action := move.action
+	action := move.action.production()
 	switch action.kind {
 	case supervisorLaunchNative:
-		attempt := supervisionAttempt(engine.supervisor, action.generation)
-		completedAt := attempt.launchBy.Add(-time.Nanosecond)
+		attempt := supervisionAttempt(engine.machine.Projection(), action.generation)
+		launchBy := attempt.launchBy.production()
+		completedAt := launchBy.Add(-time.Nanosecond)
 		var drainBy time.Time
 		kind := supervisorLaunchCompleted
 		completionKind := supervisorLaunchReleased
 		var failure LaunchFailure
 		if move.variant.launch == simulationLaunchAtBoundary {
-			completedAt = attempt.launchBy
+			completedAt = launchBy
 			kind = supervisorLaunchBoundary
 		}
 		if move.variant.launch == simulationLaunchAfterBoundary {
 			if err := engine.applySupervisor(move.source, supervisorEvent{
-				kind: supervisorLaunchBoundary, generation: action.generation, at: attempt.launchBy,
+				kind: supervisorLaunchBoundary, generation: action.generation, at: launchBy,
 			}); err != nil {
 				return err
 			}
-			completedAt = attempt.launchBy.Add(time.Nanosecond)
+			completedAt = launchBy.Add(time.Nanosecond)
 			drainBy = completedAt.Add(5 * time.Second)
 		}
 		if move.variant.launch == simulationLaunchProvenNotReleased {
@@ -480,7 +480,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			result: launchResult, receipt: campaignReceipt(processed),
 		})
 		if action.kind == supervisorPublishLaunchUnconfirmed && result.runtimeClosureInProgress &&
-			!engine.supervisor.emergency.active && !engine.hasPendingSupervisorEmergency() {
+			!engine.machine.EmergencyActive() && !engine.hasPendingSupervisorEmergency() {
 			emergencyAt := action.at.Add(time.Nanosecond)
 			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
@@ -515,7 +515,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorWaitRoot, supervisorSampleRunning:
 		return engine.applyHealthyRunning(move)
 	case supervisorForceOwned:
-		at := simulationCompletionAt(engine.supervisor, action.generation, action.at.Add(time.Nanosecond))
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.Add(time.Nanosecond))
 		completion := supervisorDrainCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -535,7 +535,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		if move.variant.drain == simulationDrainAfterBoundary {
 			at = action.drainBy.Add(time.Nanosecond)
 		}
-		at = simulationCompletionAt(engine.supervisor, action.generation, at)
+		at = simulationCompletionAt(engine.machine.Projection(), action.generation, at)
 		completion := supervisorDrainCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -545,7 +545,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
 		})
 	case supervisorCaptureOutput:
-		at := simulationCompletionAt(engine.supervisor, action.generation, action.at)
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at)
 		completion := supervisorOutputCompletion{
 			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
 			at: at, ref: 1,
@@ -554,7 +554,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorOutputCompleted, generation: action.generation, at: at, output: &completion,
 		})
 	case supervisorSealStopAdmission:
-		at := simulationCompletionAt(engine.supervisor, action.generation, action.at)
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at)
 		completion := supervisorStopSealCompletion{
 			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
 			at: at,
@@ -563,7 +563,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorStopAdmissionSealed, generation: action.generation, at: at, seal: &completion,
 		})
 	case supervisorReleaseDomain:
-		at := simulationCompletionAt(engine.supervisor, action.generation, action.at)
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at)
 		completion := supervisorReleaseCompletion{
 			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
 			at: at,
@@ -613,7 +613,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 			kind: supervisorEmergencySettlementCompleted,
 			emergencySettlement: &supervisorEmergencySettlementCompletion{
-				action:       engine.supervisor.emergency.pendingAction,
+				action:       engine.machine.PendingEmergencyAction(),
 				acknowledged: acknowledged, residuals: residuals,
 			},
 		})
@@ -666,7 +666,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			return nil
 		}
 		engine.pending = append(engine.pending, simulationEngineMove{
-			source: move.source, action: action, delivery: event,
+			source: move.source, action: move.action, delivery: event,
 		})
 
 		return nil
@@ -763,28 +763,27 @@ func (engine *simulationEngine) applySupervisor(
 		event = fact.production()
 	}
 	if engine.machine == nil {
-		engine.machine = newSupervisorMachineFrom(engine.supervisor)
+		engine.machine = newSupervisorMachine()
 	}
 	var transition supervisorTransition
 	engine.machine, transition = engine.machine.Apply(supervisionFactFromEvent(event))
 	accepted := transition.Event().Fact()
-	actions := transition.actions()
-	engine.supervisor = engine.machine.snapshot()
+	effects := transition.Effects()
 	record := simulationRecord{
 		authority: supervisionAuthority, source: source,
 		supervisorEvent:   accepted,
 		supervisorState:   engine.machine.Projection(),
-		supervisorActions: transition.Effects(),
+		supervisorActions: effects,
 	}
 	engine.append(record)
-	engine.enqueueActions(actions)
+	engine.enqueueActions(effects)
 
 	return nil
 }
 
 func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) error {
-	attempt := supervisionAttempt(engine.supervisor, move.action.generation)
-	var wait, sample supervisorAction
+	attempt := supervisionAttempt(engine.machine.Projection(), move.action.generation)
+	var wait, sample supervisionEffect
 	for index := 0; index < len(engine.pending); {
 		candidate := engine.pending[index]
 		if candidate.source.kind != supervisionActionSource ||
@@ -808,7 +807,7 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 	if wait.token == 0 {
 		return fmt.Errorf("simulation healthy running move has no wait action")
 	}
-	observedAt := attempt.startedAt.Add(time.Second)
+	observedAt := attempt.startedAt.production().Add(time.Second)
 	drainBy := observedAt.Add(5 * time.Second)
 	bundle := &supervisorRunningBundle{
 		generation: move.action.generation, sampleAction: sample.token, waitAction: wait.token,
@@ -824,7 +823,7 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 			kind: supervisorRunningRootExited, at: observedAt, exitCode: exitCode,
 		}}
 	case simulationRunningAtDeadline:
-		observedAt = attempt.deadlineAt
+		observedAt = attempt.deadlineAt.production()
 		drainBy = observedAt.Add(5 * time.Second)
 		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: observedAt}
 	case simulationRunningFuse:
@@ -836,9 +835,9 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 			kind: supervisorRunningFuseObserved, at: observedAt, rootLive: true, live: supervisorFuseCeiling + 1,
 		}}
 	case simulationRunningAfterDeadline:
-		observedAt = attempt.deadlineAt.Add(time.Nanosecond)
-		drainBy = attempt.deadlineAt.Add(5 * time.Second)
-		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt}
+		observedAt = attempt.deadlineAt.production().Add(time.Nanosecond)
+		drainBy = attempt.deadlineAt.production().Add(5 * time.Second)
+		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt.production()}
 		bundle.facts = []supervisorRunningFact{{
 			generation: move.action.generation, action: wait.token,
 			kind: supervisorRunningRootExited, at: observedAt,
@@ -874,8 +873,8 @@ func (engine *simulationEngine) enqueueEffects(effects []campaignEffect) {
 	}
 }
 
-func (engine *simulationEngine) enqueueActions(actions []supervisorAction) {
-	for _, enabled := range simulationEnabledMoves(nil, actions, engine.definition.catalogue) {
+func (engine *simulationEngine) enqueueActions(effects []supervisionEffect) {
+	for _, enabled := range simulationEnabledMoves(nil, effects, engine.definition.catalogue) {
 		engine.pending = append(engine.pending, simulationEngineMove{
 			source: simulationCausalSource{
 				kind: supervisionActionSource, identity: uint64(enabled.action.token),
@@ -1014,7 +1013,7 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 				alternative.variant.running = variant
 				moves = append(moves, alternative)
 			}
-			attempt := supervisionAttempt(engine.supervisor, move.action.generation)
+			attempt := supervisionAttempt(engine.machine.Projection(), move.action.generation)
 			if attempt.profile == AutomaticProfile {
 				fuse := move
 				fuse.variant.running = simulationRunningFuse
@@ -1029,7 +1028,7 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
 	machine := engine.machine
 	if machine == nil {
-		machine = newSupervisorMachineFrom(engine.supervisor)
+		machine = newSupervisorMachine()
 	}
 	_, ready := machine.PrepareEmergency(at, at.Add(5*time.Second))
 
@@ -1037,11 +1036,7 @@ func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
 }
 
 func (engine simulationEngine) supervisorAcceptsStop(generation attemptGeneration) bool {
-	for _, attempt := range engine.supervisor.attempts {
-		if attempt.generation != generation {
-			continue
-		}
-
+	if attempt, found := engine.machine.Attempt(generation); found {
 		return attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
 			attempt.phase == supervisorEmergencyDraining || supervisionStopResolved(attempt.phase)
 	}
@@ -1175,7 +1170,7 @@ func (engine simulationEngine) liveSources() []simulationCausalSource {
 	return sources
 }
 
-func supervisionAttempt(state supervisorState, generation attemptGeneration) supervisorAttemptState {
+func supervisionAttempt(state supervisionProjection, generation attemptGeneration) supervisionAttemptState {
 	attempt, found := supervisionAttemptIfPresent(state, generation)
 	if found {
 		return attempt
@@ -1184,26 +1179,27 @@ func supervisionAttempt(state supervisorState, generation attemptGeneration) sup
 }
 
 func supervisionAttemptIfPresent(
-	state supervisorState,
+	state supervisionProjection,
 	generation attemptGeneration,
-) (supervisorAttemptState, bool) {
+) (supervisionAttemptState, bool) {
 	for _, attempt := range state.attempts {
 		if attempt.generation == generation {
 			return attempt, true
 		}
 	}
 
-	return supervisorAttemptState{}, false
+	return supervisionAttemptState{}, false
 }
 
 func simulationCompletionAt(
-	state supervisorState,
+	state supervisionProjection,
 	generation attemptGeneration,
 	at time.Time,
 ) time.Time {
 	attempt := supervisionAttempt(state, generation)
-	if attempt.lastEventAt.After(at) {
-		return attempt.lastEventAt
+	lastEventAt := attempt.lastEventAt.production()
+	if lastEventAt.After(at) {
+		return lastEventAt
 	}
 
 	return at
