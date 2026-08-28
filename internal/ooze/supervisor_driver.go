@@ -1362,9 +1362,6 @@ func snapshotsCompletion(
 }
 
 func (driver *supervisorDriver) executeEmergency(action supervisorAction) {
-	driver.mutex.Lock()
-	state := driver.supervisorState()
-	driver.mutex.Unlock()
 	executor := supervisorEmergencyExecutor{
 		settleEmergency: func(sweep emergencySweep) emergencySettlement {
 			settled := driver.runtime.SettleEmergency(processRuntimeResolutions(sweep))
@@ -1382,9 +1379,12 @@ func (driver *supervisorDriver) executeEmergency(action supervisorAction) {
 		},
 		deliverEmergencySettlement: driver.deliverEmergencySettlement,
 	}
-	event := executor.execute(state, action)
-	if event != nil {
-		driver.apply(*event)
+	driver.mutex.Lock()
+	machine := driver.machine.Fork()
+	driver.mutex.Unlock()
+	fact := executor.execute(machine, supervisionEffectFromAction(action))
+	if fact != nil {
+		driver.apply(fact.production())
 	}
 }
 

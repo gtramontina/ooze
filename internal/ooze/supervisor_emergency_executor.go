@@ -10,14 +10,14 @@ type supervisorEmergencyExecutor struct {
 }
 
 func (executor supervisorEmergencyExecutor) execute(
-	state supervisorState,
-	action supervisorAction,
-) *supervisorEvent {
-	switch action.kind {
+	machine *supervisorMachine,
+	effect supervisionEffect,
+) *supervisionFact {
+	switch effect.kind {
 	case supervisorSettleEmergency:
-		return executor.settle(state, action)
+		return executor.settle(machine, effect)
 	case supervisorDeliverEmergencySettlement:
-		executor.deliver(state, action)
+		executor.deliver(machine, effect)
 
 		return nil
 	default:
@@ -28,36 +28,22 @@ func (executor supervisorEmergencyExecutor) execute(
 }
 
 func (executor supervisorEmergencyExecutor) settle(
-	state supervisorState,
-	action supervisorAction,
-) *supervisorEvent {
-	requireSupervisorSettlementAction(executor, state, action)
-	runtimeResolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(action.resolutions)
+	machine *supervisorMachine,
+	effect supervisionEffect,
+) *supervisionFact {
+	resolutions, ready := machine.EmergencySettlementRequest(effect)
+	if !ready || executor.settleEmergency == nil {
+		invariant(supervisorEmergencyExecutorOperation, "settlement effect is stale, wrong, or inexecutable")
+	}
+	runtimeResolutions, acknowledged, residuals := normalizeSupervisorEmergencyResolutions(resolutions)
 	settled := executor.settleEmergency(emergencySweep{resolutions: runtimeResolutions})
 	validateSupervisorRuntimeSettlement(settled, acknowledged, residuals)
-	completion := supervisorEmergencySettlementCompletion{
-		action:       state.emergency.pendingAction,
-		acknowledged: acknowledged,
-		residuals:    residuals,
+	fact, ready := machine.EmergencySettlementFact(effect, acknowledged, residuals)
+	if !ready {
+		invariant(supervisorEmergencyExecutorOperation, "settlement effect cannot produce a completion fact")
 	}
 
-	return &supervisorEvent{
-		kind:                supervisorEmergencySettlementCompleted,
-		emergencySettlement: &completion,
-	}
-}
-
-func requireSupervisorSettlementAction(
-	executor supervisorEmergencyExecutor,
-	state supervisorState,
-	action supervisorAction,
-) {
-	if action.token == 0 || len(action.residuals) != 0 || executor.settleEmergency == nil ||
-		!state.emergency.active ||
-		state.nextAction != action.token ||
-		state.emergency.pendingAction != (supervisorPendingAction{kind: action.kind, token: action.token}) {
-		invariant(supervisorEmergencyExecutorOperation, "settlement action is stale, wrong, or inexecutable")
-	}
+	return &fact
 }
 
 func normalizeSupervisorEmergencyResolutions(
@@ -90,23 +76,13 @@ func normalizeSupervisorEmergencyResolutions(
 	return runtimeResolutions, acknowledged, residualOwned
 }
 
-func (executor supervisorEmergencyExecutor) deliver(state supervisorState, action supervisorAction) {
-	requireSupervisorDeliveryAction(executor, state, action)
-	residuals := append([]supervisorEmergencyResidual(nil), action.residuals...)
+func (executor supervisorEmergencyExecutor) deliver(machine *supervisorMachine, effect supervisionEffect) {
+	residuals, ready := machine.EmergencyDelivery(effect)
+	if !ready || executor.deliverEmergencySettlement == nil {
+		invariant(supervisorEmergencyExecutorOperation, "delivery effect is stale, wrong, or inexecutable")
+	}
 	validateSupervisorDeliveryResiduals(residuals)
 	executor.deliverEmergencySettlement(residuals)
-}
-
-func requireSupervisorDeliveryAction(
-	executor supervisorEmergencyExecutor,
-	state supervisorState,
-	action supervisorAction,
-) {
-	if action.token == 0 || len(action.resolutions) != 0 || executor.deliverEmergencySettlement == nil ||
-		!state.emergency.active ||
-		state.emergency.pendingAction != (supervisorPendingAction{}) || state.nextAction != action.token {
-		invariant(supervisorEmergencyExecutorOperation, "delivery action is stale, wrong, or inexecutable")
-	}
 }
 
 func validateSupervisorDeliveryResiduals(residuals []supervisorEmergencyResidual) {

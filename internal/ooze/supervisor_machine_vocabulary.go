@@ -406,11 +406,13 @@ func supervisionFactFromEvent(value supervisorEvent) supervisionFact {
 			at: supervisionInstantFromTime(value.release.at), diagnostic: value.release.diagnostic,
 		}
 	}
-	event.emergencySnapshots = make([]supervisionEmergencySnapshot, len(value.emergencySnapshots))
-	for index, snapshot := range value.emergencySnapshots {
-		event.emergencySnapshots[index] = supervisionEmergencySnapshot{
-			generation: snapshot.generation, completion: simulationTraceLaunchCompletion(snapshot.completion),
-			running: simulationTraceRunningBundle(snapshot.running),
+	if value.emergencySnapshots != nil {
+		event.emergencySnapshots = make([]supervisionEmergencySnapshot, len(value.emergencySnapshots))
+		for index, snapshot := range value.emergencySnapshots {
+			event.emergencySnapshots[index] = supervisionEmergencySnapshot{
+				generation: snapshot.generation, completion: simulationTraceLaunchCompletion(snapshot.completion),
+				running: simulationTraceRunningBundle(snapshot.running),
+			}
 		}
 	}
 	if value.runtime != nil {
@@ -451,11 +453,13 @@ func (event supervisionFact) production() supervisorEvent {
 			at: event.release.at.production(), diagnostic: event.release.diagnostic,
 		}
 	}
-	value.emergencySnapshots = make([]supervisorEmergencySnapshot, len(event.emergencySnapshots))
-	for index, snapshot := range event.emergencySnapshots {
-		value.emergencySnapshots[index] = supervisorEmergencySnapshot{
-			generation: snapshot.generation, completion: snapshot.completion.production(),
-			running: snapshot.running.production(),
+	if event.emergencySnapshots != nil {
+		value.emergencySnapshots = make([]supervisorEmergencySnapshot, len(event.emergencySnapshots))
+		for index, snapshot := range event.emergencySnapshots {
+			value.emergencySnapshots[index] = supervisorEmergencySnapshot{
+				generation: snapshot.generation, completion: snapshot.completion.production(),
+				running: snapshot.running.production(),
+			}
 		}
 	}
 	if event.runtime != nil {

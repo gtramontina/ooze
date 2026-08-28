@@ -692,6 +692,34 @@ func (machine *supervisorMachine) EmergencySettlementFact(
 	}), true
 }
 
+func (machine *supervisorMachine) EmergencySettlementRequest(
+	effect supervisionEffect,
+) ([]supervisorEmergencyResolution, bool) {
+	if machine == nil || effect.kind != supervisorSettleEmergency || effect.token == 0 ||
+		len(effect.residuals) != 0 || !machine.state.emergency.active ||
+		machine.state.nextAction != effect.token ||
+		machine.state.emergency.pendingAction != (supervisorPendingAction{
+			kind: effect.kind, token: effect.token,
+		}) {
+		return nil, false
+	}
+
+	return slices.Clone(effect.resolutions), true
+}
+
+func (machine *supervisorMachine) EmergencyDelivery(
+	effect supervisionEffect,
+) ([]supervisorEmergencyResidual, bool) {
+	if machine == nil || effect.kind != supervisorDeliverEmergencySettlement || effect.token == 0 ||
+		len(effect.resolutions) != 0 || !machine.state.emergency.active ||
+		machine.state.emergency.pendingAction != (supervisorPendingAction{}) ||
+		machine.state.nextAction != effect.token {
+		return nil, false
+	}
+
+	return slices.Clone(effect.residuals), true
+}
+
 func (machine *supervisorMachine) EmergencyRequest(at, drainBy time.Time) supervisionFact {
 	return supervisionFactFromEvent(supervisorEvent{
 		kind: supervisorEmergencyStarted, at: at, drainBy: drainBy,

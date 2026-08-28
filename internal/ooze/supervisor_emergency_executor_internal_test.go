@@ -7,6 +7,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func executeSupervisorEmergencyForTest(
+	executor supervisorEmergencyExecutor,
+	state supervisorState,
+	action supervisorAction,
+) *supervisorEvent {
+	fact := executor.execute(newSupervisorMachineFrom(state), supervisionEffectFromAction(action))
+	if fact == nil {
+		return nil
+	}
+	event := fact.production()
+
+	return &event
+}
+
 func TestSupervisorEmergencyExecutorNormalizesRuntimeCustodyIntoCanonicalGenerationOrder(t *testing.T) {
 	action := supervisorAction{
 		kind:  supervisorSettleEmergency,
@@ -50,7 +64,7 @@ func TestSupervisorEmergencyExecutorNormalizesRuntimeCustodyIntoCanonicalGenerat
 		},
 	}
 
-	event := executor.execute(state, action)
+	event := executeSupervisorEmergencyForTest(executor, state, action)
 	wantEvent := &supervisorEvent{
 		kind: supervisorEmergencySettlementCompleted,
 		emergencySettlement: &supervisorEmergencySettlementCompletion{
@@ -92,7 +106,7 @@ func TestSupervisorEmergencyExecutorDeliversExactCanonicalResidualsOnce(t *testi
 		},
 	}
 
-	event := executor.execute(state, action)
+	event := executeSupervisorEmergencyForTest(executor, state, action)
 	assert.Nil(t, event, "delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
 	assert.EqualValues(t, 1, deliveries, "delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
 	assert.Equal(t, action.residuals, delivered, "delivery event/count/residuals = %#v/%d/%#v", event, deliveries, delivered)
@@ -117,7 +131,7 @@ func TestSupervisorEmergencyExecutorRejectsStaleSettlementActionBeforeRuntime(t 
 		},
 	}
 
-	assertInvariantViolation(t, func() { executor.execute(state, action) })
+	assertInvariantViolation(t, func() { executeSupervisorEmergencyForTest(executor, state, action) })
 	assert.EqualValues(t, 0, settleCalls, "stale action reached runtime %d times", settleCalls)
 }
 
@@ -215,7 +229,7 @@ func TestSupervisorEmergencyExecutorRejectsMismatchedRuntimeSettlementFacts(t *t
 				settleEmergency: func(emergencySweep) emergencySettlement { return settled },
 			}
 
-			assertInvariantViolation(t, func() { executor.execute(state, action) })
+			assertInvariantViolation(t, func() { executeSupervisorEmergencyForTest(executor, state, action) })
 		})
 	}
 }
@@ -249,8 +263,8 @@ func TestSupervisorEmergencyExecutorRejectsCrossKindPayloadBeforeEffects(t *test
 		deliverEmergencySettlement: func([]supervisorEmergencyResidual) { deliveryCalls++ },
 	}
 
-	assertInvariantViolation(t, func() { executor.execute(settling, settle) })
-	assertInvariantViolation(t, func() { executor.execute(delivering, deliver) })
+	assertInvariantViolation(t, func() { executeSupervisorEmergencyForTest(executor, settling, settle) })
+	assertInvariantViolation(t, func() { executeSupervisorEmergencyForTest(executor, delivering, deliver) })
 	assert.EqualValues(t, 0, settleCalls, "cross-kind payload reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
 	assert.EqualValues(t, 0, deliveryCalls, "cross-kind payload reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
 }
@@ -290,7 +304,7 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 		return settled
 	}}
 
-	event := executor.execute(state, action)
+	event := executeSupervisorEmergencyForTest(executor, state, action)
 	wantResiduals := []supervisorEmergencyResolution{
 		{generation: low.generation, kind: supervisorEmergencyResidualOwned},
 		{generation: high.generation, kind: supervisorEmergencyResidualOwned},
@@ -302,7 +316,7 @@ func TestSupervisorEmergencyExecutorSettlesProcessRuntimeOnceAcrossAdmissionOrde
 	require.Len(t, rawResidual, 2)
 	assert.Equal(t, high.generation, rawResidual[0].generation)
 	assert.Equal(t, low.generation, rawResidual[1].generation)
-	assertInvariantViolation(t, func() { executor.execute(state, action) })
+	assertInvariantViolation(t, func() { executeSupervisorEmergencyForTest(executor, state, action) })
 }
 
 func TestSupervisorEmergencyExecutorRejectsWrongActionTokensBeforeEffects(t *testing.T) {
@@ -354,7 +368,9 @@ func TestSupervisorEmergencyExecutorRejectsWrongActionTokensBeforeEffects(t *tes
 				deliverEmergencySettlement: func([]supervisorEmergencyResidual) { deliveryCalls++ },
 			}
 
-			assertInvariantViolation(t, func() { executor.execute(test.state, test.action) })
+			assertInvariantViolation(t, func() {
+				executeSupervisorEmergencyForTest(executor, test.state, test.action)
+			})
 			assert.EqualValues(t, 0, settleCalls, "wrong token reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
 			assert.EqualValues(t, 0, deliveryCalls, "wrong token reached effects: settle=%d delivery=%d", settleCalls, deliveryCalls)
 		})
@@ -374,7 +390,7 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 	}
 	executor := supervisorEmergencyExecutor{settleEmergency: func(sweep emergencySweep) emergencySettlement { return settleEmergencyForTest(shell, sweep) }}
 
-	event := executor.execute(state, action)
+	event := executeSupervisorEmergencyForTest(executor, state, action)
 	want := &supervisorEvent{
 		kind: supervisorEmergencySettlementCompleted,
 		emergencySettlement: &supervisorEmergencySettlementCompletion{
@@ -382,7 +398,7 @@ func TestSupervisorEmergencyExecutorPreservesExactEmptyRuntimeSettlement(t *test
 		},
 	}
 	assert.Equal(t, want, event)
-	assertInvariantViolation(t, func() { executor.execute(state, action) })
+	assertInvariantViolation(t, func() { executeSupervisorEmergencyForTest(executor, state, action) })
 }
 
 func cloneSupervisorAction(action supervisorAction) supervisorAction {
