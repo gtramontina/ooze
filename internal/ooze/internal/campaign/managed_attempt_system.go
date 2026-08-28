@@ -1,4 +1,4 @@
-package ooze
+package campaign
 
 import (
 	"sync"
@@ -26,6 +26,13 @@ func newNativeManagedAttemptSystem(runtime *processruntime.Runtime) (*nativeMana
 	}
 
 	return &nativeManagedAttemptSystem{driver: driver}, nil
+}
+
+func newManagedAttemptSystem(driver supervision.System) *nativeManagedAttemptSystem {
+	if driver == nil {
+		panic("managed attempt system is required")
+	}
+	return &nativeManagedAttemptSystem{driver: driver}
 }
 
 func (system *nativeManagedAttemptSystem) launch(

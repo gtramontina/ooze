@@ -1,4 +1,4 @@
-package ooze
+package campaign
 
 func (runner *managedCampaignRunner) needsEmergencySettlement() bool {
 	_, requested := runner.state.runtimeEmergencySettlementRequest()

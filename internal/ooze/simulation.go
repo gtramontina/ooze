@@ -2,12 +2,12 @@ package ooze
 
 import (
 	"fmt"
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"reflect"
 	"slices"
-	"time"
 
+	campaignmodule "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 const (
@@ -15,15 +15,39 @@ const (
 	settleEmergencyOperation = "settle emergency"
 )
 
-type simulationDuration int64
+type attemptIdentity = supervision.Identity
+type attemptGeneration = processruntime.Generation
+type mutantIdentity = string
+type runtimeInvariantViolation = campaignmodule.Violation
+type campaignRegistration = processruntime.Registration
+type observationResult = processruntime.Receipt
+type emergencySettlement = processruntime.EmergencySettlement
+type admissionGrant = processruntime.Admission
+type admissionResult = processruntime.AdmissionResult
+type confirmationQueueResult = processruntime.QueueResult
+type startCommittedResult = processruntime.StartResult
+type runtimeClosure = processruntime.Closure
+type emergencySweep = []processruntime.Resolution
 
-func simulationTraceDuration(value time.Duration) simulationDuration {
-	return simulationDuration(value)
-}
-
-func (duration simulationDuration) production() time.Duration {
-	return time.Duration(duration)
-}
+const (
+	campaignEffectRegister                = campaignmodule.RegisterEffect
+	campaignEffectEstablishSnapshot       = campaignmodule.EstablishSnapshotEffect
+	campaignEffectDiscoverCatalogue       = campaignmodule.DiscoverCatalogueEffect
+	campaignEffectReleaseSnapshot         = campaignmodule.ReleaseSnapshotEffect
+	campaignEffectMaterializeWorkspace    = campaignmodule.MaterializeWorkspaceEffect
+	campaignEffectRequestAdmission        = campaignmodule.RequestAdmissionEffect
+	campaignEffectRequestStartCommitment  = campaignmodule.RequestStartCommitmentEffect
+	campaignEffectLaunchAttempt           = campaignmodule.LaunchAttemptEffect
+	campaignEffectCancelAdmission         = campaignmodule.CancelAdmissionEffect
+	campaignEffectReturnAdmission         = campaignmodule.ReturnAdmissionEffect
+	campaignEffectStopAttempt             = campaignmodule.StopAttemptEffect
+	campaignEffectReleaseWorkspace        = campaignmodule.ReleaseWorkspaceEffect
+	campaignEffectBindConfirmationBarrier = campaignmodule.BindConfirmationBarrierEffect
+	campaignEffectProposeTerminal         = campaignmodule.ProposeTerminalEffect
+	campaignAttemptBaseline               = campaignmodule.BaselineAttempt
+	campaignAttemptPrimary                = campaignmodule.PrimaryAttempt
+	campaignAttemptConfirmation           = campaignmodule.ConfirmationAttempt
+)
 
 type simulationAuthority uint8
 
@@ -36,9 +60,9 @@ const (
 const simulationChooseBaselineFailure byte = 1
 
 type simulationDefinition struct {
-	campaign  campaignDefinition
+	campaign  campaignmodule.Definition
 	capacity  int
-	catalogue []mutantIdentity
+	catalogue []string
 }
 
 type simulationChoiceBytes []byte
@@ -97,7 +121,7 @@ type simulationChoiceRecord struct {
 
 type simulationQuiescentBarrier struct {
 	afterSequence uint64
-	campaign      simulationCampaignState
+	campaign      campaignmodule.Projection
 	runtime       simulationRuntimeState
 	supervisor    supervision.Projection
 }
@@ -107,9 +131,9 @@ type simulationRecord struct {
 	authority simulationAuthority
 	source    simulationCausalSource
 
-	campaignEvent   simulationCampaignEvent
-	campaignState   simulationCampaignState
-	campaignEffects []campaignEffect
+	campaignEvent   campaignmodule.Event
+	campaignState   campaignmodule.Projection
+	campaignEffects []campaignmodule.Effect
 
 	runtimeCut        processruntime.RecordedCut
 	runtimeCorruption *processruntime.CorruptedCut
@@ -122,7 +146,7 @@ type simulationRecord struct {
 }
 
 type simulationWorld struct {
-	campaign     campaignState
+	campaign     campaignmodule.Machine
 	runtime      simulationRuntimeState
 	runtimeState processruntime.Replay
 	supervisor   supervision.Projection
@@ -138,7 +162,7 @@ type SimulationResult struct {
 
 type simulationMalformedFact struct {
 	authority  simulationAuthority
-	campaign   simulationCampaignEvent
+	campaign   campaignmodule.Fact
 	runtimeCut processruntime.Cut
 	supervisor supervision.Fact
 }
@@ -203,7 +227,7 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 	if values, ok := choices.(simulationChoiceBytes); ok {
 		choices = &simulationChoiceCursor{values: slices.Clone(values)}
 	}
-	definition.catalogue = append([]mutantIdentity(nil), definition.catalogue...)
+	definition.catalogue = append([]string(nil), definition.catalogue...)
 	return simulationExploreEngine(definition, choices)
 }
 
@@ -234,27 +258,25 @@ func equalSupervisionEffects(left, right []supervision.Effect) bool {
 }
 
 func simulationAdvanceCampaign(
-	state campaignState,
-	payload campaignEventPayload,
-) (campaignState, []campaignEffect) {
-	return advanceCampaign(state, campaignEvent{
-		id:      campaignEventID(len(state.trace) + 1),
-		payload: payload,
-	})
+	machine campaignmodule.Machine,
+	fact campaignmodule.Fact,
+) (campaignmodule.Machine, campaignmodule.Transition) {
+	return machine.Apply(fact)
 }
 
 func simulationCampaignRecord(
 	trace simulationTrace,
-	state campaignState,
-	effects []campaignEffect,
-	payload campaignEventPayload,
+	machine campaignmodule.Machine,
+	transition campaignmodule.Transition,
 ) simulationRecord {
+	effects := transition.Effects()
+	for index, effect := range effects {
+		effects[index] = effect.Canonical(machine.Projection())
+	}
 	return simulationRecord{
 		sequence: uint64(len(trace.records) + 1), authority: simulationCampaignAuthority,
-		campaignEvent: simulationTraceCampaignEvent(campaignEvent{
-			id: campaignEventID(len(state.trace)), payload: payload,
-		}), campaignState: simulationTraceCampaignState(state),
-		campaignEffects: append([]campaignEffect(nil), effects...),
+		campaignEvent: transition.Event().Canonical(), campaignState: machine.Projection().Canonical(),
+		campaignEffects: effects,
 	}
 }
 
@@ -269,12 +291,13 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		}
 	}()
 
-	campaign, effects := beginCampaign(trace.definition.campaign)
+	campaign, initial := campaignmodule.NewMachine(trace.definition.campaign)
+	effects := initial.Effects()
 	runtime := processruntime.NewReplay(trace.definition.capacity)
 	supervisorMachine := supervision.NewMachine()
-	var delivered campaignEventPayload
-	pendingDeliveries := make(map[simulationCausalSource][]campaignEventPayload)
-	activeLaunches := make(map[attemptGeneration]campaignEffect)
+	var delivered campaignmodule.Fact
+	pendingDeliveries := make(map[simulationCausalSource][]campaignmodule.Fact)
+	activeLaunches := make(map[attemptGeneration]campaignmodule.Effect)
 	terminalReceipts := make(map[attemptGeneration]observationResult)
 	actionKinds := make(map[supervision.ActionToken]supervision.EffectKind)
 	barrierAt := 0
@@ -286,11 +309,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		}
 		switch record.authority {
 		case simulationRuntimeAuthority:
-			delivered = nil
+			delivered = campaignmodule.Fact{}
 			switch record.runtimeCut.Operation() {
 			case processruntime.RegisterCampaignOperation:
-				registrationEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectRegister
+				registrationEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectRegister
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -298,7 +321,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"registration is not enabled at record %d", index,
 					)
 				}
-				if !record.runtimeCut.Matches(processruntime.RegisterCampaignCut(trace.definition.campaign.lineage)) {
+				if !record.runtimeCut.Matches(processruntime.RegisterCampaignCut(trace.definition.campaign.Lineage)) {
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"registration input diverged at record %d", index)
 				}
@@ -311,13 +334,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"registration diverged at record %d", index)
 				}
 				registered := record.runtimeCut.Result().Registration()
-				registration := campaignRegistrationEvidence(registered)
-				delivered = campaignRegisteredEvent{registration: registration}
+				delivered = campaignmodule.Registered(registered)
 			case processruntime.RequestAdmissionOperation:
-				requestEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectRequestAdmission && record.runtimeCut.Matches(
-						processruntime.RequestAdmissionCut(processRuntimeAdmission(effect.request)),
-					)
+				requestEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectRequestAdmission &&
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -333,27 +354,20 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"admission decision diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Admission()
-				admission := runtimeAdmissionResult(processed)
-				if admission.decision != processruntime.AdmissionAccepted {
-					delivered = admissionRejectedEvent{
-						attempt: requestEffect.attempt, result: campaignAdmissionEvidence(admission),
-						cause: "simulation admission rejected",
-					}
+				if processed.Decision() != processruntime.AdmissionAccepted {
+					delivered = campaignmodule.AdmissionRejected(requestEffect, processed, "simulation admission rejected")
 					break
 				}
 				source := simulationCausalSource{
 					kind: simulationOwnerDeliverySource, identity: record.sequence,
 				}
-				for _, grant := range admission.deliveries {
-					pendingDeliveries[source] = append(pendingDeliveries[source], admissionGrantedEvent{
-						attempt: grant.attempt, grant: campaignAdmissionValue(grant),
-					})
+				for _, grant := range processed.Deliveries() {
+					pendingDeliveries[source] = append(pendingDeliveries[source], campaignmodule.AdmissionGranted(requestEffect, grant))
 				}
 			case processruntime.CancelAdmissionOperation:
-				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectCancelAdmission && record.runtimeCut.Matches(
-						processruntime.CancelAdmissionCut(processRuntimeAdmission(effect.request)),
-					)
+				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectCancelAdmission &&
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -369,16 +383,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"admission cancellation diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Admission()
-				cancelled := runtimeAdmissionResult(processed)
-				delivered = admissionCancelledEvent{
-					attempt: cancelEffect.attempt, request: cancelEffect.request,
-					result: campaignAdmissionEvidence(cancelled),
-				}
+				delivered = campaignmodule.AdmissionCancelled(cancelEffect, processed)
 			case processruntime.ReturnGrantOperation:
-				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectReturnAdmission && record.runtimeCut.Matches(
-						processruntime.ReturnGrantCut(processRuntimeAdmission(effect.grant)),
-					)
+				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectReturnAdmission &&
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -394,19 +403,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"grant return diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Admission()
-				returned := runtimeAdmissionResult(processed)
-				delivered = grantReturnAcknowledgedEvent{
-					grant: returnEffect.grant, result: campaignAdmissionEvidence(returned),
-				}
+				delivered = campaignmodule.GrantReturnAcknowledged(returnEffect, processed)
 			case processruntime.BindConfirmationBarrierOperation:
-				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					binding := runtimeBarrierBinding(effect.binding)
-					return effect.kind == campaignEffectBindConfirmationBarrier && record.runtimeCut.Matches(
-						processruntime.BindConfirmationBarrierCut(processruntime.Barrier{
-							Campaign: binding.campaign, Attempt: string(binding.attempt),
-							Profile: binding.profile, Deadline: binding.deadline,
-						}),
-					)
+				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectBindConfirmationBarrier &&
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -422,12 +423,9 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"confirmation barrier diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Barrier()
-				bound := runtimeBarrierResult(processed)
-				delivered = confirmationBarrierBoundEvent{
-					attempt: bindingEffect.attempt, result: campaignBarrierEvidence(bound),
-				}
+				delivered = campaignmodule.ConfirmationBarrierBound(bindingEffect, processed)
 			case processruntime.CompleteConfirmationQueueOperation:
-				if !record.runtimeCut.Matches(processruntime.CompleteConfirmationQueueCut(campaign.runtimeToken)) {
+				if !record.runtimeCut.Matches(processruntime.CompleteConfirmationQueueCut(campaign.Campaign())) {
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"confirmation queue input diverged at record %d", index)
 				}
@@ -440,10 +438,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				processed := record.runtimeCut.Result().Queue()
 				completed := runtimeQueueResult(processed)
 				candidates := pendingDeliveries[record.source]
-				terminalAt := slices.IndexFunc(candidates, func(candidate campaignEventPayload) bool {
-					_, ok := candidate.(attemptTerminalEvent)
-
-					return ok
+				terminalAt := slices.IndexFunc(candidates, func(candidate campaignmodule.Fact) bool {
+					return candidate.Kind() == campaignmodule.AttemptTerminalFact
 				})
 				if terminalAt < 0 {
 					return simulationReplayFailure(
@@ -451,15 +447,13 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"confirmation queue has no causal terminal at record %d", index,
 					)
 				}
-				terminal := candidates[terminalAt].(attemptTerminalEvent)
-				terminal.receipt.confirmationQueueDrained = completed.decision == processruntime.ConfirmationQueueCompleted
+				terminal := candidates[terminalAt].WithConfirmationQueueCompleted(completed)
 				pendingDeliveries[record.source] = slices.Delete(candidates, terminalAt, terminalAt+1)
 				delivered = terminal
 			case processruntime.CommitStartOperation:
-				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectRequestStartCommitment && record.runtimeCut.Matches(
-						processruntime.CommitStartCut(processRuntimeAdmission(effect.grant)),
-					)
+				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectRequestStartCommitment &&
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -475,10 +469,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"start commitment diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Start()
-				started := runtimeStartResult(processed)
-				delivered = startCommittedEvent{
-					attempt: startEffect.attempt, grant: startEffect.grant, result: campaignStartEvidence(started),
-				}
+				delivered = campaignmodule.StartCommitted(startEffect, processed)
 			case processruntime.ObserveAttemptOperation:
 				generation, observed, ok := record.runtimeCut.Observation()
 				if !ok {
@@ -491,8 +482,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return simulationReplayDivergenceFailure(trace, simulationObservationDivergence,
 						"attempt observation diverged at record %d", index)
 				}
-				processed := record.runtimeCut.Result().Receipt()
-				observation := runtimeReceipt(processed)
+				observation := record.runtimeCut.Result().Receipt()
 				actionKind := supervision.EffectKind(0)
 				if record.source.kind == supervisionActionSource {
 					actionKind = actionKinds[supervision.ActionToken(record.source.identity)]
@@ -509,11 +499,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 							"owned observation has no causal launch at record %d", index,
 						)
 					}
-					delivered = attemptLaunchEvent{
-						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
-						result:  campaignLaunchObservation{kind: campaignLaunchOwned},
-						receipt: campaignReceiptValue(observation),
-					}
+					delivered = campaignmodule.AttemptLaunched(activeLaunch, supervision.Owned{}, observation)
 				case processruntime.LaunchNotReleased:
 					if actionKind != supervision.PublishNotReleasedEffect {
 						break
@@ -529,13 +515,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					if observed.ResourceExhausted() {
 						failure = supervision.LaunchResourceExhausted
 					}
-					delivered = attemptLaunchEvent{
-						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
-						result: campaignLaunchObservation{
-							kind: campaignLaunchNotReleased, failure: failure,
-						},
-						receipt: campaignReceiptValue(observation),
-					}
+					delivered = campaignmodule.AttemptLaunched(activeLaunch, supervision.NotReleased{Kind: failure}, observation)
 				case processruntime.LaunchUnconfirmedKind:
 					if actionKind != supervision.PublishLaunchUnconfirmedEffect {
 						break
@@ -547,21 +527,15 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 							"unconfirmed observation has no causal launch at record %d", index,
 						)
 					}
-					delivered = attemptLaunchEvent{
-						attempt: activeLaunch.attempt, generation: activeLaunch.generation,
-						result: campaignLaunchObservation{
-							kind: campaignLaunchUnconfirmed, residual: supervision.ProspectiveUnresolved,
-						},
-						receipt: campaignReceiptValue(observation),
-					}
+					delivered = campaignmodule.AttemptLaunched(activeLaunch, supervision.LaunchUnconfirmed{Residual: supervision.ProspectiveUnresolved}, observation)
 				case processruntime.DrainUnconfirmedKind:
 					terminalReceipts[generation] = observation
 				default:
 					terminalReceipts[generation] = observation
 				}
 			case processruntime.CommitTerminalOperation:
-				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectProposeTerminal
+				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectProposeTerminal
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -570,7 +544,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				if !record.runtimeCut.Matches(processruntime.CommitTerminalCut(campaign.runtimeToken)) {
+				if !record.runtimeCut.Matches(processruntime.CommitTerminalCut(campaign.Campaign())) {
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"terminal input diverged at record %d", index)
 				}
@@ -581,8 +555,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"terminal commitment diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Terminal()
-				terminal := terminalResult{decision: processed.Decision()}
-				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
+				delivered = campaignmodule.TerminalCommitted(processed.Decision())
 			case processruntime.SettleEmergencyOperation:
 				var matches bool
 				runtime, matches = simulationReplayRuntimeCut(runtime, record)
@@ -591,15 +564,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"emergency settlement diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Settlement()
-				settlement := runtimeEmergencySettlement(processed)
-				delivered = runtimeEmergencySettledEvent{
-					epoch: settlement.epoch, settlement: campaignSettlementValue(settlement),
-				}
+				delivered = campaignmodule.RuntimeEmergencySettled(processed)
 			case processruntime.AuthorizeForcedAbortOperation:
-				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectProposeTerminal && record.runtimeCut.Matches(
-						processruntime.AuthorizeForcedAbortCut(campaign.runtimeToken, uint64(effect.fatalEpoch)),
-					)
+				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectProposeTerminal &&
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -615,8 +584,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"forced abort diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Terminal()
-				terminal := terminalResult{decision: processed.Decision()}
-				delivered = terminalCommittedEvent{result: campaignTerminalEvidence(terminal)}
+				delivered = campaignmodule.TerminalCommitted(processed.Decision())
 			case processruntime.CloseOperation:
 				var matches bool
 				runtime, matches = simulationReplayRuntimeCut(runtime, record)
@@ -625,15 +593,14 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"runtime closure diverged at record %d", index)
 				}
 				processed := record.runtimeCut.Result().Closure()
-				closure := runtimeClosureValue(processed)
-				delivered = runtimeEmergencyStartedEvent{closure: campaignClosureValue(closure)}
+				delivered = campaignmodule.RuntimeEmergencyStarted(processed)
 			default:
 				return simulationReplayFailure(
 					trace, simulationReplayOperationFailure,
 					"runtime operation is invalid at record %d", index,
 				)
 			}
-			if delivered != nil {
+			if !delivered.IsZero() {
 				source := simulationCausalSource{
 					kind: simulationOwnerDeliverySource, identity: record.sequence,
 				}
@@ -645,13 +612,13 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				)
 			}
 		case simulationCampaignAuthority:
-			payload := record.campaignEvent.production().payload
+			payload := record.campaignEvent.Fact()
 			if record.source.kind != 0 {
 				candidates := pendingDeliveries[record.source]
-				delivered = nil
+				delivered = campaignmodule.Fact{}
 				for candidateAt, candidate := range candidates {
 					candidate = simulationCausalCampaignPayload(payload, candidate)
-					if !reflect.DeepEqual(payload, candidate) {
+					if !payload.Equal(candidate) {
 						continue
 					}
 					delivered = candidate
@@ -660,51 +627,54 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					break
 				}
 			}
-			if payload == nil {
+			if payload.IsZero() {
 				payload = delivered
 			}
-			if delivered != nil {
+			if !delivered.IsZero() {
 				delivered = simulationCausalCampaignPayload(payload, delivered)
 			}
-			if delivered != nil && !reflect.DeepEqual(payload, delivered) {
+			if !delivered.IsZero() && !payload.Equal(delivered) {
 				return simulationReplayFailure(
 					trace, simulationReplayCausalityFailure,
 					"causal campaign fact diverged at record %d: got=%#v want=%#v",
 					index, delivered, payload,
 				)
 			}
-			if delivered == nil {
-				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
+			if delivered.IsZero() {
+				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return simulationEffectEnablesExternalFact(effect, payload)
 				})
 				if !ok {
 					return simulationReplayFailure(
 						trace, simulationReplayEnablednessFailure,
 						"external campaign fact is not enabled at record %d (%s): source=%#v effects=%v deliveries=%v",
-						index, payload.campaignEventName(), record.source,
+						index, payload.Name(), record.source,
 						simulationEffectKinds(effects), pendingDeliveries,
 					)
 				}
 				effects = remaining
 			}
-			var emitted []campaignEffect
-			campaign, emitted = advanceCampaign(campaign, campaignEvent{
-				id: campaignEventID(len(campaign.trace) + 1), payload: payload,
-			})
-			delivered = nil
-			if !reflect.DeepEqual(simulationTraceCampaignState(campaign), record.campaignState) {
+			var transition campaignmodule.Transition
+			campaign, transition = simulationAdvanceCampaign(campaign, payload)
+			emitted := transition.Effects()
+			delivered = campaignmodule.Fact{}
+			if !campaign.Projection().Canonical().Equal(record.campaignState) {
 				return simulationReplayDivergenceFailure(
 					trace, simulationCampaignStateDivergence,
-					"campaign state diverged at record %d (%s)", index, payload.campaignEventName(),
+					"campaign state diverged at record %d (%s)", index, payload.Name(),
 				)
 			}
-			if !slices.EqualFunc(emitted, record.campaignEffects, func(left, right campaignEffect) bool {
-				return reflect.DeepEqual(left, right)
+			projected := make([]campaignmodule.Effect, len(emitted))
+			for index, effect := range emitted {
+				projected[index] = effect.Canonical(campaign.Projection())
+			}
+			if !slices.EqualFunc(projected, record.campaignEffects, func(left, right campaignmodule.Effect) bool {
+				return left.Equal(right)
 			}) {
 				return simulationReplayDivergenceFailure(
 					trace, simulationCampaignEffectsDivergence,
 					"campaign effects diverged at record %d (%s): got=%v want=%v",
-					index, payload.campaignEventName(), simulationEffectKinds(emitted),
+					index, payload.Name(), simulationEffectKinds(emitted),
 					simulationEffectKinds(record.campaignEffects),
 				)
 			}
@@ -712,8 +682,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		case supervisionAuthority:
 			fact := record.supervisorEvent
 			if registration, registered := fact.Registration(); registered {
-				launchEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectLaunchAttempt &&
+				launchEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectLaunchAttempt &&
 						supervisionRegistrationMatches(effect, registration)
 				})
 				if !ok {
@@ -726,8 +696,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				effects = remaining
 			}
 			if generation, stopped := fact.StopGeneration(); stopped {
-				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignEffect) bool {
-					return effect.kind == campaignEffectStopAttempt && effect.generation == generation
+				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
+					return effect.Kind() == campaignEffectStopAttempt && effect.Generation() == generation
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -766,18 +736,15 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"terminal effect is invalid at record %d", index)
 				}
-				receipt, found := terminalReceipts[activeLaunch.generation]
+				receipt, found := terminalReceipts[activeLaunch.Generation()]
 				if !found {
 					return simulationReplayFailure(
 						trace, simulationReplayCausalityFailure,
 						"terminal completion has no runtime receipt at record %d", index,
 					)
 				}
-				delete(terminalReceipts, activeLaunch.generation)
-				terminalEvent := attemptTerminalEvent{
-					attempt: activeLaunch.attempt, generation: activeLaunch.generation,
-					terminal: terminal, receipt: campaignReceiptValue(receipt),
-				}
+				delete(terminalReceipts, activeLaunch.Generation())
+				terminalEvent := campaignmodule.AttemptTerminal(activeLaunch, terminal, receipt, 0)
 				pendingDeliveries[simulationCausalSource{
 					kind: supervisionActionSource, identity: uint64(effect.Token()),
 				}] = append(pendingDeliveries[simulationCausalSource{
@@ -790,10 +757,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					return effect.Kind() == supervision.DeliverEmergencySettlementEffect
 				})
 				candidates := pendingDeliveries[record.source]
-				settlementAt := slices.IndexFunc(candidates, func(candidate campaignEventPayload) bool {
-					_, ok := candidate.(runtimeEmergencySettledEvent)
-
-					return ok
+				settlementAt := slices.IndexFunc(candidates, func(candidate campaignmodule.Fact) bool {
+					return candidate.Kind() == campaignmodule.RuntimeEmergencySettledFact
 				})
 				if deliverAt < 0 || settlementAt < 0 {
 					return simulationReplayFailure(
@@ -815,7 +780,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 		}
 		for barrierAt < len(trace.barriers) && trace.barriers[barrierAt].afterSequence == record.sequence {
 			barrier := trace.barriers[barrierAt]
-			if !reflect.DeepEqual(simulationTraceCampaignState(campaign), barrier.campaign) ||
+			if !campaign.Projection().Canonical().Equal(barrier.campaign) ||
 				!reflect.DeepEqual(simulationTraceRuntimeState(runtime), barrier.runtime) ||
 				!supervisorMachine.Projection().Equal(barrier.supervisor) {
 				return simulationReplayFailure(
@@ -849,7 +814,8 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 	return SimulationResult{
 		trace: trace,
 		world: simulationWorld{
-			campaign: campaign, runtime: simulationTraceRuntimeState(runtime), runtimeState: runtime,
+			campaign: campaign.Projection().Canonical().Fork(),
+			runtime:  simulationTraceRuntimeState(runtime), runtimeState: runtime,
 			supervisor: supervisorMachine.Projection(), machine: supervisorMachine,
 		},
 	}
@@ -905,8 +871,8 @@ func simulationRecordDependsOn(child, parent simulationRecord) bool {
 	case simulationOwnerDeliverySource:
 		return child.source.identity == parent.sequence
 	case simulationCampaignEffectSource:
-		return slices.ContainsFunc(parent.campaignEffects, func(effect campaignEffect) bool {
-			return uint64(effect.id) == child.source.identity
+		return slices.ContainsFunc(parent.campaignEffects, func(effect campaignmodule.Effect) bool {
+			return uint64(effect.ID()) == child.source.identity
 		})
 	case supervisionActionSource:
 		return slices.ContainsFunc(parent.supervisorActions, func(action supervision.Effect) bool {
@@ -920,9 +886,16 @@ func simulationRecordDependsOn(child, parent simulationRecord) bool {
 func simulationApplyRecordedOwnerCut(world simulationWorld, record simulationRecord) (simulationWorld, error) {
 	switch record.authority {
 	case simulationCampaignAuthority:
-		state, effects := advanceCampaign(world.campaign, record.campaignEvent.production())
-		if !reflect.DeepEqual(simulationTraceCampaignState(state), record.campaignState) ||
-			!reflect.DeepEqual(effects, record.campaignEffects) {
+		state, transition := world.campaign.Apply(record.campaignEvent.Fact())
+		effects := transition.Effects()
+		projected := make([]campaignmodule.Effect, len(effects))
+		for index, effect := range effects {
+			projected[index] = effect.Canonical(state.Projection())
+		}
+		if !state.Projection().Canonical().Equal(record.campaignState) ||
+			!slices.EqualFunc(projected, record.campaignEffects, func(left, right campaignmodule.Effect) bool {
+				return left.Equal(right)
+			}) {
 			return simulationWorld{}, fmt.Errorf("campaign owner cut diverged")
 		}
 		world.campaign = state
@@ -976,16 +949,8 @@ func simulationReplayRuntimeCut(state processruntime.Replay, record simulationRe
 	return state.ApplyRecorded(record.runtimeCut)
 }
 
-func simulationCausalCampaignPayload(recorded, derived campaignEventPayload) campaignEventPayload {
-	recordedTerminal, recordedIsTerminal := recorded.(attemptTerminalEvent)
-	derivedTerminal, derivedIsTerminal := derived.(attemptTerminalEvent)
-	if recordedIsTerminal && derivedIsTerminal {
-		derivedTerminal.resolvedMutationDeadline = recordedTerminal.resolvedMutationDeadline
-
-		return derivedTerminal
-	}
-
-	return derived
+func simulationCausalCampaignPayload(recorded, derived campaignmodule.Fact) campaignmodule.Fact {
+	return derived.WithRecordedEvidence(recorded)
 }
 
 func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) (result ViolationResult) {
@@ -995,7 +960,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 	}
 	switch malformed.authority {
 	case simulationCampaignAuthority:
-		if malformed.campaign.kind == 0 {
+		if malformed.campaign.Kind() == 0 {
 			return ViolationResult{failure: fmt.Errorf("malformed campaign fact is absent")}
 		}
 	case simulationRuntimeAuthority:
@@ -1013,7 +978,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 		recovered := recover()
 		violation, ok := recovered.(runtimeInvariantViolation)
 		if runtimeViolation, runtimeFailed := recovered.(processruntime.Violation); runtimeFailed {
-			violation = runtimeInvariantViolation{operation: runtimeViolation.Operation(), reason: runtimeViolation.Reason()}
+			violation = campaignmodule.NewViolation(runtimeViolation.Operation(), runtimeViolation.Reason())
 			ok = true
 		}
 		if !ok {
@@ -1037,12 +1002,7 @@ func ReplayViolation(prefix simulationTrace, malformed simulationMalformedFact) 
 
 	switch malformed.authority {
 	case simulationCampaignAuthority:
-		malformedEvent := malformed.campaign.production()
-		_, _ = advanceCampaignGuarded(&runtime, campaign, campaignEvent{
-			id: campaignEventID(len(campaign.trace) + 1), payload: malformedEvent.payload,
-		}, func(closure runtimeClosure) emergencySweep {
-			return simulationEmergencySweep(runtime, closure)
-		})
+		simulationAdvanceCampaignGuarded(&runtime, campaign, malformed.campaign)
 	case simulationRuntimeAuthority:
 		violation, _ := malformed.runtimeCut.Malformed()
 		simulationAdvanceRuntimeGuarded(&runtime, "runtime violation replay", func(state processruntime.Replay) processruntime.Replay {
@@ -1067,17 +1027,35 @@ func simulationAdvanceRuntimeGuarded(
 		}
 		violation, ok := recovered.(runtimeInvariantViolation)
 		if runtimeViolation, runtimeFailed := recovered.(processruntime.Violation); runtimeFailed {
-			violation = runtimeInvariantViolation{operation: runtimeViolation.Operation(), reason: runtimeViolation.Reason()}
+			violation = campaignmodule.NewViolation(runtimeViolation.Operation(), runtimeViolation.Reason())
 			ok = true
 		}
 		if !ok {
-			violation = runtimeInvariantViolation{operation: operation, reason: "unexpected panic"}
+			violation = campaignmodule.NewViolation(operation, "unexpected panic")
 		}
 		simulationSettleInvariantCleanup(runtime, violation)
 		panic(violation)
 	}()
 
 	*runtime = advance(*runtime)
+}
+
+func simulationAdvanceCampaignGuarded(
+	runtime *processruntime.Replay,
+	machine campaignmodule.Machine,
+	fact campaignmodule.Fact,
+) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			violation, ok := recovered.(campaignmodule.Violation)
+			if !ok {
+				panic(recovered)
+			}
+			simulationSettleInvariantCleanup(runtime, violation)
+			panic(violation)
+		}
+	}()
+	_, _ = machine.Apply(fact)
 }
 
 func simulationAdvanceSupervisorGuarded(
@@ -1092,15 +1070,11 @@ func simulationAdvanceSupervisorGuarded(
 		}
 		violation, ok := recovered.(runtimeInvariantViolation)
 		if supervisorViolation, failed := recovered.(supervision.Violation); failed {
-			violation = runtimeInvariantViolation{
-				operation: supervisorViolation.Operation(), reason: supervisorViolation.Reason(),
-			}
+			violation = campaignmodule.NewViolation(supervisorViolation.Operation(), supervisorViolation.Reason())
 			ok = true
 		}
 		if !ok {
-			violation = runtimeInvariantViolation{
-				operation: "reduce supervisor", reason: "unexpected panic",
-			}
+			violation = campaignmodule.NewViolation("reduce supervisor", "unexpected panic")
 		}
 		simulationSettleInvariantCleanup(runtime, violation)
 		panic(violation)
@@ -1113,28 +1087,25 @@ func simulationSettleInvariantCleanup(runtime *processruntime.Replay, violation 
 	defer func() {
 		_ = recover()
 	}()
-	next, applied := runtime.Apply(processruntime.CloseCut(violation.reason))
+	next, applied := runtime.Apply(processruntime.CloseCut(violation.Reason()))
 	*runtime = next
 	closure := runtimeClosureValue(applied.Closure())
-	next, _ = runtime.Apply(processruntime.SettleEmergencyCut(processRuntimeResolutions(simulationEmergencySweep(*runtime, closure))))
+	next, _ = runtime.Apply(processruntime.SettleEmergencyCut(simulationEmergencySweep(*runtime, closure)))
 	*runtime = next
 }
 
 func simulationEmergencySweep(runtime processruntime.Replay, closure runtimeClosure) emergencySweep {
-	resolutions := make([]emergencyResolution, len(closure.residual))
-	for index, residual := range closure.residual {
-		disposition := emergencyCustodyTransferred
-		if !residual.transferred && residual.stage == admissionOwned && !runtime.Accepts(processruntime.ObserveAttemptCut(
-			residual.generation, processruntime.DrainUnconfirmed(),
+	residuals := closure.Residual()
+	resolutions := make([]processruntime.Resolution, len(residuals))
+	for index, residual := range residuals {
+		resolutions[index] = processruntime.TransferCustody(residual.Generation())
+		if !residual.Transferred() && !residual.Prospective() && !runtime.Accepts(processruntime.ObserveAttemptCut(
+			residual.Generation(), processruntime.DrainUnconfirmed(),
 		)) {
-			disposition = emergencyConfirmedDrained
-		}
-		resolutions[index] = emergencyResolution{
-			generation: residual.generation, disposition: disposition,
+			resolutions[index] = processruntime.ConfirmedDrained(residual.Generation())
 		}
 	}
-
-	return emergencySweep{resolutions: resolutions}
+	return resolutions
 }
 
 func Shrink(trace simulationTrace, key FailureKey) simulationTrace {
@@ -1299,7 +1270,7 @@ func simulationShrinkDefinitionAndChoices(
 	for parallelism := 1; parallelism < shrunk.definition.capacity; parallelism++ {
 		definition := shrunk.definition
 		definition.capacity = parallelism
-		definition.campaign.peers = parallelism
+		definition.campaign.Peers = parallelism
 		candidate, ok := preservers.definition(shrunk, definition)
 		if !ok || !simulationTraceShrinks(candidate, shrunk) {
 			continue
@@ -1324,8 +1295,8 @@ func simulationShrinkDefinitionAndChoices(
 		}
 	}
 	canonical := shrunk.definition
-	canonical.campaign.identity = "campaign-1"
-	canonical.campaign.lineage = 1
+	canonical.campaign.Identity = "campaign-1"
+	canonical.campaign.Lineage = 1
 	canonical.catalogue = make([]mutantIdentity, len(shrunk.definition.catalogue))
 	for index := range canonical.catalogue {
 		canonical.catalogue[index] = mutantIdentity(fmt.Sprintf("mutant-%d", index+1))
@@ -1340,7 +1311,7 @@ func simulationShrinkDefinitionAndChoices(
 
 func simulationTraceShrinkMeasure(trace simulationTrace) [4]int {
 	return [4]int{
-		len(trace.definition.catalogue) + trace.definition.capacity + trace.definition.campaign.peers,
+		len(trace.definition.catalogue) + trace.definition.capacity + trace.definition.campaign.Peers,
 		len(trace.records), simulationTracePayloadRank(trace), simulationTraceBoundaryDistance(trace),
 	}
 }
@@ -1372,7 +1343,7 @@ func simulationTracePayloadRank(trace simulationTrace) int {
 
 func simulationIdentityPayloadRank(definition simulationDefinition) int {
 	rank := 0
-	if definition.campaign.identity != "campaign-1" || definition.campaign.lineage != 1 {
+	if definition.campaign.Identity != "campaign-1" || definition.campaign.Lineage != 1 {
 		rank++
 	}
 	for index, mutant := range definition.catalogue {
@@ -1388,8 +1359,7 @@ func simulationRecordPayloadRank(record simulationRecord) int {
 	rank := 1 + len(record.campaignEffects) + len(record.supervisorActions)
 	switch record.authority {
 	case simulationCampaignAuthority:
-		rank += len(record.campaignEvent.catalogueDiscovered.mutants)
-		rank += len(record.campaignEvent.workspaceMaterializationFailed.artifactResidue)
+		rank += record.campaignEvent.Fact().Complexity()
 	case simulationRuntimeAuthority:
 		rank += record.runtimeCut.Complexity()
 	case supervisionAuthority:
@@ -1541,7 +1511,7 @@ func simulationSameRecordKind(left, right simulationRecord) bool {
 	}
 	switch left.authority {
 	case simulationCampaignAuthority:
-		return left.campaignEvent.kind == right.campaignEvent.kind
+		return left.campaignEvent.Fact().Kind() == right.campaignEvent.Fact().Kind()
 	case simulationRuntimeAuthority:
 		return left.runtimeCut.Operation() == right.runtimeCut.Operation()
 	case supervisionAuthority:
@@ -1565,8 +1535,8 @@ func simulationRenumberRecords(records []simulationRecord) {
 
 func simulationCloneTrace(trace simulationTrace) simulationTrace {
 	trace.definition.catalogue = slices.Clone(trace.definition.catalogue)
-	trace.definition.campaign.command = slices.Clone(trace.definition.campaign.command)
-	trace.definition.campaign.env = slices.Clone(trace.definition.campaign.env)
+	trace.definition.campaign.Command = slices.Clone(trace.definition.campaign.Command)
+	trace.definition.campaign.Env = slices.Clone(trace.definition.campaign.Env)
 	trace.records = slices.Clone(trace.records)
 	trace.barriers = slices.Clone(trace.barriers)
 	trace.choices = slices.Clone(trace.choices)
@@ -1590,7 +1560,7 @@ func simulationPreservesFailure(trace simulationTrace, key FailureKey) bool {
 }
 
 func simulationFailureKey(authority simulationAuthority, violation runtimeInvariantViolation) FailureKey {
-	relevant := violation.stableIdentities
+	relevant := violation.StableIdentities()
 	if authority == simulationCampaignAuthority && len(relevant) != 0 {
 		relevant = relevant[:1]
 	}
@@ -1614,44 +1584,34 @@ func simulationFailureKey(authority simulationAuthority, violation runtimeInvari
 
 	return FailureKey{
 		property: "ReplayViolation", kind: simulationInvariantFailureKind,
-		authority: authority, operation: violation.operation, reason: violation.reason,
+		authority: authority, operation: violation.Operation(), reason: violation.Reason(),
 		identities: identities,
 	}
 }
 
-func supervisionRegistrationMatches(effect campaignEffect, registration supervision.Registration) bool {
-	return registration.Generation() == effect.generation && registration.Attempt() == effect.attempt &&
-		registration.Profile() == effect.spec.Profile && registration.CommandDeadline() == effect.spec.Deadline
+func supervisionRegistrationMatches(effect campaignmodule.Effect, registration supervision.Registration) bool {
+	return registration.Generation() == effect.Generation() && registration.Attempt() == effect.Attempt() &&
+		registration.Profile() == effect.Spec().Profile && registration.CommandDeadline() == effect.Spec().Deadline
 }
 
-func simulationEffectEnablesExternalFact(effect campaignEffect, payload campaignEventPayload) bool {
-	switch fact := payload.(type) {
-	case snapshotEstablishedEvent:
-		return effect.kind == campaignEffectEstablishSnapshot
-	case catalogueDiscoveredEvent:
-		return effect.kind == campaignEffectDiscoverCatalogue
-	case resourceSettledEvent:
-		switch fact.kind {
-		case campaignResourceSnapshot:
-			return effect.kind == campaignEffectReleaseSnapshot && string(effect.snapshot) == fact.identity
-		case campaignResourceWorkspace:
-			return effect.kind == campaignEffectReleaseWorkspace && effect.workspace == fact.identity
-		default:
-			return false
-		}
-	case workspaceMaterializedEvent:
-		materialized := payload.(workspaceMaterializedEvent)
+func simulationEffectEnablesExternalFact(effect campaignmodule.Effect, payload campaignmodule.Fact) bool {
+	return effect.Enables(payload)
+}
 
-		return effect.kind == campaignEffectMaterializeWorkspace && effect.attempt == materialized.attempt
-	default:
-		return false
-	}
+func simulationEffectMatchesRuntimeCut(
+	effect campaignmodule.Effect,
+	definition campaignmodule.Definition,
+	campaign processruntime.Campaign,
+	recorded processruntime.RecordedCut,
+) bool {
+	cut, ok := effect.RuntimeCut(definition, campaign)
+	return ok && recorded.Matches(cut)
 }
 
 func simulationTakeEffect(
-	effects []campaignEffect,
-	match func(campaignEffect) bool,
-) (campaignEffect, []campaignEffect, bool) {
+	effects []campaignmodule.Effect,
+	match func(campaignmodule.Effect) bool,
+) (campaignmodule.Effect, []campaignmodule.Effect, bool) {
 	for index, effect := range effects {
 		if !match(effect) {
 			continue
@@ -1662,13 +1622,13 @@ func simulationTakeEffect(
 		return effect, remaining, true
 	}
 
-	return campaignEffect{}, effects, false
+	return campaignmodule.Effect{}, effects, false
 }
 
-func simulationEffectKinds(effects []campaignEffect) []campaignEffectKind {
-	kinds := make([]campaignEffectKind, len(effects))
+func simulationEffectKinds(effects []campaignmodule.Effect) []campaignmodule.EffectKind {
+	kinds := make([]campaignmodule.EffectKind, len(effects))
 	for index, effect := range effects {
-		kinds[index] = effect.kind
+		kinds[index] = effect.Kind()
 	}
 
 	return kinds

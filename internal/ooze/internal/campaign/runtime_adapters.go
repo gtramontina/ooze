@@ -1,6 +1,43 @@
-package ooze
+package campaign
 
 import "github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+
+func runtimeAdmissions(values []processruntime.Admission) []admissionAuthority {
+	result := make([]admissionAuthority, len(values))
+	for index, value := range values {
+		result[index] = runtimeAdmissionValue(value)
+	}
+	return result
+}
+
+func runtimeAdmissionResult(result processruntime.AdmissionResult) admissionResult {
+	return admissionResult{
+		decision: result.Decision(), request: runtimeAdmissionValue(result.Request()),
+		deliveries: runtimeAdmissions(result.Deliveries()), fatalEpoch: fatalEpochID(result.FatalEpoch()),
+	}
+}
+
+func runtimeBarrierResult(result processruntime.BarrierResult) barrierResult {
+	return barrierResult{
+		decision: result.Decision(), request: runtimeAdmissionValue(result.Request()),
+		deliveries: runtimeAdmissions(result.Deliveries()),
+	}
+}
+
+func runtimeStartResult(result processruntime.StartResult) startCommittedResult {
+	return startCommittedResult{
+		decision: result.Decision(), generation: result.Generation(),
+		settlementAcknowledged:   result.SettlementAcknowledged(),
+		runtimeClosureInProgress: result.RuntimeClosureInProgress(),
+	}
+}
+
+func runtimeClosureValue(value processruntime.Closure) runtimeClosure {
+	return runtimeClosure{
+		epoch: fatalEpochID(value.Epoch()), cancelledWaiting: runtimeAdmissions(value.CancelledWaiting()),
+		compensatedGrants: runtimeAdmissions(value.CompensatedGrants()), residual: runtimeResiduals(value.Residual()),
+	}
+}
 
 func campaignAdmissionFact(authority processruntime.Admission) campaignAdmission {
 	return campaignAdmission{
@@ -48,19 +85,6 @@ func campaignReceipt(result processruntime.Receipt) campaignRuntimeReceipt {
 		confirmationObserved:     result.ConfirmationObserved(),
 		confirmationQueueDrained: result.ConfirmationQueueDrained(),
 		fatalEpoch:               fatalEpochID(result.FatalEpoch()),
-	}
-}
-
-func campaignReceiptValue(result observationResult) campaignRuntimeReceipt {
-	return campaignRuntimeReceipt{
-		generation: result.generation, cancelledWaiting: campaignAdmissionValues(result.cancelledWaiting),
-		compensatedGrants:        campaignAdmissionValues(result.compensatedGrants),
-		settlementAcknowledged:   result.settlementAcknowledged,
-		confirmationProvisional:  result.confirmationProvisional,
-		pressureTransitioned:     result.pressureTransitioned,
-		runtimeClosureInProgress: result.runtimeClosureInProgress,
-		confirmationObserved:     result.confirmationObserved,
-		confirmationQueueDrained: result.confirmationQueueDrained, fatalEpoch: result.fatalEpoch,
 	}
 }
 
@@ -118,10 +142,6 @@ func campaignClosureValue(result runtimeClosure) campaignRuntimeClosure {
 	}
 }
 
-func campaignTerminalEvidence(result terminalResult) campaignTerminalResult {
-	return campaignTerminalResult(result)
-}
-
 func campaignBarrierEvidence(result barrierResult) campaignBarrierResult {
 	deliveries := make([]campaignAdmission, len(result.deliveries))
 	for index, grant := range result.deliveries {
@@ -131,10 +151,6 @@ func campaignBarrierEvidence(result barrierResult) campaignBarrierResult {
 	return campaignBarrierResult{
 		decision: result.decision, request: campaignAdmissionValue(result.request), deliveries: deliveries,
 	}
-}
-
-func runtimeAdmissionRequest(fact campaignAdmission) admissionRequest {
-	return admissionAuthority(fact)
 }
 
 func processRuntimeAdmission(fact campaignAdmission) processruntime.Admission {
@@ -149,40 +165,6 @@ func runtimeAdmissionValue(value processruntime.Admission) admissionAuthority {
 		campaign: value.Campaign, attempt: attemptIdentity(value.Attempt), class: value.Class,
 		profile: value.Profile, deadline: value.Deadline,
 	}
-}
-
-func processRuntimeObservation(observation attemptObservation) processruntime.Observation {
-	switch observation := observation.(type) {
-	case launchOwned:
-		return processruntime.Owned()
-	case launchNotReleased:
-		return processruntime.NotReleased(observation.reason == launchResourceExhausted)
-	case attemptSettled:
-		return processruntime.Settled(observation.profile, observation.deadline)
-	case attemptTripped:
-		return processruntime.Tripped(observation.kind == fuseTrip, observation.profile, observation.deadline)
-	case launchUnconfirmed:
-		return processruntime.LaunchUnconfirmed()
-	case drainUnconfirmed:
-		return processruntime.DrainUnconfirmed()
-	case attemptStopped:
-		return processruntime.Stopped()
-	case attemptInfrastructure:
-		return processruntime.Infrastructure(observation.cause)
-	default:
-		return processruntime.Observation{}
-	}
-}
-
-func processRuntimeResolutions(sweep emergencySweep) []processruntime.Resolution {
-	result := make([]processruntime.Resolution, len(sweep.resolutions))
-	for index, resolution := range sweep.resolutions {
-		result[index] = processruntime.ConfirmedDrained(resolution.generation)
-		if resolution.disposition == emergencyCustodyTransferred {
-			result[index] = processruntime.TransferCustody(resolution.generation)
-		}
-	}
-	return result
 }
 
 func runtimeEmergencySettlement(settlement processruntime.EmergencySettlement) emergencySettlement {
@@ -205,8 +187,4 @@ func runtimeResiduals(values []processruntime.Residual) []residualCustody {
 		}
 	}
 	return result
-}
-
-func runtimeBarrierBinding(fact campaignBarrierBinding) barrierBinding {
-	return barrierBinding(fact)
 }

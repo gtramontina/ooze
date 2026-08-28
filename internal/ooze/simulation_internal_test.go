@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	campaignmodule "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,19 @@ import (
 )
 
 type simulationFocusedChoiceSource func([]simulationEngineMove) int
+
+type mutantResultKind = campaignmodule.ManagedMutationOutcome
+type campaignAttemptEvidenceKind = campaignmodule.AttemptKind
+
+const (
+	mutantSurvived = campaignmodule.ManagedSurvived
+	mutantKilled   = campaignmodule.ManagedKilled
+	mutantTimedOut = campaignmodule.ManagedTimedOut
+	mutantRunaway  = campaignmodule.ManagedRunaway
+
+	campaignEvidenceSettled  = campaignmodule.AttemptSettled
+	campaignEvidenceDeadline = campaignmodule.AttemptDeadline
+)
 
 func (simulationFocusedChoiceSource) choose(int) int { return 0 }
 
@@ -23,22 +37,19 @@ func (source simulationFocusedChoiceSource) chooseMove(moves []simulationEngineM
 
 func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *testing.T) {
 	definition := simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-a",
-			lineage:  11,
-			command:  []string{"go", "test", "./..."},
-			profile:  AutomaticProfile,
-			peers:    2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-a",
+			Lineage:  11,
+			Command:  []string{"go", "test", "./..."},
+			Profile:  AutomaticProfile,
+			Peers:    2,
 		},
 		capacity: 2,
 	}
 
 	explored := Explore(definition, simulationChoiceBytes{0, 1, 2})
 	assert.Nil(t, explored.failure, "exploration failure=%v", explored.failure)
-	{
-		got, want := explored.world.campaign.outcome, (campaignOutcome)(noMutantsOutcome{})
-		assert.Equal(t, want, got, "explored outcome=%#v, want %#v", got, want)
-	}
+	assert.Equal(t, campaignmodule.NoMutantsOutcome, explored.world.campaign.Outcome().Kind())
 	{
 		got, want := simulationAuthorities(explored.trace), []simulationAuthority{
 			simulationRuntimeAuthority,
@@ -65,12 +76,12 @@ func TestSimulationExploresAndReplaysEmptyCatalogueThroughProductionOwners(t *te
 
 func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testing.T) {
 	definition := simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-supervised",
-			lineage:  21,
-			command:  []string{"go", "test", "./..."},
-			profile:  AutomaticProfile,
-			peers:    2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-supervised",
+			Lineage:  21,
+			Command:  []string{"go", "test", "./..."},
+			Profile:  AutomaticProfile,
+			Peers:    2,
 		},
 		capacity:  2,
 		catalogue: []mutantIdentity{"mutant-a"},
@@ -79,8 +90,8 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 	explored := Explore(definition, simulationChoiceBytes{0, 2})
 	assert.Nil(t, explored.failure, "exploration failure=%v", explored.failure)
 	{
-		_, ok := explored.world.campaign.outcome.(abortedOutcome)
-		require.True(t, ok, "explored outcome=%#v, want aborted baseline", explored.world.campaign.outcome)
+		ok := explored.world.campaign.Outcome().Kind() == campaignmodule.AbortedOutcome
+		require.True(t, ok, "explored outcome=%#v, want aborted baseline", explored.world.campaign.Outcome())
 	}
 	var supervisorKinds []supervision.FactKind
 	for _, record := range explored.trace.records {
@@ -104,9 +115,9 @@ func TestSimulationComposesSupervisedBaselineFailureAndTerminalRecovery(t *testi
 
 func TestSimulationChoiceSourceSelectsCanonicalLegalLaunchBoundaryFacts(t *testing.T) {
 	definition := simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-boundary", lineage: 22, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-boundary", Lineage: 22, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}
@@ -161,9 +172,9 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			name: "launch after", action: supervision.LaunchNativeEffect,
 			variant: simulationMoveVariant{launch: simulationLaunchAfterBoundary},
 			outcome: func(world simulationWorld) bool {
-				_, aborted := world.campaign.outcome.(abortedOutcome)
+				aborted := world.campaign.Outcome().Kind() == campaignmodule.AbortedOutcome
 
-				return aborted && world.campaign.failure == nil
+				return aborted && !world.campaign.Failed()
 			},
 			observe: func(trace simulationTrace) bool {
 				var launchBy time.Time
@@ -187,10 +198,10 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			name: "deadline after", action: supervision.WaitRootEffect,
 			variant: simulationMoveVariant{running: simulationRunningAfterDeadline},
 			outcome: func(world simulationWorld) bool {
-				completed, ok := world.campaign.outcome.(completedOutcome)
+				completed, ok := world.campaign.Mutations(), world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
 
-				return ok && world.campaign.failure == nil && len(completed.mutants) == 1 &&
-					completed.mutants[0].kind == mutantTimedOut
+				return ok && !world.campaign.Failed() && len(completed) == 1 &&
+					completed[0].Result() == mutantTimedOut
 			},
 			observe: func(trace simulationTrace) bool {
 				for _, record := range trace.records {
@@ -210,7 +221,7 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 			name: "drain after", action: supervision.ObserveEmptinessEffect,
 			variant: simulationMoveVariant{drain: simulationDrainAfterBoundary},
 			outcome: func(world simulationWorld) bool {
-				_, failed := world.campaign.failure.(cleanupUnconfirmedFault)
+				failed := world.campaign.CleanupUnconfirmed()
 
 				return failed && world.runtime.Unconfirmed()
 			},
@@ -256,16 +267,16 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 				return 0
 			})
 			explored := Explore(simulationDefinition{
-				campaign: campaignDefinition{
-					identity: "campaign-after-boundary", lineage: 221, command: []string{"test"},
-					profile: AutomaticProfile, peers: 1,
+				campaign: campaignmodule.Definition{
+					Identity: "campaign-after-boundary", Lineage: 221, Command: []string{"test"},
+					Profile: AutomaticProfile, Peers: 1,
 				},
 				capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 			}, choices)
-			assert.Nil(t, explored.failure, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
-			assert.True(t, selected, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
-			assert.True(t, test.outcome(explored.world), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
-			assert.True(t, test.observe(explored.trace), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.outcome, explored.world.campaign.failure, explored.failure)
+			assert.Nil(t, explored.failure, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.Outcome(), explored.world.campaign.Failed(), explored.failure)
+			assert.True(t, selected, "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.Outcome(), explored.world.campaign.Failed(), explored.failure)
+			assert.True(t, test.outcome(explored.world), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.Outcome(), explored.world.campaign.Failed(), explored.failure)
+			assert.True(t, test.observe(explored.trace), "after-boundary selected=%v outcome=%T campaign-failure=%T simulation-failure=%v", selected, explored.world.campaign.Outcome(), explored.world.campaign.Failed(), explored.failure)
 			if test.action == supervision.LaunchNativeEffect {
 				order := make(map[supervision.EffectKind]int)
 				ordinal := 0
@@ -290,9 +301,9 @@ func TestSimulationChoiceSourceSelectsCanonicalAfterBoundaryFacts(t *testing.T) 
 
 func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 	definition := simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-primary", lineage: 23, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-primary", Lineage: 23, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}
@@ -323,13 +334,13 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 				return 0
 			})
 			explored := Explore(definition, choices)
-			completed, ok := explored.world.campaign.outcome.(completedOutcome)
-			require.Nil(t, explored.failure, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
-			assert.True(t, ok, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
-			require.Len(t, completed.mutants, 1, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
-			assert.Equal(t, test.want, completed.mutants[0].kind, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.outcome, explored.failure, test.want, explored.trace.choices)
-			assert.EqualValues(t, 2, explored.world.campaign.commandCount(), "terminal commands/obligations=%d/%#v", explored.world.campaign.commandCount(), explored.world.campaign.obligations)
-			assert.EqualValues(t, 0, len(explored.world.campaign.obligations), "terminal commands/obligations=%d/%#v", explored.world.campaign.commandCount(), explored.world.campaign.obligations)
+			completed, ok := explored.world.campaign.Mutations(), explored.world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
+			require.Nil(t, explored.failure, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.Outcome(), explored.failure, test.want, explored.trace.choices)
+			assert.True(t, ok, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.Outcome(), explored.failure, test.want, explored.trace.choices)
+			require.Len(t, completed, 1, "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.Outcome(), explored.failure, test.want, explored.trace.choices)
+			assert.Equal(t, test.want, completed[0].Result(), "completed outcome=%#v failure=%v, want %v; choices=%#v", explored.world.campaign.Outcome(), explored.failure, test.want, explored.trace.choices)
+			assert.EqualValues(t, 2, explored.world.campaign.CommandCount(), "terminal commands/obligations=%d/%#v", explored.world.campaign.CommandCount(), explored.world.campaign.Projection().Obligations())
+			assert.EqualValues(t, 0, len(explored.world.campaign.Projection().Obligations()), "terminal commands/obligations=%d/%#v", explored.world.campaign.CommandCount(), explored.world.campaign.Projection().Obligations())
 			replayed := ReplayLegal(explored.trace)
 			assert.Nil(t, replayed.failure, "outcome replay diverged: %#v", replayed)
 			assert.Equal(t, explored.world, replayed.world, "outcome replay diverged: %#v", replayed)
@@ -339,45 +350,45 @@ func TestSimulationChoiceSourceCompletesPrimaryOutcomes(t *testing.T) {
 
 func TestSimulationExploresEveryCatalogueMemberInStableOrder(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-catalogue", lineage: 24, command: []string{"test"},
-			profile: SerialProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-catalogue", Lineage: 24, Command: []string{"test"},
+			Profile: SerialProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{0})
-	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	require.Nil(t, explored.failure, "catalogue exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	assert.True(t, ok, "catalogue exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	got := make([]mutantIdentity, len(completed.mutants))
-	for index, mutant := range completed.mutants {
-		got[index] = mutant.mutant
+	completed, ok := explored.world.campaign.Mutations(), explored.world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
+	require.Nil(t, explored.failure, "catalogue exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	assert.True(t, ok, "catalogue exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	got := make([]mutantIdentity, len(completed))
+	for index, mutant := range completed {
+		got[index] = mutant.Identity()
 	}
 	{
 		want := []mutantIdentity{"mutant-a", "mutant-b"}
 		assert.Equal(t, want, got, "completed catalogue order=%v, want %v", got, want)
 	}
-	assert.EqualValues(t, 3, explored.world.campaign.commandCount(), "command count=%d, want baseline plus two primaries", explored.world.campaign.commandCount())
+	assert.EqualValues(t, 3, explored.world.campaign.CommandCount(), "command count=%d, want baseline plus two primaries", explored.world.campaign.CommandCount())
 }
 
 func TestSimulationExploresOneMutantWithSparePeerCapacity(t *testing.T) {
 	result := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-spare-capacity", lineage: 43, command: []string{"test"},
-			profile: AutomaticProfile, peers: 4,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-spare-capacity", Lineage: 43, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 4,
 		},
 		capacity: 4, catalogue: []mutantIdentity{"mutant-a"},
 	}, nil)
-	completed, ok := result.world.campaign.outcome.(completedOutcome)
-	assert.Nil(t, result.failure, "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
-	assert.True(t, ok, "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
-	assert.EqualValues(t, 1, len(completed.mutants), "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.outcome, result.failure)
+	completed, ok := result.world.campaign.Mutations(), result.world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
+	assert.Nil(t, result.failure, "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.Outcome(), result.failure)
+	assert.True(t, ok, "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.Outcome(), result.failure)
+	assert.EqualValues(t, 1, len(completed), "spare-capacity exploration outcome=%#v failure=%v", result.world.campaign.Outcome(), result.failure)
 }
 
 func TestSimulationExploresPeerPrimaryOverlapFromEmittedEffectWave(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-overlap", lineage: 25, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-overlap", Lineage: 25, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{0})
@@ -403,7 +414,7 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 	choices := simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 		grantAt := -1
 		for index, move := range moves {
-			if _, ok := move.delivery.(admissionGrantedEvent); ok {
+			if move.delivery.Kind() == campaignmodule.AdmissionGrantedFact {
 				grantAt = index
 				break
 			}
@@ -429,9 +440,9 @@ func TestSimulationFocusedLateGrantDeliveryRemainsLegal(t *testing.T) {
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-late-grant", lineage: 2511, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-late-grant", Lineage: 2511, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
@@ -461,23 +472,23 @@ func TestSimulationFocusedRepeatedIntrinsicDeadlinesDoNotChangeAdmission(t *test
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-repeated-intrinsic-deadline", lineage: 2512, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-repeated-intrinsic-deadline", Lineage: 2512, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
-	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	require.Nil(t, explored.failure, "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	assert.True(t, ok, "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	assert.EqualValues(t, 2, len(completed.mutants), "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	for _, mutant := range completed.mutants {
-		assert.Equal(t, mutantTimedOut, mutant.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
-		assert.Equal(t, campaignEvidenceDeadline, mutant.primary.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
-		assert.Equal(t, campaignAttemptEvidenceKind(0), mutant.confirmation.kind, "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
+	completed, ok := explored.world.campaign.Mutations(), explored.world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
+	require.Nil(t, explored.failure, "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	assert.True(t, ok, "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	assert.EqualValues(t, 2, len(completed), "repeated-deadline exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	for _, mutant := range completed {
+		assert.Equal(t, mutantTimedOut, mutant.Result(), "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
+		assert.Equal(t, campaignEvidenceDeadline, mutant.Primary(), "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
+		assert.Equal(t, campaignAttemptEvidenceKind(0), mutant.Confirmation(), "repeated-deadline mutant=%#v, want direct deadline without confirmation", mutant)
 	}
-	assert.False(t, explored.world.runtime.SingleAdmission(), "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.SingleAdmission(), completed.singleAdmissionFallback)
-	assert.False(t, completed.singleAdmissionFallback, "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.SingleAdmission(), completed.singleAdmissionFallback)
+	assert.False(t, explored.world.runtime.SingleAdmission(), "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.SingleAdmission(), explored.world.campaign.SingleAdmissionFallback())
+	assert.False(t, explored.world.campaign.SingleAdmissionFallback(), "repeated-deadline admission mode/fallback=%v/%v", explored.world.runtime.SingleAdmission(), explored.world.campaign.SingleAdmissionFallback())
 	{
 		replayed := ReplayLegal(explored.trace)
 		assert.Nil(t, replayed.failure, "repeated-deadline replay=%#v", replayed)
@@ -515,22 +526,22 @@ func TestSimulationExploresOverlapConfirmationAndPressureFallback(t *testing.T) 
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-confirmation", lineage: 252, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-confirmation", Lineage: 252, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
-	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	require.Nil(t, explored.failure, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	assert.True(t, ok, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	assert.True(t, timedOut, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	require.Len(t, completed.mutants, 2, "confirmation exploration=%#v failure=%v", explored.world.campaign.outcome, explored.failure)
-	assert.Equal(t, mutantSurvived, completed.mutants[0].kind, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
-	assert.Equal(t, campaignEvidenceDeadline, completed.mutants[0].primary.kind, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
-	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
-	assert.True(t, completed.singleAdmissionFallback, "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
-	assert.EqualValues(t, 4, explored.world.campaign.commandCount(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.commandCount())
+	completed, ok := explored.world.campaign.Mutations(), explored.world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
+	require.Nil(t, explored.failure, "confirmation exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	assert.True(t, ok, "confirmation exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	assert.True(t, timedOut, "confirmation exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	require.Len(t, completed, 2, "confirmation exploration=%#v failure=%v", explored.world.campaign.Outcome(), explored.failure)
+	assert.Equal(t, mutantSurvived, completed[0].Result(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.CommandCount())
+	assert.Equal(t, campaignEvidenceDeadline, completed[0].Primary(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.CommandCount())
+	assert.Equal(t, campaignEvidenceSettled, completed[0].Confirmation(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.CommandCount())
+	assert.True(t, explored.world.campaign.SingleAdmissionFallback(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.CommandCount())
+	assert.EqualValues(t, 4, explored.world.campaign.CommandCount(), "confirmation outcome=%#v commands=%d", completed, explored.world.campaign.CommandCount())
 	replayed := ReplayLegal(explored.trace)
 	assert.Nil(t, replayed.failure, "confirmation replay failure=%v", replayed.failure)
 	assert.Equal(t, explored.world, replayed.world, "confirmation replay world diverged")
@@ -571,34 +582,30 @@ func TestSimulationFocusedMultipleProvisionalsBindFIFOConfirmationBarriers(t *te
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-multiple-provisionals", lineage: 2521, command: []string{"test"},
-			profile: AutomaticProfile, peers: 3,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-multiple-provisionals", Lineage: 2521, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 3,
 		},
 		capacity: 3, catalogue: catalogue,
 	}, choices)
-	completed, ok := explored.world.campaign.outcome.(completedOutcome)
-	require.Nil(t, explored.failure, "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
-	assert.True(t, ok, "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
-	assert.Equal(t, len(catalogue), len(timedOut), "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
-	assert.Equal(t, len(catalogue), len(completed.mutants), "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.outcome, timedOut, explored.failure)
-	for index, mutant := range completed.mutants {
-		assert.Equal(t, catalogue[index], mutant.mutant, "multiple-provisional mutant[%d]=%#v", index, mutant)
-		assert.Equal(t, campaignEvidenceDeadline, mutant.primary.kind, "multiple-provisional mutant[%d]=%#v", index, mutant)
-		assert.Equal(t, campaignEvidenceSettled, mutant.confirmation.kind, "multiple-provisional mutant[%d]=%#v", index, mutant)
+	completed, ok := explored.world.campaign.Mutations(), explored.world.campaign.Outcome().Kind() == campaignmodule.CompletedOutcome
+	require.Nil(t, explored.failure, "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.Outcome(), timedOut, explored.failure)
+	assert.True(t, ok, "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.Outcome(), timedOut, explored.failure)
+	assert.Equal(t, len(catalogue), len(timedOut), "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.Outcome(), timedOut, explored.failure)
+	assert.Equal(t, len(catalogue), len(completed), "multiple-provisional exploration=%#v timed=%v failure=%v", explored.world.campaign.Outcome(), timedOut, explored.failure)
+	for index, mutant := range completed {
+		assert.Equal(t, catalogue[index], mutant.Identity(), "multiple-provisional mutant[%d]=%#v", index, mutant)
+		assert.Equal(t, campaignEvidenceDeadline, mutant.Primary(), "multiple-provisional mutant[%d]=%#v", index, mutant)
+		assert.Equal(t, campaignEvidenceSettled, mutant.Confirmation(), "multiple-provisional mutant[%d]=%#v", index, mutant)
 	}
 	var barriers, confirmations []mutantIdentity
 	for _, record := range explored.trace.records {
 		for _, effect := range record.campaignEffects {
-			if effect.kind == campaignEffectBindConfirmationBarrier {
-				barriers = append(barriers, effect.mutant)
+			if effect.Kind() == campaignEffectBindConfirmationBarrier {
+				barriers = append(barriers, effect.Mutant())
 			}
-			if effect.kind == campaignEffectLaunchAttempt && effect.attemptKind == campaignAttemptConfirmation {
-				attemptAt := slices.IndexFunc(record.campaignState.attempts, func(attempt campaignAttempt) bool {
-					return attempt.identity == effect.attempt
-				})
-				require.False(t, attemptAt < 0, "confirmation launch attempt %q is absent", effect.attempt)
-				confirmations = append(confirmations, record.campaignState.attempts[attemptAt].mutant)
+			if effect.Kind() == campaignEffectLaunchAttempt && effect.AttemptRole() == campaignAttemptConfirmation {
+				confirmations = append(confirmations, effect.Mutant())
 			}
 		}
 	}
@@ -639,9 +646,9 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-release-stop", lineage: 2522, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-release-stop", Lineage: 2522, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
@@ -655,7 +662,7 @@ func TestSimulationFocusedReleaseCutPrecedesStopOfOwnedPeer(t *testing.T) {
 			}
 		}
 		for _, effect := range record.campaignEffects {
-			if effect.kind == campaignEffectStopAttempt {
+			if effect.Kind() == campaignEffectStopAttempt {
 				stopEffectAt = index
 			}
 		}
@@ -701,15 +708,15 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-custody-order", lineage: 2523, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-custody-order", Lineage: 2523, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, choices)
 	assert.Nil(t, explored.failure, "custody-order exploration selected=%v failure=%v", selected, explored.failure)
 	assert.True(t, selected, "custody-order exploration selected=%v failure=%v", selected, explored.failure)
-	var stages []admissionStage
+	var prospective []bool
 	for _, record := range explored.trace.records {
 		_, observation, observed := record.runtimeCut.Observation()
 		if record.authority != simulationRuntimeAuthority || !observed ||
@@ -717,15 +724,11 @@ func TestSimulationFocusedUnconfirmedCustodyOrdersProspectiveBeforeOwned(t *test
 			continue
 		}
 		for _, residual := range record.runtimeState.Residual() {
-			stage := admissionOwned
-			if residual.Prospective() {
-				stage = admissionProspective
-			}
-			stages = append(stages, stage)
+			prospective = append(prospective, residual.Prospective())
 		}
 		break
 	}
-	assert.Equal(t, []admissionStage{admissionProspective, admissionOwned}, stages, "unconfirmed prospective/owned custody order=%v", stages)
+	assert.Equal(t, []bool{true, false}, prospective, "unconfirmed prospective/owned custody order=%v", prospective)
 	{
 		replayed := ReplayLegal(explored.trace)
 		assert.Nil(t, replayed.failure, "custody-order replay=%#v", replayed)
@@ -754,9 +757,9 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-drain-expiry", lineage: 253, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-drain-expiry", Lineage: 253, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
@@ -767,10 +770,10 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 				last = record
 			}
 		}
-		require.FailNowf(t, "drain-expiry exploration failed", "failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%T", explored.failure, expired, last.campaignState.phase, last.campaignEvent.kind, len(last.campaignState.obligations), last.campaignState.failure)
+		require.FailNowf(t, "drain-expiry exploration failed", "failure=%v expired=%v phase=%v event=%v obligations=%d campaign-failure=%v", explored.failure, expired, last.campaignState.PhaseName(), last.campaignEvent.Fact().Kind(), len(last.campaignState.Obligations()), last.campaignState.Failed())
 	}
 	{
-		_, ok := explored.world.campaign.failure.(cleanupUnconfirmedFault)
+		ok := explored.world.campaign.CleanupUnconfirmed()
 		require.True(t, ok, "drain-expiry world=%#v", explored.world)
 		assert.True(t, explored.world.runtime.Unconfirmed(), "drain-expiry world=%#v", explored.world)
 	}
@@ -821,25 +824,25 @@ func TestSimulationFocusedStartClosureTerminalFatalAndGlobalDrainExpiry(t *testi
 	firstViolation := ReplayViolation(explored.trace, malformed)
 	secondViolation := ReplayViolation(explored.trace, malformed)
 	assert.Nil(t, firstViolation.failure, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
-	assert.Equal(t, "reduce supervisor", firstViolation.invariant.operation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
-	assert.EqualValues(t, "emergency epoch is invalid, duplicated, or conflicting", firstViolation.invariant.reason, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, "reduce supervisor", firstViolation.invariant.Operation(), "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.EqualValues(t, "emergency epoch is invalid, duplicated, or conflicting", firstViolation.invariant.Reason(), "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
 	assert.Equal(t, secondViolation, firstViolation, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
-	assert.Equal(t, explored.world.campaign.outcome, firstViolation.world.campaign.outcome, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
-	assert.Equal(t, explored.world.campaign.failure, firstViolation.world.campaign.failure, "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, explored.world.campaign.Outcome(), firstViolation.world.campaign.Outcome(), "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
+	assert.Equal(t, explored.world.campaign.Failed(), firstViolation.world.campaign.Failed(), "repeated closure/invariant dominance first=%#v second=%#v", firstViolation, secondViolation)
 }
 
 func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 	definition := simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-choice-order", lineage: 251, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-choice-order", Lineage: 251, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}
 	explorePreferred := func(preferred mutantIdentity) SimulationResult {
 		return Explore(definition, simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
 			for index, move := range moves {
-				if move.effect.kind == campaignEffectMaterializeWorkspace && move.effect.mutant == preferred {
+				if move.effect.Kind() == campaignEffectMaterializeWorkspace && move.effect.Mutant() == preferred {
 					return index
 				}
 			}
@@ -857,9 +860,9 @@ func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 			if record.authority != simulationCampaignAuthority {
 				continue
 			}
-			terminal, ok := record.campaignEvent.production().payload.(attemptTerminalEvent)
-			if ok {
-				attempts = append(attempts, terminal.attempt)
+			fact := record.campaignEvent.Fact()
+			if fact.Kind() == campaignmodule.AttemptTerminalFact {
+				attempts = append(attempts, fact.Attempt())
 			}
 		}
 
@@ -878,9 +881,9 @@ func TestSimulationChoiceSourceSelectsEnabledPeerSettlementOrder(t *testing.T) {
 
 func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-resource", lineage: 26, command: []string{"test"},
-			profile: SerialProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-resource", Lineage: 26, Command: []string{"test"},
+			Profile: SerialProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{0})
@@ -891,14 +894,11 @@ func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 		if record.authority != simulationCampaignAuthority {
 			continue
 		}
-		settled, ok := record.campaignEvent.production().payload.(resourceSettledEvent)
-		if !ok || settled.kind != campaignResourceWorkspace {
+		settled := record.campaignEvent.Fact()
+		if settled.Kind() != campaignmodule.ResourceSettledFact || settled.ResourceKind() != campaignmodule.WorkspaceResource {
 			continue
 		}
-		settled.identity = "workspace-not-released"
-		trace.records[index].campaignEvent = simulationTraceCampaignEvent(campaignEvent{
-			id: trace.records[index].campaignEvent.id, payload: settled,
-		})
+		trace.records[index].campaignEvent = record.campaignEvent.WithFact(settled.WithResourceIdentity("workspace-not-released"))
 		break
 	}
 
@@ -909,9 +909,9 @@ func TestSimulationReplayRequiresExactReleasedResource(t *testing.T) {
 
 func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-violation", lineage: 31, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-violation", Lineage: 31, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1,
 	}, nil)
@@ -921,9 +921,7 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 	}
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
-		campaign: simulationTraceCampaignEvent(campaignEvent{
-			id: 1, payload: snapshotEstablishedEvent{},
-		}),
+		campaign:  campaignmodule.SnapshotEstablished(""),
 	}
 
 	first := ReplayViolation(prefix, malformed)
@@ -931,11 +929,11 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 	assert.Nil(t, first.failure, "violation replay failures=%v/%v", first.failure, second.failure)
 	assert.Nil(t, second.failure, "violation replay failures=%v/%v", first.failure, second.failure)
 	assert.Equal(t, second, first, "violation replay is nondeterministic:\nfirst=%#v\nsecond=%#v", first, second)
-	assert.EqualValues(t, "campaign establish snapshot", first.invariant.operation, "retained invariant=%#v", first.invariant)
-	assert.EqualValues(t, "snapshot observation is invalid", first.invariant.reason, "retained invariant=%#v", first.invariant)
+	assert.EqualValues(t, "campaign establish snapshot", first.invariant.Operation(), "retained invariant=%#v", first.invariant)
+	assert.EqualValues(t, "snapshot observation is invalid", first.invariant.Reason(), "retained invariant=%#v", first.invariant)
 	assert.Equal(t, simulationCampaignAuthority, first.key.authority, "failure key=%#v, invariant=%#v", first.key, first.invariant)
-	assert.Equal(t, first.invariant.operation, first.key.operation, "failure key=%#v, invariant=%#v", first.key, first.invariant)
-	assert.Equal(t, first.invariant.reason, first.key.reason, "failure key=%#v, invariant=%#v", first.key, first.invariant)
+	assert.Equal(t, first.invariant.Operation(), first.key.operation, "failure key=%#v, invariant=%#v", first.key, first.invariant)
+	assert.Equal(t, first.invariant.Reason(), first.key.reason, "failure key=%#v, invariant=%#v", first.key, first.invariant)
 	assert.True(t, first.world.runtime.Drained(), "runtime cleanup=%#v", first.world.runtime)
 	assert.NotEqual(t, 0, first.world.runtime.FatalEpoch(), "runtime cleanup=%#v", first.world.runtime)
 	assert.EqualValues(t, 1, first.world.runtime.FatalCauseCount(), "runtime cleanup=%#v", first.world.runtime)
@@ -943,9 +941,9 @@ func TestSimulationViolationReplayCleansRuntimeAndRetainsTypedInvariant(t *testi
 
 func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-supervisor-violation", lineage: 32, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-supervisor-violation", Lineage: 32, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{simulationChooseBaselineFailure})
@@ -975,7 +973,7 @@ func TestSimulationViolationReplayRejectsWrongSupervisorActionAndCleansCustody(t
 	assert.Nil(t, first.failure, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, second, first, "supervisor violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, supervisionAuthority, first.key.authority, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.Equal(t, "reduce supervisor", first.invariant.operation, "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.Equal(t, "reduce supervisor", first.invariant.Operation(), "supervisor invariant/key=%#v/%#v", first.invariant, first.key)
 	residual := first.world.runtime.Residual()
 	assert.True(t, first.world.runtime.Unconfirmed(), "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
 	require.Len(t, residual, 1, "supervisor violation cleanup did not transfer exact custody: %#v", first.world.runtime)
@@ -1000,9 +998,9 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-supervisor-corruption-families", lineage: 321, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-supervisor-corruption-families", Lineage: 321, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
@@ -1082,17 +1080,17 @@ func TestSimulationViolationReplayCoversNamedSupervisorCorruptions(t *testing.T)
 			second := ReplayViolation(test.prefix, malformed)
 			assert.Nil(t, first.failure, "supervisor corruption replay diverged: first=%#v second=%#v", first, second)
 			assert.Equal(t, second, first, "supervisor corruption replay diverged: first=%#v second=%#v", first, second)
-			assert.Equal(t, "reduce supervisor", first.invariant.operation, "supervisor corruption invariant=%#v", first.invariant)
-			assert.Equal(t, test.reason, first.invariant.reason, "supervisor corruption invariant=%#v", first.invariant)
+			assert.Equal(t, "reduce supervisor", first.invariant.Operation(), "supervisor corruption invariant=%#v", first.invariant)
+			assert.Equal(t, test.reason, first.invariant.Reason(), "supervisor corruption invariant=%#v", first.invariant)
 		})
 	}
 }
 
 func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCustody(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-runtime-violation", lineage: 33, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-runtime-violation", Lineage: 33, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1,
 	}, nil)
@@ -1110,17 +1108,17 @@ func TestSimulationViolationReplayRejectsMalformedRuntimeAdmissionAndCleansCusto
 	assert.Nil(t, first.failure, "runtime violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, second, first, "runtime violation replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.EqualValues(t, "request admission", first.invariant.operation, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.EqualValues(t, "invalid request", first.invariant.reason, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "request admission", first.invariant.Operation(), "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "invalid request", first.invariant.Reason(), "runtime invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.True(t, first.world.runtime.Drained(), "runtime violation cleanup retained custody: %#v", first.world.runtime)
 	assert.EqualValues(t, 0, first.world.runtime.AdmissionCount(), "runtime violation cleanup retained custody: %#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-runtime-return-violation", lineage: 34, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-runtime-return-violation", Lineage: 34, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1,
 	}, nil)
@@ -1138,17 +1136,17 @@ func TestSimulationViolationReplayRejectsStaleGrantReturnAndCleansRuntime(t *tes
 	assert.Nil(t, first.failure, "stale return replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, second, first, "stale return replay diverged: first=%#v second=%#v", first, second)
 	assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.EqualValues(t, "acknowledge grant return", first.invariant.operation, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
-	assert.EqualValues(t, "grant return authority is stale or wrong", first.invariant.reason, "stale return invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "acknowledge grant return", first.invariant.Operation(), "stale return invariant/key=%#v/%#v", first.invariant, first.key)
+	assert.EqualValues(t, "grant return authority is stale or wrong", first.invariant.Reason(), "stale return invariant/key=%#v/%#v", first.invariant, first.key)
 	assert.True(t, first.world.runtime.Drained(), "stale return cleanup=%#v", first.world.runtime)
 	assert.EqualValues(t, 0, first.world.runtime.AdmissionCount(), "stale return cleanup=%#v", first.world.runtime)
 }
 
 func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFamilies(t *testing.T) {
 	prefix := simulationTrace{definition: simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-runtime-families", lineage: 35, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-runtime-families", Lineage: 35, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1,
 	}}
@@ -1190,8 +1188,8 @@ func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFam
 			assert.Nil(t, first.failure, "runtime violation replay diverged: first=%#v second=%#v", first, second)
 			assert.Equal(t, second, first, "runtime violation replay diverged: first=%#v second=%#v", first, second)
 			assert.Equal(t, simulationRuntimeAuthority, first.key.authority, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
-			assert.Equal(t, test.operation, first.invariant.operation, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
-			assert.Equal(t, test.reason, first.invariant.reason, "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+			assert.Equal(t, test.operation, first.invariant.Operation(), "runtime invariant/key=%#v/%#v", first.invariant, first.key)
+			assert.Equal(t, test.reason, first.invariant.Reason(), "runtime invariant/key=%#v/%#v", first.invariant, first.key)
 			assert.True(t, first.world.runtime.Drained(), "runtime violation cleanup=%#v", first.world.runtime)
 			assert.EqualValues(t, 0, first.world.runtime.AdmissionCount(), "runtime violation cleanup=%#v", first.world.runtime)
 		})
@@ -1200,18 +1198,16 @@ func TestSimulationViolationReplayCoversRuntimeObservationEmergencyAndClosureFam
 
 func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-shrink", lineage: 41, command: []string{"test"},
-			profile: AutomaticProfile, peers: 4,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-shrink", Lineage: 41, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 4,
 		},
 		capacity:  4,
 		catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{simulationChooseBaselineFailure})
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
-		campaign: simulationTraceCampaignEvent(campaignEvent{
-			id: 1, payload: snapshotEstablishedEvent{},
-		}),
+		campaign:  campaignmodule.SnapshotEstablished(""),
 	}
 	counterexample := simulationTrace{
 		definition: explored.trace.definition,
@@ -1223,8 +1219,8 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 	shrunk := Shrink(counterexample, key)
 	assert.False(t, len(shrunk.records) >= len(counterexample.records), "record count was not reduced: got=%d input=%d", len(shrunk.records), len(counterexample.records))
 	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "shrunk catalogue=%v, want no unrelated members", shrunk.definition.catalogue)
-	assert.EqualValues(t, 1, shrunk.definition.capacity, "shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
+	assert.EqualValues(t, 1, shrunk.definition.capacity, "shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1", shrunk.definition.capacity, shrunk.definition.campaign.Peers)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Peers, "shrunk capacity/peers=%d/%d, want accepted lower bounds 1/1", shrunk.definition.capacity, shrunk.definition.campaign.Peers)
 	require.NotNil(t, shrunk.malformed, "shrink removed the one intended corruption")
 	first := ReplayViolation(shrunk, *shrunk.malformed)
 	second := ReplayViolation(shrunk, *shrunk.malformed)
@@ -1235,9 +1231,9 @@ func TestSimulationShrinkRemovesLegalRecordsAndDefinitionMembersToFixpoint(t *te
 
 func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-positive-shrink", lineage: 46, command: []string{"test"},
-			profile: AutomaticProfile, peers: 3,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-positive-shrink", Lineage: 46, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 3,
 		},
 		capacity: 3, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, nil)
@@ -1251,10 +1247,10 @@ func TestSimulationShrinkRemovesPositiveTraceSuffixAndRetainsReplayFailure(t *te
 	shrunk := Shrink(counterexample, replayed.key)
 	assert.False(t, len(shrunk.records) >= len(counterexample.records), "positive record count was not reduced: got=%d input=%d", len(shrunk.records), len(counterexample.records))
 	assert.EqualValues(t, 1, shrunk.definition.capacity, "positive shrunk definition=%#v", shrunk.definition)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Peers, "positive shrunk definition=%#v", shrunk.definition)
 	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "positive shrunk definition=%#v", shrunk.definition)
-	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.identity, "positive shrunk definition=%#v", shrunk.definition)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.lineage, "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.Identity, "positive shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Lineage, "positive shrunk definition=%#v", shrunk.definition)
 	first := ReplayLegal(shrunk)
 	second := ReplayLegal(shrunk)
 	assert.NotNil(t, first.failure, "positive shrunk replay did not retain stable failure:\nkey=%#v\nfirst=%#v\nsecond=%#v", replayed.key, first, second)
@@ -1279,9 +1275,9 @@ func TestSimulationShrinkMovesPositiveReplayTowardNamedBoundary(t *testing.T) {
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-positive-boundary", lineage: 47, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-positive-boundary", Lineage: 47, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
@@ -1337,10 +1333,10 @@ func TestSimulationShrinkMeasureUsesPayloadAndNamedBoundaryFacts(t *testing.T) {
 	assert.True(t, simulationShrinkMeasureLess(simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near)), "simple/rich payload measures=%v/%v", simulationTraceShrinkMeasure(simple), simulationTraceShrinkMeasure(near))
 
 	uncanonical := simulationTrace{definition: simulationDefinition{
-		campaign: campaignDefinition{identity: "a", lineage: 1, peers: 1}, capacity: 1,
+		campaign: campaignmodule.Definition{Identity: "a", Lineage: 1, Peers: 1}, capacity: 1,
 	}}
 	canonical := simulationCloneTrace(uncanonical)
-	canonical.definition.campaign.identity = "campaign-1"
+	canonical.definition.campaign.Identity = "campaign-1"
 	assert.True(t, simulationShrinkMeasureLess(
 		simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical),
 	), "canonical/short identity measures=%v/%v", simulationTraceShrinkMeasure(canonical), simulationTraceShrinkMeasure(uncanonical))
@@ -1365,18 +1361,16 @@ func TestSimulationShrinkRetainsTypedReplayDivergenceIndependentOfDiagnostic(t *
 
 func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-shrink-causal", lineage: 42, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-shrink-causal", Lineage: 42, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, nil)
 	assert.Nil(t, explored.failure, "causal shrink exploration failure=%v", explored.failure)
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
-		campaign: simulationTraceCampaignEvent(campaignEvent{
-			id: 1, payload: snapshotEstablishedEvent{},
-		}),
+		campaign:  campaignmodule.SnapshotEstablished(""),
 	}
 	counterexample := simulationCloneTrace(explored.trace)
 	counterexample.malformed = &malformed
@@ -1385,8 +1379,8 @@ func TestSimulationShrinkRemovesCatalogueMembersWithTheirCausalRecords(t *testin
 	shrunk := Shrink(counterexample, key)
 	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "causal shrink catalogue=%v, want no unrelated mutants", shrunk.definition.catalogue)
 	assert.False(t, len(shrunk.records) >= len(counterexample.records), "causal shrink records=%d, want fewer than %d", len(shrunk.records), len(counterexample.records))
-	assert.EqualValues(t, 1, shrunk.definition.capacity, "causal shrink capacity/peers=%d/%d, want 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "causal shrink capacity/peers=%d/%d, want 1/1", shrunk.definition.capacity, shrunk.definition.campaign.peers)
+	assert.EqualValues(t, 1, shrunk.definition.capacity, "causal shrink capacity/peers=%d/%d, want 1/1", shrunk.definition.capacity, shrunk.definition.campaign.Peers)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Peers, "causal shrink capacity/peers=%d/%d, want 1/1", shrunk.definition.capacity, shrunk.definition.campaign.Peers)
 	replayed := ReplayViolation(shrunk, *shrunk.malformed)
 	assert.Nil(t, replayed.failure, "causal shrink replay=%#v, want key %#v", replayed, key)
 	assert.Equal(t, key, replayed.key, "causal shrink replay=%#v, want key %#v", replayed, key)
@@ -1425,9 +1419,9 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 		return 0
 	})
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-shrink-boundary", lineage: 45, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-shrink-boundary", Lineage: 45, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, choices)
@@ -1444,9 +1438,7 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 	assert.NotEqual(t, 0, prefixLength, "boundary shrink trace has no launch completion")
 	malformed := simulationMalformedFact{
 		authority: simulationCampaignAuthority,
-		campaign: simulationTraceCampaignEvent(campaignEvent{
-			id: 1, payload: snapshotEstablishedEvent{},
-		}),
+		campaign:  campaignmodule.SnapshotEstablished(""),
 	}
 	counterexample := simulationCloneTrace(explored.trace)
 	counterexample.records = slices.Clone(counterexample.records[:prefixLength])
@@ -1459,8 +1451,8 @@ func TestSimulationShrinkMovesChoicesTowardNamedBoundaries(t *testing.T) {
 		measure := simulationTraceShrinkMeasure(shrunk)
 		assert.True(t, simulationShrinkMeasureLess(measure, originalMeasure), "boundary measure=%v, want less than %v", measure, originalMeasure)
 	}
-	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.identity, "canonical shrink definition=%#v", shrunk.definition)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.lineage, "canonical shrink definition=%#v", shrunk.definition)
+	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.Identity, "canonical shrink definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Lineage, "canonical shrink definition=%#v", shrunk.definition)
 	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "canonical shrink definition=%#v", shrunk.definition)
 	replayed := ReplayViolation(shrunk, *shrunk.malformed)
 	assert.Nil(t, replayed.failure, "boundary shrink replay=%#v, want key %#v", replayed, key)
@@ -1491,9 +1483,9 @@ func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T
 	}
 	trace := simulationTrace{
 		definition: simulationDefinition{
-			campaign: campaignDefinition{
-				identity: "campaign-liveness-shrink", lineage: 49, command: []string{"test"},
-				profile: AutomaticProfile, peers: 3,
+			campaign: campaignmodule.Definition{
+				Identity: "campaign-liveness-shrink", Lineage: 49, Command: []string{"test"},
+				Profile: AutomaticProfile, Peers: 3,
 			},
 			capacity: 3, catalogue: []mutantIdentity{"unrelated", "required"},
 		},
@@ -1518,26 +1510,26 @@ func TestSimulationLivenessShrinkUsesSameFailureEvaluatorToFixpoint(t *testing.T
 
 	shrunk := simulationShrinkLivenessWith(trace, key, evaluate)
 	assert.EqualValues(t, 1, shrunk.definition.capacity, "liveness shrunk definition=%#v", shrunk.definition)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.peers, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Peers, "liveness shrunk definition=%#v", shrunk.definition)
 	assert.EqualValues(t, 0, len(shrunk.definition.catalogue), "liveness shrunk definition=%#v", shrunk.definition)
-	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.identity, "liveness shrunk definition=%#v", shrunk.definition)
-	assert.EqualValues(t, 1, shrunk.definition.campaign.lineage, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, "campaign-1", shrunk.definition.campaign.Identity, "liveness shrunk definition=%#v", shrunk.definition)
+	assert.EqualValues(t, 1, shrunk.definition.campaign.Lineage, "liveness shrunk definition=%#v", shrunk.definition)
 	assert.EqualValues(t, 0, len(shrunk.choices), "liveness shrunk choices=%#v", shrunk.choices)
 }
 
 func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	definition := campaignDefinition{
-		identity: "campaign-conformance", lineage: 51, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
+	definition := campaignmodule.Definition{
+		Identity: "campaign-conformance", Lineage: 51, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 1,
 	}
-	campaign, _ := beginCampaign(definition)
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	campaign, _ := campaignmodule.NewMachine(definition)
+	observer := simulationCampaignObserver{recorder: recorder}
 	machine := supervision.NewMachine()
 
-	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
-	runner.advance(campaignRegisteredEvent{registration: registration})
+	registration := shell.RegisterCampaign(definition.Lineage)
+	_, campaignTransition := applyRecordedCampaign(observer, campaign, campaignmodule.Registered(registration))
 	fact := supervision.ProspectiveRegistration(
 		1, "attempt-a", time.Unix(100, 0), time.Unix(101, 0), AutomaticProfile, time.Second,
 	)
@@ -1548,7 +1540,7 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 		recorder.recordSupervisorEffect(effect)
 	}
 
-	trace, projection := recorder.quiescent(runner, shell, machine)
+	trace, projection := recorder.quiescent(shell, machine)
 	{
 		got, want := simulationAuthorities(trace), []simulationAuthority{
 			simulationRuntimeAuthority, simulationCampaignAuthority, supervisionAuthority,
@@ -1560,50 +1552,57 @@ func TestSimulationRecorderLinearizesProductionOwnerCutsAndQuiescentProjection(t
 	}
 
 	wantRuntime := processruntime.NewReplay(1)
-	wantRuntime, registrationResult := wantRuntime.Apply(processruntime.RegisterCampaignCut(definition.lineage))
-	wantRegistration := campaignRegistrationEvidence(registrationResult.Registration())
-	wantCampaign, wantEffects := advanceCampaign(campaign, campaignEvent{
-		id: 1, payload: campaignRegisteredEvent{registration: wantRegistration},
-	})
-	wantMachine, wantTransition := supervision.NewMachine().Apply(fact)
+	wantRuntime, registrationResult := wantRuntime.Apply(processruntime.RegisterCampaignCut(definition.Lineage))
+	wantCampaign, _ := campaignmodule.NewMachine(definition)
+	var wantCampaignTransition campaignmodule.Transition
+	wantCampaign, wantCampaignTransition = wantCampaign.Apply(campaignmodule.Registered(registrationResult.Registration()))
+	wantCampaign = wantCampaign.Projection().Canonical().Fork()
+	wantMachine, wantSupervisorTransition := supervision.NewMachine().Apply(fact)
 	wantProjection := simulationWorld{
 		campaign: wantCampaign, runtime: simulationTraceRuntimeState(wantRuntime),
 		supervisor: wantMachine.Projection(), machine: wantMachine,
 	}
 	assert.Equal(t, wantProjection, projection, "production projection diverged:\n got=%#v\nwant=%#v", projection, wantProjection)
-	assert.Equal(t, wantEffects, trace.records[1].campaignEffects, "recorded ordered outputs diverged: %#v", trace.records)
-	assert.Equal(t, wantTransition.Effects(), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
+	assert.True(t, campaignTransition.Projection().Canonical().Equal(trace.records[1].campaignState))
+	wantCampaignEffects := wantCampaignTransition.Effects()
+	for index := range wantCampaignEffects {
+		wantCampaignEffects[index] = wantCampaignEffects[index].Canonical(wantCampaignTransition.Projection())
+	}
+	assert.True(t, slices.EqualFunc(wantCampaignEffects, trace.records[1].campaignEffects,
+		func(left, right campaignmodule.Effect) bool { return left.Equal(right) }))
+	assert.Equal(t, wantSupervisorTransition.Effects(), trace.records[2].supervisorActions, "recorded ordered outputs diverged: %#v", trace.records)
 }
 
 func TestSimulationRecorderRejectsRuntimeDivergenceAtQuiescence(t *testing.T) {
 	recorder := newSimulationRecorder()
 	observer := newSimulationRuntimeObserver(recorder, 1)
-	runtime := newProcessRuntimeShellWithObserver(2, observer)
-	first := runtime.RegisterCampaign(71).Campaign()
-	second := runtime.RegisterCampaign(72).Campaign()
+	runtime := processruntime.NewObserved(2, observer)
+	firstRegistration := runtime.RegisterCampaign(71)
+	secondRegistration := runtime.RegisterCampaign(72)
 	runtime.RequestAdmission(processruntime.Admission{
-		Campaign: first, Attempt: "first", Class: processruntime.SharedAdmission,
+		Campaign: firstRegistration.Campaign(), Attempt: "first", Class: processruntime.SharedAdmission,
 	})
 	runtime.RequestAdmission(processruntime.Admission{
-		Campaign: second, Attempt: "second", Class: processruntime.SharedAdmission,
+		Campaign: secondRegistration.Campaign(), Attempt: "second", Class: processruntime.SharedAdmission,
 	})
-	campaign, _ := beginCampaign(campaignDefinition{
-		identity: "campaign-conformance", lineage: 71, command: []string{"test"},
-		profile: AutomaticProfile, peers: 2,
+	campaign, _ := campaignmodule.NewMachine(campaignmodule.Definition{
+		Identity: "campaign-conformance", Lineage: 71, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 2,
 	})
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	_, _ = applyRecordedCampaign(simulationCampaignObserver{recorder: recorder}, campaign,
+		campaignmodule.Registered(firstRegistration))
 	machine := supervision.NewMachine()
 
 	assert.PanicsWithError(t, "process runtime event diverged", func() {
-		recorder.quiescent(runner, runtime, machine)
+		recorder.quiescent(runtime, machine)
 	})
 }
 
 func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-commutation", lineage: 510, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-commutation", Lineage: 510, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, nil)
@@ -1611,7 +1610,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 	trace := simulationCloneTrace(explored.trace)
 	trace.barriers = []simulationQuiescentBarrier{{
 		afterSequence: trace.records[len(trace.records)-1].sequence,
-		campaign:      simulationTraceCampaignState(explored.world.campaign),
+		campaign:      explored.world.campaign.Projection(),
 		runtime:       explored.world.runtime,
 		supervisor:    explored.world.supervisor,
 	}}
@@ -1634,7 +1633,7 @@ func TestSimulationReplayChecksIndependentOwnerCutsAtQuiescence(t *testing.T) {
 
 func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
 	activeCampaign := shell.RegisterCampaign(512)
 	waitingCampaign := shell.RegisterCampaign(513)
 	active := shell.RequestAdmission(processruntime.Admission{
@@ -1646,7 +1645,7 @@ func TestSimulationRecorderCorrelatesQueuedGrantWithItsRuntimeCut(t *testing.T) 
 
 	shell.CancelAdmission(active.Request())
 	grant, _ := waiting.Receive()
-	event := admissionGrantedEvent{attempt: "waiting", grant: campaignAdmissionFact(grant.Admission())}
+	event := campaignmodule.AdmissionDelivered(grant.Admission())
 	recorder.mutex.Lock()
 	cancelSequence := recorder.records[len(recorder.records)-1].sequence
 	recorder.mutex.Unlock()
@@ -1722,19 +1721,28 @@ func TestSimulationRecorderCorrelatesRuntimeReceiptWithItsActionCut(t *testing.T
 	assert.Equal(t, simulationOwnerDeliverySource, terminalSource.kind, "runtime receipt source=%#v", terminalSource)
 	assert.Equal(t, terminalReservation.sequence, terminalSource.identity, "runtime receipt source=%#v", terminalSource)
 
-	launchSource := recorder.campaignSource(attemptLaunchEvent{generation: generation})
+	launchFact := simulationFactForGeneration(t, Explore(simulationDefinition{
+		campaign: campaignmodule.Definition{
+			Identity: "launch-source", Lineage: 91, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, nil).trace, campaignmodule.AttemptLaunchedFact, generation)
+	launchSource := recorder.campaignSource(launchFact)
 	assert.Equal(t, simulationOwnerDeliverySource, launchSource.kind, "launch source=%#v", launchSource)
 	assert.Equal(t, launchReservation.sequence, launchSource.identity, "launch source=%#v", launchSource)
 }
 
 func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	campaign, _ := beginCampaign(campaignDefinition{
-		identity: "campaign-action-barrier", lineage: 511, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
+	registration := shell.RegisterCampaign(511)
+	campaign, _ := campaignmodule.NewMachine(campaignmodule.Definition{
+		Identity: "campaign-action-barrier", Lineage: 511, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 1,
 	})
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	_, _ = applyRecordedCampaign(simulationCampaignObserver{recorder: recorder}, campaign,
+		campaignmodule.Registered(registration))
 	machine := supervision.NewMachine()
 	action := supervision.MalformedEffect(supervision.LaunchNativeEffect)
 	recorder.actions[71] = simulationInFlightAction{kind: supervision.LaunchNativeEffect, generation: 9}
@@ -1743,7 +1751,7 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 	completed := make(chan struct{})
 	go func() {
 		close(started)
-		recorder.quiescent(runner, shell, machine)
+		recorder.quiescent(shell, machine)
 		close(completed)
 	}()
 	<-started
@@ -1763,35 +1771,32 @@ func TestSimulationRecorderQuiescenceWaitsForInFlightActionCut(t *testing.T) {
 
 func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	definition := campaignDefinition{
-		identity: "campaign-recorded-replay", lineage: 52, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
+	definition := campaignmodule.Definition{
+		Identity: "campaign-recorded-replay", Lineage: 52, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 1,
 	}
-	campaign, _ := beginCampaign(definition)
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	campaign, _ := campaignmodule.NewMachine(definition)
+	observer := simulationCampaignObserver{recorder: recorder}
 	machine := supervision.NewMachine()
-	cut := func() { _, _ = recorder.quiescent(runner, shell, machine) }
+	cut := func() { _, _ = recorder.quiescent(shell, machine) }
 
-	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
+	registration := shell.RegisterCampaign(definition.Lineage)
+	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.Registered(registration))
 	cut()
-	runner.advance(campaignRegisteredEvent{registration: registration})
+	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.SnapshotEstablished("private-snapshot"))
 	cut()
-	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
+	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.CatalogueDiscovered("private-snapshot", nil))
 	cut()
-	runner.advance(catalogueDiscoveredEvent{snapshot: "private-snapshot"})
+	campaign, _ = applyRecordedCampaign(observer, campaign,
+		campaignmodule.ResourceSettled(campaignmodule.SnapshotResource, "private-snapshot"))
 	cut()
-	runner.advance(resourceSettledEvent{
-		kind: campaignResourceSnapshot, identity: "private-snapshot",
-	})
+	processedTerminal := shell.CommitTerminal(registration.Campaign())
 	cut()
-	processedTerminal := shell.CommitTerminal(registration.token)
-	terminal := terminalResult{decision: processedTerminal.Decision()}
-	cut()
-	runner.advance(terminalCommittedEvent{result: campaignTerminalEvidence(terminal)})
+	_, _ = applyRecordedCampaign(observer, campaign, campaignmodule.TerminalCommitted(processedTerminal.Decision()))
 
-	trace, production := recorder.quiescent(runner, shell, machine)
-	assert.EqualValues(t, 7, len(trace.barriers), "retained prefix barriers=%d, want 7", len(trace.barriers))
+	trace, production := recorder.quiescent(shell, machine)
+	assert.EqualValues(t, 6, len(trace.barriers), "retained prefix barriers=%d, want 6", len(trace.barriers))
 	replayed := ReplayLegal(trace)
 	require.Nil(t, replayed.failure, "recorded production trace did not replay: %v", replayed.failure)
 	replayed.world.runtimeState = processruntime.Replay{}
@@ -1808,9 +1813,9 @@ func TestSimulationRecorderReplaysAnEmptyProductionCampaign(t *testing.T) {
 
 func TestSimulationReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-recorded-managed", lineage: 521, command: []string{"test"},
-			profile: SerialProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-recorded-managed", Lineage: 521, Command: []string{"test"},
+			Profile: SerialProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, nil)
@@ -1828,31 +1833,34 @@ func TestSimulationReplaysNonEmptyManagedCampaignAtQuiescence(t *testing.T) {
 
 func TestSimulationRecorderSealsCatalogueFactsAgainstCallerMutation(t *testing.T) {
 	recorder := newSimulationRecorder()
-	definition := campaignDefinition{
-		identity: "campaign-immutable-record", lineage: 53, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+	definition := campaignmodule.Definition{
+		Identity: "campaign-immutable-record", Lineage: 53, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 1,
 	}
-	campaign, _ := beginCampaign(definition)
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
+	campaign, _ := campaignmodule.NewMachine(definition)
+	observer := simulationCampaignObserver{recorder: recorder}
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
 	machine := supervision.NewMachine()
-	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
-	runner.advance(campaignRegisteredEvent{registration: registration})
-	runner.advance(snapshotEstablishedEvent{snapshot: "private-snapshot"})
+	registration := shell.RegisterCampaign(definition.Lineage)
+	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.Registered(registration))
+	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.SnapshotEstablished("private-snapshot"))
 	mutants := []mutantIdentity{"mutant-a", "mutant-b"}
-	runner.advance(catalogueDiscoveredEvent{snapshot: "private-snapshot", mutants: mutants})
+	mutantNames := []string{"mutant-a", "mutant-b"}
+	_, _ = applyRecordedCampaign(observer, campaign,
+		campaignmodule.CatalogueDiscovered("private-snapshot", mutantNames))
 
-	trace, _ := recorder.quiescent(runner, shell, machine)
+	trace, _ := recorder.quiescent(shell, machine)
 	mutants[0] = "caller-rewrite"
-	got := trace.records[len(trace.records)-1].campaignEvent.production().payload.(catalogueDiscoveredEvent).mutants
-	assert.Equal(t, []mutantIdentity{"mutant-a", "mutant-b"}, got, "recorded catalogue changed with caller input: %v", got)
+	mutantNames[0] = "caller-rewrite"
+	assert.Equal(t, []string{"mutant-a", "mutant-b"},
+		trace.records[len(trace.records)-1].campaignState.Catalogue())
 }
 
 func TestSimulationTraceStoresRuntimeOwnedRecordedCuts(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-runtime-cuts", lineage: 91, command: []string{"test"},
-			profile: SerialProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-runtime-cuts", Lineage: 91, Command: []string{"test"},
+			Profile: SerialProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{})
@@ -1867,21 +1875,22 @@ func TestSimulationTraceStoresRuntimeOwnedRecordedCuts(t *testing.T) {
 
 func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
 	registration := shell.RegisterCampaign(71)
 	await := shell.RequestAdmission(processruntime.Admission{
 		Campaign: registration.Campaign(), Attempt: "attempt-a", Class: processruntime.SharedAdmission,
 		Profile: AutomaticProfile,
 	})
 	assert.Equal(t, processruntime.AdmissionAccepted, await.Decision(), "admission decision=%v", await.Decision())
-	campaign, _ := beginCampaign(campaignDefinition{
-		identity: "campaign-projection", lineage: 71, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+	campaign, _ := campaignmodule.NewMachine(campaignmodule.Definition{
+		Identity: "campaign-projection", Lineage: 71, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 1,
 	})
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	_, _ = applyRecordedCampaign(simulationCampaignObserver{recorder: recorder}, campaign,
+		campaignmodule.Registered(registration))
 	machine := supervision.NewMachine()
 
-	trace, _ := recorder.quiescent(runner, shell, machine)
+	trace, _ := recorder.quiescent(shell, machine)
 	{
 		path := simulationForbiddenValuePath(reflect.ValueOf(trace), "trace")
 		assert.EqualValues(t, "", path, "runtime trace leaked a delivery capability at %s", path)
@@ -1889,25 +1898,56 @@ func TestSimulationRecorderProjectsRuntimeCustodyWithoutDeliveryCapabilities(t *
 }
 
 func TestSimulationCausalTerminalConsumesRecordedResolvedDeadline(t *testing.T) {
-	recorded := attemptTerminalEvent{
-		attempt: "baseline", generation: 7,
-		terminal:                 supervision.Settled{ExecutionData: supervision.ExecutionData{Deadline: time.Minute}},
-		resolvedMutationDeadline: mutationDeadlineResolution{duration: 37 * time.Second},
+	traceForPeers := func(peers int) simulationTrace {
+		result := Explore(simulationDefinition{
+			campaign: campaignmodule.Definition{
+				Identity: "campaign-deadline", Lineage: processruntime.Lineage(peers),
+				Command: []string{"test"}, Profile: AutomaticProfile, Peers: peers,
+			},
+			capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+		}, nil)
+		require.NoError(t, result.failure)
+		return result.trace
 	}
-	derived := recorded
-	derived.resolvedMutationDeadline.duration = 99 * time.Second
-
-	merged, ok := simulationCausalCampaignPayload(recorded, derived).(attemptTerminalEvent)
-	require.True(t, ok, "merged terminal=%#v, want recorded deadline %#v", merged, recorded.resolvedMutationDeadline)
-	assert.Equal(t, recorded.resolvedMutationDeadline, merged.resolvedMutationDeadline, "merged terminal=%#v, want recorded deadline %#v", merged, recorded.resolvedMutationDeadline)
+	recorded := simulationFact(t, traceForPeers(30), campaignmodule.AttemptTerminalFact)
+	derived := simulationFact(t, traceForPeers(1), campaignmodule.AttemptTerminalFact)
+	merged := simulationCausalCampaignPayload(recorded, derived)
+	recordedDeadline, recordedOK := recorded.ResolvedMutationDeadline()
+	derivedDeadline, derivedOK := derived.ResolvedMutationDeadline()
+	mergedDeadline, mergedOK := merged.ResolvedMutationDeadline()
+	require.True(t, recordedOK)
+	require.True(t, derivedOK)
+	require.True(t, mergedOK)
+	assert.NotEqual(t, recordedDeadline, derivedDeadline)
+	assert.Equal(t, recordedDeadline, mergedDeadline)
 }
 
 func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
-	effects := []campaignEffect{
-		{id: 9, kind: campaignEffectLaunchAttempt, attempt: "attempt-b", generation: 3},
-		{id: 4, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-b", mutant: "mutant-b"},
-		{id: 3, kind: campaignEffectMaterializeWorkspace, attempt: "attempt-a", mutant: "mutant-a"},
+	explored := Explore(simulationDefinition{
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-enabled-order", Lineage: 1901, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, nil)
+	require.NoError(t, explored.failure)
+	var materializeA, materializeB, launch campaignmodule.Effect
+	for _, record := range explored.trace.records {
+		for _, effect := range record.campaignEffects {
+			switch {
+			case effect.Kind() == campaignEffectMaterializeWorkspace && effect.Mutant() == "mutant-a":
+				materializeA = effect
+			case effect.Kind() == campaignEffectMaterializeWorkspace && effect.Mutant() == "mutant-b":
+				materializeB = effect
+			case effect.Kind() == campaignEffectLaunchAttempt && launch.Kind() == 0:
+				launch = effect
+			}
+		}
 	}
+	require.NotZero(t, materializeA.Kind())
+	require.NotZero(t, materializeB.Kind())
+	require.NotZero(t, launch.Kind())
+	effects := []campaignmodule.Effect{launch, materializeB, materializeA}
 	actions := []supervision.Effect{
 		supervision.CorrelatedMalformedEffect(supervision.WaitRootEffect, 3, 8),
 		supervision.CorrelatedMalformedEffect(supervision.SampleRunningEffect, 3, 7),
@@ -1915,9 +1955,9 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 
 	got := simulationEnabledMoves(effects, actions, []mutantIdentity{"mutant-a", "mutant-b"})
 	want := []simulationEnabledMove{
-		{authority: simulationCampaignAuthority, effect: effects[2]},
-		{authority: simulationCampaignAuthority, effect: effects[1]},
-		{authority: supervisionAuthority, effect: effects[0]},
+		{authority: simulationCampaignAuthority, effect: materializeA},
+		{authority: simulationCampaignAuthority, effect: materializeB},
+		{authority: supervisionAuthority, effect: launch},
 		{authority: supervisionAuthority, action: actions[1]},
 		{authority: supervisionAuthority, action: actions[0]},
 	}
@@ -1926,9 +1966,9 @@ func TestSimulationEnabledMovesAreCanonicalReducerOwnedWork(t *testing.T) {
 
 func TestSimulationChoiceRecordsMarkCanonicalRecovery(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-recovery", lineage: 91, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-recovery", Lineage: 91, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{2})
@@ -1949,9 +1989,9 @@ func TestSimulationChoiceRecordsMarkCanonicalRecovery(t *testing.T) {
 
 func TestSimulationEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-causal-empty", lineage: 92, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-causal-empty", Lineage: 92, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1,
 	}, simulationChoiceBytes{})
@@ -1964,9 +2004,9 @@ func TestSimulationEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 
 func TestSimulationNonEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-causal-nonempty", lineage: 93, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-causal-nonempty", Lineage: 93, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
 		},
 		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
 	}, simulationChoiceBytes{})
@@ -1979,22 +2019,187 @@ func TestSimulationNonEmptyCampaignRecordsOnlyEnabledCausalMoves(t *testing.T) {
 
 func TestSimulationRecorderProjectsFilesystemPathsToLogicalIdentities(t *testing.T) {
 	recorder := newSimulationRecorder()
-	shell := newProcessRuntimeShellWithObserver(1, newSimulationRuntimeObserver(recorder, 1))
-	definition := campaignDefinition{
-		identity: "campaign-paths", lineage: 81, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1,
+	shell := processruntime.NewObserved(1, newSimulationRuntimeObserver(recorder, 1))
+	definition := campaignmodule.Definition{
+		Identity: "campaign-paths", Lineage: 81, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: 1,
 	}
-	campaign, _ := beginCampaign(definition)
-	runner := &managedCampaignRunner{state: campaign, recorder: recorder}
+	campaign, _ := campaignmodule.NewMachine(definition)
+	observer := simulationCampaignObserver{recorder: recorder}
 	machine := supervision.NewMachine()
-	registration := campaignRegistrationEvidence(shell.RegisterCampaign(definition.lineage))
-	runner.advance(campaignRegisteredEvent{registration: registration})
-	runner.advance(snapshotEstablishedEvent{snapshot: "/private/repository/snapshot-937"})
+	registration := shell.RegisterCampaign(definition.Lineage)
+	campaign, _ = applyRecordedCampaign(observer, campaign, campaignmodule.Registered(registration))
+	_, _ = applyRecordedCampaign(observer, campaign,
+		campaignmodule.SnapshotEstablished("/private/repository/snapshot-937"))
 
-	trace, projection := recorder.quiescent(runner, shell, machine)
+	trace, projection := recorder.quiescent(shell, machine)
 	projected := fmt.Sprintf("%#v %#v", trace, projection)
 	assert.NotContains(t, projected, "/private/repository", "simulation projection leaked a filesystem path: %s", projected)
-	assert.EqualValues(t, "snapshot:campaign-paths", projection.campaign.snapshot, "logical snapshot identity=%q", projection.campaign.snapshot)
+	assert.True(t, trace.records[len(trace.records)-1].campaignEvent.Fact().Equal(
+		campaignmodule.SnapshotEstablished("snapshot:campaign-paths")))
+}
+
+func applyRecordedCampaign(
+	observer simulationCampaignObserver,
+	machine campaignmodule.Machine,
+	fact campaignmodule.Fact,
+) (campaignmodule.Machine, campaignmodule.Transition) {
+	leave := observer.Enter()
+	defer leave()
+	reservation := observer.Reserve()
+	next, transition := machine.Apply(fact)
+	observer.Publish(reservation, transition.Event(), transition.Projection(), transition.Effects())
+	return next, transition
+}
+
+func simulationFactForGeneration(
+	t *testing.T,
+	trace simulationTrace,
+	kind campaignmodule.FactKind,
+	generation processruntime.Generation,
+) campaignmodule.Fact {
+	t.Helper()
+	for _, record := range trace.records {
+		fact := record.campaignEvent.Fact()
+		if fact.Kind() == kind && fact.Generation() == generation {
+			return fact
+		}
+	}
+	require.FailNowf(t, "campaign fact not found", "kind=%d generation=%d", kind, generation)
+	return campaignmodule.Fact{}
+}
+
+func simulationFact(t *testing.T, trace simulationTrace, kind campaignmodule.FactKind) campaignmodule.Fact {
+	t.Helper()
+	for _, record := range trace.records {
+		fact := record.campaignEvent.Fact()
+		if fact.Kind() == kind {
+			return fact
+		}
+	}
+	require.FailNowf(t, "campaign fact not found", "kind=%d", kind)
+	return campaignmodule.Fact{}
+}
+
+func simulationEffect(t *testing.T, trace simulationTrace, kind campaignmodule.EffectKind) campaignmodule.Effect {
+	t.Helper()
+	for _, record := range trace.records {
+		for _, effect := range record.campaignEffects {
+			if effect.Kind() == kind {
+				return effect
+			}
+		}
+	}
+	require.FailNowf(t, "campaign effect not found", "kind=%d", kind)
+	return campaignmodule.Effect{}
+}
+
+func simulationEffectForGeneration(
+	t *testing.T,
+	trace simulationTrace,
+	kind campaignmodule.EffectKind,
+	generation processruntime.Generation,
+) campaignmodule.Effect {
+	t.Helper()
+	for _, record := range trace.records {
+		for _, effect := range record.campaignEffects {
+			if effect.Kind() == kind && effect.Generation() == generation {
+				return effect
+			}
+		}
+	}
+	require.FailNowf(t, "campaign effect not found", "kind=%d generation=%d", kind, generation)
+	return campaignmodule.Effect{}
+}
+
+func simulationFatalTrace(t *testing.T) simulationTrace {
+	t.Helper()
+	expired := false
+	result := Explore(simulationDefinition{
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-fatal-fixture", Lineage: 2179, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		for index, move := range moves {
+			if move.action.Kind() == supervision.ObserveEmptinessEffect &&
+				move.variant.drain == simulationDrainAtBoundary &&
+				move.attemptKind == campaignAttemptPrimary {
+				expired = true
+				return index
+			}
+		}
+		for index, move := range moves {
+			if move.action.Kind() != supervision.WaitRootEffect {
+				return index
+			}
+		}
+		return 0
+	}))
+	require.NoError(t, result.failure)
+	require.True(t, expired)
+	return result.trace
+}
+
+func simulationStopTrace(t *testing.T) simulationTrace {
+	t.Helper()
+	selected := false
+	result := Explore(simulationDefinition{
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-stop-fixture", Lineage: 2180, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 2,
+		},
+		capacity: 2, catalogue: []mutantIdentity{"mutant-a", "mutant-b"},
+	}, simulationFocusedChoiceSource(func(moves []simulationEngineMove) int {
+		ownedPeerReady := slices.ContainsFunc(moves, func(move simulationEngineMove) bool {
+			return move.action.Kind() == supervision.WaitRootEffect && move.mutant == "mutant-a"
+		})
+		if ownedPeerReady {
+			for index, move := range moves {
+				if move.action.Kind() == supervision.LaunchNativeEffect && move.mutant == "mutant-b" &&
+					move.variant.launch == simulationLaunchProvenNotReleased {
+					selected = true
+					return index
+				}
+			}
+		}
+		for index, move := range moves {
+			if move.action.Kind() == supervision.LaunchNativeEffect && move.mutant == "mutant-b" {
+				continue
+			}
+			if move.action.Kind() != supervision.WaitRootEffect {
+				return index
+			}
+		}
+		return 0
+	}))
+	require.NoError(t, result.failure)
+	require.True(t, selected)
+	return result.trace
+}
+
+func simulationEmergencyCampaign(t *testing.T, trace simulationTrace) campaignmodule.Machine {
+	t.Helper()
+	var kinds []campaignmodule.FactKind
+	for index, record := range trace.records {
+		if record.authority == simulationCampaignAuthority {
+			kinds = append(kinds, record.campaignEvent.Fact().Kind())
+		}
+		if record.campaignEvent.Fact().Kind() != campaignmodule.RuntimeEmergencySettledFact {
+			continue
+		}
+		prefix := simulationTrace{
+			definition: trace.definition,
+			records:    slices.Clone(trace.records[:index]),
+		}
+		replayed := ReplayLegal(prefix)
+		require.NoError(t, replayed.failure)
+		require.True(t, replayed.world.campaign.EmergencyRequested())
+		return replayed.world.campaign
+	}
+	require.FailNowf(t, "campaign emergency fact not found", "kinds=%v", kinds)
+	return campaignmodule.Machine{}
 }
 
 func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
@@ -2022,9 +2227,9 @@ func TestSimulationRecorderCanonicalizesSupervisorInstants(t *testing.T) {
 
 func TestSimulationTraceCarriesNoProductionCapabilities(t *testing.T) {
 	explored := Explore(simulationDefinition{
-		campaign: campaignDefinition{
-			identity: "campaign-integer-time", lineage: 82, command: []string{"test"},
-			profile: AutomaticProfile, peers: 1,
+		campaign: campaignmodule.Definition{
+			Identity: "campaign-integer-time", Lineage: 82, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
 		},
 		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
 	}, simulationChoiceBytes{0})
@@ -2073,7 +2278,7 @@ func simulationForbiddenValuePath(value reflect.Value, path string) string {
 func TestSimulationFuzzInputDrivesSustainedLegalChoices(t *testing.T) {
 	definition, choices := simulationFuzzInput([]byte{2, 2, 4, 5, 6, 7})
 	assert.EqualValues(t, 3, definition.capacity, "fuzz definition/choices=%#v/%v", definition, choices)
-	assert.EqualValues(t, 3, definition.campaign.peers, "fuzz definition/choices=%#v/%v", definition, choices)
+	assert.EqualValues(t, 3, definition.campaign.Peers, "fuzz definition/choices=%#v/%v", definition, choices)
 	assert.EqualValues(t, 3, len(definition.catalogue), "fuzz definition/choices=%#v/%v", definition, choices)
 	assert.EqualValues(t, 4, len(choices), "fuzz definition/choices=%#v/%v", definition, choices)
 	explored := Explore(definition, choices)
@@ -2118,7 +2323,16 @@ func TestSimulationSelectsOneTypedActionFromACompoundOwnerCut(t *testing.T) {
 }
 
 func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
-	launch := attemptLaunchEvent{attempt: "attempt-a", generation: 2}
+	explored := Explore(simulationDefinition{
+		campaign: campaignmodule.Definition{
+			Identity: "terminal-launch-order", Lineage: 2199, Command: []string{"test"},
+			Profile: AutomaticProfile, Peers: 1,
+		},
+		capacity: 1, catalogue: []mutantIdentity{"mutant-a"},
+	}, nil)
+	require.NoError(t, explored.failure)
+	launch := simulationFact(t, explored.trace, campaignmodule.AttemptLaunchedFact)
+	generation := launch.Generation()
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
 			source:   simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 9},
@@ -2126,7 +2340,7 @@ func TestSimulationTerminalWaitsForItsCampaignLaunchDelivery(t *testing.T) {
 		},
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
-			action: supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, 2, 10),
+			action: supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, generation, 10),
 		},
 	}}
 
@@ -2160,13 +2374,11 @@ func simulationOwnedRuntime(t *testing.T) (processruntime.Replay, attemptGenerat
 		Campaign: registered.Registration().Campaign(), Attempt: "attempt-a", Class: processruntime.SharedAdmission,
 	}))
 	admitted := runtimeAdmissionResult(admission.Admission())
-	require.Len(t, admitted.deliveries, 1)
-	runtime, start := runtime.Apply(processruntime.CommitStartCut(
-		processRuntimeAdmission(campaignAdmissionValue(admitted.deliveries[0])),
-	))
+	require.Len(t, admitted.Deliveries(), 1)
+	runtime, start := runtime.Apply(processruntime.CommitStartCut(admitted.Deliveries()[0]))
 	started := runtimeStartResult(start.Start())
-	runtime, _ = runtime.Apply(processruntime.ObserveAttemptCut(started.generation, processruntime.Owned()))
-	return runtime, started.generation
+	runtime, _ = runtime.Apply(processruntime.ObserveAttemptCut(started.Generation(), processruntime.Owned()))
+	return runtime, started.Generation()
 }
 
 func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
@@ -2191,20 +2403,21 @@ func TestSimulationOrdersRuntimeCustodyActionsByOwnerToken(t *testing.T) {
 }
 
 func TestSimulationEmergencySettlementRetiresPendingCampaignTerminals(t *testing.T) {
+	release := simulationEffect(t, simulationFatalTrace(t), campaignEffectEstablishSnapshot)
 	engine := simulationEngine{pending: []simulationEngineMove{
 		{
 			source: simulationCausalSource{kind: supervisionActionSource, identity: 10},
 			action: supervision.CorrelatedMalformedEffect(supervision.DeliverTerminalEffect, 2, 10),
 		},
 		{
-			source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 12},
-			effect: campaignEffect{id: 12, kind: campaignEffectReleaseSnapshot},
+			source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(release.ID())},
+			effect: release,
 		},
 	}}
 
 	engine.retireCampaignTerminals()
 	require.Len(t, engine.pending, 1, "pending work after emergency terminal retirement=%#v", engine.pending)
-	assert.EqualValues(t, 12, engine.pending[0].effect.id, "pending work after emergency terminal retirement=%#v", engine.pending)
+	assert.EqualValues(t, release.ID(), engine.pending[0].effect.ID(), "pending work after emergency terminal retirement=%#v", engine.pending)
 }
 
 func TestSimulationOrdersRuntimeCompletionBeforeLaterCustodyAction(t *testing.T) {
@@ -2244,9 +2457,10 @@ func TestSimulationEmergencySettlementWaitsForCampaignRequest(t *testing.T) {
 }
 
 func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testing.T) {
-	launch := attemptLaunchEvent{attempt: "attempt-a", generation: 2}
+	trace := simulationFatalTrace(t)
+	launch := simulationFact(t, trace, campaignmodule.AttemptLaunchedFact)
 	engine := simulationEngine{
-		campaign: campaignState{drain: campaignDrainIntent{kind: campaignDrainRuntimeEmergency, epoch: 1}},
+		campaign: simulationEmergencyCampaign(t, trace),
 		pending: []simulationEngineMove{
 			{
 				source:   simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 19},
@@ -2265,13 +2479,11 @@ func TestSimulationEmergencySettlementWaitsForPublishedCampaignIngress(t *testin
 }
 
 func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
+	trace := simulationFatalTrace(t)
 	emergency := supervision.NewMachine().EmergencyRequest(time.Unix(1, 0), time.Unix(2, 0))
-	start := startCommittedEvent{
-		attempt: "attempt-b",
-		result:  campaignStartResult{decision: processruntime.StartAccepted, generation: 4},
-	}
+	start := simulationFact(t, trace, campaignmodule.StartCommittedFact)
 	engine := simulationEngine{
-		campaign: campaignState{drain: campaignDrainIntent{kind: campaignDrainRuntimeEmergency, epoch: 1}},
+		campaign: simulationEmergencyCampaign(t, trace),
 		pending: []simulationEngineMove{
 			{
 				source:             simulationCausalSource{kind: simulationOwnerDeliverySource, identity: 20},
@@ -2290,14 +2502,17 @@ func TestSimulationEmergencyCutWaitsForCommittedStartDelivery(t *testing.T) {
 }
 
 func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
-	const generation attemptGeneration = 4
+	trace := simulationStopTrace(t)
+	stopEffect := simulationEffect(t, trace, campaignEffectStopAttempt)
+	launchEffect := simulationEffectForGeneration(t, trace, campaignEffectLaunchAttempt, stopEffect.Generation())
+	generation := launchEffect.Generation()
 	launch := simulationEngineMove{
-		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 19},
-		effect: campaignEffect{id: 19, kind: campaignEffectLaunchAttempt, generation: generation},
+		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(launchEffect.ID())},
+		effect: launchEffect,
 	}
 	stop := simulationEngineMove{
-		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: 20},
-		effect: campaignEffect{id: 20, kind: campaignEffectStopAttempt, generation: generation},
+		source: simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(stopEffect.ID())},
+		effect: stopEffect,
 	}
 	machine, transition := supervision.NewMachine().Apply(supervision.ProspectiveRegistration(
 		generation, "attempt", time.Unix(1, 0), time.Unix(2, 0), AutomaticProfile, time.Second,
@@ -2324,18 +2539,18 @@ func TestSimulationStopWaitsForSupervisorAttemptOwnership(t *testing.T) {
 			moves := test.engine.enabledMoves()
 			assert.NotEqual(t, 0, len(moves), "attempt ownership made no progress")
 			for _, move := range moves {
-				assert.NotEqual(t, campaignEffectStopAttempt, move.effect.kind, "enabled stop before supervisor ownership: %#v", moves)
+				assert.NotEqual(t, campaignEffectStopAttempt, move.effect.Kind(), "enabled stop before supervisor ownership: %#v", moves)
 			}
 		})
 	}
 	t.Run("ownership_acquired", func(t *testing.T) {
 		completed := simulationEngine{
-			launches: map[attemptGeneration]campaignEffect{generation: launch.effect},
+			launches: map[attemptGeneration]campaignmodule.Effect{generation: launch.effect},
 			pending:  []simulationEngineMove{stop},
 		}
 		moves := completed.enabledMoves()
 		require.EqualValues(t, 1, len(moves), "completed generation retained disabled stop: %#v", moves)
-		assert.Equal(t, campaignEffectStopAttempt, moves[0].effect.kind, "completed generation retained disabled stop: %#v", moves)
+		assert.Equal(t, campaignEffectStopAttempt, moves[0].effect.Kind(), "completed generation retained disabled stop: %#v", moves)
 		assert.True(t, completed.consume(moves[0]), "completed generation stop was not pending")
 		err := completed.apply(moves[0])
 		assert.NoError(t, err, "completed generation stop=%v, want no-op", err)
@@ -2361,9 +2576,9 @@ func TestSimulationOrdersSupervisorActionsWithinOneGeneration(t *testing.T) {
 
 func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceBytes) {
 	capacity := 1
-	definition := simulationDefinition{campaign: campaignDefinition{
-		identity: "campaign-fuzz", lineage: 61, command: []string{"test"},
-		profile: AutomaticProfile, peers: capacity,
+	definition := simulationDefinition{campaign: campaignmodule.Definition{
+		Identity: "campaign-fuzz", Lineage: 61, Command: []string{"test"},
+		Profile: AutomaticProfile, Peers: capacity,
 	}, capacity: capacity}
 	if len(source) == 0 {
 		return definition, nil
@@ -2376,7 +2591,7 @@ func simulationFuzzInput(source []byte) (simulationDefinition, simulationChoiceB
 	if len(source) > 1 {
 		capacity = 1 + int(source[1]%3)
 		definition.capacity = capacity
-		definition.campaign.peers = capacity
+		definition.campaign.Peers = capacity
 	}
 	if len(source) <= 2 {
 		return definition, nil
@@ -2402,9 +2617,7 @@ func FuzzSimulationLegalReplayAndViolationRemainDeterministic(f *testing.F) {
 		}
 		malformed := simulationMalformedFact{
 			authority: simulationCampaignAuthority,
-			campaign: simulationTraceCampaignEvent(campaignEvent{
-				id: 1, payload: snapshotEstablishedEvent{},
-			}),
+			campaign:  campaignmodule.SnapshotEstablished(""),
 		}
 		if len(source) != 0 {
 			switch source[0] % 3 {

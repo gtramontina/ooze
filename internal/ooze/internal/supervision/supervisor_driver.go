@@ -277,6 +277,11 @@ func (observed ObservedLaunch) Result() LaunchResult { return observed.result }
 // Receipt returns the corresponding process-runtime receipt.
 func (observed ObservedLaunch) Receipt() processruntime.Receipt { return observed.receipt }
 
+// NewObservedLaunch combines a system-boundary launch result with its runtime receipt.
+func NewObservedLaunch(result LaunchResult, receipt processruntime.Receipt) ObservedLaunch {
+	return ObservedLaunch{result: result, receipt: receipt}
+}
+
 // ReserveLaunch records an inert launch before runtime start commitment.
 func (driver *driver) ReserveLaunch(cell *processruntime.StartCell, spec Spec) {
 	driver.reserveLaunch(cell, spec)
@@ -1318,6 +1323,11 @@ func (observed ObservedTerminal) Terminal() Terminal { return observed.terminal 
 
 // Receipt returns the corresponding process-runtime receipt.
 func (observed ObservedTerminal) Receipt() processruntime.Receipt { return observed.receipt }
+
+// NewObservedTerminal combines a system-boundary terminal result with its runtime receipt.
+func NewObservedTerminal(terminal Terminal, receipt processruntime.Receipt) ObservedTerminal {
+	return ObservedTerminal{terminal: terminal, receipt: receipt}
+}
 
 // Wait joins one owned attempt and returns its exact terminal receipt.
 func (driver *driver) Wait(generation Generation, owned *OwnedAttempt) ObservedTerminal {

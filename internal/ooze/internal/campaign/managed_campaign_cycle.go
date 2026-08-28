@@ -1,4 +1,4 @@
-package ooze
+package campaign
 
 import "slices"
 
@@ -17,7 +17,7 @@ func (runner *managedCampaignRunner) run(request managedCampaignRequest) managed
 		}
 		var next []campaignEffect
 		for _, effect := range effects {
-			complete := runner.recorder.executeEffect(effect)
+			complete := beginObservedEffect(runner.observer, effect)
 			next = append(next, runner.execute(effect, request)...)
 			complete()
 		}
@@ -41,15 +41,15 @@ func proposesTerminal(effects []campaignEffect) bool {
 }
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
-	leaveRecorder := runner.recorder.enter()
+	leaveRecorder := enterObserver(runner.observer)
 	defer leaveRecorder()
-	reservation := runner.recorder.reserve(simulationCampaignAuthority)
-	runner.nextEvent++
-	var effects []campaignEffect
-	event := campaignEvent{id: runner.nextEvent, payload: payload}
+	reservation := reserveObserver(runner.observer)
 	previous := runner.state
-	runner.state, effects = advanceCampaign(runner.state, event)
-	runner.recorder.recordCampaign(reservation, event, previous, runner.state, effects)
+	machine, transition := (Machine{state: runner.state}).Apply(Fact{payload: payload})
+	runner.state = machine.state
+	runner.nextEvent = transition.event.value.id
+	effects := transition.effects
+	publishObserver(runner.observer, reservation, transition)
 	runner.publishProgress(payload, previous, runner.state)
 
 	return effects

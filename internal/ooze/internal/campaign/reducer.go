@@ -1,4 +1,4 @@
-package ooze
+package campaign
 
 import (
 	"slices"
@@ -613,37 +613,6 @@ func advanceCampaign(state campaignState, event campaignEvent) (campaignState, [
 	return campaignState{}, nil
 }
 
-func advanceCampaignGuarded(
-	runtime *processruntime.Replay,
-	state campaignState,
-	event campaignEvent,
-	emergencyDrain func(runtimeClosure) emergencySweep,
-) (next campaignState, effects []campaignEffect) {
-	if runtime == nil || emergencyDrain == nil {
-		campaignInvariant("guard", "runtime guard is invalid")
-	}
-	defer func() {
-		recovered := recover()
-		if recovered == nil {
-			return
-		}
-		violation, ok := recovered.(runtimeInvariantViolation)
-		if !ok {
-			violation = runtimeInvariantViolation{operation: "campaign advance", reason: "unexpected panic"}
-		}
-		var closure runtimeClosure
-		nextRuntime, applied := runtime.Apply(processruntime.CloseCut(violation.reason))
-		*runtime = nextRuntime
-		closure = runtimeClosureValue(applied.Closure())
-		sweep := emergencyDrain(closure)
-		nextRuntime, _ = runtime.Apply(processruntime.SettleEmergencyCut(processRuntimeResolutions(sweep)))
-		*runtime = nextRuntime
-		panic(violation)
-	}()
-
-	return advanceCampaign(state, event)
-}
-
 func (state campaignState) onRegistered(event campaignRegisteredEvent) (campaignState, []campaignEffect) {
 	if state.phase != campaignPreparing || state.runtimeToken.ID() != 0 {
 		campaignInvariant("register", "registration is invalid")
@@ -1243,6 +1212,7 @@ func (state campaignState) onStartCommitted(event startCommittedEvent) (campaign
 
 	return state.emit(campaignEffect{
 		kind: campaignEffectLaunchAttempt, attempt: event.attempt, generation: event.result.generation,
+		mutant:   state.attempts[attemptAt].mutant,
 		snapshot: state.snapshot, workspace: state.attempts[attemptAt].workspace,
 		attemptKind: state.attempts[attemptAt].kind,
 		completesConfirmationQueue: state.attempts[attemptAt].kind == campaignAttemptConfirmation &&
@@ -1826,7 +1796,7 @@ func (state campaignState) materializeAttempt(kind campaignAttemptKind, mutant m
 
 	return state, campaignEffect{
 		id: state.nextEffect, kind: campaignEffectMaterializeWorkspace,
-		snapshot: state.snapshot, attempt: attempt, mutant: mutant,
+		snapshot: state.snapshot, attempt: attempt, mutant: mutant, attemptKind: kind,
 	}
 }
 
@@ -2061,23 +2031,6 @@ func (state campaignState) commandCount() int { return state.commands }
 
 func campaignInvariant(operation, reason string) {
 	panic(runtimeInvariantViolation{operation: "campaign " + operation, reason: reason})
-}
-
-func resolveMutationDeadline(baseline time.Duration, peers int) time.Duration {
-	if baseline <= 0 || peers <= 0 {
-		campaignInvariant("resolve mutation deadline", "inputs must be positive")
-	}
-	factorHalves := int64(10 + 3*(peers-1))
-	resolved := baseline * time.Duration(factorHalves) / 2
-	if resolved < 20*time.Second {
-		return 20 * time.Second
-	}
-
-	return resolved
-}
-
-func resolveBaselineMutationDeadline(baseline time.Duration, peers int) mutationDeadlineResolution {
-	return mutationDeadlineResolution{duration: resolveMutationDeadline(baseline, peers)}
 }
 
 func recordedMutationDeadline(deadline time.Duration) mutationDeadlineResolution {

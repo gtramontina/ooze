@@ -1,4 +1,4 @@
-package ooze
+package campaign
 
 import (
 	"fmt"

@@ -1,4 +1,4 @@
-package ooze
+package campaign
 
 import (
 	"time"
@@ -34,7 +34,6 @@ type admissionAuthority struct {
 	deadline time.Duration
 }
 
-type admissionRequest = admissionAuthority
 type admissionRequestToken = admissionAuthority
 type admissionGrant = admissionAuthority
 
@@ -51,71 +50,11 @@ type startCommittedResult struct {
 	settlementAcknowledged, runtimeClosureInProgress bool
 }
 
-type terminalResult struct {
-	decision processruntime.TerminalDecision
-	epoch    fatalEpochID
-}
-
-type barrierBinding struct {
-	campaign campaignToken
-	attempt  attemptIdentity
-	profile  Profile
-	deadline time.Duration
-}
-
 type barrierResult struct {
 	decision   processruntime.BarrierDecision
 	request    admissionRequestToken
 	deliveries []admissionGrant
 }
-
-type confirmationQueueResult struct {
-	decision   processruntime.QueueDecision
-	deliveries []admissionGrant
-}
-
-type launchNotReleasedReason uint8
-
-const (
-	launchFailed launchNotReleasedReason = iota + 1
-	launchResourceExhausted
-)
-
-type attemptTripKind uint8
-
-const (
-	deadlineTrip attemptTripKind = iota + 1
-	fuseTrip
-)
-
-type attemptObservation interface{ attemptObservation() }
-
-type (
-	launchOwned       struct{}
-	launchNotReleased struct{ reason launchNotReleasedReason }
-	attemptSettled    struct {
-		profile  Profile
-		deadline time.Duration
-	}
-	attemptTripped struct {
-		kind     attemptTripKind
-		profile  Profile
-		deadline time.Duration
-	}
-	launchUnconfirmed     struct{}
-	drainUnconfirmed      struct{}
-	attemptStopped        struct{}
-	attemptInfrastructure struct{ cause string }
-)
-
-func (launchOwned) attemptObservation()           {}
-func (launchNotReleased) attemptObservation()     {}
-func (attemptSettled) attemptObservation()        {}
-func (attemptTripped) attemptObservation()        {}
-func (launchUnconfirmed) attemptObservation()     {}
-func (drainUnconfirmed) attemptObservation()      {}
-func (attemptStopped) attemptObservation()        {}
-func (attemptInfrastructure) attemptObservation() {}
 
 type admissionStage uint8
 
@@ -133,35 +72,11 @@ type residualCustody struct {
 	transferred bool
 }
 
-type observationResult struct {
-	generation                                      attemptGeneration
-	deliveries                                      []admissionAuthority
-	cancelledWaiting, compensatedGrants             []admissionAuthority
-	settlementAcknowledged, confirmationProvisional bool
-	pressureTransitioned, runtimeClosureInProgress  bool
-	confirmationObserved, confirmationQueueDrained  bool
-	fatalEpoch                                      fatalEpochID
-}
-
 type runtimeClosure struct {
 	epoch                               fatalEpochID
 	cancelledWaiting, compensatedGrants []admissionAuthority
 	residual                            []residualCustody
 }
-
-type emergencyResolution struct {
-	generation  attemptGeneration
-	disposition emergencyDisposition
-}
-
-type emergencyDisposition uint8
-
-const (
-	emergencyConfirmedDrained emergencyDisposition = iota + 1
-	emergencyCustodyTransferred
-)
-
-type emergencySweep struct{ resolutions []emergencyResolution }
 
 type emergencySettlement struct {
 	epoch        fatalEpochID
@@ -170,11 +85,63 @@ type emergencySettlement struct {
 	residual     []residualCustody
 }
 
-type runtimeInvariantViolation struct {
+type Violation struct {
 	operation, reason                               string
 	phase                                           uint8
 	rejectedEvent                                   string
 	stableIdentities, obligationSnapshot, traceTail []string
+}
+
+type runtimeInvariantViolation = Violation
+
+// NewViolation records invariant evidence originating in another campaign-owned adapter.
+func NewViolation(operation, reason string) Violation {
+	return Violation{operation: operation, reason: reason}
+}
+
+// Operation returns the rejected campaign operation.
+func (violation Violation) Operation() string { return violation.operation }
+
+// Reason returns the invariant reason.
+func (violation Violation) Reason() string { return violation.reason }
+
+// Phase returns the campaign phase at rejection.
+func (violation Violation) Phase() uint8 { return violation.phase }
+
+// PhaseName returns the campaign phase at rejection.
+func (violation Violation) PhaseName() string {
+	switch campaignPhase(violation.phase) {
+	case campaignPreparing:
+		return "Preparing"
+	case campaignBaselining:
+		return "Baselining"
+	case campaignRunning:
+		return "Running"
+	case campaignDraining:
+		return "Draining"
+	case campaignConfirming:
+		return "Confirming"
+	default:
+		return ""
+	}
+}
+
+// RejectedEvent returns the rejected fact name.
+func (violation Violation) RejectedEvent() string { return violation.rejectedEvent }
+
+// StableIdentities returns detached stable campaign identities.
+func (violation Violation) StableIdentities() []string {
+	return append([]string(nil), violation.stableIdentities...)
+}
+
+// Obligations returns detached campaign obligations at rejection.
+func (violation Violation) Obligations() []string {
+	return append([]string(nil), violation.obligationSnapshot...)
+}
+
+// TraceTail returns detached campaign trace evidence.
+func (violation Violation) TraceTail() []string {
+	return append([]string(nil), violation.traceTail...)
 }
 
 func invariant(operation, reason string) {

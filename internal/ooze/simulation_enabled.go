@@ -3,17 +3,18 @@ package ooze
 import (
 	"sort"
 
+	campaignmodule "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 type simulationEnabledMove struct {
 	authority simulationAuthority
-	effect    campaignEffect
+	effect    campaignmodule.Effect
 	action    supervision.Effect
 }
 
 func simulationEnabledMoves(
-	effects []campaignEffect,
+	effects []campaignmodule.Effect,
 	actions []supervision.Effect,
 	catalogue []mutantIdentity,
 ) []simulationEnabledMove {
@@ -24,7 +25,7 @@ func simulationEnabledMoves(
 	moves := make([]simulationEnabledMove, 0, len(effects)+len(actions))
 	for _, effect := range effects {
 		moves = append(moves, simulationEnabledMove{
-			authority: simulationEffectAuthority(effect.kind), effect: effect,
+			authority: simulationEffectAuthority(effect.Kind()), effect: effect,
 		})
 	}
 	for _, action := range actions {
@@ -37,14 +38,14 @@ func simulationEnabledMoves(
 		if first.authority != second.authority {
 			return first.authority < second.authority
 		}
-		if first.effect.kind != 0 || second.effect.kind != 0 {
-			if first.effect.kind == 0 {
+		if first.effect.Kind() != 0 || second.effect.Kind() != 0 {
+			if first.effect.Kind() == 0 {
 				return false
 			}
-			if second.effect.kind == 0 {
+			if second.effect.Kind() == 0 {
 				return true
 			}
-			firstRank, secondRank := ranks[first.effect.mutant], ranks[second.effect.mutant]
+			firstRank, secondRank := ranks[first.effect.Mutant()], ranks[second.effect.Mutant()]
 			if firstRank != secondRank {
 				if firstRank == 0 {
 					return false
@@ -54,16 +55,16 @@ func simulationEnabledMoves(
 				}
 				return firstRank < secondRank
 			}
-			if first.effect.attempt != second.effect.attempt {
-				return first.effect.attempt < second.effect.attempt
+			if first.effect.Attempt() != second.effect.Attempt() {
+				return first.effect.Attempt() < second.effect.Attempt()
 			}
-			if first.effect.generation != second.effect.generation {
-				return first.effect.generation < second.effect.generation
+			if first.effect.Generation() != second.effect.Generation() {
+				return first.effect.Generation() < second.effect.Generation()
 			}
-			if first.effect.id != second.effect.id {
-				return first.effect.id < second.effect.id
+			if first.effect.ID() != second.effect.ID() {
+				return first.effect.ID() < second.effect.ID()
 			}
-			return first.effect.kind < second.effect.kind
+			return first.effect.Kind() < second.effect.Kind()
 		}
 		if first.action.Generation() != second.action.Generation() {
 			return first.action.Generation() < second.action.Generation()
@@ -77,7 +78,7 @@ func simulationEnabledMoves(
 	return moves
 }
 
-func simulationEffectAuthority(kind campaignEffectKind) simulationAuthority {
+func simulationEffectAuthority(kind campaignmodule.EffectKind) simulationAuthority {
 	switch kind {
 	case campaignEffectEstablishSnapshot, campaignEffectDiscoverCatalogue,
 		campaignEffectReleaseSnapshot, campaignEffectMaterializeWorkspace,

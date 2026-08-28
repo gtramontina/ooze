@@ -5,24 +5,26 @@ import (
 	"sort"
 	"sync"
 
+	campaignmodule "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
 type simulationRecorder struct {
-	gate         sync.RWMutex
-	mutex        sync.Mutex
-	next         supervision.OwnerCutSequence
-	records      []simulationRecord
-	barriers     []simulationQuiescentBarrier
-	actionMutex  sync.Mutex
-	actions      map[supervision.ActionToken]simulationInFlightAction
-	actionWake   chan struct{}
-	causalMutex  sync.Mutex
-	activeEffect campaignEffect
-	runtimeCuts  []simulationRecordedRuntimeCut
-	runtimeError error
-	runtimeState processruntime.Replay
+	gate          sync.RWMutex
+	mutex         sync.Mutex
+	next          supervision.OwnerCutSequence
+	records       []simulationRecord
+	barriers      []simulationQuiescentBarrier
+	actionMutex   sync.Mutex
+	actions       map[supervision.ActionToken]simulationInFlightAction
+	actionWake    chan struct{}
+	causalMutex   sync.Mutex
+	activeEffect  campaignmodule.Effect
+	runtimeCuts   []simulationRecordedRuntimeCut
+	runtimeError  error
+	runtimeState  processruntime.Replay
+	campaignState campaignmodule.Projection
 }
 
 func (recorder *simulationRecorder) recordRuntimeError(err error) {
@@ -99,12 +101,12 @@ func (recorder *simulationRecorder) reserve(authority simulationAuthority) simul
 	return simulationReservation{sequence: recorder.next.Add(1), authority: authority}
 }
 
-func (recorder *simulationRecorder) executeEffect(effect campaignEffect) func() {
+func (recorder *simulationRecorder) executeEffect(effect campaignmodule.Effect) func() {
 	if recorder == nil {
 		return func() {}
 	}
 	recorder.causalMutex.Lock()
-	if recorder.activeEffect.id != 0 {
+	if recorder.activeEffect.ID() != 0 {
 		recorder.causalMutex.Unlock()
 		panic("simulation recorder campaign effects overlap")
 	}
@@ -113,11 +115,11 @@ func (recorder *simulationRecorder) executeEffect(effect campaignEffect) func() 
 
 	return func() {
 		recorder.causalMutex.Lock()
-		if recorder.activeEffect.id != effect.id {
+		if recorder.activeEffect.ID() != effect.ID() {
 			recorder.causalMutex.Unlock()
 			panic("simulation recorder campaign effect completion is stale")
 		}
-		recorder.activeEffect = campaignEffect{}
+		recorder.activeEffect = campaignmodule.Effect{}
 		recorder.causalMutex.Unlock()
 	}
 }
@@ -145,31 +147,56 @@ func (recorder *simulationRecorder) recordRuntime(
 	recorder.causalMutex.Unlock()
 }
 
-func (recorder *simulationRecorder) recordCampaign(
-	reservation simulationReservation,
-	event campaignEvent,
-	previous campaignState,
-	state campaignState,
-	effects []campaignEffect,
+type simulationCampaignObserver struct{ recorder *simulationRecorder }
+
+func (observer simulationCampaignObserver) Enter() func() { return observer.recorder.enter() }
+
+func (observer simulationCampaignObserver) Reserve() campaignmodule.CutReservation {
+	return observer.recorder.reserveCampaign()
+}
+
+func (observer simulationCampaignObserver) BeginEffect(effect campaignmodule.Effect) func() {
+	return observer.recorder.executeEffect(effect)
+}
+
+func (observer simulationCampaignObserver) Publish(
+	reservation campaignmodule.CutReservation,
+	event campaignmodule.Event,
+	projection campaignmodule.Projection,
+	effects []campaignmodule.Effect,
 ) {
-	if recorder == nil {
-		return
-	}
+	observer.recorder.recordCampaign(reservation, event, projection, effects)
+}
+
+func (recorder *simulationRecorder) reserveCampaign() campaignmodule.CutReservation {
+	return campaignmodule.CutReservation(recorder.reserve(simulationCampaignAuthority).sequence)
+}
+
+func (recorder *simulationRecorder) recordCampaign(
+	reservation campaignmodule.CutReservation,
+	event campaignmodule.Event,
+	projection campaignmodule.Projection,
+	effects []campaignmodule.Effect,
+) {
+	fact := event.Fact()
 	var source simulationCausalSource
-	switch payload := event.payload.(type) {
-	case attemptTerminalEvent:
-		source = recorder.recordSupervisorDelivery(supervision.DeliverTerminalEffect, payload.generation)
-	case runtimeEmergencySettledEvent:
+	switch fact.Kind() {
+	case campaignmodule.AttemptTerminalFact:
+		source = recorder.recordSupervisorDelivery(supervision.DeliverTerminalEffect, fact.Generation())
+	case campaignmodule.RuntimeEmergencySettledFact:
 		source = recorder.recordSupervisorDelivery(supervision.DeliverEmergencySettlementEffect, 0)
 	default:
-		source = recorder.campaignSource(payload)
+		source = recorder.campaignSource(fact)
 	}
-	projectedState := simulationProjectCampaign(state)
+	canonical := projection.Canonical()
+	projectedEffects := make([]campaignmodule.Effect, len(effects))
+	for index, effect := range effects {
+		projectedEffects[index] = effect.Canonical(projection)
+	}
+	recorder.campaignState = canonical
 	recorder.append(simulationRecord{
-		sequence: reservation.sequence, authority: reservation.authority, source: source,
-		campaignEvent:   simulationTraceCampaignEvent(simulationProjectCampaignEvent(event, previous)),
-		campaignState:   simulationTraceCampaignState(projectedState),
-		campaignEffects: simulationProjectCampaignEffects(effects, state),
+		sequence: uint64(reservation), authority: simulationCampaignAuthority, source: source,
+		campaignEvent: event.Canonical(), campaignState: canonical, campaignEffects: projectedEffects,
 	})
 }
 
@@ -201,8 +228,8 @@ func (recorder *simulationRecorder) runtimeSource(record simulationRecord) simul
 	recorder.causalMutex.Lock()
 	effect := recorder.activeEffect
 	recorder.causalMutex.Unlock()
-	if effect.id != 0 {
-		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
+	if effect.ID() != 0 {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
 	}
 	if record.runtimeCut.Operation() == processruntime.RegisterCampaignOperation {
 		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: 1}
@@ -243,7 +270,7 @@ func (recorder *simulationRecorder) runtimeActionSource(record simulationRecord)
 	return simulationCausalSource{kind: supervisionActionSource, identity: uint64(matched)}
 }
 
-func (recorder *simulationRecorder) campaignSource(payload campaignEventPayload) simulationCausalSource {
+func (recorder *simulationRecorder) campaignSource(payload campaignmodule.Fact) simulationCausalSource {
 	if source := recorder.takeRuntimeCut(func(record simulationRecord) bool {
 		return simulationRuntimeCutEnablesCampaign(record, payload)
 	}); source.kind != 0 {
@@ -252,72 +279,15 @@ func (recorder *simulationRecorder) campaignSource(payload campaignEventPayload)
 	recorder.causalMutex.Lock()
 	effect := recorder.activeEffect
 	recorder.causalMutex.Unlock()
-	if effect.id != 0 && simulationEffectEnablesExternalFact(effect, payload) {
-		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
+	if effect.ID() != 0 && simulationEffectEnablesExternalFact(effect, payload) {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
 	}
 
 	return simulationCausalSource{}
 }
 
-func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campaignEventPayload) bool {
-	result := record.runtimeCut.Result()
-	switch event := payload.(type) {
-	case campaignRegisteredEvent:
-		return record.runtimeCut.Operation() == processruntime.RegisterCampaignOperation &&
-			campaignRegistrationEvidence(result.Registration()) == event.registration
-	case admissionGrantedEvent:
-		return slices.ContainsFunc(simulationRuntimeDeliveries(record), func(delivery simulationAdmission) bool {
-			return campaignAdmissionValue(delivery.production()) == event.grant
-		})
-	case admissionCancelledEvent:
-		cancelled := runtimeAdmissionResult(result.Admission())
-		return record.runtimeCut.Operation() == processruntime.CancelAdmissionOperation &&
-			campaignAdmissionValue(cancelled.request) == event.request &&
-			cancelled.decision == event.result.decision &&
-			campaignAdmissionValue(cancelled.request) == event.result.request &&
-			cancelled.fatalEpoch == event.result.fatalEpoch
-	case admissionRejectedEvent:
-		rejected := runtimeAdmissionResult(result.Admission())
-		return record.runtimeCut.Operation() == processruntime.RequestAdmissionOperation &&
-			rejected.decision == event.result.decision && campaignAdmissionValue(rejected.request) == event.result.request
-	case startCommittedEvent:
-		return record.runtimeCut.Operation() == processruntime.CommitStartOperation &&
-			runtimeStartResult(result.Start()) == startCommittedResult(event.result)
-	case attemptLaunchEvent:
-		return record.runtimeCut.Matches(processruntime.ObserveAttemptCut(event.generation, processruntime.Owned()))
-	case confirmationBarrierBoundEvent:
-		bound := runtimeBarrierResult(result.Barrier())
-		return record.runtimeCut.Operation() == processruntime.BindConfirmationBarrierOperation &&
-			bound.decision == event.result.decision && campaignAdmissionValue(bound.request) == event.result.request &&
-			slices.EqualFunc(bound.deliveries, event.result.deliveries,
-				func(left admissionAuthority, right campaignAdmission) bool {
-					return campaignAdmissionValue(left) == right
-				})
-	case grantReturnAcknowledgedEvent:
-		return record.runtimeCut.Operation() == processruntime.ReturnGrantOperation &&
-			result.Admission().Decision() == event.result.decision
-	case terminalCommittedEvent:
-		return record.runtimeCut.Operation() == processruntime.CommitTerminalOperation &&
-			terminalResult{decision: result.Terminal().Decision()} == terminalResult(event.result)
-	default:
-		return false
-	}
-}
-
-func simulationRuntimeDeliveries(record simulationRecord) []simulationAdmission {
-	result := record.runtimeCut.Result()
-	var deliveries []processruntime.Admission
-	switch record.runtimeCut.Operation() {
-	case processruntime.RequestAdmissionOperation, processruntime.CancelAdmissionOperation, processruntime.ReturnGrantOperation:
-		deliveries = result.Admission().Deliveries()
-	case processruntime.BindConfirmationBarrierOperation:
-		deliveries = result.Barrier().Deliveries()
-	case processruntime.CompleteConfirmationQueueOperation:
-		deliveries = result.Queue().Deliveries()
-	case processruntime.ObserveAttemptOperation:
-		deliveries = result.Receipt().Deliveries()
-	}
-	return simulationTraceAdmissions(runtimeAdmissions(deliveries))
+func simulationRuntimeCutEnablesCampaign(record simulationRecord, payload campaignmodule.Fact) bool {
+	return payload.MatchesRuntimeCut(record.runtimeCut)
 }
 
 func (recorder *simulationRecorder) supervisorSource(fact supervision.Fact) simulationCausalSource {
@@ -335,8 +305,8 @@ func (recorder *simulationRecorder) supervisorSource(fact supervision.Fact) simu
 	recorder.causalMutex.Lock()
 	effect := recorder.activeEffect
 	recorder.causalMutex.Unlock()
-	if fact.Kind() == supervision.ProspectiveRegisteredFact && effect.kind == campaignEffectLaunchAttempt {
-		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.id)}
+	if fact.Kind() == supervision.ProspectiveRegisteredFact && effect.Kind() == campaignEffectLaunchAttempt {
+		return simulationCausalSource{kind: simulationCampaignEffectSource, identity: uint64(effect.ID())}
 	}
 
 	return simulationCausalSource{}
@@ -438,7 +408,6 @@ func (recorder *simulationRecorder) recordSupervisorDelivery(
 }
 
 func (recorder *simulationRecorder) quiescent(
-	runner *managedCampaignRunner,
 	runtime *processruntime.Runtime,
 	machine *supervision.Machine,
 ) (simulationTrace, simulationWorld) {
@@ -470,11 +439,8 @@ func (recorder *simulationRecorder) quiescent(
 	runtimeState := simulationTraceRuntimeState(recorder.runtimeState)
 	supervisionMachine := machine.Fork()
 	supervisorState := supervisionMachine.Projection()
-	campaignState := simulationProjectCampaign(runner.state)
-	definition := campaignState.definition
-	definition.baselineDeadline = 0
-	definition.command = slices.Clone(definition.command)
-	definition.env = slices.Clone(definition.env)
+	campaignState := recorder.campaignState
+	definition := campaignState.Definition()
 
 	afterSequence := uint64(0)
 	if len(records) != 0 {
@@ -482,7 +448,7 @@ func (recorder *simulationRecorder) quiescent(
 	}
 	barrier := simulationQuiescentBarrier{
 		afterSequence: afterSequence,
-		campaign:      simulationTraceCampaignState(campaignState),
+		campaign:      campaignState,
 		runtime:       runtimeState,
 		supervisor:    supervisorState,
 	}
@@ -494,125 +460,11 @@ func (recorder *simulationRecorder) quiescent(
 	return simulationTrace{
 			definition: simulationDefinition{
 				campaign: definition, capacity: runtimeState.Capacity(),
-				catalogue: slices.Clone(campaignState.catalogue),
+				catalogue: campaignState.Catalogue(),
 			},
 			records: records, barriers: barriers,
 		}, simulationWorld{
-			campaign: campaignState, runtime: runtimeState,
+			campaign: campaignState.Fork(), runtime: runtimeState,
 			supervisor: supervisorState, machine: supervisionMachine,
 		}
-}
-
-func simulationProjectCampaign(state campaignState) campaignState {
-	state = state.clone()
-	logicalSnapshot := simulationLogicalSnapshot(state.definition.identity)
-	if state.snapshot != "" {
-		state.snapshot = logicalSnapshot
-	}
-	for index := range state.attempts {
-		if state.attempts[index].workspace != "" {
-			state.attempts[index].workspace = simulationLogicalWorkspace(state.attempts[index].identity)
-		}
-	}
-	for index := range state.obligations {
-		switch state.obligations[index].kind {
-		case campaignResourceSnapshot:
-			if state.snapshot != "" {
-				state.obligations[index].identity = string(logicalSnapshot)
-			}
-		case campaignResourceWorkspace:
-			attemptAt := state.attemptIndex(state.obligations[index].attempt)
-			if attemptAt >= 0 && state.attempts[attemptAt].workspace != "" {
-				state.obligations[index].identity = simulationLogicalWorkspace(state.obligations[index].attempt)
-			}
-		}
-	}
-	for index := range state.artifactResidue {
-		state.artifactResidue[index] = "artifact-residue"
-	}
-
-	return state
-}
-
-func simulationProjectCampaignEvent(event campaignEvent, state campaignState) campaignEvent {
-	logicalSnapshot := simulationLogicalSnapshot(state.definition.identity)
-	switch payload := event.payload.(type) {
-	case snapshotEstablishedEvent:
-		payload.snapshot = logicalSnapshot
-		event.payload = payload
-	case catalogueDiscoveredEvent:
-		payload.snapshot = logicalSnapshot
-		payload.mutants = slices.Clone(payload.mutants)
-		event.payload = payload
-	case workspaceMaterializedEvent:
-		payload.snapshot = logicalSnapshot
-		payload.workspace = simulationLogicalWorkspace(payload.attempt)
-		event.payload = payload
-	case workspaceMaterializationFailedEvent:
-		payload.artifactResidue = slices.Clone(payload.artifactResidue)
-		for index := range payload.artifactResidue {
-			payload.artifactResidue[index] = "artifact-residue"
-		}
-		event.payload = payload
-	case resourceSettledEvent:
-		payload.identity = simulationLogicalResource(payload.kind, payload.identity, "", state)
-		event.payload = payload
-	case resourceSettlementFailedEvent:
-		payload.identity = simulationLogicalResource(payload.kind, payload.identity, "", state)
-		event.payload = payload
-	}
-
-	return event
-}
-
-func simulationProjectCampaignEffects(effects []campaignEffect, state campaignState) []campaignEffect {
-	projected := slices.Clone(effects)
-	for index := range projected {
-		effect := &projected[index]
-		if effect.snapshot != "" {
-			effect.snapshot = simulationLogicalSnapshot(state.definition.identity)
-		}
-		if effect.workspace != "" {
-			effect.workspace = simulationLogicalWorkspace(effect.attempt)
-		}
-		if effect.spec.Dir != "" {
-			effect.spec.Dir = simulationLogicalWorkspace(effect.attempt)
-		}
-		effect.spec.Command = slices.Clone(effect.spec.Command)
-		effect.spec.Env = slices.Clone(effect.spec.Env)
-	}
-
-	return projected
-}
-
-func simulationLogicalResource(
-	kind campaignResourceKind,
-	identity string,
-	attempt attemptIdentity,
-	state campaignState,
-) string {
-	switch kind {
-	case campaignResourceSnapshot:
-		return string(simulationLogicalSnapshot(state.definition.identity))
-	case campaignResourceWorkspace:
-		if attempt != "" {
-			return simulationLogicalWorkspace(attempt)
-		}
-		for _, candidate := range state.attempts {
-			if candidate.workspace == identity {
-				return simulationLogicalWorkspace(candidate.identity)
-			}
-		}
-		return "workspace:settled"
-	default:
-		return identity
-	}
-}
-
-func simulationLogicalSnapshot(campaign campaignIdentity) snapshotIdentity {
-	return snapshotIdentity("snapshot:" + string(campaign))
-}
-
-func simulationLogicalWorkspace(attempt attemptIdentity) string {
-	return "workspace:" + string(attempt)
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gomutatedfile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -180,7 +181,7 @@ type ManagedInvariantEvidence struct {
 type managedProcess struct {
 	capacity int
 	runtime  *processruntime.Runtime
-	attempts managedAttemptSystem
+	executor *campaign.Executor
 	next     atomic.Uint64
 }
 
@@ -193,12 +194,12 @@ func ProcessManagedRelease(configuration ManagedReleaseConfiguration) ManagedRel
 	defaultManagedProcess.once.Do(func() {
 		capacity := runtime.GOMAXPROCS(0)
 		runtimeShell := processruntime.New(capacity)
-		attempts, err := newNativeManagedAttemptSystem(runtimeShell)
+		executor, err := campaign.NewExecutor(runtimeShell)
 		if err != nil {
 			panic(err)
 		}
 		defaultManagedProcess.process = &managedProcess{
-			capacity: capacity, runtime: runtimeShell, attempts: attempts,
+			capacity: capacity, runtime: runtimeShell, executor: executor,
 		}
 	})
 
@@ -214,30 +215,31 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 			}
 			return
 		}
-		violation, ok := recovered.(runtimeInvariantViolation)
+		violation, ok := recovered.(campaign.Violation)
 		runtimeViolation, runtimeFailed := recovered.(processruntime.Violation)
 		if !ok && !runtimeFailed {
 			panic(recovered)
 		}
+		invariant := &ManagedInvariantEvidence{}
 		if runtimeFailed {
-			violation.operation = runtimeViolation.Operation()
-			violation.reason = runtimeViolation.Reason()
+			invariant.Operation = runtimeViolation.Operation()
+			invariant.Reason = runtimeViolation.Reason()
+		} else {
+			invariant.Operation = violation.Operation()
+			invariant.Reason = violation.Reason()
+			invariant.Phase = violation.PhaseName()
+			invariant.RejectedEvent = violation.RejectedEvent()
+			invariant.StableIdentities = violation.StableIdentities()
+			invariant.Obligations = violation.Obligations()
+			invariant.TraceTail = violation.TraceTail()
 		}
-		closure := process.runtime.Close(violation.reason)
-		residual := campaignResiduals(closure.Residual())
+		closure := process.runtime.Close(invariant.Reason)
+		residual := presentProcessRuntimeResiduals(closure.Residual())
 		if process.runtime.EmergencySettlementRequired() {
-			settled := process.attempts.emergency(fatalEpochID(closure.Epoch()))
-			residual = campaignResiduals(settled.settlement.Residual())
+			residual = process.executor.Emergency(closure.Epoch())
 		}
 		presented = ManagedReleaseResult{
-			Outcome: ManagedInvariantViolation,
-			Invariant: &ManagedInvariantEvidence{
-				Operation: violation.operation, Reason: violation.reason,
-				Phase: managedCampaignPhase(violation.phase), RejectedEvent: violation.rejectedEvent,
-				StableIdentities: append([]string(nil), violation.stableIdentities...),
-				Obligations:      append([]string(nil), violation.obligationSnapshot...),
-				TraceTail:        append([]string(nil), violation.traceTail...),
-			},
+			Outcome: ManagedInvariantViolation, Invariant: invariant,
 			Residual: presentManagedResiduals(residual),
 		}
 		if configuration.Observe != nil {
@@ -251,75 +253,55 @@ func (process *managedProcess) release(configuration ManagedReleaseConfiguration
 	configuration.Command = slices.Clone(configuration.Command)
 	configuration.Environment = slices.Clone(configuration.Environment)
 	configuration.Viruses = slices.Clone(configuration.Viruses)
-	identity := campaignIdentity("campaign-" + strconv.FormatUint(process.next.Add(1), 10))
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: process.runtime, repository: configuration.Repository,
-		temporaryDirectory: configuration.TemporaryDir, attempts: process.attempts,
-		observe: configuration.Observe,
-	})
-	result := runner.run(managedCampaignRequest{
-		identity: identity, lineage: campaignLineage(configuration.Lineage),
-		command: configuration.Command, env: configuration.Environment,
-		profile: configuration.Profile, peers: process.capacity,
-		mutationTimeout: configuration.MutationTimeout, viruses: configuration.Viruses,
+	identity := "campaign-" + strconv.FormatUint(process.next.Add(1), 10)
+	result := process.executor.Execute(campaign.Configuration{
+		Identity: identity, Lineage: processruntime.Lineage(configuration.Lineage),
+		Repository: campaignRepository{Repository: configuration.Repository}, TemporaryDir: configuration.TemporaryDir,
+		Command: configuration.Command, Environment: configuration.Environment,
+		Profile: configuration.Profile, Peers: process.capacity,
+		MutationTimeout: configuration.MutationTimeout, Viruses: configuration.Viruses,
+		Observe: func(progress campaign.ManagedProgress) {
+			if configuration.Observe != nil {
+				configuration.Observe(presentManagedProgress(progress))
+			}
+		},
 	})
 
 	return presentManagedRelease(result)
 }
 
-func managedCampaignPhase(phase uint8) string {
-	switch campaignPhase(phase) {
-	case campaignPreparing:
-		return "Preparing"
-	case campaignBaselining:
-		return "Baselining"
-	case campaignRunning:
-		return "Running"
-	case campaignDraining:
-		return "Draining"
-	case campaignConfirming:
-		return "Confirming"
-	default:
-		return ""
-	}
-}
-
-func presentManagedRelease(result managedCampaignResult) ManagedReleaseResult {
-	switch outcome := result.outcome.(type) {
-	case noMutantsOutcome:
+func presentManagedRelease(result campaign.Result) ManagedReleaseResult {
+	switch result.Outcome {
+	case campaign.ManagedNoMutants:
 		return ManagedReleaseResult{Outcome: ManagedNoMutants}
-	case completedOutcome:
+	case campaign.ManagedCompleted:
 		return ManagedReleaseResult{
-			Outcome: ManagedCompleted, Mutations: presentManagedMutations(result, outcome.mutants),
-			SingleAdmissionFallback: outcome.singleAdmissionFallback,
+			Outcome: ManagedCompleted, Mutations: presentManagedMutations(result.Mutations),
+			SingleAdmissionFallback: result.SingleAdmissionFallback,
 		}
-	case abortedOutcome:
-		mutations := presentManagedMutations(result, outcome.mutants)
+	case campaign.ManagedAborted:
 		presented := ManagedReleaseResult{
-			Outcome: ManagedAborted, Cause: presentManagedAbortCause(outcome.cause),
-			Mutations: mutations, Total: outcome.total,
-			ArtifactResidue:         append([]string(nil), outcome.artifactResidue...),
-			SingleAdmissionFallback: outcome.singleAdmissionFallback,
+			Outcome: ManagedAborted, Cause: presentManagedAbortCause(result.Cause),
+			Mutations: presentManagedMutations(result.Mutations), Total: result.Total,
+			ArtifactResidue:         append([]string(nil), result.ArtifactResidue...),
+			SingleAdmissionFallback: result.SingleAdmissionFallback,
 		}
-		if outcome.baseline.kind != 0 {
-			baseline := presentManagedAttempt(outcome.baseline)
+		if result.Baseline != nil {
+			baseline := presentManagedAttempt(*result.Baseline)
 			presented.Baseline = &baseline
 		}
 
 		return presented
-	case nil:
-		if fatal, ok := result.failure.(cleanupUnconfirmedFault); ok {
-			residual := append([]campaignResidualCustody{fatal.residual.head}, fatal.residual.tail...)
-			attempts := make([]ManagedFatalAttemptEvidence, len(fatal.attempts))
-			for index, attempt := range fatal.attempts {
-				attempts[index] = ManagedFatalAttemptEvidence{
-					Attempt: string(attempt.attempt), Evidence: presentManagedAttempt(attempt.evidence),
-				}
+	case campaign.ManagedCleanupUnconfirmed:
+		attempts := make([]ManagedFatalAttemptEvidence, len(result.FatalAttempts))
+		for index, attempt := range result.FatalAttempts {
+			attempts[index] = ManagedFatalAttemptEvidence{
+				Attempt: attempt.Attempt, Evidence: presentManagedAttempt(attempt.Evidence),
 			}
-			return ManagedReleaseResult{
-				Outcome:  ManagedCleanupUnconfirmed,
-				Residual: presentManagedResiduals(residual), FatalAttempts: attempts,
-			}
+		}
+		return ManagedReleaseResult{
+			Outcome:  ManagedCleanupUnconfirmed,
+			Residual: presentManagedResiduals(result.Residual), FatalAttempts: attempts,
 		}
 	}
 	panic("managed campaign produced no terminal result")
@@ -373,41 +355,47 @@ func presentManagedAbortCause(cause string) ManagedAbortCause {
 	}
 }
 
-func presentManagedResiduals(residual []campaignResidualCustody) []ManagedResidualCustody {
+func presentManagedResiduals(residual []campaign.ResidualCustody) []ManagedResidualCustody {
 	presented := make([]ManagedResidualCustody, len(residual))
 	for index, custody := range residual {
 		var stage ManagedResidualStage
-		switch custody.stage {
-		case admissionProspective:
+		switch custody.Prospective {
+		case true:
 			stage = ManagedResidualProspective
-		case admissionOwned:
+		case false:
 			stage = ManagedResidualOwned
-		default:
-			panic("managed residual stage is invalid")
 		}
 		presented[index] = ManagedResidualCustody{
-			Attempt: string(custody.attempt), Generation: uint64(custody.generation),
-			Stage: stage, Transferred: custody.transferred,
+			Attempt: custody.Attempt, Generation: uint64(custody.Generation),
+			Stage: stage, Transferred: custody.Transferred,
 		}
 	}
 
 	return presented
 }
 
-func presentManagedMutations(
-	result managedCampaignResult,
-	mutants []mutantResult,
-) []ManagedMutationResult {
+func presentProcessRuntimeResiduals(residual []processruntime.Residual) []campaign.ResidualCustody {
+	presented := make([]campaign.ResidualCustody, len(residual))
+	for index, custody := range residual {
+		presented[index] = campaign.ResidualCustody{
+			Attempt: custody.Attempt(), Generation: custody.Generation(),
+			Prospective: custody.Prospective(), Transferred: custody.Transferred(),
+		}
+	}
+	return presented
+}
+
+func presentManagedMutations(mutants []campaign.MutationResult) []ManagedMutationResult {
 	presented := make([]ManagedMutationResult, len(mutants))
 	for index, mutant := range mutants {
 		presented[index] = ManagedMutationResult{
-			File: result.mutations[mutant.mutant], Primary: presentManagedAttempt(mutant.primary),
+			File: mutant.File, Primary: presentManagedAttempt(mutant.Primary),
 		}
-		if mutant.kind != 0 {
-			presented[index].Outcome = presentManagedMutation(mutant.kind)
+		if mutant.Outcome != 0 {
+			presented[index].Outcome = ManagedMutationOutcome(mutant.Outcome)
 		}
-		if mutant.confirmation.kind != 0 {
-			confirmation := presentManagedAttempt(mutant.confirmation)
+		if mutant.Confirmation != nil {
+			confirmation := presentManagedAttempt(*mutant.Confirmation)
 			presented[index].Confirmation = &confirmation
 		}
 	}
@@ -415,47 +403,12 @@ func presentManagedMutations(
 	return presented
 }
 
-func presentManagedAttempt(evidence campaignAttemptEvidence) ManagedAttemptEvidence {
+func presentManagedAttempt(evidence campaign.AttemptEvidence) ManagedAttemptEvidence {
 	return ManagedAttemptEvidence{
-		Kind: presentManagedAttemptKind(evidence.kind), Passed: evidence.passed,
-		Deadline: evidence.deadline, LaunchDuration: evidence.launchDuration,
-		CommandDuration: evidence.commandDuration, BoundFired: BoundFired(evidence.boundFired),
-		Output: OutputSnapshot(evidence.output), Failures: FailureDiagnostics(evidence.failures),
-		Count:                   ObservedCount(evidence.count),
-		ConfirmationProvisional: evidence.confirmationProvisional,
-	}
-}
-
-func presentManagedAttemptKind(kind campaignAttemptEvidenceKind) ManagedAttemptKind {
-	switch kind {
-	case campaignEvidenceSettled:
-		return ManagedAttemptSettled
-	case campaignEvidenceDeadline:
-		return ManagedAttemptDeadline
-	case campaignEvidenceFuse:
-		return ManagedAttemptFuse
-	case campaignEvidenceStopped:
-		return ManagedAttemptStopped
-	case campaignEvidenceInfrastructure:
-		return ManagedAttemptInfrastructure
-	case campaignEvidenceDrainUnconfirmed:
-		return ManagedAttemptDrainUnconfirmed
-	default:
-		panic("managed attempt evidence kind is invalid")
-	}
-}
-
-func presentManagedMutation(kind mutantResultKind) ManagedMutationOutcome {
-	switch kind {
-	case mutantSurvived:
-		return ManagedSurvived
-	case mutantKilled:
-		return ManagedKilled
-	case mutantTimedOut:
-		return ManagedTimedOut
-	case mutantRunaway:
-		return ManagedRunaway
-	default:
-		panic("managed mutant outcome is invalid")
+		Kind: ManagedAttemptKind(evidence.Kind), Passed: evidence.Passed,
+		Deadline: evidence.Deadline, LaunchDuration: evidence.LaunchDuration,
+		CommandDuration: evidence.CommandDuration, BoundFired: BoundFired(evidence.BoundFired),
+		Output: OutputSnapshot(evidence.Output), Failures: FailureDiagnostics(evidence.Failures),
+		Count: ObservedCount(evidence.Count), ConfirmationProvisional: evidence.ConfirmationProvisional,
 	}
 }

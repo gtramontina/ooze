@@ -1,8 +1,7 @@
-package ooze
+package campaign_test
 
 import (
 	"errors"
-	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"slices"
 	"strings"
 	"sync"
@@ -10,7 +9,9 @@ import (
 	"time"
 
 	"github.com/gtramontina/ooze/internal/gosourcefile"
+	"github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
+	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
 	"github.com/stretchr/testify/assert"
@@ -20,20 +21,13 @@ import (
 func TestManagedCampaignEmptyCatalogueRunsNoCommands(t *testing.T) {
 	repository := &managedMemoryRepository{}
 	attempts := &managedAttemptFixture{}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(2), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(processruntime.New(2), attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 2,
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{},
-	})
-
-	{
-		_, ok := result.outcome.(noMutantsOutcome)
-		require.True(t, ok, "outcome = %#v, want NoMutants", result.outcome)
-	}
+	assert.Equal(t, campaign.ManagedNoMutants, result.Outcome)
 	assert.EqualValues(t, 0, attempts.launches, "launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
 	assert.EqualValues(t, 1, repository.materializations, "launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
 	assert.True(t, repository.snapshot.removed, "launches/materializations/snapshot = %d/%d/%#v", attempts.launches, repository.materializations, repository.snapshot)
@@ -53,15 +47,14 @@ func TestManagedCampaignLazilyOverlapsAutomaticPrimariesUpToCapacity(t *testing.
 			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(2), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
-	})
-	completed := make(chan managedCampaignResult, 1)
+	runtime := processruntime.New(2)
+	completed := make(chan campaign.Result, 1)
 	go func() {
-		completed <- runner.run(managedCampaignRequest{
-			identity: "campaign-a", lineage: 11, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
+		completed <- executeManagedCampaign(runtime, attempts, campaign.Configuration{
+			Identity: "campaign-a", Lineage: 11, Repository: repository,
+			TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+			Profile: processruntime.AutomaticProfile, Peers: 2,
+			Viruses: []viruses.Virus{integerincrement.New()},
 		})
 	}()
 
@@ -76,9 +69,8 @@ func TestManagedCampaignLazilyOverlapsAutomaticPrimariesUpToCapacity(t *testing.
 	close(release)
 	select {
 	case result := <-completed:
-		outcome, ok := result.outcome.(completedOutcome)
-		require.True(t, ok, "outcome = %#v", result.outcome)
-		assert.EqualValues(t, 2, len(outcome.mutants), "outcome = %#v", result.outcome)
+		assert.Equal(t, campaign.ManagedCompleted, result.Outcome)
+		assert.Len(t, result.Mutations, 2)
 	case <-time.After(time.Second):
 		require.FailNow(t, "overlapped campaign did not complete")
 	}
@@ -98,15 +90,14 @@ func TestManagedCampaignSerialPrimariesAreExclusiveWithDetectedCapacityProfile(t
 			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(3), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
-	})
-	completed := make(chan managedCampaignResult, 1)
+	runtime := processruntime.New(3)
+	completed := make(chan campaign.Result, 1)
 	go func() {
-		completed <- runner.run(managedCampaignRequest{
-			identity: "campaign-a", lineage: 11, command: []string{"test"},
-			profile: SerialProfile, peers: 3, viruses: []viruses.Virus{integerincrement.New()},
+		completed <- executeManagedCampaign(runtime, attempts, campaign.Configuration{
+			Identity: "campaign-a", Lineage: 11, Repository: repository,
+			TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+			Profile: processruntime.SerialProfile, Peers: 3,
+			Viruses: []viruses.Virus{integerincrement.New()},
 		})
 	}()
 
@@ -121,11 +112,8 @@ func TestManagedCampaignSerialPrimariesAreExclusiveWithDetectedCapacityProfile(t
 	close(release)
 	select {
 	case result := <-completed:
-		{
-			outcome, ok := result.outcome.(completedOutcome)
-			require.True(t, ok, "outcome = %#v", result.outcome)
-			assert.EqualValues(t, 2, len(outcome.mutants), "outcome = %#v", result.outcome)
-		}
+		assert.Equal(t, campaign.ManagedCompleted, result.Outcome)
+		assert.Len(t, result.Mutations, 2)
 	case <-time.After(time.Second):
 		require.FailNow(t, "serial campaign did not complete")
 	}
@@ -139,24 +127,54 @@ func TestManagedCampaignRunsBaselineBeforeOneAutomaticPrimary(t *testing.T) {
 		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: 2 * time.Second}},
 		supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 	}}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(2), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(processruntime.New(2), attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 2,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	completed, ok := result.outcome.(completedOutcome)
-	require.True(t, ok, "outcome = %#v, want one killed mutant", result.outcome)
-	require.Len(t, completed.mutants, 1, "outcome = %#v, want one killed mutant", result.outcome)
-	assert.Equal(t, mutantKilled, completed.mutants[0].kind, "outcome = %#v, want one killed mutant", result.outcome)
+	require.Equal(t, campaign.ManagedCompleted, result.Outcome)
+	require.Len(t, result.Mutations, 1)
+	assert.Equal(t, campaign.ManagedKilled, result.Mutations[0].Outcome)
 	assert.EqualValues(t, 2, attempts.launches, "launches/specs = %d/%#v", attempts.launches, attempts.specs)
 	assert.EqualValues(t, 2, len(attempts.specs), "launches/specs = %d/%#v", attempts.launches, attempts.specs)
 	for _, spec := range attempts.specs {
 		assert.True(t, slices.Contains(spec.Env, "GOMAXPROCS=1"), "automatic spec environment = %#v", spec.Env)
+	}
+}
+
+func TestManagedCampaignReportsBaselineAbortCause(t *testing.T) {
+	tests := []struct {
+		name     string
+		terminal supervision.Terminal
+		cause    string
+	}{
+		{name: "nonzero exit", terminal: supervision.Settled{Exit: supervision.ExitStatus{Code: 1}}, cause: "baseline did not pass"},
+		{name: "automatic deadline", terminal: supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}}, cause: "baseline command deadline fired"},
+		{name: "process fuse", terminal: supervision.Tripped{Trip: supervision.FuseTrip{Live: 65}}, cause: "baseline process fuse fired"},
+		{name: "stopped", terminal: supervision.Stopped{}, cause: "baseline was stopped"},
+		{name: "infrastructure census", terminal: supervision.Infrastructure{Cause: supervision.CensusFailed, Err: assert.AnError}, cause: "baseline infrastructure uncertainty"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
+				gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
+			}}
+			result := executeManagedCampaign(processruntime.New(1), &managedAttemptFixture{
+				terminals: []supervision.Terminal{test.terminal},
+			}, campaign.Configuration{
+				Identity: "campaign-a", Lineage: 11, Repository: repository,
+				TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+				Profile: processruntime.AutomaticProfile, Peers: 1,
+				Viruses: []viruses.Virus{integerincrement.New()},
+			})
+
+			assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+			assert.Equal(t, test.cause, result.Cause)
+			assert.Equal(t, 1, result.Total)
+			require.NotNil(t, result.Baseline)
+		})
 	}
 }
 
@@ -168,21 +186,16 @@ func TestManagedCampaignPropagatesAbsoluteTimeoutAndRetainsTimedOutResult(t *tes
 		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}},
 	}}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(1), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(processruntime.New(1), attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1, MutationTimeout: 37 * time.Millisecond,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, mutationTimeout: 37 * time.Millisecond,
-		viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	completed, ok := result.outcome.(completedOutcome)
-	require.True(t, ok, "outcome = %#v, want one timed-out mutant", result.outcome)
-	require.Len(t, completed.mutants, 1, "outcome = %#v, want one timed-out mutant", result.outcome)
-	assert.Equal(t, mutantTimedOut, completed.mutants[0].kind, "outcome = %#v, want one timed-out mutant", result.outcome)
+	require.Equal(t, campaign.ManagedCompleted, result.Outcome)
+	require.Len(t, result.Mutations, 1)
+	assert.Equal(t, campaign.ManagedTimedOut, result.Mutations[0].Outcome)
 	require.Len(t, attempts.specs, 2, "attempt specs = %#v, want exact 37ms primary deadline", attempts.specs)
 	assert.Equal(t, 37*time.Millisecond, attempts.specs[1].Deadline, "attempt specs = %#v, want exact 37ms primary deadline", attempts.specs)
 }
@@ -201,25 +214,20 @@ func TestManagedCampaignConfirmsOverlapDeadlineAndTransitionsFutureAdmission(t *
 			supervision.Settled{Exit: supervision.ExitStatus{Code: 1}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
-	shell := newProcessRuntimeShell(2)
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(processruntime.New(2), attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 2, MutationTimeout: time.Minute,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 2, mutationTimeout: time.Minute,
-		viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	completed, ok := result.outcome.(completedOutcome)
-	require.True(t, ok, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	require.Len(t, completed.mutants, 2, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.Equal(t, mutantKilled, completed.mutants[0].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.Equal(t, mutantKilled, completed.mutants[1].kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.True(t, completed.singleAdmissionFallback, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
-	assert.Equal(t, campaignEvidenceSettled, completed.mutants[0].confirmation.kind, "outcome = %#v, want two killed mutants after confirmation", result.outcome)
+	require.Equal(t, campaign.ManagedCompleted, result.Outcome)
+	require.Len(t, result.Mutations, 2)
+	assert.Equal(t, campaign.ManagedKilled, result.Mutations[0].Outcome)
+	assert.Equal(t, campaign.ManagedKilled, result.Mutations[1].Outcome)
+	assert.True(t, result.SingleAdmissionFallback)
+	require.NotNil(t, result.Mutations[0].Confirmation)
+	assert.Equal(t, campaign.AttemptSettled, result.Mutations[0].Confirmation.Kind)
 	assert.EqualValues(t, 4, attempts.launches)
 }
 
@@ -239,25 +247,22 @@ func TestManagedCampaignResumesWithSingleAdmissionAfterConfirmationPressure(t *t
 			killed, killed,
 		},
 	}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(2), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
-	})
-	completed := make(chan managedCampaignResult, 1)
+	runtime := processruntime.New(2)
+	completed := make(chan campaign.Result, 1)
 	go func() {
-		completed <- runner.run(managedCampaignRequest{
-			identity: "campaign-a", lineage: 11, command: []string{"test"},
-			profile: AutomaticProfile, peers: 2, mutationTimeout: time.Minute,
-			viruses: []viruses.Virus{integerincrement.New()},
+		completed <- executeManagedCampaign(runtime, attempts, campaign.Configuration{
+			Identity: "campaign-a", Lineage: 11, Repository: repository,
+			TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+			Profile: processruntime.AutomaticProfile, Peers: 2, MutationTimeout: time.Minute,
+			Viruses: []viruses.Virus{integerincrement.New()},
 		})
 	}()
 
 	select {
 	case result := <-completed:
-		outcome, ok := result.outcome.(completedOutcome)
-		require.True(t, ok, "outcome = %#v", result.outcome)
-		assert.Len(t, outcome.mutants, 4)
-		assert.True(t, outcome.singleAdmissionFallback)
+		assert.Equal(t, campaign.ManagedCompleted, result.Outcome)
+		assert.Len(t, result.Mutations, 4)
+		assert.True(t, result.SingleAdmissionFallback)
 		assert.EqualValues(t, 6, attempts.launches)
 	case <-time.After(time.Second):
 		require.FailNow(t, "campaign did not resume with single admission after confirmation pressure")
@@ -274,20 +279,15 @@ func TestManagedCampaignAbortsResourceExhaustionAndTransitionsFutureAdmission(t 
 			supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		},
 	}
-	shell := newProcessRuntimeShell(2)
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(processruntime.New(2), attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 2,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	outcome, ok := result.outcome.(abortedOutcome)
-	require.True(t, ok)
-	assert.True(t, outcome.singleAdmissionFallback)
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+	assert.True(t, result.SingleAdmissionFallback)
 	assert.EqualValues(t, 2, attempts.launches)
 }
 
@@ -303,28 +303,22 @@ func TestManagedCampaignStopsOwnedPeerAndWaitsForSettlementBeforeAbort(t *testin
 			supervision.Stopped{},
 		},
 	}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(2), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(processruntime.New(2), attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 2,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 2, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	{
-		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/stops = %#v/%d, want aborted after one peer stop", result.outcome, attempts.stops)
-		assert.EqualValues(t, 1, attempts.stops, "outcome/stops = %#v/%d, want aborted after one peer stop", result.outcome, attempts.stops)
-	}
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+	assert.EqualValues(t, 1, attempts.stops)
 }
 
 func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T) {
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
-	shell := newProcessRuntimeShell(1)
+	shell := processruntime.New(1)
 	attempts := &managedAttemptFixture{shell: shell, terminals: []supervision.Terminal{
 		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
 		supervision.DrainUnconfirmed{
@@ -336,27 +330,22 @@ func TestManagedCampaignSettlesRuntimeEmergencyBeforeCleanupFailure(t *testing.T
 			},
 		},
 	}}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
+	result := executeManagedCampaign(shell, attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	fault, ok := result.failure.(cleanupUnconfirmedFault)
-	require.True(t, ok, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
-	require.Len(t, fault.attempts, 1, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
-	assert.EqualValues(t, "campaign-a:2", fault.attempts[0].attempt, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
-	assert.EqualValues(t, 7, fault.attempts[0].evidence.output.Cutoff, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
-	assert.EqualValues(t, "census failed", fault.attempts[0].evidence.failures.DrainCensus, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
-	assert.EqualValues(t, 1, attempts.emergencies, "failure/emergencies = %#v/%d, want cleanup failure after one emergency", result.failure, attempts.emergencies)
+	require.Len(t, result.FatalAttempts, 1)
+	assert.Equal(t, "campaign-a:2", result.FatalAttempts[0].Attempt)
+	assert.EqualValues(t, 7, result.FatalAttempts[0].Evidence.Output.Cutoff)
+	assert.Equal(t, "census failed", result.FatalAttempts[0].Evidence.Failures.DrainCensus)
+	assert.EqualValues(t, 1, attempts.emergencies)
 }
 
 func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing.T) {
-	shell := newProcessRuntimeShell(1)
+	shell := processruntime.New(1)
 	repository := &managedMemoryRepository{files: []*gosourcefile.GoSourceFile{
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
@@ -366,96 +355,71 @@ func TestManagedCampaignAuthorizesForcedAbortAfterEmptyEmergencySweep(t *testing
 	temporaryDirectory := &blockingManagedTemporaryDirectory{
 		managedTemporaryDirectory: managedTemporaryDirectory{}, started: started, release: release,
 	}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, repository: repository, temporaryDirectory: temporaryDirectory, attempts: attempts,
-	})
 	go func() {
 		<-started
 		shell.Close("peer fatal without custody")
 		close(release)
 	}()
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	result := executeManagedCampaign(shell, attempts, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: temporaryDirectory, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	{
-		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/failure = %#v/%#v, want forced Aborted", result.outcome, result.failure)
-		assert.Nil(t, result.failure, "outcome/failure = %#v/%#v, want forced Aborted", result.outcome, result.failure)
-	}
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
 }
 
 func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(1), repository: managedPanickingRepository{},
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{},
+	result := executeManagedCampaign(processruntime.New(1), &managedAttemptFixture{}, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: managedPanickingRepository{},
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	{
-		outcome, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "boundary outcome = %#v, want typed snapshot abort", result.outcome)
-		assert.EqualValues(t, "repository snapshot could not be materialized", outcome.cause, "boundary outcome = %#v, want typed snapshot abort", result.outcome)
-		assert.NotContains(t, outcome.cause, "/private/repository", "boundary outcome = %#v, want typed snapshot abort", result.outcome)
-	}
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+	assert.Equal(t, "repository snapshot could not be materialized", result.Cause)
+	assert.NotContains(t, result.Cause, "/private/repository")
 }
 
 func TestManagedCampaignCleansWorkspaceAcquiredBeforeMutationPanic(t *testing.T) {
 	repository := &managedPartialWorkspaceRepository{}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(1), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{
-			terminals: []supervision.Terminal{supervision.Settled{
-				Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second},
-			}},
-		},
+	result := executeManagedCampaign(processruntime.New(1), &managedAttemptFixture{terminals: []supervision.Terminal{
+		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+	}}, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	{
-		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/workspace = %#v/%#v, want aborted with acquired workspace removed", result.outcome, repository.workspace)
-		require.NotNil(t, repository.workspace, "outcome/workspace = %#v/%#v, want aborted with acquired workspace removed", result.outcome, repository.workspace)
-		assert.True(t, repository.workspace.removed, "outcome/workspace = %#v/%#v, want aborted with acquired workspace removed", result.outcome, repository.workspace)
-	}
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+	require.NotNil(t, repository.workspace)
+	assert.True(t, repository.workspace.removed)
 }
 
 func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeCleaned(t *testing.T) {
 	repository := &managedPartialWorkspaceRepository{failWorkspaceCleanup: true}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: newProcessRuntimeShell(1), repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: &managedAttemptFixture{
-			terminals: []supervision.Terminal{supervision.Settled{
-				Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second},
-			}},
-		},
+	result := executeManagedCampaign(processruntime.New(1), &managedAttemptFixture{terminals: []supervision.Terminal{
+		supervision.Settled{Exit: supervision.ExitStatus{}, ExecutionData: supervision.ExecutionData{CommandDuration: time.Second}},
+	}}, campaign.Configuration{
+		Identity: "campaign-a", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-a", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
-	})
-
-	outcome, ok := result.outcome.(abortedOutcome)
-	require.True(t, ok, "outcome = %#v, want stable cause plus structured residue", result.outcome)
-	assert.NotContains(t, outcome.cause, "/private/workspace", "outcome = %#v, want stable cause plus structured residue", result.outcome)
-	require.Len(t, outcome.artifactResidue, 1, "outcome = %#v, want stable cause plus structured residue", result.outcome)
-	assert.True(t, strings.HasPrefix(outcome.artifactResidue[0], "temporary-"), "outcome = %#v, want stable cause plus structured residue", result.outcome)
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+	assert.NotContains(t, result.Cause, "/private/workspace")
+	require.Len(t, result.ArtifactResidue, 1)
+	assert.True(t, strings.HasPrefix(result.ArtifactResidue[0], "temporary-"))
 }
 
 func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T) {
 	waiting := make(chan struct{}, 1)
-	shell := newProcessRuntimeShellWithObserver(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
+	shell := processruntime.NewObserved(1, processruntime.ObserverFunc(func(event processruntime.RecordedCut) {
 		if event.Operation() == processruntime.RequestAdmissionOperation &&
 			event.Result().Admission().Request().Attempt != "held" {
 			waiting <- struct{}{}
@@ -464,7 +428,7 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 	heldCampaign := shell.RegisterCampaign(99)
 	held := shell.RequestAdmission(processruntime.Admission{
 		Campaign: heldCampaign.Campaign(), Attempt: "held", Class: processruntime.ExclusiveAdmission,
-		Profile: AutomaticProfile, Deadline: baselineBootstrapDeadline,
+		Profile: processruntime.AutomaticProfile, Deadline: 10 * time.Minute,
 	})
 	heldGrant, _ := held.Receive()
 	prepared := shell.CommitStart(heldGrant, processruntime.NewStartCell())
@@ -474,26 +438,24 @@ func TestManagedCampaignConsumesFatalEpochWhileWaitingForAdmission(t *testing.T)
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}}
 	attempts := &managedAttemptFixture{shell: shell, emergencyGeneration: prepared.Generation()}
-	runner := newManagedCampaignRunner(managedCampaignConstruction{
-		runtime: shell, repository: repository,
-		temporaryDirectory: &managedTemporaryDirectory{}, attempts: attempts,
-	})
 	go func() {
 		<-waiting
 		shell.Observe(prepared.Generation(), processruntime.DrainUnconfirmed())
 	}()
 
-	result := runner.run(managedCampaignRequest{
-		identity: "campaign-waiting", lineage: 11, command: []string{"test"},
-		profile: AutomaticProfile, peers: 1, viruses: []viruses.Virus{integerincrement.New()},
+	result := executeManagedCampaign(shell, attempts, campaign.Configuration{
+		Identity: "campaign-waiting", Lineage: 11, Repository: repository,
+		TemporaryDir: &managedTemporaryDirectory{}, Command: []string{"test"},
+		Profile: processruntime.AutomaticProfile, Peers: 1,
+		Viruses: []viruses.Virus{integerincrement.New()},
 	})
 
-	{
-		_, ok := result.outcome.(abortedOutcome)
-		require.True(t, ok, "outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort", result.outcome, result.failure, attempts.emergencies)
-		assert.Nil(t, result.failure, "outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort", result.outcome, result.failure, attempts.emergencies)
-		assert.EqualValues(t, 1, attempts.emergencies, "outcome/failure/emergencies = %#v/%#v/%d, want non-owner forced abort", result.outcome, result.failure, attempts.emergencies)
-	}
+	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
+	assert.EqualValues(t, 1, attempts.emergencies)
+}
+
+func executeManagedCampaign(runtime *processruntime.Runtime, attempts supervision.System, configuration campaign.Configuration) campaign.Result {
+	return campaign.NewExecutorWithSystem(runtime, attempts).Execute(configuration)
 }
 
 type managedMemoryRepository struct {
@@ -505,7 +467,7 @@ type managedMemoryRepository struct {
 type managedPanickingRepository struct{}
 
 func (managedPanickingRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile { return nil }
-func (managedPanickingRepository) MaterializeTemporaryRepository(string) TemporaryRepository {
+func (managedPanickingRepository) MaterializeTemporaryRepository(string) campaign.TemporaryRepository {
 	panic("snapshot exploded at /private/repository")
 }
 
@@ -521,7 +483,7 @@ func (r *managedPartialWorkspaceRepository) ListGoSourceFiles() []*gosourcefile.
 		gosourcefile.New("source.go", []byte("package source\nvar number = 0\n")),
 	}
 }
-func (r *managedPartialWorkspaceRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+func (r *managedPartialWorkspaceRepository) MaterializeTemporaryRepository(path string) campaign.TemporaryRepository {
 	r.snapshot = &managedPartialSnapshot{owner: r, root: path}
 	return r.snapshot
 }
@@ -535,7 +497,7 @@ func (r *managedPartialSnapshot) Root() string { return r.root }
 func (r *managedPartialSnapshot) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return r.owner.ListGoSourceFiles()
 }
-func (r *managedPartialSnapshot) MaterializeTemporaryRepository(path string) TemporaryRepository {
+func (r *managedPartialSnapshot) MaterializeTemporaryRepository(path string) campaign.TemporaryRepository {
 	r.owner.workspaceCount++
 	r.owner.workspace = &managedPartialWorkspace{
 		root: path, failRemove: r.owner.failWorkspaceCleanup && r.owner.workspaceCount > 1,
@@ -553,7 +515,7 @@ type managedPartialWorkspace struct {
 
 func (r *managedPartialWorkspace) Root() string                                  { return r.root }
 func (*managedPartialWorkspace) ListGoSourceFiles() []*gosourcefile.GoSourceFile { return nil }
-func (*managedPartialWorkspace) MaterializeTemporaryRepository(string) TemporaryRepository {
+func (*managedPartialWorkspace) MaterializeTemporaryRepository(string) campaign.TemporaryRepository {
 	panic("nested workspace is invalid")
 }
 func (*managedPartialWorkspace) Overwrite(string, []byte) { panic("mutation write exploded") }
@@ -568,7 +530,7 @@ func (r *managedMemoryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFi
 	return append([]*gosourcefile.GoSourceFile(nil), r.files...)
 }
 
-func (r *managedMemoryRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+func (r *managedMemoryRepository) MaterializeTemporaryRepository(path string) campaign.TemporaryRepository {
 	r.materializations++
 	r.snapshot = &managedMemoryTemporaryRepository{root: path, files: r.ListGoSourceFiles()}
 
@@ -585,7 +547,7 @@ func (r *managedMemoryTemporaryRepository) Root() string { return r.root }
 func (r *managedMemoryTemporaryRepository) ListGoSourceFiles() []*gosourcefile.GoSourceFile {
 	return append([]*gosourcefile.GoSourceFile(nil), r.files...)
 }
-func (r *managedMemoryTemporaryRepository) MaterializeTemporaryRepository(path string) TemporaryRepository {
+func (r *managedMemoryTemporaryRepository) MaterializeTemporaryRepository(path string) campaign.TemporaryRepository {
 	return &managedMemoryTemporaryRepository{root: path, files: r.ListGoSourceFiles()}
 }
 func (r *managedMemoryTemporaryRepository) Overwrite(string, []byte) {}
@@ -620,10 +582,10 @@ type managedAttemptFixture struct {
 	launches            int
 	specs               []supervision.Spec
 	terminals           []supervision.Terminal
-	shell               *processRuntimeShell
-	byGeneration        map[attemptGeneration]supervision.Spec
-	terminalByGen       map[attemptGeneration]supervision.Terminal
-	starts              map[attemptGeneration]processruntime.PreparedStart
+	shell               *processruntime.Runtime
+	byGeneration        map[processruntime.Generation]supervision.Spec
+	terminalByGen       map[processruntime.Generation]supervision.Terminal
+	starts              map[processruntime.Generation]processruntime.PreparedStart
 	waitStarted         chan supervision.Spec
 	releasePrimaries    <-chan struct{}
 	waitAll             <-chan struct{}
@@ -635,23 +597,40 @@ type managedAttemptFixture struct {
 	stopRelease         chan struct{}
 	stops               int
 	emergencies         int
-	drainGeneration     attemptGeneration
-	emergencyGeneration attemptGeneration
+	drainGeneration     processruntime.Generation
+	emergencyGeneration processruntime.Generation
 	emergencyEmpty      bool
 }
 
-func (f *managedAttemptFixture) reserveLaunch(*pendingStartCell, supervision.Spec) {}
+func managedTerminalData(terminal supervision.Terminal) supervision.ExecutionData {
+	switch terminal := terminal.(type) {
+	case supervision.Settled:
+		return terminal.ExecutionData
+	case supervision.Infrastructure:
+		return terminal.ExecutionData
+	case supervision.Tripped:
+		return terminal.ExecutionData
+	case supervision.Stopped:
+		return terminal.ExecutionData
+	case supervision.DrainUnconfirmed:
+		return terminal.ExecutionData
+	default:
+		panic("unsupported fixture terminal")
+	}
+}
 
-func (f *managedAttemptFixture) discardLaunch(*pendingStartCell) {}
+func (f *managedAttemptFixture) ReserveLaunch(*processruntime.StartCell, supervision.Spec) {}
 
-func (f *managedAttemptFixture) launch(start installedStart, spec supervision.Spec) managedObservedLaunch {
+func (f *managedAttemptFixture) DiscardLaunch(*processruntime.StartCell) {}
+
+func (f *managedAttemptFixture) Launch(start processruntime.PreparedStart, spec supervision.Spec) supervision.ObservedLaunch {
 	f.mutex.Lock()
 	f.launches++
 	f.specs = append(f.specs, spec)
 	if f.byGeneration == nil {
-		f.byGeneration = make(map[attemptGeneration]supervision.Spec)
-		f.terminalByGen = make(map[attemptGeneration]supervision.Terminal)
-		f.starts = make(map[attemptGeneration]processruntime.PreparedStart)
+		f.byGeneration = make(map[processruntime.Generation]supervision.Spec)
+		f.terminalByGen = make(map[processruntime.Generation]supervision.Terminal)
+		f.starts = make(map[processruntime.Generation]processruntime.PreparedStart)
 	}
 	f.byGeneration[start.Generation()] = spec
 	f.starts[start.Generation()] = start
@@ -674,7 +653,7 @@ func (f *managedAttemptFixture) launch(start installedStart, spec supervision.Sp
 		})
 		receipt := start.Observe(observed)
 
-		return managedObservedLaunch{result: result, receipt: receipt}
+		return supervision.NewObservedLaunch(result, receipt)
 	}
 	observed := start.Launch(func(processruntime.Generation) processruntime.Observation {
 		result = supervision.Owned{Attempt: &supervision.OwnedAttempt{}}
@@ -683,9 +662,9 @@ func (f *managedAttemptFixture) launch(start installedStart, spec supervision.Sp
 	})
 	receipt := start.Observe(observed)
 
-	return managedObservedLaunch{result: result, receipt: receipt}
+	return supervision.NewObservedLaunch(result, receipt)
 }
-func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *supervision.OwnedAttempt) managedObservedTerminal {
+func (f *managedAttemptFixture) Wait(generation supervision.Generation, _ *supervision.OwnedAttempt) supervision.ObservedTerminal {
 	f.mutex.Lock()
 	terminal := f.terminalByGen[generation]
 	spec := f.byGeneration[generation]
@@ -694,68 +673,53 @@ func (f *managedAttemptFixture) wait(generation attemptGeneration, _ *supervisio
 	if f.waitAll != nil {
 		<-f.waitAll
 	}
-	if f.waitForLaunches != 0 && spec.Deadline != baselineBootstrapDeadline {
+	if f.waitForLaunches != 0 && spec.Deadline != 10*time.Minute {
 		<-f.launchesReady
 	}
-	if f.waitStarted != nil && spec.Deadline != baselineBootstrapDeadline {
+	if f.waitStarted != nil && spec.Deadline != 10*time.Minute {
 		f.waitStarted <- spec
 		<-f.releasePrimaries
 	}
-	data := terminalExecutionData(terminal)
+	data := managedTerminalData(terminal)
 	data.Deadline = spec.Deadline
 	switch terminal := terminal.(type) {
 	case supervision.Settled:
 		terminal.ExecutionData = data
-		return managedObservedTerminal{
-			terminal: terminal,
-			receipt:  start.Observe(processruntime.Settled(spec.Profile, spec.Deadline)),
-		}
+		return supervision.NewObservedTerminal(terminal, start.Observe(processruntime.Settled(spec.Profile, spec.Deadline)))
 	case supervision.Infrastructure:
 		terminal.ExecutionData = data
 
-		return managedObservedTerminal{
-			terminal: terminal,
-			receipt:  start.Observe(processruntime.Infrastructure(terminal.Err.Error())),
-		}
+		return supervision.NewObservedTerminal(terminal, start.Observe(processruntime.Infrastructure(terminal.Err.Error())))
 	case supervision.Tripped:
 		terminal.ExecutionData = data
 		terminal.BoundFired = supervision.CommandDeadlineFired
 
-		return managedObservedTerminal{
-			terminal: terminal,
-			receipt:  start.Observe(processruntime.Tripped(false, spec.Profile, spec.Deadline)),
-		}
+		return supervision.NewObservedTerminal(terminal, start.Observe(processruntime.Tripped(false, spec.Profile, spec.Deadline)))
 	case supervision.Stopped:
 		if f.stopRelease != nil {
 			<-f.stopRelease
 		}
 		terminal.ExecutionData = data
 
-		return managedObservedTerminal{
-			terminal: terminal,
-			receipt:  start.Observe(processruntime.Stopped()),
-		}
+		return supervision.NewObservedTerminal(terminal, start.Observe(processruntime.Stopped()))
 	case supervision.DrainUnconfirmed:
 		terminal.ExecutionData = data
 		f.mutex.Lock()
 		f.drainGeneration = generation
 		f.mutex.Unlock()
 
-		return managedObservedTerminal{
-			terminal: terminal,
-			receipt:  start.Observe(processruntime.DrainUnconfirmed()),
-		}
+		return supervision.NewObservedTerminal(terminal, start.Observe(processruntime.DrainUnconfirmed()))
 	default:
 		panic("unsupported fixture terminal")
 	}
 }
-func (f *managedAttemptFixture) stop(*supervision.OwnedAttempt) {
+func (f *managedAttemptFixture) Stop(*supervision.OwnedAttempt) {
 	f.mutex.Lock()
 	f.stops++
 	close(f.stopRelease)
 	f.mutex.Unlock()
 }
-func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEmergency {
+func (f *managedAttemptFixture) EmergencyDrain(supervision.EmergencyRequest) (supervision.SweepResult, processruntime.EmergencySettlement) {
 	f.mutex.Lock()
 	f.emergencies++
 	generation := f.drainGeneration
@@ -766,9 +730,9 @@ func (f *managedAttemptFixture) emergency(epoch fatalEpochID) managedObservedEme
 	if f.emergencyEmpty {
 		settlement := f.shell.SettleEmergency(nil)
 
-		return managedObservedEmergency{epoch: epoch, settlement: settlement}
+		return supervision.SweepDrained{}, settlement
 	}
 	settlement := f.shell.SettleEmergency([]processruntime.Resolution{processruntime.TransferCustody(generation)})
 
-	return managedObservedEmergency{epoch: epoch, settlement: settlement}
+	return supervision.SweepDrained{}, settlement
 }
