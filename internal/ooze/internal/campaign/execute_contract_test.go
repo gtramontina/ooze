@@ -148,13 +148,13 @@ func TestManagedCampaignReportsBaselineAbortCause(t *testing.T) {
 	tests := []struct {
 		name     string
 		terminal supervision.Terminal
-		cause    string
+		cause    campaign.AbortCause
 	}{
-		{name: "nonzero exit", terminal: supervision.Settled{Exit: supervision.ExitStatus{Code: 1}}, cause: "baseline did not pass"},
-		{name: "automatic deadline", terminal: supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}}, cause: "baseline command deadline fired"},
-		{name: "process fuse", terminal: supervision.Tripped{Trip: supervision.FuseTrip{Live: 65}}, cause: "baseline process fuse fired"},
-		{name: "stopped", terminal: supervision.Stopped{}, cause: "baseline was stopped"},
-		{name: "infrastructure census", terminal: supervision.Infrastructure{Cause: supervision.CensusFailed, Err: assert.AnError}, cause: "baseline infrastructure uncertainty"},
+		{name: "nonzero exit", terminal: supervision.Settled{Exit: supervision.ExitStatus{Code: 1}}, cause: campaign.AbortBaselineFailed},
+		{name: "automatic deadline", terminal: supervision.Tripped{Trip: supervision.AutomaticDeadlineTrip{}}, cause: campaign.AbortBaselineDeadline},
+		{name: "process fuse", terminal: supervision.Tripped{Trip: supervision.FuseTrip{Live: 65}}, cause: campaign.AbortBaselineFuse},
+		{name: "stopped", terminal: supervision.Stopped{}, cause: campaign.AbortBaselineStopped},
+		{name: "infrastructure census", terminal: supervision.Infrastructure{Cause: supervision.CensusFailed, Err: assert.AnError}, cause: campaign.AbortBaselineInfrastructure},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -380,8 +380,7 @@ func TestManagedCampaignNormalizesSnapshotBoundaryPanic(t *testing.T) {
 	})
 
 	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
-	assert.Equal(t, "repository snapshot could not be materialized", result.Cause)
-	assert.NotContains(t, result.Cause, "/private/repository")
+	assert.Equal(t, campaign.AbortSnapshotMaterialization, result.Cause)
 }
 
 func TestManagedCampaignCleansWorkspaceAcquiredBeforeMutationPanic(t *testing.T) {
@@ -412,7 +411,7 @@ func TestManagedCampaignReportsOnlyStructuredResidueWhenFailedWorkspaceCannotBeC
 	})
 
 	assert.Equal(t, campaign.ManagedAborted, result.Outcome)
-	assert.NotContains(t, result.Cause, "/private/workspace")
+	assert.Equal(t, campaign.AbortWorkspaceMaterialization, result.Cause)
 	require.Len(t, result.ArtifactResidue, 1)
 	assert.True(t, strings.HasPrefix(result.ArtifactResidue[0], "temporary-"))
 }

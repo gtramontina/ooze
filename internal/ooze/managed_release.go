@@ -307,51 +307,50 @@ func presentManagedRelease(result campaign.Result) ManagedReleaseResult {
 	panic("managed campaign produced no terminal result")
 }
 
-func presentManagedAbortCause(cause string) ManagedAbortCause {
+func presentManagedAbortCause(cause campaign.AbortCause) ManagedAbortCause {
 	switch cause {
-	case "campaign registration rejected":
+	case campaign.AbortCampaignRegistration:
 		return ManagedAbortCampaignRegistration
-	case "repository snapshot could not be materialized":
+	case campaign.AbortSnapshotMaterialization:
 		return ManagedAbortSnapshotMaterialization
-	case "mutation catalogue discovery failed":
+	case campaign.AbortCatalogueDiscovery:
 		return ManagedAbortCatalogueDiscovery
-	case "mutation workspace could not be materialized",
-		"mutation workspace could not be materialized; workspace cleanup could not be confirmed":
+	case campaign.AbortWorkspaceMaterialization:
 		return ManagedAbortWorkspaceMaterialization
-	case "managed admission rejected":
+	case campaign.AbortAdmissionRejected:
 		return ManagedAbortAdmissionRejected
-	case "process runtime entered a fatal epoch while admission waited", "fatal closure won terminal commitment":
+	case campaign.AbortFatalEpoch:
 		return ManagedAbortFatalEpoch
-	case "mutation workspace cleanup could not be confirmed":
+	case campaign.AbortWorkspaceCleanup:
 		return ManagedAbortWorkspaceCleanup
-	case "repository snapshot cleanup could not be confirmed":
+	case campaign.AbortSnapshotCleanup:
 		return ManagedAbortSnapshotCleanup
-	case "attempt was not released":
+	case campaign.AbortAttemptNotReleased:
 		return ManagedAbortAttemptNotReleased
-	case "prospective launch unresolved":
+	case campaign.AbortProspectiveLaunch:
 		return ManagedAbortProspectiveLaunch
-	case "execution-domain drainage unconfirmed":
+	case campaign.AbortDrainageUnconfirmed:
 		return ManagedAbortDrainageUnconfirmed
-	case "baseline did not pass":
+	case campaign.AbortBaselineFailed:
 		return ManagedAbortBaselineFailed
-	case "baseline command deadline fired":
+	case campaign.AbortBaselineDeadline:
 		return ManagedAbortBaselineDeadline
-	case "baseline process fuse fired":
+	case campaign.AbortBaselineFuse:
 		return ManagedAbortBaselineFuse
-	case "baseline was stopped":
+	case campaign.AbortBaselineStopped:
 		return ManagedAbortBaselineStopped
-	case "baseline infrastructure uncertainty":
+	case campaign.AbortBaselineInfrastructure:
 		return ManagedAbortBaselineInfrastructure
-	case "primary stopped":
+	case campaign.AbortPrimaryStopped:
 		return ManagedAbortPrimaryStopped
-	case "primary infrastructure uncertainty":
+	case campaign.AbortPrimaryInfrastructure:
 		return ManagedAbortPrimaryInfrastructure
-	case "confirmation infrastructure uncertainty":
+	case campaign.AbortConfirmationInfrastructure:
 		return ManagedAbortConfirmationInfrastructure
-	case "process runtime emergency":
+	case campaign.AbortProcessEmergency:
 		return ManagedAbortProcessEmergency
 	default:
-		return ManagedAbortInfrastructure
+		panic("managed campaign abort cause is invalid")
 	}
 }
 

@@ -39,6 +39,33 @@ const (
 	ManagedInvariantViolation
 )
 
+// AbortCause identifies why a campaign stopped without a mutation score.
+type AbortCause uint8
+
+// Campaign abort causes.
+const (
+	AbortCampaignRegistration AbortCause = iota + 1
+	AbortSnapshotMaterialization
+	AbortCatalogueDiscovery
+	AbortWorkspaceMaterialization
+	AbortAdmissionRejected
+	AbortFatalEpoch
+	AbortWorkspaceCleanup
+	AbortSnapshotCleanup
+	AbortAttemptNotReleased
+	AbortProspectiveLaunch
+	AbortDrainageUnconfirmed
+	AbortBaselineFailed
+	AbortBaselineDeadline
+	AbortBaselineFuse
+	AbortBaselineStopped
+	AbortBaselineInfrastructure
+	AbortPrimaryStopped
+	AbortPrimaryInfrastructure
+	AbortConfirmationInfrastructure
+	AbortProcessEmergency
+)
+
 func presentManagedMutation(kind mutantResultKind) ManagedMutationOutcome {
 	switch kind {
 	case mutantSurvived:

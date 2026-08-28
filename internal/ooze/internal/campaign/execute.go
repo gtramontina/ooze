@@ -63,7 +63,7 @@ type Result struct {
 	Mutations               []MutationResult
 	Total                   int
 	Baseline                *AttemptEvidence
-	Cause                   string
+	Cause                   AbortCause
 	Residual                []ResidualCustody
 	FatalAttempts           []FatalAttemptEvidence
 	ArtifactResidue         []string
@@ -146,7 +146,7 @@ func presentResult(result managedCampaignResult) Result {
 		}
 	case abortedOutcome:
 		presented := Result{
-			Outcome: ManagedAborted, Cause: outcome.cause,
+			Outcome: ManagedAborted, Cause: presentAbortCause(outcome.cause),
 			Mutations: presentMutations(result, outcome.mutants), Total: outcome.total,
 			ArtifactResidue:         append([]string(nil), outcome.artifactResidue...),
 			SingleAdmissionFallback: outcome.singleAdmissionFallback,
@@ -167,6 +167,54 @@ func presentResult(result managedCampaignResult) Result {
 		}
 	}
 	panic("managed campaign produced no terminal result")
+}
+
+func presentAbortCause(cause string) AbortCause {
+	switch cause {
+	case "campaign registration rejected":
+		return AbortCampaignRegistration
+	case "repository snapshot could not be materialized":
+		return AbortSnapshotMaterialization
+	case "mutation catalogue discovery failed":
+		return AbortCatalogueDiscovery
+	case "mutation workspace could not be materialized",
+		"mutation workspace could not be materialized; workspace cleanup could not be confirmed":
+		return AbortWorkspaceMaterialization
+	case "managed admission rejected":
+		return AbortAdmissionRejected
+	case "process runtime entered a fatal epoch while admission waited", "fatal closure won terminal commitment":
+		return AbortFatalEpoch
+	case "mutation workspace cleanup could not be confirmed":
+		return AbortWorkspaceCleanup
+	case "repository snapshot cleanup could not be confirmed":
+		return AbortSnapshotCleanup
+	case "attempt was not released":
+		return AbortAttemptNotReleased
+	case "prospective launch unresolved":
+		return AbortProspectiveLaunch
+	case "execution-domain drainage unconfirmed":
+		return AbortDrainageUnconfirmed
+	case "baseline did not pass":
+		return AbortBaselineFailed
+	case "baseline command deadline fired":
+		return AbortBaselineDeadline
+	case "baseline process fuse fired":
+		return AbortBaselineFuse
+	case "baseline was stopped":
+		return AbortBaselineStopped
+	case "baseline infrastructure uncertainty":
+		return AbortBaselineInfrastructure
+	case "primary stopped":
+		return AbortPrimaryStopped
+	case "primary infrastructure uncertainty":
+		return AbortPrimaryInfrastructure
+	case "confirmation infrastructure uncertainty":
+		return AbortConfirmationInfrastructure
+	case "process runtime emergency":
+		return AbortProcessEmergency
+	default:
+		panic("managed campaign abort cause is invalid")
+	}
 }
 
 func presentMutations(result managedCampaignResult, mutants []mutantResult) []MutationResult {
