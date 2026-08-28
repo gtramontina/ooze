@@ -358,7 +358,7 @@ func writeManagedMutationDetail(
 			writeManagedAttemptDiagnostics(report, *mutation.Confirmation, "  ", "confirmation ")
 			break
 		}
-		fmt.Fprintf(report, "supervision.Infrastructure uncertainty: %s\n", mutation.File.Label())
+		fmt.Fprintf(report, "Infrastructure uncertainty: %s\n", mutation.File.Label())
 		writeManagedAttemptDiagnostics(report, mutation.Primary, "  ", "")
 	case ManagedSurvived:
 		fmt.Fprintf(report, "Mutant survived: %s\n", mutation.File.Label())

@@ -210,6 +210,8 @@ func TestManagedReportRetainsOrderedPartialDiagnosticsForMidCampaignAbort(t *tes
 		Mutations:       []managed.ManagedMutationResult{survived, uncertain},
 		ArtifactResidue: []string{"/tmp/ooze-residue"},
 	}, 0.5, false, false)
+	assert.Contains(t, report.Text, "\nInfrastructure uncertainty: second.go → Loop Condition\n")
+	assert.NotContains(t, report.Text, "supervision.Infrastructure")
 
 	for _, fragment := range []string{
 		"Mutant survived: first.go → Integer Increment",
