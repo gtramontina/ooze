@@ -2287,10 +2287,10 @@ func TestSimulationEngineConsumesTheSelectedSameCutDelivery(t *testing.T) {
 }
 
 func TestSimulationSelectsOneTypedActionFromACompoundOwnerCut(t *testing.T) {
-	want := supervisorAction{kind: supervisorDeliverTerminal, token: 10}
-	actions := []supervisorAction{
+	want := supervisionEffectFromAction(supervisorAction{kind: supervisorDeliverTerminal, token: 10})
+	actions := []supervisionEffect{
 		want,
-		{kind: supervisorSettleEmergency, token: 11},
+		supervisionEffectFromAction(supervisorAction{kind: supervisorSettleEmergency, token: 11}),
 	}
 	{
 		got := simulationOnlySupervisorAction(actions, supervisorDeliverTerminal)

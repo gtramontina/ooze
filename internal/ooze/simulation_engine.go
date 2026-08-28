@@ -411,7 +411,7 @@ func (engine *simulationEngine) applyRuntime(cut processruntime.Cut) processrunt
 }
 
 func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove) error {
-	action := move.action.production()
+	action := move.action
 	switch action.kind {
 	case supervisorLaunchNative:
 		attempt := supervisionAttempt(engine.machine.Projection(), action.generation)
@@ -464,7 +464,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: campaignLaunchUnconfirmed, residual: ProspectiveUnresolved,
 		}
 		if action.kind == supervisorPublishNotReleased {
-			observation = launchObservationFromAction(action)
+			observation = launchObservationFromAction(action.production())
 			launchResult = campaignLaunchObservation{
 				kind: campaignLaunchNotReleased, failure: action.launchFailure,
 			}
@@ -481,13 +481,13 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 		})
 		if action.kind == supervisorPublishLaunchUnconfirmed && result.runtimeClosureInProgress &&
 			!engine.machine.EmergencyActive() && !engine.hasPendingSupervisorEmergency() {
-			emergencyAt := action.at.Add(time.Nanosecond)
+			emergencyAt := action.at.production().Add(time.Nanosecond)
 			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
 			})
 		}
 	case supervisorCloseProspective:
-		observation := launchObservationFromAction(action)
+		observation := launchObservationFromAction(action.production())
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
 		result := runtimeReceipt(processed)
 		sequence := engine.append(simulationRecord{
@@ -515,7 +515,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorWaitRoot, supervisorSampleRunning:
 		return engine.applyHealthyRunning(move)
 	case supervisorForceOwned:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.Add(time.Nanosecond))
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production().Add(time.Nanosecond))
 		completion := supervisorDrainCompletion{
 			generation: action.generation,
 			action:     supervisorPendingAction{kind: action.kind, token: action.token},
@@ -525,15 +525,16 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
 		})
 	case supervisorObserveEmptiness:
-		at := action.drainBy.Add(-time.Nanosecond)
+		drainBy := action.drainBy.production()
+		at := drainBy.Add(-time.Nanosecond)
 		kind := supervisorDrainObservedEmpty
 		if move.variant.drain == simulationDrainAtBoundary ||
 			move.variant.drain == simulationDrainAfterBoundary {
-			at = action.drainBy
+			at = drainBy
 			kind = supervisorDrainObservedResidual
 		}
 		if move.variant.drain == simulationDrainAfterBoundary {
-			at = action.drainBy.Add(time.Nanosecond)
+			at = drainBy.Add(time.Nanosecond)
 		}
 		at = simulationCompletionAt(engine.machine.Projection(), action.generation, at)
 		completion := supervisorDrainCompletion{
@@ -545,7 +546,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorDrainCompleted, generation: action.generation, at: at, drain: &completion,
 		})
 	case supervisorCaptureOutput:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at)
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production())
 		completion := supervisorOutputCompletion{
 			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
 			at: at, ref: 1,
@@ -554,7 +555,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorOutputCompleted, generation: action.generation, at: at, output: &completion,
 		})
 	case supervisorSealStopAdmission:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at)
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production())
 		completion := supervisorStopSealCompletion{
 			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
 			at: at,
@@ -563,7 +564,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			kind: supervisorStopAdmissionSealed, generation: action.generation, at: at, seal: &completion,
 		})
 	case supervisorReleaseDomain:
-		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at)
+		at := simulationCompletionAt(engine.machine.Projection(), action.generation, action.at.production())
 		completion := supervisorReleaseCompletion{
 			generation: action.generation, action: supervisorPendingAction{kind: action.kind, token: action.token},
 			at: at,
@@ -589,7 +590,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			},
 		})
 		if wasOpen {
-			emergencyAt := action.at.Add(time.Nanosecond)
+			emergencyAt := action.at.production().Add(time.Nanosecond)
 			engine.enqueueSupervisorDelivery(sequence, supervisorEvent{
 				kind: supervisorEmergencyStarted, at: emergencyAt, drainBy: emergencyAt.Add(5 * time.Second),
 			})
@@ -622,7 +623,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 			epoch: engine.emergency.epoch, settlement: campaignSettlementValue(engine.emergency),
 		})
 	case supervisorSettleRuntime:
-		observation := terminalObservation(action.terminal)
+		observation := terminalObservation(action.terminal.production())
 		processed := engine.applyRuntime(processruntime.ObserveAttemptCut(action.generation, processRuntimeObservation(observation))).Receipt()
 		receipt := runtimeReceipt(processed)
 		engine.receipts[action.generation] = receipt
@@ -642,7 +643,7 @@ func (engine *simulationEngine) applySupervisorAction(move simulationEngineMove)
 	case supervisorDeliverTerminal:
 		launch := engine.launches[action.generation]
 		receipt := engine.receipts[action.generation]
-		terminal := publicTerminal(action.terminal, func(supervisorOutputRef) string { return "" }, nil, action.runtimeKind)
+		terminal := publicTerminal(action.terminal.production(), func(supervisorOutputRef) string { return "" }, nil, action.runtimeKind)
 		event := attemptTerminalEvent{
 			attempt: launch.attempt, generation: action.generation,
 			terminal: terminal, receipt: campaignReceiptValue(receipt),

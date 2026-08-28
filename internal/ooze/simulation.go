@@ -228,10 +228,10 @@ func Explore(definition simulationDefinition, choices simulationChoiceSource) Si
 }
 
 func simulationOnlySupervisorAction(
-	actions []supervisorAction,
+	actions []supervisionEffect,
 	kind supervisorActionKind,
-) supervisorAction {
-	var matched supervisorAction
+) supervisionEffect {
+	var matched supervisionEffect
 	count := 0
 	for _, action := range actions {
 		if action.kind != kind {
@@ -757,9 +757,9 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			}
 			var transition supervisorTransition
 			supervisorMachine, transition = supervisorMachine.Apply(fact)
-			actions := transition.actions()
-			for _, action := range actions {
-				actionKinds[action.token] = action.kind
+			supervisionEffects := transition.Effects()
+			for _, effect := range supervisionEffects {
+				actionKinds[effect.token] = effect.kind
 			}
 			if !reflect.DeepEqual(supervisorMachine.Projection(), record.supervisorState) ||
 				!reflect.DeepEqual(transition.Effects(), record.supervisorActions) {
@@ -767,11 +767,11 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					trace, supervisionDivergence, "supervisor transition diverged at record %d", index,
 				)
 			}
-			for _, action := range actions {
-				if action.kind != supervisorDeliverTerminal {
+			for _, effect := range supervisionEffects {
+				if effect.kind != supervisorDeliverTerminal {
 					continue
 				}
-				activeLaunch, found := activeLaunches[action.generation]
+				activeLaunch, found := activeLaunches[effect.generation]
 				if !found {
 					return simulationReplayFailure(
 						trace, simulationReplayCausalityFailure,
@@ -779,7 +779,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				terminal := publicTerminal(
-					action.terminal, func(supervisorOutputRef) string { return "" }, nil, action.runtimeKind,
+					effect.terminal.production(), func(supervisorOutputRef) string { return "" }, nil, effect.runtimeKind,
 				)
 				receipt, found := terminalReceipts[activeLaunch.generation]
 				if !found {
@@ -794,15 +794,15 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					terminal: terminal, receipt: campaignReceiptValue(receipt),
 				}
 				pendingDeliveries[simulationCausalSource{
-					kind: supervisionActionSource, identity: uint64(action.token),
+					kind: supervisionActionSource, identity: uint64(effect.token),
 				}] = append(pendingDeliveries[simulationCausalSource{
-					kind: supervisionActionSource, identity: uint64(action.token),
+					kind: supervisionActionSource, identity: uint64(effect.token),
 				}], terminalEvent)
 				delivered = terminalEvent
 			}
 			if record.supervisorEvent.kind == supervisorEmergencySettlementCompleted {
-				deliverAt := slices.IndexFunc(actions, func(action supervisorAction) bool {
-					return action.kind == supervisorDeliverEmergencySettlement
+				deliverAt := slices.IndexFunc(supervisionEffects, func(effect supervisionEffect) bool {
+					return effect.kind == supervisorDeliverEmergencySettlement
 				})
 				candidates := pendingDeliveries[record.source]
 				settlementAt := slices.IndexFunc(candidates, func(candidate campaignEventPayload) bool {
@@ -819,7 +819,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				settlement := candidates[settlementAt]
 				pendingDeliveries[record.source] = slices.Delete(candidates, settlementAt, settlementAt+1)
 				source := simulationCausalSource{
-					kind: supervisionActionSource, identity: uint64(actions[deliverAt].token),
+					kind: supervisionActionSource, identity: uint64(supervisionEffects[deliverAt].token),
 				}
 				pendingDeliveries[source] = append(pendingDeliveries[source], settlement)
 			}
