@@ -27,7 +27,7 @@ test.adversarial: $(pre-reqs)
 test.crosscompile: $(pre-reqs)
 	@for target in linux/amd64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 plan9/amd64; do \
 		GOOS="$${target%/*}" GOARCH="$${target#*/}" CGO_ENABLED=0 \
-			go test -exec=true ./internal/ooze; \
+			go test -exec=true ./internal/ooze/...; \
 	done
 .PHONY: test.crosscompile
 

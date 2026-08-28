@@ -300,6 +300,13 @@ func TestCIWorkflowRunsProductionSimulationContract(t *testing.T) {
 	)
 }
 
+func TestCrossCompileTargetIncludesNestedManagedPackages(t *testing.T) {
+	contents, err := os.ReadFile("makefile")
+	require.NoError(t, err)
+	makefile := strings.ReplaceAll(string(contents), "\r\n", "\n")
+	requireContract(t, makefile, "cross-compile target", "go test -exec=true ./internal/ooze/...")
+}
+
 func TestLintTargetUsesAcceptedNoConfigGate(t *testing.T) {
 	contents, err := os.ReadFile("makefile")
 	require.NoError(t, err)
