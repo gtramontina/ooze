@@ -489,10 +489,6 @@ func (machine *Machine) Apply(fact Fact) (*Machine, Transition) {
 	}
 }
 
-func (machine *Machine) snapshot() supervisorState {
-	return cloneSupervisorState(machine.state)
-}
-
 // Projection returns the machine's opaque comparable projection.
 func (machine *Machine) Projection() Projection {
 	if machine == nil {
