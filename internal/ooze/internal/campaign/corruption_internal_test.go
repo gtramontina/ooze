@@ -9,6 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type panickingCampaignFact struct{}
+
+func (panickingCampaignFact) campaignEventPayload() {}
+
+func (panickingCampaignFact) campaignEventName() string { panic("reducer defect") }
+
 func TestCampaignRejectsInjectedBaselineDeadline(t *testing.T) {
 	definition := campaignDefinition{
 		identity: "campaign-a", lineage: 11, command: []string{"test"}, profile: SerialProfile, peers: 8,
@@ -51,4 +57,22 @@ func TestCampaignInvariantProjectionOmitsPrivateCustodyAndFilesystemFacts(t *tes
 	} {
 		assert.NotContains(t, projected, private)
 	}
+}
+
+func TestMachineAcceptsPropagatesUnexpectedReducerPanics(t *testing.T) {
+	machine, _ := NewMachine(Definition{
+		Identity: "campaign-a", Lineage: 11, Command: []string{"test"}, Profile: SerialProfile, Peers: 1,
+	})
+
+	assert.PanicsWithValue(t, "reducer defect", func() {
+		machine.Accepts(Fact{payload: panickingCampaignFact{}})
+	})
+}
+
+func TestCanonicalProjectionOmitsRuntimeAuthority(t *testing.T) {
+	first := Projection{state: campaignState{runtimeToken: campaignToken{}}}
+	_, registered := processruntime.NewReplay(1).Apply(processruntime.RegisterCampaignCut(11))
+	second := Projection{state: campaignState{runtimeToken: registered.Registration().Campaign()}}
+
+	assert.True(t, first.Canonical().Equal(second.Canonical()))
 }

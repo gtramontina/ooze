@@ -119,6 +119,10 @@ func (effect Effect) Equal(other Effect) bool { return reflect.DeepEqual(effect.
 // Canonical returns a capability-free effect with logical artifact identities.
 func (effect Effect) Canonical(projection Projection) Effect {
 	value := effect.value
+	value.runtimeToken = campaignToken{}
+	value.request.campaign = campaignToken{}
+	value.grant.campaign = campaignToken{}
+	value.binding.campaign = campaignToken{}
 	identity := projection.state.definition.identity
 	if value.snapshot != "" {
 		value.snapshot = snapshotIdentity("snapshot:" + string(identity))
@@ -154,7 +158,7 @@ func (effect Effect) CompletesConfirmationQueue() bool {
 }
 
 // RuntimeCut returns the process-runtime input represented by the effect.
-func (effect Effect) RuntimeCut(definition Definition, campaign processruntime.Campaign) (processruntime.Cut, bool) {
+func (effect Effect) RuntimeCut(definition Definition) (processruntime.Cut, bool) {
 	switch effect.value.kind {
 	case campaignEffectRegister:
 		return processruntime.RegisterCampaignCut(definition.Lineage), true
@@ -174,9 +178,11 @@ func (effect Effect) RuntimeCut(definition Definition, campaign processruntime.C
 		return processruntime.CommitStartCut(processRuntimeAdmission(effect.value.grant)), true
 	case campaignEffectProposeTerminal:
 		if effect.value.fatalEpoch != 0 {
-			return processruntime.AuthorizeForcedAbortCut(campaign, uint64(effect.value.fatalEpoch)), true
+			return processruntime.AuthorizeForcedAbortCut(
+				effect.value.runtimeToken, uint64(effect.value.fatalEpoch),
+			), true
 		}
-		return processruntime.CommitTerminalCut(campaign), true
+		return processruntime.CommitTerminalCut(effect.value.runtimeToken), true
 	default:
 		return processruntime.Cut{}, false
 	}
@@ -275,6 +281,7 @@ func (projection Projection) Canonical() Projection {
 		state.artifactResidue[index] = "artifact-residue"
 	}
 	state.definition.baselineDeadline = 0
+	state.runtimeToken = campaignToken{}
 	return Projection{state: state}
 }
 
@@ -303,9 +310,6 @@ func (projection Projection) PhaseName() string {
 		return ""
 	}
 }
-
-// Campaign returns the process-runtime campaign authority.
-func (projection Projection) Campaign() processruntime.Campaign { return projection.state.runtimeToken }
 
 // Catalogue returns the stable mutant identities.
 func (projection Projection) Catalogue() []string {
@@ -728,14 +732,15 @@ func (machine Machine) Projection() Projection {
 	return Projection{state: machine.state.clone()}
 }
 
-// Campaign returns the process-runtime campaign authority.
-func (machine Machine) Campaign() processruntime.Campaign { return machine.state.runtimeToken }
-
 // Accepts reports whether a fact is legal at the current campaign state.
 func (machine Machine) Accepts(fact Fact) (accepted bool) {
 	defer func() {
-		if recover() != nil {
-			accepted = false
+		if recovered := recover(); recovered != nil {
+			if _, rejected := recovered.(Violation); rejected {
+				accepted = false
+				return
+			}
+			panic(recovered)
 		}
 	}()
 	_, _ = machine.Apply(fact)

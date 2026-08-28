@@ -89,6 +89,7 @@ type campaignEffect struct {
 	binding                    campaignBarrierBinding
 	terminal                   campaignTerminalCandidate
 	fatalEpoch                 fatalEpochID
+	runtimeToken               campaignToken
 	attemptKind                campaignAttemptKind
 	completesConfirmationQueue bool
 	spec                       supervision.Spec
@@ -1650,7 +1651,9 @@ func (state campaignState) onRuntimeEmergencySettled(
 }
 
 func (state campaignState) proposeTerminal() (campaignState, []campaignEffect) {
-	effect := campaignEffect{kind: campaignEffectProposeTerminal, terminal: state.candidate}
+	effect := campaignEffect{
+		kind: campaignEffectProposeTerminal, terminal: state.candidate, runtimeToken: state.runtimeToken,
+	}
 	if state.drain.kind == campaignDrainRuntimeEmergency {
 		effect.fatalEpoch = state.drain.epoch
 	}

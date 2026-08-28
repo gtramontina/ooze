@@ -300,6 +300,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 	activeLaunches := make(map[attemptGeneration]campaignmodule.Effect)
 	terminalReceipts := make(map[attemptGeneration]observationResult)
 	actionKinds := make(map[supervision.ActionToken]supervision.EffectKind)
+	var runtimeCampaign processruntime.Campaign
 	barrierAt := 0
 	for index, record := range trace.records {
 		if record.sequence != uint64(index+1) {
@@ -334,11 +335,12 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 						"registration diverged at record %d", index)
 				}
 				registered := record.runtimeCut.Result().Registration()
+				runtimeCampaign = registered.Campaign()
 				delivered = campaignmodule.Registered(registered)
 			case processruntime.RequestAdmissionOperation:
 				requestEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectRequestAdmission &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -367,7 +369,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.CancelAdmissionOperation:
 				cancelEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectCancelAdmission &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -387,7 +389,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.ReturnGrantOperation:
 				returnEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectReturnAdmission &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -407,7 +409,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.BindConfirmationBarrierOperation:
 				bindingEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectBindConfirmationBarrier &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -425,7 +427,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 				processed := record.runtimeCut.Result().Barrier()
 				delivered = campaignmodule.ConfirmationBarrierBound(bindingEffect, processed)
 			case processruntime.CompleteConfirmationQueueOperation:
-				if !record.runtimeCut.Matches(processruntime.CompleteConfirmationQueueCut(campaign.Campaign())) {
+				if !record.runtimeCut.Matches(processruntime.CompleteConfirmationQueueCut(runtimeCampaign)) {
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"confirmation queue input diverged at record %d", index)
 				}
@@ -453,7 +455,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.CommitStartOperation:
 				startEffect, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectRequestStartCommitment &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -544,7 +546,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 					)
 				}
 				effects = remaining
-				if !record.runtimeCut.Matches(processruntime.CommitTerminalCut(campaign.Campaign())) {
+				if !record.runtimeCut.Matches(processruntime.CommitTerminalCut(runtimeCampaign)) {
 					return simulationReplayFailure(trace, simulationReplayCausalityFailure,
 						"terminal input diverged at record %d", index)
 				}
@@ -568,7 +570,7 @@ func simulationReplayLegal(trace simulationTrace, verifyCommutation bool) (resul
 			case processruntime.AuthorizeForcedAbortOperation:
 				_, remaining, ok := simulationTakeEffect(effects, func(effect campaignmodule.Effect) bool {
 					return effect.Kind() == campaignEffectProposeTerminal &&
-						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, campaign.Campaign(), record.runtimeCut)
+						simulationEffectMatchesRuntimeCut(effect, trace.definition.campaign, record.runtimeCut)
 				})
 				if !ok {
 					return simulationReplayFailure(
@@ -1601,10 +1603,9 @@ func simulationEffectEnablesExternalFact(effect campaignmodule.Effect, payload c
 func simulationEffectMatchesRuntimeCut(
 	effect campaignmodule.Effect,
 	definition campaignmodule.Definition,
-	campaign processruntime.Campaign,
 	recorded processruntime.RecordedCut,
 ) bool {
-	cut, ok := effect.RuntimeCut(definition, campaign)
+	cut, ok := effect.RuntimeCut(definition)
 	return ok && recorded.Matches(cut)
 }
 

@@ -67,14 +67,14 @@ func TestMachineOwnsBaselinePolicyAndEarlierProjections(t *testing.T) {
 		machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
 		require.Equal(t, []campaign.EffectKind{campaign.RequestAdmissionEffect}, transition.EffectKinds())
 		request := transition.Effects()[0]
-		cut, ok := request.RuntimeCut(definition, machine.Campaign())
+		cut, ok := request.RuntimeCut(definition)
 		require.True(t, ok)
 		runtime, admitted := runtime.Apply(cut)
 		require.Len(t, admitted.Admission().Deliveries(), 1)
 		machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 		require.Equal(t, []campaign.EffectKind{campaign.RequestStartCommitmentEffect}, transition.EffectKinds())
 		start := transition.Effects()[0]
-		cut, ok = start.RuntimeCut(definition, machine.Campaign())
+		cut, ok = start.RuntimeCut(definition)
 		require.True(t, ok)
 		_, started := runtime.Apply(cut)
 		machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))
@@ -135,12 +135,12 @@ func TestMachineRetainsRecordedMutationDeadline(t *testing.T) {
 	materialize := transition.Effects()[0]
 	machine, transition = machine.Apply(campaign.WorkspaceMaterialized(materialize, "workspace-a"))
 	request := transition.Effects()[0]
-	cut, ok := request.RuntimeCut(definition, machine.Campaign())
+	cut, ok := request.RuntimeCut(definition)
 	require.True(t, ok)
 	runtime, admitted := runtime.Apply(cut)
 	machine, transition = machine.Apply(campaign.AdmissionGranted(request, admitted.Admission().Deliveries()[0]))
 	start := transition.Effects()[0]
-	cut, ok = start.RuntimeCut(definition, machine.Campaign())
+	cut, ok = start.RuntimeCut(definition)
 	require.True(t, ok)
 	runtime, started := runtime.Apply(cut)
 	machine, transition = machine.Apply(campaign.StartCommitted(start, started.Start()))

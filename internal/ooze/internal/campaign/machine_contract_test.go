@@ -12,11 +12,12 @@ import (
 )
 
 type campaignMachineHarness struct {
-	t          *testing.T
-	definition campaign.Definition
-	machine    campaign.Machine
-	runtime    processruntime.Replay
-	effects    []campaign.Effect
+	t               *testing.T
+	definition      campaign.Definition
+	machine         campaign.Machine
+	runtime         processruntime.Replay
+	runtimeCampaign processruntime.Campaign
+	effects         []campaign.Effect
 }
 
 type launchedMachineAttempt struct {
@@ -41,6 +42,7 @@ func newCampaignMachineHarness(
 		effects: transition.Effects(),
 	}
 	registered := harness.applyRuntime(harness.effects[0]).Registration()
+	harness.runtimeCampaign = registered.Campaign()
 	harness.advance(campaign.Registered(registered))
 	harness.advance(campaign.SnapshotEstablished("snapshot-a"))
 	harness.advance(campaign.CatalogueDiscovered("snapshot-a", mutants))
@@ -76,7 +78,7 @@ func (harness *campaignMachineHarness) advance(fact campaign.Fact) []campaign.Ef
 
 func (harness *campaignMachineHarness) applyRuntime(effect campaign.Effect) processruntime.ReplayResult {
 	harness.t.Helper()
-	cut, ok := effect.RuntimeCut(harness.definition, harness.machine.Campaign())
+	cut, ok := effect.RuntimeCut(harness.definition)
 	require.True(harness.t, ok)
 	var result processruntime.ReplayResult
 	harness.runtime, result = harness.runtime.Apply(cut)
@@ -136,7 +138,7 @@ func (harness *campaignMachineHarness) settle(
 	receipt := harness.applyCut(processruntime.ObserveAttemptCut(attempt.generation, observation)).Receipt()
 	fact := campaign.AttemptTerminal(attempt.effect, terminal, receipt, resolved)
 	if attempt.effect.AttemptRole() == campaign.ConfirmationAttempt && receipt.ConfirmationObserved() {
-		queue := harness.applyCut(processruntime.CompleteConfirmationQueueCut(harness.machine.Campaign())).Queue()
+		queue := harness.applyCut(processruntime.CompleteConfirmationQueueCut(harness.runtimeCampaign)).Queue()
 		fact = fact.WithConfirmationQueueCompleted(queue)
 	}
 	return harness.advance(fact)

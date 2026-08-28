@@ -247,7 +247,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	}
 	switch move.effect.Kind() {
 	case campaignEffectRegister:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.campaign.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		registered := engine.applyRuntime(cut).Registration()
 		engine.registration = registered
 		sequence := engine.append(simulationRecord{
@@ -267,7 +267,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			move.effect, fmt.Sprintf("workspace-%d", engine.attempts),
 		))
 	case campaignEffectRequestAdmission:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.campaign.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Admission()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -283,7 +283,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			engine.enqueueDelivery(sequence, campaignmodule.AdmissionGranted(move.effect, grant))
 		}
 	case campaignEffectCancelAdmission:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.campaign.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Admission()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -291,7 +291,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 		engine.enqueueDelivery(sequence, campaignmodule.AdmissionCancelled(move.effect, processed))
 	case campaignEffectRequestStartCommitment:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.campaign.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Start()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -299,7 +299,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 		engine.enqueueDelivery(sequence, campaignmodule.StartCommitted(move.effect, processed))
 	case campaignEffectReturnAdmission:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.campaign.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		if !engine.runtime.Accepts(cut) {
 			return fmt.Errorf("simulation grant return has no returnable runtime authority")
 		}
@@ -310,7 +310,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 		})
 		engine.enqueueDelivery(sequence, campaignmodule.GrantReturnAcknowledged(move.effect, processed))
 	case campaignEffectBindConfirmationBarrier:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.campaign.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Barrier()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
@@ -346,7 +346,7 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 	case campaignEffectReleaseSnapshot:
 		return engine.applyCampaign(move.source, campaignmodule.ResourceSettled(campaignmodule.SnapshotResource, move.effect.Snapshot()))
 	case campaignEffectProposeTerminal:
-		cut, _ := move.effect.RuntimeCut(engine.definition.campaign, engine.registration.Campaign())
+		cut, _ := move.effect.RuntimeCut(engine.definition.campaign)
 		processed := engine.applyRuntime(cut).Terminal()
 		sequence := engine.append(simulationRecord{
 			authority: simulationRuntimeAuthority, source: move.source,
