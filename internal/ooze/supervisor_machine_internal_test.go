@@ -179,3 +179,72 @@ func TestSupervisorMachineProducesLaunchFactsFromItsOwnEffect(t *testing.T) {
 		})
 	}
 }
+
+func TestSupervisorMachineProducesRunningFactsFromItsOwnEffects(t *testing.T) {
+	machine, effects := runningSupervisorMachine(t, AutomaticProfile)
+	wait := effectOfKind(t, effects, supervisorWaitRoot)
+	sample := effectOfKind(t, effects, supervisorSampleRunning)
+
+	tests := []struct {
+		name    string
+		outcome supervisionRunningOutcome
+		kind    supervisorRunningFactKind
+	}{
+		{name: "passed", outcome: supervisionRunningPassed, kind: supervisorRunningRootExited},
+		{name: "failed", outcome: supervisionRunningFailed, kind: supervisorRunningRootExited},
+		{name: "deadline", outcome: supervisionRunningAtDeadline},
+		{name: "after deadline", outcome: supervisionRunningAfterDeadline, kind: supervisorRunningRootExited},
+		{name: "fuse", outcome: supervisionRunningFuse, kind: supervisorRunningFuseObserved},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fact, ok := machine.RunningFact(wait, sample, test.outcome)
+
+			require.True(t, ok)
+			require.NotNil(t, fact.running)
+			if test.kind != 0 {
+				require.Len(t, fact.running.facts, 1)
+				assert.Equal(t, test.kind, fact.running.facts[0].kind)
+			}
+		})
+	}
+}
+
+func TestSupervisorMachineOwnsStopAdmission(t *testing.T) {
+	machine, _ := runningSupervisorMachine(t, AutomaticProfile)
+
+	fact, disposition := machine.StopFact(1)
+
+	assert.Equal(t, supervisionStopReady, disposition)
+	assert.Equal(t, supervisorRunningObserved, fact.kind)
+	require.NotNil(t, fact.running)
+	require.Len(t, fact.running.facts, 1)
+	assert.Equal(t, supervisorRunningStopRequested, fact.running.facts[0].kind)
+}
+
+func runningSupervisorMachine(t *testing.T, profile Profile) (*supervisorMachine, []supervisionEffect) {
+	t.Helper()
+	registeredAt := time.Unix(100, 0)
+	machine, transition := newSupervisorMachine().Apply(supervisionProspectiveRegistration(
+		1, "mutant-1", registeredAt, registeredAt.Add(time.Second), profile, time.Minute,
+	))
+	launch := effectOfKind(t, transition.Effects(), supervisorLaunchNative)
+	facts, ok := machine.LaunchFacts(launch, supervisionLaunchReleasedBeforeBoundary)
+	require.True(t, ok)
+	require.Len(t, facts, 1)
+	machine, transition = machine.Apply(facts[0])
+
+	return machine, transition.Effects()
+}
+
+func effectOfKind(t *testing.T, effects []supervisionEffect, kind supervisorActionKind) supervisionEffect {
+	t.Helper()
+	for _, effect := range effects {
+		if effect.kind == kind {
+			return effect
+		}
+	}
+	require.Failf(t, "effect not found", "kind %d in %v", kind, effects)
+
+	return supervisionEffect{}
+}

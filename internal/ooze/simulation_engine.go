@@ -47,13 +47,13 @@ const (
 	simulationLaunchProvenNotReleased = supervisionLaunchProvenNotReleased
 )
 
-type simulationRunningVariant uint8
+type simulationRunningVariant = supervisionRunningOutcome
 
 const (
-	simulationRunningFailed simulationRunningVariant = iota + 1
-	simulationRunningAtDeadline
-	simulationRunningFuse
-	simulationRunningAfterDeadline
+	simulationRunningFailed        = supervisionRunningFailed
+	simulationRunningAtDeadline    = supervisionRunningAtDeadline
+	simulationRunningFuse          = supervisionRunningFuse
+	simulationRunningAfterDeadline = supervisionRunningAfterDeadline
 )
 
 type simulationDrainVariant uint8
@@ -344,34 +344,22 @@ func (engine *simulationEngine) apply(move simulationEngineMove) error {
 			profile: move.effect.spec.Profile, commandDeadline: move.effect.spec.Deadline,
 		})
 	case campaignEffectStopAttempt:
-		attempt, found := engine.machine.Attempt(move.effect.generation)
-		if !found {
+		fact, disposition := engine.machine.StopFact(move.effect.generation)
+		switch disposition {
+		case supervisionStopAbsent:
 			if _, registered := engine.launches[move.effect.generation]; registered {
 				return nil
 			}
-
 			return fmt.Errorf("simulation stop effect has no registered generation %d", move.effect.generation)
-		}
-		if supervisionStopResolved(attempt.phase) {
+		case supervisionStopResolved:
 			return nil
+		case supervisionStopNotReady:
+			return fmt.Errorf("simulation stop effect reached supervision before stop admission sealed")
+		case supervisionStopReady:
+			return engine.applySupervisorFact(move.source, fact)
+		default:
+			return fmt.Errorf("simulation stop disposition %d is invalid", disposition)
 		}
-		if attempt.phase != supervisorRunning && attempt.phase != supervisorIntentLatched &&
-			attempt.phase != supervisorEmergencyDraining {
-			return fmt.Errorf("simulation stop effect reached phase %d before stop admission sealed", attempt.phase)
-		}
-		at := attempt.lastEventAt.production().Add(time.Nanosecond)
-		drainBy := at.Add(5 * time.Second)
-		return engine.applySupervisor(move.source, supervisorEvent{
-			kind: supervisorRunningObserved, generation: move.effect.generation, at: at, drainBy: drainBy,
-			running: &supervisorRunningBundle{
-				generation: move.effect.generation,
-				waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
-				facts: []supervisorRunningFact{{
-					generation: move.effect.generation, kind: supervisorRunningStopRequested,
-					at: at, stop: StopRequest{At: at, DrainBy: drainBy},
-				}},
-			},
-		})
 	case campaignEffectReleaseWorkspace:
 		return engine.applyCampaign(move.source, resourceSettledEvent{
 			kind: campaignResourceWorkspace, identity: move.effect.workspace,
@@ -768,7 +756,6 @@ func (engine *simulationEngine) applySupervisorFact(
 }
 
 func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) error {
-	attempt := supervisionAttempt(engine.machine.Projection(), move.action.generation)
 	var wait, sample supervisionEffect
 	for index := 0; index < len(engine.pending); {
 		candidate := engine.pending[index]
@@ -793,48 +780,12 @@ func (engine *simulationEngine) applyHealthyRunning(move simulationEngineMove) e
 	if wait.token == 0 {
 		return fmt.Errorf("simulation healthy running move has no wait action")
 	}
-	observedAt := attempt.startedAt.production().Add(time.Second)
-	drainBy := observedAt.Add(5 * time.Second)
-	bundle := &supervisorRunningBundle{
-		generation: move.action.generation, sampleAction: sample.token, waitAction: wait.token,
+	fact, ready := engine.machine.RunningFact(wait, sample, move.variant.running)
+	if !ready {
+		return fmt.Errorf("simulation running outcome %d is not enabled", move.variant.running)
 	}
-	switch move.variant.running {
-	case 0, simulationRunningFailed:
-		exitCode := 0
-		if move.variant.running == simulationRunningFailed {
-			exitCode = 1
-		}
-		bundle.facts = []supervisorRunningFact{{
-			generation: move.action.generation, action: wait.token,
-			kind: supervisorRunningRootExited, at: observedAt, exitCode: exitCode,
-		}}
-	case simulationRunningAtDeadline:
-		observedAt = attempt.deadlineAt.production()
-		drainBy = observedAt.Add(5 * time.Second)
-		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: observedAt}
-	case simulationRunningFuse:
-		if sample.token == 0 {
-			return fmt.Errorf("simulation fuse move has no running sample action")
-		}
-		bundle.facts = []supervisorRunningFact{{
-			generation: move.action.generation, action: sample.token,
-			kind: supervisorRunningFuseObserved, at: observedAt, rootLive: true, live: supervisorFuseCeiling + 1,
-		}}
-	case simulationRunningAfterDeadline:
-		observedAt = attempt.deadlineAt.production().Add(time.Nanosecond)
-		drainBy = attempt.deadlineAt.production().Add(5 * time.Second)
-		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt.production()}
-		bundle.facts = []supervisorRunningFact{{
-			generation: move.action.generation, action: wait.token,
-			kind: supervisorRunningRootExited, at: observedAt,
-		}}
-	default:
-		return fmt.Errorf("simulation running variant %d is invalid", move.variant.running)
-	}
-	return engine.applySupervisor(move.source, supervisorEvent{
-		kind: supervisorRunningObserved, generation: move.action.generation, at: observedAt, drainBy: drainBy,
-		running: bundle,
-	})
+
+	return engine.applySupervisorFact(move.source, fact)
 }
 
 func (engine *simulationEngine) append(record simulationRecord) uint64 {
@@ -1000,8 +951,11 @@ func (engine simulationEngine) enabledMoves() []simulationEngineMove {
 				alternative.variant.running = variant
 				moves = append(moves, alternative)
 			}
-			attempt := supervisionAttempt(engine.machine.Projection(), move.action.generation)
-			if attempt.profile == AutomaticProfile {
+			if sample, found := engine.pendingSupervisorAction(move.action.generation, supervisorSampleRunning); found {
+				_, supportsFuse := engine.machine.RunningFact(move.action, sample, supervisionRunningFuse)
+				if !supportsFuse {
+					continue
+				}
 				fuse := move
 				fuse.variant.running = simulationRunningFuse
 				moves = append(moves, fuse)
@@ -1023,9 +977,9 @@ func (engine simulationEngine) supervisorEmergencyReady(at time.Time) bool {
 }
 
 func (engine simulationEngine) supervisorAcceptsStop(generation attemptGeneration) bool {
-	if attempt, found := engine.machine.Attempt(generation); found {
-		return attempt.phase == supervisorRunning || attempt.phase == supervisorIntentLatched ||
-			attempt.phase == supervisorEmergencyDraining || supervisionStopResolved(attempt.phase)
+	_, disposition := engine.machine.StopFact(generation)
+	if disposition != supervisionStopAbsent {
+		return disposition == supervisionStopReady || disposition == supervisionStopResolved
 	}
 
 	_, registered := engine.launches[generation]
@@ -1033,14 +987,18 @@ func (engine simulationEngine) supervisorAcceptsStop(generation attemptGeneratio
 	return registered
 }
 
-func supervisionStopResolved(phase supervisorAttemptPhase) bool {
-	switch phase {
-	case supervisorReleasingDomain, supervisorTransferringResidualCustody,
-		supervisorSettlingRuntime, supervisorAwaitingEmergencySettlement:
-		return true
-	default:
-		return false
+func (engine simulationEngine) pendingSupervisorAction(
+	generation attemptGeneration,
+	kind supervisorActionKind,
+) (supervisionEffect, bool) {
+	for _, move := range engine.pending {
+		if move.source.kind == supervisionActionSource && move.action.generation == generation &&
+			move.action.kind == kind {
+			return move.action, true
+		}
 	}
+
+	return supervisionEffect{}, false
 }
 
 func (engine simulationEngine) firstSupervisorAction(generation attemptGeneration) supervisorActionToken {

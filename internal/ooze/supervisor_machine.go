@@ -44,6 +44,25 @@ const (
 	supervisionLaunchProvenNotReleased
 )
 
+type supervisionRunningOutcome uint8
+
+const (
+	supervisionRunningPassed supervisionRunningOutcome = iota
+	supervisionRunningFailed
+	supervisionRunningAtDeadline
+	supervisionRunningFuse
+	supervisionRunningAfterDeadline
+)
+
+type supervisionStopDisposition uint8
+
+const (
+	supervisionStopAbsent supervisionStopDisposition = iota
+	supervisionStopNotReady
+	supervisionStopReady
+	supervisionStopResolved
+)
+
 func newSupervisorMachine() *supervisorMachine {
 	return &supervisorMachine{}
 }
@@ -133,6 +152,103 @@ func (machine *supervisorMachine) LaunchFacts(
 	}))
 
 	return facts, true
+}
+
+func (machine *supervisorMachine) RunningFact(
+	wait supervisionEffect,
+	sample supervisionEffect,
+	outcome supervisionRunningOutcome,
+) (supervisionFact, bool) {
+	if machine == nil || wait.kind != supervisorWaitRoot {
+		return supervisionFact{}, false
+	}
+	index := machine.state.attemptIndex(wait.generation)
+	if index < 0 {
+		return supervisionFact{}, false
+	}
+	attempt := machine.state.attempts[index]
+	if attempt.waitAction != wait.token ||
+		(sample.kind != 0 && (sample.kind != supervisorSampleRunning || sample.generation != wait.generation ||
+			attempt.sampleAction != sample.token)) {
+		return supervisionFact{}, false
+	}
+	observedAt := attempt.startedAt.Add(time.Second)
+	drainBy := observedAt.Add(5 * time.Second)
+	bundle := &supervisorRunningBundle{
+		generation: wait.generation, sampleAction: sample.token, waitAction: wait.token,
+	}
+	switch outcome {
+	case supervisionRunningPassed, supervisionRunningFailed:
+		exitCode := 0
+		if outcome == supervisionRunningFailed {
+			exitCode = 1
+		}
+		bundle.facts = []supervisorRunningFact{{
+			generation: wait.generation, action: wait.token,
+			kind: supervisorRunningRootExited, at: observedAt, exitCode: exitCode,
+		}}
+	case supervisionRunningAtDeadline:
+		observedAt = attempt.deadlineAt
+		drainBy = observedAt.Add(5 * time.Second)
+		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: observedAt}
+	case supervisionRunningFuse:
+		if attempt.profile != AutomaticProfile || sample.kind != supervisorSampleRunning {
+			return supervisionFact{}, false
+		}
+		bundle.facts = []supervisorRunningFact{{
+			generation: wait.generation, action: sample.token,
+			kind: supervisorRunningFuseObserved, at: observedAt, rootLive: true, live: supervisorFuseCeiling + 1,
+		}}
+	case supervisionRunningAfterDeadline:
+		observedAt = attempt.deadlineAt.Add(time.Nanosecond)
+		drainBy = attempt.deadlineAt.Add(5 * time.Second)
+		bundle.exitRecheck = supervisorExitRecheck{performed: true, at: attempt.deadlineAt}
+		bundle.facts = []supervisorRunningFact{{
+			generation: wait.generation, action: wait.token,
+			kind: supervisorRunningRootExited, at: observedAt,
+		}}
+	default:
+		return supervisionFact{}, false
+	}
+
+	return supervisionFactFromEvent(supervisorEvent{
+		kind: supervisorRunningObserved, generation: wait.generation, at: observedAt,
+		drainBy: drainBy, running: bundle,
+	}), true
+}
+
+func (machine *supervisorMachine) StopFact(generation attemptGeneration) (
+	supervisionFact,
+	supervisionStopDisposition,
+) {
+	if machine == nil {
+		return supervisionFact{}, supervisionStopAbsent
+	}
+	index := machine.state.attemptIndex(generation)
+	if index < 0 {
+		return supervisionFact{}, supervisionStopAbsent
+	}
+	attempt := machine.state.attempts[index]
+	switch attempt.phase {
+	case supervisorRunning, supervisorIntentLatched, supervisorEmergencyDraining:
+		at := attempt.lastEventAt.Add(time.Nanosecond)
+		drainBy := at.Add(5 * time.Second)
+		return supervisionFactFromEvent(supervisorEvent{
+			kind: supervisorRunningObserved, generation: generation, at: at, drainBy: drainBy,
+			running: &supervisorRunningBundle{
+				generation: generation, waitAction: attempt.waitAction, sampleAction: attempt.sampleAction,
+				facts: []supervisorRunningFact{{
+					generation: generation, kind: supervisorRunningStopRequested,
+					at: at, stop: StopRequest{At: at, DrainBy: drainBy},
+				}},
+			},
+		}), supervisionStopReady
+	case supervisorReleasingDomain, supervisorTransferringResidualCustody,
+		supervisorSettlingRuntime, supervisorAwaitingEmergencySettlement:
+		return supervisionFact{}, supervisionStopResolved
+	default:
+		return supervisionFact{}, supervisionStopNotReady
+	}
 }
 
 func (machine *supervisorMachine) EmergencyActive() bool {
