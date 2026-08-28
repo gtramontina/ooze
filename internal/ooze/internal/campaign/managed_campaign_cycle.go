@@ -44,10 +44,9 @@ func proposesTerminal(effects []campaignEffect) bool {
 }
 
 func (runner *managedCampaignRunner) advance(payload campaignEventPayload) []campaignEffect {
-	leave := func() {}
 	reservation := uint64(0)
 	if runner.conformance != nil {
-		leave = runner.conformance.Enter()
+		leave := runner.conformance.Enter()
 		defer leave()
 		reservation = runner.conformance.Reserve()
 	}
