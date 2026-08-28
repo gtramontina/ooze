@@ -118,6 +118,40 @@ func TestSupervisionPublicLifecycle(t *testing.T) {
 		assert.NotZero(t, settlement.Epoch())
 	})
 
+	t.Run("emergency during prospective launch waits for exact no-release closure", func(t *testing.T) {
+		runtime, driver, boundary, start, spec := supervisionContractAttempt(t)
+		boundary.mutex.Lock()
+		boundary.launchGate = make(chan struct{})
+		boundary.launchNotReleased = true
+		boundary.mutex.Unlock()
+		launched := make(chan supervision.ObservedLaunch, 1)
+		go func() { launched <- driver.Launch(start, spec) }()
+		<-boundary.prepared
+		closure := runtime.Close("prospective launch emergency")
+		require.NotZero(t, closure.Epoch())
+		at := boundary.Now().Add(time.Nanosecond)
+		type emergencyResult struct {
+			sweep      supervision.SweepResult
+			settlement processruntime.EmergencySettlement
+		}
+		emergency := make(chan emergencyResult, 1)
+		go func() {
+			sweep, settlement := driver.EmergencyDrain(supervision.EmergencyRequest{
+				At: at, DrainBy: at.Add(time.Second),
+			})
+			emergency <- emergencyResult{sweep: sweep, settlement: settlement}
+		}()
+
+		observed := <-launched
+		_, unconfirmed := observed.Result().(supervision.LaunchUnconfirmed)
+		assert.True(t, unconfirmed)
+		close(boundary.launchGate)
+		result := <-emergency
+		_, drained := result.sweep.(supervision.SweepDrained)
+		assert.True(t, drained)
+		assert.NotZero(t, result.settlement.Epoch())
+	})
+
 	t.Run("residual custody reaches wait and emergency sweep", func(t *testing.T) {
 		runtime, driver, boundary, start, spec := supervisionContractAttempt(t)
 		defer close(boundary.wait)
@@ -295,6 +329,7 @@ type supervisionBoundary struct {
 	awaitedCommand    chan time.Time
 	samples           chan time.Time
 	live              uint64
+	prepared          chan struct{}
 }
 
 func (boundary *supervisionBoundary) Now() time.Time {
@@ -351,7 +386,12 @@ func (boundary *supervisionBoundary) SampleTicks() (<-chan time.Time, func()) {
 	return ticker.C, ticker.Stop
 }
 
-func (*supervisionBoundary) Prepare(supervision.Generation, supervision.Spec) {}
+func (boundary *supervisionBoundary) Prepare(supervision.Generation, supervision.Spec) {
+	select {
+	case boundary.prepared <- struct{}{}:
+	default:
+	}
+}
 
 func (boundary *supervisionBoundary) Execute(
 	effect supervision.Effect,
@@ -504,6 +544,7 @@ func supervisionContractAttemptWithProfile(
 	boundary := &supervisionBoundary{
 		wait: make(chan struct{}), awaitedLaunch: make(chan time.Time, 1),
 		awaitedCommand: make(chan time.Time, 1), diagnostics: make(map[uint64]error),
+		prepared: make(chan struct{}, 1),
 	}
 	driver, err := supervision.NewDriver(runtime, 2*time.Second, 3*time.Second, boundary)
 	require.NoError(t, err)
