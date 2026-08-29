@@ -81,6 +81,89 @@ func TestSupervisorDriverDiscardsReservationWhenEmergencyPrecedesStartCommitment
 	assert.Zero(t, cell.InstalledGeneration())
 }
 
+func TestSupervisorDriverEmergencyConsumesSnapshottedLateLaunchCompletion(t *testing.T) {
+	registeredAt := time.Unix(6_750, 0)
+	launchBy := registeredAt.Add(time.Second)
+	completionAt := launchBy.Add(time.Nanosecond)
+	emergencyAt := completionAt.Add(time.Nanosecond)
+	drainBy := emergencyAt.Add(5 * time.Second)
+	shell := newProcessRuntimeShell(1)
+	campaign := registerCampaignForTest(shell, campaignProvenance{lineage: 88})
+	requested := requestAdmissionForTest(shell, admissionRequest{
+		campaign: campaign.token, attempt: "snapshotted-late-completion", class: serialPrimaryAdmission,
+	})
+	grant := <-requested.delivery
+	launchBoundary := make(chan time.Time, 1)
+	awaitedLaunch := make(chan time.Time, 1)
+	launchGate := make(chan struct{})
+	driver := newSupervisorDriver(supervisorDriverConstruction{
+		runtime: shell, now: func() time.Time { return registeredAt },
+		launchBoundary: func(at time.Time) <-chan time.Time {
+			awaitedLaunch <- at
+
+			return launchBoundary
+		},
+		launchProgress: time.Second, drainEpoch: 5 * time.Second,
+		execute: func(action supervisorAction) *supervisorEvent {
+			if action.kind != supervisorLaunchNative {
+				return nil
+			}
+			<-launchGate
+			completion := supervisorLaunchCompletion{
+				generation: action.generation, action: action.token, at: completionAt,
+				kind: supervisorLaunchProvenNotReleased, failure: LaunchFailed,
+			}
+
+			return &supervisorEvent{
+				kind: supervisorLaunchCompleted, generation: action.generation,
+				at: completionAt, completion: &completion,
+			}
+		},
+		readOutput: func(supervisorOutputRef) string { return "" },
+	})
+	spec := Spec{
+		Attempt: "snapshotted-late-completion", Command: []string{"late-no-release"}, Dir: "/tmp",
+		Profile: SerialProfile, Deadline: 10 * time.Second,
+	}
+	cell := processruntime.NewStartCell()
+	driver.reserveLaunch(cell, spec)
+	prepared := startCommittedForTest(shell, grant, startInstallation{grant: grant, cell: cell})
+	type stagedLaunch struct {
+		actions []supervisorAction
+	}
+	staged := make(chan stagedLaunch, 1)
+	go func() {
+		_, actions, _, _ := driver.stageLaunch(prepared.start, spec)
+		staged <- stagedLaunch{actions: actions}
+	}()
+
+	assert.Equal(t, launchBy, <-awaitedLaunch)
+	launchBoundary <- launchBy
+	stage := <-staged
+	for _, action := range stage.actions {
+		driver.run(action)
+	}
+	close(launchGate)
+	require.Eventually(t, func() bool {
+		driver.mutex.Lock()
+		defer driver.mutex.Unlock()
+
+		return driver.requireAttempt(prepared.start.Generation()).launchEvent != nil
+	}, time.Second, time.Millisecond)
+	closeRuntimeForTest(shell, runtimeFatalCause("snapshotted late launch completion"))
+
+	settlement := driver.emergencyDrain(EmergencyRequest{At: emergencyAt, DrainBy: drainBy})
+	_, drained := settlement.(SweepDrained)
+	require.True(t, drained)
+	driver.mutex.Lock()
+	attempt := driver.requireAttempt(prepared.start.Generation())
+	consumed := attempt.launchConsumed
+	publication := attempt.launchPublished
+	driver.mutex.Unlock()
+	assert.True(t, consumed)
+	close(publication)
+}
+
 func TestSupervisorDriverReleasesRecorderOwnerCutBeforeNativeAction(t *testing.T) {
 	recorder := newSimulationRecorder()
 	fixture := newRunningReducerFixture(t, SerialProfile)

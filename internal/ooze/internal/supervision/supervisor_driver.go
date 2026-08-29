@@ -549,15 +549,18 @@ func (driver *driver) executeLaunch(action supervisorAction) {
 	driver.mutex.Unlock()
 
 	<-published
+	leaveRecorder := driver.ownerObserver().Enter()
 	driver.mutex.Lock()
 	attempt = driver.requireAttempt(action.generation)
-	consumed := attempt.launchConsumed
-	resolved := attempt.launchResolved
-	driver.mutex.Unlock()
-	if consumed {
+	if attempt.launchConsumed {
+		driver.mutex.Unlock()
+		leaveRecorder()
+
 		return
 	}
-	if !resolved {
+	if !attempt.launchResolved {
+		driver.mutex.Unlock()
+		leaveRecorder()
 		invariant(supervisorDriverOperation, "late launch completion preceded boundary resolution")
 	}
 	late := *event
@@ -565,7 +568,15 @@ func (driver *driver) executeLaunch(action supervisorAction) {
 		event.completion.kind == supervisorLaunchReleaseUnconfirmed {
 		late.drainBy = event.at.Add(driver.drainEpoch)
 	}
-	driver.apply(late)
+	attempt.launchConsumed = true
+	actions := driver.reduceLocked(late)
+	driver.mutex.Unlock()
+	driver.publishOwnerCuts()
+	leaveRecorder()
+	for _, action := range actions {
+		driver.run(action)
+	}
+	driver.startEligibleMonitors()
 }
 
 func launchObservation(completion *supervisorLaunchCompletion) processruntime.Observation {
@@ -1439,6 +1450,11 @@ func (driver *driver) emergencyDrain(request EmergencyRequest) SweepResult {
 	event := fact.production()
 	snapshots := event.emergencySnapshots
 	actions := driver.reduceLocked(event)
+	for _, snapshot := range snapshots {
+		if snapshot.completion != nil {
+			driver.requireAttempt(snapshot.generation).launchConsumed = true
+		}
+	}
 	remaining := make([]supervisorAction, 0, len(actions))
 	for _, action := range actions {
 		if _, ok := returning[action.generation]; ok {
@@ -1461,7 +1477,6 @@ func (driver *driver) emergencyDrain(request EmergencyRequest) SweepResult {
 			invariant(supervisorDriverOperation, "emergency launch return is absent or duplicated")
 		}
 		attempt.launchResolved = true
-		attempt.launchConsumed = snapshotsCompletion(snapshots, generation) != nil
 		attempt.emergencyReturn = true
 		driver.emergencyReturns++
 		select {
@@ -1529,19 +1544,6 @@ func (driver *driver) preemptReservedLaunchesLocked(request EmergencyRequest) []
 	}
 
 	return preempted
-}
-
-func snapshotsCompletion(
-	snapshots []supervisorEmergencySnapshot,
-	generation attemptGeneration,
-) *supervisorLaunchCompletion {
-	for _, snapshot := range snapshots {
-		if snapshot.generation == generation {
-			return snapshot.completion
-		}
-	}
-
-	return nil
 }
 
 func (driver *driver) executeEmergency(action supervisorAction) {
