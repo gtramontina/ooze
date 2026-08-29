@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Projection is the immutable replay state used for conformance.
 type Projection struct {
 	capacity    int
 	nextID      uint64
@@ -34,43 +33,31 @@ type imageAuthority struct {
 	deadline time.Duration
 }
 
-// Capacity returns the admission capacity.
 func (image Projection) Capacity() int { return image.capacity }
 
-// Open reports whether the replay accepts new work.
 func (image Projection) Open() bool { return image.lifecycle == runtimeOpen }
 
-// Closing reports whether fatal settlement remains outstanding.
 func (image Projection) Closing() bool { return image.lifecycle == runtimeFatalClosing }
 
-// Drained reports proven terminal emptiness.
 func (image Projection) Drained() bool { return image.lifecycle == runtimeClosedDrained }
 
-// Unconfirmed reports terminal residual custody.
 func (image Projection) Unconfirmed() bool { return image.lifecycle == runtimeClosedUnconfirmed }
 
-// SingleAdmission reports irreversible single-admission fallback.
 func (image Projection) SingleAdmission() bool { return image.mode == singleAdmission }
 
-// FatalEpoch returns the current fatal epoch.
 func (image Projection) FatalEpoch() uint64 { return uint64(image.fatalEpoch) }
 
-// FatalCauseCount returns the retained fatal-cause count.
 func (image Projection) FatalCauseCount() int { return len(image.fatalCauses) }
 
-// CampaignCount returns the registered campaign count.
 func (image Projection) CampaignCount() int { return len(image.campaigns) }
 
-// AdmissionCount returns the retained admission count.
 func (image Projection) AdmissionCount() int { return len(image.admissions) }
 
-// Owned reports runtime ownership for one generation.
 func (image Projection) Owned(generation Generation) bool {
 	index := image.admissionIndex(attemptGeneration(generation))
 	return index >= 0 && image.admissions[index].stage == admissionOwned
 }
 
-// HasOverlappedPair reports whether at least two retained admissions overlapped.
 func (image Projection) HasOverlappedPair() bool {
 	count := 0
 	for _, admission := range image.admissions {
@@ -81,7 +68,6 @@ func (image Projection) HasOverlappedPair() bool {
 	return count >= 2
 }
 
-// Residual returns unresolved execution-domain custody in runtime order.
 func (image Projection) Residual() []Residual {
 	result := make([]Residual, 0, len(image.admissions))
 	for _, admission := range image.admissions {

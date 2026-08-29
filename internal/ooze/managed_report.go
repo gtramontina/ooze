@@ -56,7 +56,6 @@ type ManagedReport struct {
 	Score         *ManagedReportScore
 }
 
-// ManagedReportScore contains the authoritative score and threshold decision.
 type ManagedReportScore struct {
 	Detected int
 	Total    int

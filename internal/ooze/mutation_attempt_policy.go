@@ -17,7 +17,6 @@ var ErrInvalidMutationAttemptPlan = campaign.ErrInvalidMutationAttemptPlan
 type MutationAttemptPlanInput = campaign.MutationAttemptPlanInput
 type MutationAttemptPlan = campaign.MutationAttemptPlan
 
-// Spec fixes one mutation attempt's command and supervision policy.
 type Spec = campaign.Spec
 
 func NewMutationAttemptPlan(input MutationAttemptPlanInput) (MutationAttemptPlan, error) {

@@ -2,13 +2,11 @@ package campaign
 
 import "github.com/gtramontina/ooze/internal/gosourcefile"
 
-// Repository supplies the immutable source state for a campaign.
 type Repository interface {
 	ListGoSourceFiles() []*gosourcefile.GoSourceFile
 	MaterializeTemporaryRepository(string) TemporaryRepository
 }
 
-// TemporaryRepository is one removable repository snapshot or mutant workspace.
 type TemporaryRepository interface {
 	Repository
 	Root() string
@@ -16,10 +14,8 @@ type TemporaryRepository interface {
 	Remove()
 }
 
-// ManagedMutationOutcome identifies one attributed mutation result.
 type ManagedMutationOutcome uint8
 
-// Managed mutation outcomes.
 const (
 	ManagedSurvived ManagedMutationOutcome = iota + 1
 	ManagedKilled
@@ -27,10 +23,8 @@ const (
 	ManagedRunaway
 )
 
-// ManagedOutcome identifies the terminal campaign result.
 type ManagedOutcome uint8
 
-// Managed campaign outcomes.
 const (
 	ManagedNoMutants ManagedOutcome = iota + 1
 	ManagedCompleted
@@ -39,10 +33,8 @@ const (
 	ManagedInvariantViolation
 )
 
-// AbortCause identifies why a campaign stopped without a mutation score.
 type AbortCause uint8
 
-// Campaign abort causes.
 const (
 	AbortCampaignRegistration AbortCause = iota + 1
 	AbortSnapshotMaterialization

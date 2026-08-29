@@ -14,45 +14,26 @@ const supervisorDriverOperation = "drive supervisor"
 
 const nominalSupervisorFuseCadence = 50 * time.Millisecond
 
-// SystemBoundary executes native process operations requested by supervision.
 type SystemBoundary interface {
-	// Now returns the current supervision instant.
 	Now() time.Time
-	// AwaitLaunch reports when a launch deadline is ready.
 	AwaitLaunch(time.Time) <-chan time.Time
-	// AwaitCommand reports when a command deadline is ready.
 	AwaitCommand(time.Time) <-chan time.Time
-	// SampleTicks returns running-census ticks and their cancellation function.
 	SampleTicks() (<-chan time.Time, func())
-	// Prepare allocates native state before launch.
 	Prepare(Generation, Spec)
-	// Execute performs one requested supervision effect.
 	Execute(Effect) (Fact, bool)
-	// RecheckRoot reads root completion at a deadline boundary.
 	RecheckRoot(Generation) (ExitStatus, time.Time, bool, error)
-	// SampleRunning reads the current live-member count.
 	SampleRunning(Generation) (bool, uint64, error)
-	// ReadOutput resolves immutable captured output.
 	ReadOutput(uint64) string
-	// ReadDiagnostic resolves an immutable diagnostic.
 	ReadDiagnostic(uint64) error
-	// RecordDiagnostic stores an immutable diagnostic.
 	RecordDiagnostic(error) uint64
 }
 
-// System owns supervised attempt lifecycles around one process runtime.
 type System interface {
-	// ReserveLaunch records inert prospective custody before runtime commitment.
 	ReserveLaunch(*processruntime.StartCell, Spec)
-	// DiscardLaunch removes a reservation rejected by runtime commitment.
 	DiscardLaunch(*processruntime.StartCell)
-	// Launch drives one runtime-authorized launch.
 	Launch(processruntime.PreparedStart, Spec) ObservedLaunch
-	// Wait joins one owned attempt and its runtime receipt.
 	Wait(Generation, *OwnedAttempt) ObservedTerminal
-	// Stop records bounded explicit drainage.
 	Stop(*OwnedAttempt)
-	// EmergencyDrain closes all obligations through one bounded epoch.
 	EmergencyDrain(EmergencyRequest) (SweepResult, processruntime.EmergencySettlement)
 }
 
@@ -131,7 +112,6 @@ type driver struct {
 	ownerCuts         []ownerCut
 }
 
-// New constructs supervision around a system boundary.
 func New(
 	runtime *processruntime.Runtime,
 	launchProgress time.Duration,
@@ -265,32 +245,25 @@ type launchObservationResult struct {
 	receipt processruntime.Receipt
 }
 
-// ObservedLaunch is the public launch result and its process-runtime receipt.
 type ObservedLaunch struct {
 	result  LaunchResult
 	receipt processruntime.Receipt
 }
 
-// Result returns the supervised launch result.
 func (observed ObservedLaunch) Result() LaunchResult { return observed.result }
 
-// Receipt returns the corresponding process-runtime receipt.
 func (observed ObservedLaunch) Receipt() processruntime.Receipt { return observed.receipt }
 
-// NewObservedLaunch combines a system-boundary launch result with its runtime receipt.
 func NewObservedLaunch(result LaunchResult, receipt processruntime.Receipt) ObservedLaunch {
 	return ObservedLaunch{result: result, receipt: receipt}
 }
 
-// ReserveLaunch records an inert launch before runtime start commitment.
 func (driver *driver) ReserveLaunch(cell *processruntime.StartCell, spec Spec) {
 	driver.reserveLaunch(cell, spec)
 }
 
-// DiscardLaunch removes an inert launch that runtime start commitment rejected.
 func (driver *driver) DiscardLaunch(cell *processruntime.StartCell) { driver.discardLaunch(cell) }
 
-// Launch starts one runtime-authorized attempt.
 func (driver *driver) Launch(start processruntime.PreparedStart, spec Spec) ObservedLaunch {
 	observed := driver.launchManaged(start, spec)
 	return ObservedLaunch(observed)
@@ -1323,36 +1296,29 @@ type terminalObservationResult struct {
 	receipt  processruntime.Receipt
 }
 
-// ObservedTerminal is the public terminal result and its process-runtime receipt.
 type ObservedTerminal struct {
 	terminal Terminal
 	receipt  processruntime.Receipt
 }
 
-// Terminal returns the supervised terminal result.
 func (observed ObservedTerminal) Terminal() Terminal { return observed.terminal }
 
-// Receipt returns the corresponding process-runtime receipt.
 func (observed ObservedTerminal) Receipt() processruntime.Receipt { return observed.receipt }
 
-// NewObservedTerminal combines a system-boundary terminal result with its runtime receipt.
 func NewObservedTerminal(terminal Terminal, receipt processruntime.Receipt) ObservedTerminal {
 	return ObservedTerminal{terminal: terminal, receipt: receipt}
 }
 
-// Wait joins one owned attempt and returns its exact terminal receipt.
 func (driver *driver) Wait(generation Generation, owned *OwnedAttempt) ObservedTerminal {
 	observed := driver.waitManaged(generation, owned)
 	return ObservedTerminal(observed)
 }
 
-// Stop requests bounded drainage for one owned attempt.
 func (driver *driver) Stop(owned *OwnedAttempt) {
 	at := driver.now()
 	owned.Stop(StopRequest{At: at, DrainBy: at.Add(driver.drainEpoch)})
 }
 
-// EmergencyDrain closes and drains every supervised obligation.
 func (driver *driver) EmergencyDrain(request EmergencyRequest) (SweepResult, processruntime.EmergencySettlement) {
 	result := driver.emergencyDrain(request)
 	driver.mutex.Lock()

@@ -9,22 +9,15 @@ import (
 	"github.com/gtramontina/ooze/viruses"
 )
 
-// TemporaryDirectory supplies fresh campaign artifact locations.
 type TemporaryDirectory interface{ New() string }
 
-// Conformance records accepted campaign cuts and the effects they authorize.
 type Conformance interface {
-	// Enter holds the owner-cut gate until its returned function is called.
 	Enter() func()
-	// Reserve assigns the next process-wide owner-cut sequence.
 	Reserve() uint64
-	// Publish records one accepted immutable campaign transition.
 	Publish(uint64, Event, Projection, []Effect)
-	// BeginEffect retains causal ownership until its returned function is called.
 	BeginEffect(Effect) func()
 }
 
-// Configuration fixes one campaign execution.
 type Configuration struct {
 	Identity        string
 	Lineage         processruntime.Lineage
@@ -39,14 +32,12 @@ type Configuration struct {
 	Observe         func(Event)
 }
 
-// Executor interprets campaign effects through one process runtime and supervision system.
 type Executor struct {
 	runtime     *processruntime.Runtime
 	attempts    managedAttemptSystem
 	conformance Conformance
 }
 
-// NewExecutor constructs campaign execution over native supervision.
 func NewExecutor(runtime *processruntime.Runtime) (*Executor, error) {
 	attempts, err := newNativeManagedAttemptSystem(runtime)
 	if err != nil {
@@ -55,7 +46,6 @@ func NewExecutor(runtime *processruntime.Runtime) (*Executor, error) {
 	return &Executor{runtime: runtime, attempts: attempts}, nil
 }
 
-// NewExecutorWithSystem constructs campaign execution over an injected supervision system.
 func NewExecutorWithSystem(runtime *processruntime.Runtime, system supervision.System) *Executor {
 	if runtime == nil {
 		panic("campaign process runtime is required")
@@ -63,7 +53,6 @@ func NewExecutorWithSystem(runtime *processruntime.Runtime, system supervision.S
 	return &Executor{runtime: runtime, attempts: newManagedAttemptSystem(system)}
 }
 
-// NewConformingExecutorWithSystem constructs campaign execution with owner-cut conformance recording.
 func NewConformingExecutorWithSystem(
 	runtime *processruntime.Runtime,
 	system supervision.System,
@@ -77,13 +66,11 @@ func NewConformingExecutorWithSystem(
 	return executor
 }
 
-// Emergency settles one runtime-wide fatal epoch through supervision.
 func (executor *Executor) Emergency(epoch uint64) []ResidualCustody {
 	settled := executor.attempts.emergency(fatalEpochID(epoch))
 	return presentResiduals(campaignResiduals(settled.settlement.Residual()))
 }
 
-// Result is immutable campaign execution evidence.
 type Result struct {
 	Outcome                 ManagedOutcome
 	Mutations               []MutationResult
@@ -96,7 +83,6 @@ type Result struct {
 	SingleAdmissionFallback bool
 }
 
-// MutationResult records one mutant's attributable evidence.
 type MutationResult struct {
 	File         *gomutatedfile.GoMutatedFile
 	Outcome      ManagedMutationOutcome
@@ -104,7 +90,6 @@ type MutationResult struct {
 	Confirmation *AttemptEvidence
 }
 
-// AttemptEvidence records one supervised attempt terminal.
 type AttemptEvidence struct {
 	Kind                    AttemptKind
 	Passed                  bool
@@ -118,10 +103,8 @@ type AttemptEvidence struct {
 	ConfirmationProvisional bool
 }
 
-// AttemptKind identifies one campaign attempt outcome.
 type AttemptKind uint8
 
-// Campaign attempt outcomes.
 const (
 	AttemptSettled AttemptKind = iota + 1
 	AttemptDeadline
@@ -131,7 +114,6 @@ const (
 	AttemptDrainUnconfirmed
 )
 
-// ResidualCustody records one unresolved execution-domain obligation.
 type ResidualCustody struct {
 	Attempt     string
 	Generation  processruntime.Generation
@@ -139,13 +121,11 @@ type ResidualCustody struct {
 	Transferred bool
 }
 
-// FatalAttemptEvidence records one attempt retained by fatal cleanup.
 type FatalAttemptEvidence struct {
 	Attempt  string
 	Evidence AttemptEvidence
 }
 
-// Execute runs one campaign to a terminal result.
 func (executor *Executor) Execute(configuration Configuration) Result {
 	runner := newManagedCampaignRunner(managedCampaignConstruction{
 		runtime: executor.runtime, repository: configuration.Repository,

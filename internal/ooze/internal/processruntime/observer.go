@@ -1,12 +1,9 @@
 package processruntime
 
-// Observer receives immutable accepted process-runtime events.
 type Observer interface{ Observe(RecordedCut) }
 
-// ObserverFunc adapts a function to Observer.
 type ObserverFunc func(RecordedCut)
 
-// Observe receives one accepted process-runtime event.
 func (observe ObserverFunc) Observe(event RecordedCut) { observe(event) }
 
 func runtimeEventAdmission(authority admissionAuthority) admissionAuthority {

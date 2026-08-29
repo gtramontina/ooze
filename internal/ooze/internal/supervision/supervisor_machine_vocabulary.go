@@ -7,27 +7,20 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/processruntime"
 )
 
-// Profile selects automatic or serial supervision policy.
 type Profile = processruntime.Profile
 
 const (
-	// AutomaticProfile enables descendant sampling and automatic deadline policy.
 	AutomaticProfile = processruntime.AutomaticProfile
-	// SerialProfile enables serial command-deadline policy.
-	SerialProfile = processruntime.SerialProfile
+	SerialProfile    = processruntime.SerialProfile
 )
 
-// LaunchFailure classifies a proven pre-release failure.
 type LaunchFailure uint8
 
 const (
-	// LaunchFailed reports an ordinary pre-release launch failure.
 	LaunchFailed LaunchFailure = iota + 1
-	// LaunchResourceExhausted reports proven pre-release resource exhaustion.
 	LaunchResourceExhausted
 )
 
-// StopRequest bounds explicit attempt drainage.
 type StopRequest struct {
 	At      time.Time
 	DrainBy time.Time
@@ -183,7 +176,6 @@ type supervisionAttemptState struct {
 	terminal          supervisionTerminalEvidence
 }
 
-// Projection is an opaque immutable supervision-state view.
 type Projection struct {
 	value supervisionProjectionValue
 }
@@ -205,7 +197,6 @@ type supervisionEmergencySnapshot struct {
 	running    *supervisionRunningBundle
 }
 
-// Fact is an immutable normalized supervision input.
 type Fact struct {
 	kind                supervisionFactKind
 	generation          attemptGeneration
@@ -226,7 +217,6 @@ type Fact struct {
 	emergencySettlement *supervisorEmergencySettlementCompletion
 }
 
-// Effect is an immutable normalized supervision output.
 type Effect struct {
 	kind             supervisionEffectKind
 	generation       attemptGeneration

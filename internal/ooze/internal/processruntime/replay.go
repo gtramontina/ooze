@@ -2,37 +2,23 @@ package processruntime
 
 import "reflect"
 
-// Operation identifies one process-runtime transition in a deterministic trace.
 type Operation uint8
 
 const (
-	// RegisterCampaignOperation registers a campaign lineage.
 	RegisterCampaignOperation Operation = iota + 1
-	// RequestAdmissionOperation requests attempt admission.
 	RequestAdmissionOperation
-	// CancelAdmissionOperation cancels an admission request.
 	CancelAdmissionOperation
-	// ReturnGrantOperation acknowledges a compensated grant.
 	ReturnGrantOperation
-	// BindConfirmationBarrierOperation binds an exclusive confirmation barrier.
 	BindConfirmationBarrierOperation
-	// CompleteConfirmationQueueOperation completes a confirmation queue.
 	CompleteConfirmationQueueOperation
-	// CommitStartOperation commits runtime ownership before launch.
 	CommitStartOperation
-	// ObserveAttemptOperation submits attempt evidence.
 	ObserveAttemptOperation
-	// SettleEmergencyOperation settles exact emergency custody.
 	SettleEmergencyOperation
-	// CommitTerminalOperation commits ordinary campaign termination.
 	CommitTerminalOperation
-	// AuthorizeForcedAbortOperation authorizes fatal campaign termination.
 	AuthorizeForcedAbortOperation
-	// CloseOperation starts or joins fatal runtime closure.
 	CloseOperation
 )
 
-// Cut is one inert process-runtime trace input.
 type Cut struct {
 	operation   Operation
 	lineage     Lineage
@@ -46,10 +32,8 @@ type Cut struct {
 	cause       string
 }
 
-// Operation returns the transition kind.
 func (cut Cut) Operation() Operation { return cut.operation }
 
-// Malformed returns a validated malformed-fact replay input.
 func (cut Cut) Malformed() (MalformedCut, bool) {
 	if cut.operation != RequestAdmissionOperation && cut.operation != ReturnGrantOperation &&
 		cut.operation != ObserveAttemptOperation && cut.operation != SettleEmergencyOperation &&
@@ -59,68 +43,54 @@ func (cut Cut) Malformed() (MalformedCut, bool) {
 	return MalformedCut{cut: cut}, true
 }
 
-// MalformedCut is a runtime-validated malformed-fact replay input.
 type MalformedCut struct{ cut Cut }
 
-// RegisterCampaignCut creates a campaign-registration input.
 func RegisterCampaignCut(lineage Lineage) Cut {
 	return Cut{operation: RegisterCampaignOperation, lineage: lineage}
 }
 
-// RequestAdmissionCut creates an admission-request input.
 func RequestAdmissionCut(admission Admission) Cut {
 	return Cut{operation: RequestAdmissionOperation, admission: admission}
 }
 
-// CancelAdmissionCut creates an admission-cancellation input.
 func CancelAdmissionCut(admission Admission) Cut {
 	return Cut{operation: CancelAdmissionOperation, admission: admission}
 }
 
-// ReturnGrantCut creates a grant-return input.
 func ReturnGrantCut(admission Admission) Cut {
 	return Cut{operation: ReturnGrantOperation, admission: admission}
 }
 
-// BindConfirmationBarrierCut creates a barrier-binding input.
 func BindConfirmationBarrierCut(barrier Barrier) Cut {
 	return Cut{operation: BindConfirmationBarrierOperation, barrier: barrier}
 }
 
-// CompleteConfirmationQueueCut creates a confirmation-queue completion input.
 func CompleteConfirmationQueueCut(campaign Campaign) Cut {
 	return Cut{operation: CompleteConfirmationQueueOperation, campaign: campaign}
 }
 
-// CommitStartCut creates a start-commitment input.
 func CommitStartCut(admission Admission) Cut {
 	return Cut{operation: CommitStartOperation, admission: admission}
 }
 
-// ObserveAttemptCut creates an attempt-evidence input.
 func ObserveAttemptCut(generation Generation, observation Observation) Cut {
 	return Cut{operation: ObserveAttemptOperation, generation: generation, observation: observation}
 }
 
-// SettleEmergencyCut creates an emergency-settlement input.
 func SettleEmergencyCut(resolutions []Resolution) Cut {
 	return Cut{operation: SettleEmergencyOperation, resolutions: append([]Resolution(nil), resolutions...)}
 }
 
-// CommitTerminalCut creates an ordinary terminal-commitment input.
 func CommitTerminalCut(campaign Campaign) Cut {
 	return Cut{operation: CommitTerminalOperation, campaign: campaign}
 }
 
-// AuthorizeForcedAbortCut creates a fatal terminal-authorization input.
 func AuthorizeForcedAbortCut(campaign Campaign, epoch uint64) Cut {
 	return Cut{operation: AuthorizeForcedAbortOperation, campaign: campaign, epoch: epoch}
 }
 
-// CloseCut creates a fatal-closure input.
 func CloseCut(cause string) Cut { return Cut{operation: CloseOperation, cause: cause} }
 
-// ReplayResult is the owner-authored result of one replayed cut.
 type ReplayResult struct {
 	registration Registration
 	admission    AdmissionResult
@@ -134,10 +104,8 @@ type ReplayResult struct {
 	recorded     RecordedCut
 }
 
-// RecordedCut returns the capability-free accepted transition.
 func (result ReplayResult) RecordedCut() RecordedCut { return result.recorded }
 
-// RecordedCut is one capability-free accepted process-runtime transition.
 type RecordedCut struct {
 	cut    Cut
 	result recordedResult
@@ -165,22 +133,18 @@ type recordedResult struct {
 	acknowledged                                     []Generation
 }
 
-// Operation returns the accepted transition kind.
 func (recorded RecordedCut) Operation() Operation {
 	return recorded.cut.operation
 }
 
-// Matches reports whether the recorded transition accepted the proposed input.
 func (recorded RecordedCut) Matches(cut Cut) bool {
 	return reflect.DeepEqual(recorded.cut, cut)
 }
 
-// Result returns the capability-free accepted result.
 func (recorded RecordedCut) Result() ReplayResult {
 	return thawRecordedResult(recorded.cut.operation, recorded.result)
 }
 
-// Observation returns the accepted attempt-evidence input.
 func (recorded RecordedCut) Observation() (Generation, Observation, bool) {
 	if recorded.cut.operation != ObserveAttemptOperation {
 		return 0, Observation{}, false
@@ -188,7 +152,6 @@ func (recorded RecordedCut) Observation() (Generation, Observation, bool) {
 	return recorded.cut.generation, recorded.cut.observation, true
 }
 
-// ExpectResultFrom returns a corrupted replay expectation without fabricating an accepted cut.
 func (recorded RecordedCut) ExpectResultFrom(other RecordedCut) (CorruptedCut, bool) {
 	if recorded.Operation() == 0 || recorded.Operation() != other.Operation() {
 		return CorruptedCut{}, false
@@ -196,13 +159,11 @@ func (recorded RecordedCut) ExpectResultFrom(other RecordedCut) (CorruptedCut, b
 	return CorruptedCut{cut: recorded.cut, result: other.result}, true
 }
 
-// CorruptedCut is an intentionally invalid replay expectation.
 type CorruptedCut struct {
 	cut    Cut
 	result recordedResult
 }
 
-// Complexity reports the number of repeated values retained by this cut.
 func (recorded RecordedCut) Complexity() int {
 	return len(recorded.cut.resolutions) + len(recorded.result.deliveries) +
 		len(recorded.result.cancelledWaiting) + len(recorded.result.compensatedGrants) +
@@ -210,40 +171,28 @@ func (recorded RecordedCut) Complexity() int {
 		len(recorded.result.settlementResidual)
 }
 
-// Registration returns the campaign-registration result.
 func (result ReplayResult) Registration() Registration { return result.registration }
 
-// Admission returns the admission result.
 func (result ReplayResult) Admission() AdmissionResult { return result.admission }
 
-// Barrier returns the barrier-binding result.
 func (result ReplayResult) Barrier() BarrierResult { return result.barrier }
 
-// Queue returns the confirmation-queue result.
 func (result ReplayResult) Queue() QueueResult { return result.queue }
 
-// Start returns the start-commitment result.
 func (result ReplayResult) Start() StartResult { return result.start }
 
-// Receipt returns the attempt-evidence receipt.
 func (result ReplayResult) Receipt() Receipt { return result.receipt }
 
-// Terminal returns the terminal-commitment result.
 func (result ReplayResult) Terminal() TerminalResult { return result.terminal }
 
-// Closure returns the fatal-closure result.
 func (result ReplayResult) Closure() Closure { return result.closure }
 
-// Settlement returns the emergency-settlement result.
 func (result ReplayResult) Settlement() EmergencySettlement { return result.settlement }
 
-// Replay owns deterministic process-runtime transition replay and queries.
 type Replay struct{ state processRuntime }
 
-// NewReplay creates an empty deterministic process-runtime replay.
 func NewReplay(capacity int) Replay { return Replay{state: newProcessRuntime(capacity)} }
 
-// Apply reduces one owner-authored cut.
 func (replay Replay) Apply(cut Cut) (Replay, ReplayResult) {
 	var result ReplayResult
 	switch cut.operation {
@@ -315,25 +264,21 @@ func (replay Replay) Apply(cut Cut) (Replay, ReplayResult) {
 	return replay, result
 }
 
-// ApplyRecorded replays one accepted transition and verifies its result.
 func (replay Replay) ApplyRecorded(recorded RecordedCut) (Replay, bool) {
 	next, result := replay.Apply(recorded.cut)
 	return next, reflect.DeepEqual(freezeReplayResult(recorded.cut.operation, result), recorded.result)
 }
 
-// ApplyCorrupted replays an intentionally invalid expectation.
 func (replay Replay) ApplyCorrupted(corrupted CorruptedCut) (Replay, bool) {
 	next, result := replay.Apply(corrupted.cut)
 	return next, reflect.DeepEqual(freezeReplayResult(corrupted.cut.operation, result), corrupted.result)
 }
 
-// ApplyMalformed reduces one validated malformed-fact input.
 func (replay Replay) ApplyMalformed(malformed MalformedCut) Replay {
 	next, _ := replay.Apply(malformed.cut)
 	return next
 }
 
-// Accepts reports whether the production reducer accepts a proposed cut.
 func (replay Replay) Accepts(cut Cut) (accepted bool) {
 	defer func() {
 		recovered := recover()
@@ -500,5 +445,4 @@ func residualCustodies(values []Residual) []residualCustody {
 	return result
 }
 
-// Projection returns a capability-free immutable domain projection.
 func (replay Replay) Projection() Projection { return projectState(replay.state) }

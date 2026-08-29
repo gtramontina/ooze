@@ -322,7 +322,6 @@ type confirmationQueueResult struct {
 	deliveries []admissionGrant
 }
 
-// Violation reports a process-runtime invariant breach.
 type Violation struct {
 	operation string
 	reason    string
@@ -330,10 +329,8 @@ type Violation struct {
 
 type runtimeInvariantViolation = Violation
 
-// Operation returns the invariant operation.
 func (violation Violation) Operation() string { return violation.operation }
 
-// Reason returns the invariant reason.
 func (violation Violation) Reason() string { return violation.reason }
 
 func newProcessRuntime(capacity int) processRuntime {

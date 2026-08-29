@@ -83,7 +83,6 @@ type supervisorNativeExecutor struct {
 	domainEmpty      func(nativePlatformState, int) (bool, error)
 }
 
-// NewNative constructs supervision around the native platform boundary.
 func NewNative(
 	runtime *processruntime.Runtime,
 	launchProgress time.Duration,

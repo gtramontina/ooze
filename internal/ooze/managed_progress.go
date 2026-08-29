@@ -2,7 +2,6 @@ package ooze
 
 import "github.com/gtramontina/ooze/internal/ooze/internal/campaign"
 
-// ManagedProgressKind identifies one campaign-domain observation for the root package.
 type ManagedProgressKind uint8
 
 const (
@@ -19,7 +18,6 @@ const (
 	ManagedCampaignInvariantViolated
 )
 
-// ManagedProgress contains capability-free campaign-domain facts for the root package.
 type ManagedProgress struct {
 	Kind         ManagedProgressKind
 	Total        int

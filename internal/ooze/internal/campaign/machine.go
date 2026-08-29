@@ -9,7 +9,6 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
-// Definition fixes one campaign's immutable policy inputs.
 type Definition struct {
 	Identity string
 	Lineage  processruntime.Lineage
@@ -19,44 +18,34 @@ type Definition struct {
 	Peers    int
 }
 
-// Machine applies campaign facts through the production reducer.
 type Machine struct{ state campaignState }
 
-// RuntimeBinding resolves inert campaign identities at the process-runtime boundary.
 type RuntimeBinding struct{ campaign processruntime.Campaign }
 
-// RuntimeRequest is one opaque process-runtime request emitted by a campaign.
 type RuntimeRequest struct {
 	effect Effect
 	cut    processruntime.Cut
 }
 
-// ArtifactRequest is one opaque repository-artifact request emitted by a campaign.
 type ArtifactRequest struct{ effect Effect }
 
-// SupervisionRequest is one opaque attempt-supervision request emitted by a campaign.
 type SupervisionRequest struct{ effect Effect }
 
-// BindRuntime retains the executable authority outside pure campaign state.
 func BindRuntime(registration processruntime.Registration) RuntimeBinding {
 	return RuntimeBinding{campaign: registration.Campaign()}
 }
 
-// RuntimeRequest returns the process-runtime request represented by an effect.
 func (binding RuntimeBinding) RuntimeRequest(effect Effect, definition Definition) (RuntimeRequest, bool) {
 	cut, ok := binding.runtimeCut(effect, definition)
 	return RuntimeRequest{effect: effect, cut: cut}, ok
 }
 
-// Cut returns the input for the process-runtime reducer.
 func (request RuntimeRequest) Cut() processruntime.Cut { return request.cut }
 
-// Matches reports whether a recorded runtime cut accepted this request.
 func (request RuntimeRequest) Matches(cut processruntime.RecordedCut) bool {
 	return cut.Matches(request.cut)
 }
 
-// Complete translates an accepted runtime cut into campaign facts.
 func (request RuntimeRequest) Complete(recorded processruntime.RecordedCut) []Fact {
 	if !request.Matches(recorded) {
 		panic("process runtime result does not match campaign request")
@@ -89,7 +78,6 @@ func (request RuntimeRequest) Complete(recorded processruntime.RecordedCut) []Fa
 	}
 }
 
-// ArtifactRequest returns the repository-artifact request represented by an effect.
 func (effect Effect) ArtifactRequest() (ArtifactRequest, bool) {
 	switch effect.value.kind {
 	case campaignEffectEstablishSnapshot, campaignEffectDiscoverCatalogue,
@@ -101,12 +89,10 @@ func (effect Effect) ArtifactRequest() (ArtifactRequest, bool) {
 	}
 }
 
-// EstablishesSnapshot reports whether the request creates the campaign snapshot.
 func (request ArtifactRequest) EstablishesSnapshot() bool {
 	return request.effect.value.kind == campaignEffectEstablishSnapshot
 }
 
-// CatalogueSnapshot returns the snapshot whose catalogue is requested.
 func (request ArtifactRequest) CatalogueSnapshot() (string, bool) {
 	if request.effect.value.kind != campaignEffectDiscoverCatalogue {
 		return "", false
@@ -114,7 +100,6 @@ func (request ArtifactRequest) CatalogueSnapshot() (string, bool) {
 	return string(request.effect.value.snapshot), true
 }
 
-// Workspace returns the attempt and snapshot for a workspace request.
 func (request ArtifactRequest) Workspace() (supervision.Identity, string, bool) {
 	if request.effect.value.kind != campaignEffectMaterializeWorkspace {
 		return "", "", false
@@ -122,7 +107,6 @@ func (request ArtifactRequest) Workspace() (supervision.Identity, string, bool) 
 	return request.effect.value.attempt, string(request.effect.value.snapshot), true
 }
 
-// Settlement returns the resource released by the request.
 func (request ArtifactRequest) Settlement() (ResourceKind, string, bool) {
 	switch request.effect.value.kind {
 	case campaignEffectReleaseSnapshot:
@@ -134,7 +118,6 @@ func (request ArtifactRequest) Settlement() (ResourceKind, string, bool) {
 	}
 }
 
-// EstablishedSnapshot completes snapshot establishment.
 func (request ArtifactRequest) EstablishedSnapshot(snapshot string) Fact {
 	if !request.EstablishesSnapshot() {
 		panic("campaign artifact request does not establish a snapshot")
@@ -142,7 +125,6 @@ func (request ArtifactRequest) EstablishedSnapshot(snapshot string) Fact {
 	return SnapshotEstablished(snapshot)
 }
 
-// DiscoveredCatalogue completes catalogue discovery.
 func (request ArtifactRequest) DiscoveredCatalogue(mutants []string) Fact {
 	snapshot, ok := request.CatalogueSnapshot()
 	if !ok {
@@ -151,7 +133,6 @@ func (request ArtifactRequest) DiscoveredCatalogue(mutants []string) Fact {
 	return CatalogueDiscovered(snapshot, mutants)
 }
 
-// MaterializedWorkspace completes workspace materialization.
 func (request ArtifactRequest) MaterializedWorkspace(workspace string) Fact {
 	if _, _, ok := request.Workspace(); !ok {
 		panic("campaign artifact request does not materialize a workspace")
@@ -159,7 +140,6 @@ func (request ArtifactRequest) MaterializedWorkspace(workspace string) Fact {
 	return WorkspaceMaterialized(request.effect, workspace)
 }
 
-// Settled completes authoritative resource cleanup.
 func (request ArtifactRequest) Settled() Fact {
 	kind, identity, ok := request.Settlement()
 	if !ok {
@@ -168,7 +148,6 @@ func (request ArtifactRequest) Settled() Fact {
 	return ResourceSettled(kind, identity)
 }
 
-// SupervisionRequest returns the attempt-supervision request represented by an effect.
 func (effect Effect) SupervisionRequest() (SupervisionRequest, bool) {
 	switch effect.value.kind {
 	case campaignEffectLaunchAttempt, campaignEffectStopAttempt:
@@ -178,7 +157,6 @@ func (effect Effect) SupervisionRequest() (SupervisionRequest, bool) {
 	}
 }
 
-// Prospective returns the attempt launched by this request.
 func (request SupervisionRequest) Prospective(registeredAt, launchBy time.Time) (supervision.Fact, bool) {
 	if request.effect.value.kind != campaignEffectLaunchAttempt {
 		return supervision.Fact{}, false
@@ -190,7 +168,6 @@ func (request SupervisionRequest) Prospective(registeredAt, launchBy time.Time) 
 	), true
 }
 
-// StopGeneration returns the generation stopped by this request.
 func (request SupervisionRequest) StopGeneration() (processruntime.Generation, bool) {
 	if request.effect.value.kind != campaignEffectStopAttempt {
 		return 0, false
@@ -206,29 +183,24 @@ func admissionDeliveryFacts(deliveries []processruntime.Admission) []Fact {
 	return facts
 }
 
-// Fact is an immutable campaign input.
 type Fact struct {
 	payload campaignEventPayload
 	label   string
 }
 
-// Transition contains the normalized event, effects, and projection produced by one accepted fact.
 type Transition struct {
 	event      Event
 	effects    []campaignEffect
 	projection Projection
 }
 
-// Event is an immutable accepted campaign fact.
 type Event struct {
 	value    campaignEvent
 	previous campaignState
 }
 
-// EventKind identifies one accepted campaign fact.
 type EventKind uint8
 
-// Campaign event kinds.
 const (
 	CampaignRegisteredEvent EventKind = iota + 1
 	SnapshotEstablishedEvent
@@ -251,36 +223,28 @@ const (
 	RuntimeEmergencyStartedEvent
 )
 
-// Effect is an immutable normalized campaign effect.
 type Effect struct{ value campaignEffect }
 
-// Owner identifies the system boundary that interprets an effect.
 type Owner uint8
 
-// Campaign effect owners.
 const (
 	ArtifactOwner Owner = iota + 1
 	RuntimeOwner
 	SupervisionOwner
 )
 
-// AttemptRole identifies one attempt's role in a campaign.
 type AttemptRole uint8
 
-// Campaign attempt roles.
 const (
 	BaselineAttempt AttemptRole = iota + 1
 	PrimaryAttempt
 	ConfirmationAttempt
 )
 
-// ID returns the stable effect identity.
 func (effect Effect) ID() uint64 { return uint64(effect.value.id) }
 
-// IsZero reports whether the effect is absent.
 func (effect Effect) IsZero() bool { return effect.value.kind == 0 }
 
-// Less reports the canonical order of two campaign effects.
 func (effect Effect) Less(other Effect, catalogue []string) bool {
 	ranks := make(map[mutantIdentity]int, len(catalogue))
 	for rank, mutant := range catalogue {
@@ -308,7 +272,6 @@ func (effect Effect) Less(other Effect, catalogue []string) bool {
 	return effect.value.kind < other.value.kind
 }
 
-// Owner returns the boundary that interprets the effect.
 func (effect Effect) Owner() Owner {
 	switch effect.value.kind {
 	case campaignEffectEstablishSnapshot, campaignEffectDiscoverCatalogue,
@@ -327,22 +290,16 @@ func (effect Effect) Owner() Owner {
 	}
 }
 
-// Attempt returns the affected attempt identity.
 func (effect Effect) Attempt() supervision.Identity { return effect.value.attempt }
 
-// Generation returns the affected execution generation.
 func (effect Effect) Generation() processruntime.Generation { return effect.value.generation }
 
-// Mutant returns the affected mutant identity.
 func (effect Effect) Mutant() string { return string(effect.value.mutant) }
 
-// AttemptRole returns the affected attempt role.
 func (effect Effect) AttemptRole() AttemptRole { return AttemptRole(effect.value.attemptKind) }
 
-// Equal reports whether two effects carry the same immutable value.
 func (effect Effect) Equal(other Effect) bool { return reflect.DeepEqual(effect.value, other.value) }
 
-// Canonical returns a capability-free effect with logical artifact identities.
 func (effect Effect) Canonical(projection Projection) Effect {
 	value := effect.value
 	value.runtimeToken = campaignToken{}
@@ -364,7 +321,6 @@ func (effect Effect) Canonical(projection Projection) Effect {
 	return Effect{value: value}
 }
 
-// Spec returns a detached supervision specification.
 func (effect Effect) Spec() supervision.Spec {
 	result := effect.value.spec
 	result.Command = slices.Clone(result.Command)
@@ -372,7 +328,6 @@ func (effect Effect) Spec() supervision.Spec {
 	return result
 }
 
-// CompletesConfirmationQueue reports whether the attempt closes its confirmation queue.
 func (effect Effect) CompletesConfirmationQueue() bool {
 	return effect.value.completesConfirmationQueue
 }
@@ -417,10 +372,8 @@ func (binding RuntimeBinding) runtimeCut(effect Effect, definition Definition) (
 	}
 }
 
-// ResourceKind identifies a campaign-owned resource.
 type ResourceKind uint8
 
-// Campaign-owned resource kinds.
 const (
 	RegistrationResource ResourceKind = iota + 1
 	SnapshotResource
@@ -430,20 +383,16 @@ const (
 	ExecutionDomainResource
 )
 
-// OutcomeKind identifies a terminal campaign outcome.
 type OutcomeKind uint8
 
-// Terminal campaign outcome kinds.
 const (
 	NoMutantsOutcome OutcomeKind = iota + 1
 	CompletedOutcome
 	AbortedOutcome
 )
 
-// Outcome is immutable terminal campaign evidence.
 type Outcome struct{ kind OutcomeKind }
 
-// MutationEvidence contains one mutant's pure reducer evidence.
 type MutationEvidence struct {
 	identity     string
 	result       ManagedMutationOutcome
@@ -451,25 +400,18 @@ type MutationEvidence struct {
 	confirmation AttemptKind
 }
 
-// Identity returns the stable mutant identity.
 func (evidence MutationEvidence) Identity() string { return evidence.identity }
 
-// Result returns the attributable mutant outcome.
 func (evidence MutationEvidence) Result() ManagedMutationOutcome { return evidence.result }
 
-// Primary returns the primary attempt evidence kind.
 func (evidence MutationEvidence) Primary() AttemptKind { return evidence.primary }
 
-// Confirmation returns the confirmation attempt evidence kind when present.
 func (evidence MutationEvidence) Confirmation() AttemptKind { return evidence.confirmation }
 
-// Kind returns the terminal outcome kind.
 func (outcome Outcome) Kind() OutcomeKind { return outcome.kind }
 
-// Projection is an immutable campaign-state view.
 type Projection struct{ state campaignState }
 
-// Obligations returns stable campaign-owned resource identities.
 func (projection Projection) Obligations() []string {
 	result := make([]string, len(projection.state.obligations))
 	for index, obligation := range projection.state.obligations {
@@ -478,12 +420,10 @@ func (projection Projection) Obligations() []string {
 	return result
 }
 
-// Equal reports whether two projections describe the same campaign state.
 func (projection Projection) Equal(other Projection) bool {
 	return reflect.DeepEqual(projection.state, other.state)
 }
 
-// Canonical returns a capability-free projection with logical artifact identities.
 func (projection Projection) Canonical() Projection {
 	state := projection.state.clone()
 	logicalSnapshot := snapshotIdentity("snapshot:" + string(state.definition.identity))
@@ -520,15 +460,12 @@ func (projection Projection) Canonical() Projection {
 	return Projection{state: state}
 }
 
-// Settled reports whether the campaign has reached an outcome or failure.
 func (projection Projection) Settled() bool {
 	return projection.state.outcome != nil || projection.state.failure != nil
 }
 
-// Failed reports whether the projection carries infrastructure failure evidence.
 func (projection Projection) Failed() bool { return projection.state.failure != nil }
 
-// PhaseName returns the current campaign phase.
 func (projection Projection) PhaseName() string {
 	switch projection.state.phase {
 	case campaignPreparing:
@@ -546,7 +483,6 @@ func (projection Projection) PhaseName() string {
 	}
 }
 
-// Catalogue returns the stable mutant identities.
 func (projection Projection) Catalogue() []string {
 	result := make([]string, len(projection.state.catalogue))
 	for index, mutant := range projection.state.catalogue {
@@ -555,7 +491,6 @@ func (projection Projection) Catalogue() []string {
 	return result
 }
 
-// Definition returns detached immutable campaign inputs.
 func (projection Projection) Definition() Definition {
 	definition := projection.state.definition
 	return Definition{
@@ -565,13 +500,10 @@ func (projection Projection) Definition() Definition {
 	}
 }
 
-// Fork returns an independent machine at the projected state.
 func (projection Projection) Fork() Machine { return Machine{state: projection.state.clone()} }
 
-// Event returns the fact carried by the event.
 func (event Event) Fact() Fact { return Fact{payload: event.value.payload, label: event.value.label} }
 
-// Kind returns the accepted campaign fact kind.
 func (event Event) Kind() EventKind {
 	switch event.value.payload.(type) {
 	case campaignRegisteredEvent:
@@ -617,31 +549,26 @@ func (event Event) Kind() EventKind {
 	}
 }
 
-// CatalogueSize returns the discovered mutant count when present.
 func (event Event) CatalogueSize() (int, bool) {
 	discovered, ok := event.value.payload.(catalogueDiscoveredEvent)
 	return len(discovered.mutants), ok
 }
 
-// AttemptRole returns the role of the attempt named by the event.
 func (event Event) AttemptRole() (AttemptRole, bool) {
 	attempt, ok := event.attempt()
 	return AttemptRole(attempt.kind), ok
 }
 
-// MutationLabel returns the mutation label named by the event when present.
 func (event Event) MutationLabel() (string, bool) {
 	attempt, ok := event.attempt()
 	return event.value.label, ok && attempt.mutant != ""
 }
 
-// LaunchOwned reports whether an attempt launch established owned custody.
 func (event Event) LaunchOwned() bool {
 	launched, ok := event.value.payload.(attemptLaunchEvent)
 	return ok && launched.result.kind == campaignLaunchOwned
 }
 
-// AttemptPassed returns baseline settlement evidence when present.
 func (event Event) AttemptPassed() (bool, bool) {
 	_, ok := event.value.payload.(attemptTerminalEvent)
 	if !ok {
@@ -654,7 +581,6 @@ func (event Event) AttemptPassed() (bool, bool) {
 	return event.value.baselinePassed, true
 }
 
-// MutationOutcome returns a newly attributable mutant outcome when present.
 func (event Event) MutationOutcome() (ManagedMutationOutcome, bool) {
 	attempt, ok := event.attempt()
 	if !ok || attempt.mutant == "" {
@@ -666,7 +592,6 @@ func (event Event) MutationOutcome() (ManagedMutationOutcome, bool) {
 	return presentManagedMutation(event.value.mutationOutcome), true
 }
 
-// TerminalOutcome returns campaign terminal evidence when present.
 func (event Event) TerminalOutcome() (OutcomeKind, bool) {
 	if event.Kind() != TerminalCommittedEvent {
 		return 0, false
@@ -695,7 +620,6 @@ func (event Event) attempt() (campaignAttempt, bool) {
 	return event.previous.attempts[attemptAt], true
 }
 
-// WithFact returns the same event identity carrying replacement campaign input.
 func (event Event) WithFact(fact Fact) Event {
 	value := event.value
 	value.payload = fact.payload
@@ -706,10 +630,8 @@ func (event Event) WithFact(fact Fact) Event {
 	return Event{value: value, previous: event.previous}
 }
 
-// Equal reports whether two events carry the same immutable value.
 func (event Event) Equal(other Event) bool { return reflect.DeepEqual(event.value, other.value) }
 
-// Canonical returns a capability-free event with logical artifact identities.
 func (event Event) Canonical() Event {
 	value := event.value
 	canonical := Fact{payload: value.payload, label: value.label}.Canonical()
@@ -745,7 +667,6 @@ func (event Event) Canonical() Event {
 	return Event{value: value}
 }
 
-// Canonical returns the fact without process-runtime authority.
 func (fact Fact) Canonical() Fact {
 	payload := fact.payload
 	switch event := payload.(type) {
@@ -825,7 +746,6 @@ func canonicalResourceIdentity(kind campaignResourceKind, identity string, state
 	}
 }
 
-// Name returns the stable domain name of the fact.
 func (fact Fact) Name() string {
 	if fact.payload == nil {
 		return ""
@@ -833,13 +753,10 @@ func (fact Fact) Name() string {
 	return fact.payload.campaignEventName()
 }
 
-// IsZero reports whether the fact is absent.
 func (fact Fact) IsZero() bool { return fact.payload == nil }
 
-// Equal reports whether two facts carry the same immutable value.
 func (fact Fact) Equal(other Fact) bool { return reflect.DeepEqual(fact, other) }
 
-// Complexity returns the semantic payload size used by deterministic shrinking.
 func (fact Fact) Complexity() int {
 	switch value := fact.payload.(type) {
 	case catalogueDiscoveredEvent:
@@ -851,7 +768,6 @@ func (fact Fact) Complexity() int {
 	}
 }
 
-// Attempt returns the fact's attempt identity when it has one.
 func (fact Fact) Attempt() supervision.Identity {
 	switch value := fact.payload.(type) {
 	case workspaceMaterializedEvent:
@@ -879,7 +795,6 @@ func (fact Fact) Attempt() supervision.Identity {
 	}
 }
 
-// Generation returns the fact's execution generation when it has one.
 func (fact Fact) Generation() processruntime.Generation {
 	switch value := fact.payload.(type) {
 	case attemptLaunchEvent:
@@ -891,7 +806,6 @@ func (fact Fact) Generation() processruntime.Generation {
 	}
 }
 
-// RuntimeClosureInProgress reports whether runtime receipt evidence carries a fatal epoch.
 func (fact Fact) RuntimeClosureInProgress() bool {
 	switch value := fact.payload.(type) {
 	case attemptLaunchEvent:
@@ -903,48 +817,40 @@ func (fact Fact) RuntimeClosureInProgress() bool {
 	}
 }
 
-// IsAttemptTerminal reports whether the fact carries terminal attempt evidence.
 func (fact Fact) IsAttemptTerminal() bool {
 	_, ok := fact.payload.(attemptTerminalEvent)
 	return ok
 }
 
-// IsAttemptLaunched reports whether the fact carries launch evidence.
 func (fact Fact) IsAttemptLaunched() bool {
 	_, ok := fact.payload.(attemptLaunchEvent)
 	return ok
 }
 
-// IsAdmissionGranted reports whether the fact delivers admission authority.
 func (fact Fact) IsAdmissionGranted() bool {
 	_, ok := fact.payload.(admissionGrantedEvent)
 	return ok
 }
 
-// IsStartCommitted reports whether the fact carries a start decision.
 func (fact Fact) IsStartCommitted() bool {
 	_, ok := fact.payload.(startCommittedEvent)
 	return ok
 }
 
-// IsResourceSettled reports whether the fact confirms authoritative cleanup.
 func (fact Fact) IsResourceSettled() bool {
 	_, ok := fact.payload.(resourceSettledEvent)
 	return ok
 }
 
-// SameKind reports whether two facts represent the same domain event kind.
 func (fact Fact) SameKind(other Fact) bool {
 	return reflect.TypeOf(fact.payload) == reflect.TypeOf(other.payload)
 }
 
-// CompletesEmergencySettlement reports whether the fact closes a runtime-wide emergency sweep.
 func (fact Fact) CompletesEmergencySettlement() bool {
 	_, ok := fact.payload.(runtimeEmergencySettledEvent)
 	return ok
 }
 
-// SupervisorDelivery returns the supervision delivery that caused the fact.
 func (fact Fact) SupervisorDelivery() (supervision.EffectKind, processruntime.Generation, bool) {
 	switch fact.payload.(type) {
 	case attemptTerminalEvent:
@@ -956,7 +862,6 @@ func (fact Fact) SupervisorDelivery() (supervision.EffectKind, processruntime.Ge
 	}
 }
 
-// SupersedesFact reports whether a pending fact became stale after the latest transition.
 func (machine Machine) SupersedesFact(fact Fact) bool {
 	switch fact.payload.(type) {
 	case admissionGrantedEvent, admissionCancelledEvent, admissionRejectedEvent,
@@ -967,7 +872,6 @@ func (machine Machine) SupersedesFact(fact Fact) bool {
 	}
 }
 
-// SupersedesEffect reports whether a pending asynchronous effect became stale.
 func (machine Machine) SupersedesEffect(effect Effect) bool {
 	switch effect.value.kind {
 	case campaignEffectCancelAdmission, campaignEffectRequestStartCommitment:
@@ -977,24 +881,20 @@ func (machine Machine) SupersedesEffect(effect Effect) bool {
 	}
 }
 
-// MayCommitTerminal reports whether the effect can complete campaign terminalization.
 func (effect Effect) MayCommitTerminal() bool {
 	return effect.value.kind == campaignEffectProposeTerminal
 }
 
-// ProvenNotReleased reports whether the fact is a proven pre-release launch failure.
 func (fact Fact) ProvenNotReleased() bool {
 	value, ok := fact.payload.(attemptLaunchEvent)
 	return ok && value.result.kind == campaignLaunchNotReleased
 }
 
-// StartAccepted reports whether the fact accepted start commitment.
 func (fact Fact) StartAccepted() bool {
 	value, ok := fact.payload.(startCommittedEvent)
 	return ok && value.result.decision == processruntime.StartAccepted
 }
 
-// WithResourceIdentity replaces a cleanup fact's resource identity.
 func (fact Fact) WithResourceIdentity(identity string) Fact {
 	switch value := fact.payload.(type) {
 	case resourceSettledEvent:
@@ -1008,7 +908,6 @@ func (fact Fact) WithResourceIdentity(identity string) Fact {
 	}
 }
 
-// ResourceKind returns the cleanup fact's resource kind.
 func (fact Fact) ResourceKind() ResourceKind {
 	switch value := fact.payload.(type) {
 	case resourceSettledEvent:
@@ -1020,7 +919,6 @@ func (fact Fact) ResourceKind() ResourceKind {
 	}
 }
 
-// Enables reports whether an effect authorizes an externally supplied fact.
 func (effect Effect) Enables(fact Fact) bool {
 	switch value := fact.payload.(type) {
 	case snapshotEstablishedEvent:
@@ -1040,7 +938,6 @@ func (effect Effect) Enables(fact Fact) bool {
 	return false
 }
 
-// MatchesRuntimeCut reports whether a process-runtime cut produced the fact.
 func (fact Fact) MatchesRuntimeCut(cut processruntime.RecordedCut) bool {
 	result := cut.Result()
 	switch event := fact.payload.(type) {
@@ -1102,7 +999,6 @@ func runtimeDeliveries(cut processruntime.RecordedCut) []processruntime.Admissio
 	}
 }
 
-// NewMachine starts a campaign through the production reducer.
 func NewMachine(definition Definition) (Machine, Transition) {
 	state, effects := beginCampaign(campaignDefinition{
 		identity: campaignIdentity(definition.Identity), lineage: definition.Lineage,
@@ -1112,7 +1008,6 @@ func NewMachine(definition Definition) (Machine, Transition) {
 	return Machine{state: state}, transitionFrom(campaignState{}, state, campaignEvent{}, effects)
 }
 
-// Apply accepts one campaign fact and returns its normalized effects.
 func (machine Machine) Apply(fact Fact) (Machine, Transition) {
 	state, effects := advanceCampaign(machine.state, campaignEvent{
 		id: campaignEventID(len(machine.state.trace) + 1), payload: fact.payload, label: fact.label,
@@ -1121,10 +1016,8 @@ func (machine Machine) Apply(fact Fact) (Machine, Transition) {
 	return Machine{state: state}, transitionFrom(machine.state, state, event, effects)
 }
 
-// Event returns the accepted campaign event.
 func (transition Transition) Event() Event { return transition.event }
 
-// Effects returns the ordered immutable campaign effects.
 func (transition Transition) Effects() []Effect {
 	result := make([]Effect, len(transition.effects))
 	for index, effect := range transition.effects {
@@ -1133,10 +1026,8 @@ func (transition Transition) Effects() []Effect {
 	return result
 }
 
-// Projection returns the state after the accepted campaign event.
 func (transition Transition) Projection() Projection { return transition.projection }
 
-// Outcome returns terminal campaign evidence when available.
 func (machine Machine) Outcome() Outcome {
 	switch machine.state.outcome.(type) {
 	case noMutantsOutcome:
@@ -1150,7 +1041,6 @@ func (machine Machine) Outcome() Outcome {
 	}
 }
 
-// Mutations returns detached terminal mutation evidence.
 func (machine Machine) Mutations() []MutationEvidence {
 	outcome, ok := machine.state.outcome.(completedOutcome)
 	if !ok {
@@ -1166,27 +1056,21 @@ func (machine Machine) Mutations() []MutationEvidence {
 	return result
 }
 
-// Failed reports whether the campaign carries infrastructure failure evidence.
 func (machine Machine) Failed() bool { return machine.state.failure != nil }
 
-// CleanupUnconfirmed reports whether campaign failure retains unresolved custody.
 func (machine Machine) CleanupUnconfirmed() bool {
 	_, ok := machine.state.failure.(cleanupUnconfirmedFault)
 	return ok
 }
 
-// CommandCount returns the number of accepted start commitments.
 func (machine Machine) CommandCount() int { return machine.state.commandCount() }
 
-// SingleAdmissionFallback reports whether capacity pressure reduced automatic admission.
 func (machine Machine) SingleAdmissionFallback() bool { return machine.state.singleAdmissionFallback }
 
-// Projection returns an immutable campaign-state view.
 func (machine Machine) Projection() Projection {
 	return Projection{state: machine.state.clone()}
 }
 
-// Accepts reports whether a fact is legal at the current campaign state.
 func (machine Machine) Accepts(fact Fact) (accepted bool) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -1220,7 +1104,6 @@ func (machine Machine) effectPending(effect Effect) bool {
 	}
 }
 
-// EmergencyRequested reports whether campaign cleanup awaits runtime-wide settlement.
 func (machine Machine) EmergencyRequested() bool {
 	_, requested := machine.state.runtimeEmergencySettlementRequest()
 	return requested
@@ -1263,24 +1146,20 @@ func enrichCampaignEvent(previous, state campaignState, event campaignEvent) cam
 	return event
 }
 
-// Event returns the normalized event represented by this fact.
 func (fact Fact) Event() Event {
 	return Event{value: campaignEvent{payload: fact.payload, label: fact.label}}
 }
 
-// Registered records process-runtime campaign registration.
 func Registered(registration processruntime.Registration) Fact {
 	return Fact{payload: campaignRegisteredEvent{registration: campaignRegistration{
 		decision: registration.Decision(), token: campaignTokenValue(registration.Campaign()),
 	}}}
 }
 
-// SnapshotEstablished records one immutable repository snapshot.
 func SnapshotEstablished(snapshot string) Fact {
 	return Fact{payload: snapshotEstablishedEvent{snapshot: snapshotIdentity(snapshot)}}
 }
 
-// CatalogueDiscovered records the stable mutant catalogue.
 func CatalogueDiscovered(snapshot string, mutants []string) Fact {
 	identities := make([]mutantIdentity, len(mutants))
 	for index, mutant := range mutants {
@@ -1289,17 +1168,14 @@ func CatalogueDiscovered(snapshot string, mutants []string) Fact {
 	return Fact{payload: catalogueDiscoveredEvent{snapshot: snapshotIdentity(snapshot), mutants: identities}}
 }
 
-// ResourceSettled records authoritative campaign resource cleanup.
 func ResourceSettled(kind ResourceKind, identity string) Fact {
 	return Fact{payload: resourceSettledEvent{kind: campaignResourceKind(kind), identity: identity}}
 }
 
-// TerminalCommitted records process-runtime terminal authorization.
 func TerminalCommitted(decision processruntime.TerminalDecision) Fact {
 	return Fact{payload: terminalCommittedEvent{result: campaignTerminalResult{decision: decision}}}
 }
 
-// PreparationFailed records failure to establish the snapshot or catalogue.
 func PreparationFailed(catalogue bool, cause string) Fact {
 	stage := campaignPreparingSnapshot
 	if catalogue {
@@ -1308,49 +1184,42 @@ func PreparationFailed(catalogue bool, cause string) Fact {
 	return Fact{payload: campaignPreparationFailedEvent{stage: stage, cause: cause}}
 }
 
-// ResourceSettlementFailed records failed authoritative resource cleanup.
 func ResourceSettlementFailed(kind ResourceKind, identity, cause string) Fact {
 	return Fact{payload: resourceSettlementFailedEvent{
 		kind: campaignResourceKind(kind), identity: identity, cause: cause,
 	}}
 }
 
-// WorkspaceMaterialized records one materialized mutation workspace.
 func WorkspaceMaterialized(effect Effect, workspace string) Fact {
 	return Fact{payload: workspaceMaterializedEvent{
 		attempt: effect.value.attempt, workspace: workspace, snapshot: effect.value.snapshot,
 	}}
 }
 
-// WorkspaceMaterializationFailed records failed workspace materialization.
 func WorkspaceMaterializationFailed(effect Effect, cause string, residue []string) Fact {
 	return Fact{payload: workspaceMaterializationFailedEvent{
 		attempt: effect.value.attempt, cause: cause, artifactResidue: slices.Clone(residue),
 	}}
 }
 
-// AdmissionGranted records a delivered process-runtime admission grant.
 func AdmissionGranted(effect Effect, grant processruntime.Admission) Fact {
 	return Fact{payload: admissionGrantedEvent{
 		attempt: effect.value.attempt, grant: campaignAdmissionFact(grant),
 	}}
 }
 
-// AdmissionDelivered records a process-runtime admission grant for its own attempt.
 func AdmissionDelivered(grant processruntime.Admission) Fact {
 	return Fact{payload: admissionGrantedEvent{
 		attempt: supervision.Identity(grant.Attempt), grant: campaignAdmissionFact(grant),
 	}}
 }
 
-// AdmissionRejected records a rejected process-runtime admission request.
 func AdmissionRejected(effect Effect, result processruntime.AdmissionResult, cause string) Fact {
 	return Fact{payload: admissionRejectedEvent{
 		attempt: effect.value.attempt, result: campaignAdmissionEvidence(runtimeAdmissionResult(result)), cause: cause,
 	}}
 }
 
-// AdmissionCancelled records process-runtime admission cancellation.
 func AdmissionCancelled(effect Effect, result processruntime.AdmissionResult) Fact {
 	return Fact{payload: admissionCancelledEvent{
 		attempt: effect.value.attempt, request: effect.value.request,
@@ -1358,28 +1227,24 @@ func AdmissionCancelled(effect Effect, result processruntime.AdmissionResult) Fa
 	}}
 }
 
-// GrantReturnAcknowledged records a returned process-runtime admission grant.
 func GrantReturnAcknowledged(effect Effect, result processruntime.AdmissionResult) Fact {
 	return Fact{payload: grantReturnAcknowledgedEvent{
 		grant: effect.value.grant, result: campaignAdmissionEvidence(runtimeAdmissionResult(result)),
 	}}
 }
 
-// ConfirmationBarrierBound records a bound exclusive confirmation barrier.
 func ConfirmationBarrierBound(effect Effect, result processruntime.BarrierResult) Fact {
 	return Fact{payload: confirmationBarrierBoundEvent{
 		attempt: effect.value.attempt, result: campaignBarrierEvidence(runtimeBarrierResult(result)),
 	}}
 }
 
-// StartCommitted records a process-runtime start decision.
 func StartCommitted(effect Effect, result processruntime.StartResult) Fact {
 	return Fact{payload: startCommittedEvent{
 		attempt: effect.value.attempt, grant: effect.value.grant, result: campaignStartEvidence(runtimeStartResult(result)),
 	}}
 }
 
-// AttemptLaunched records supervision's launch result and its runtime receipt.
 func AttemptLaunched(effect Effect, result supervision.LaunchResult, receipt processruntime.Receipt) Fact {
 	observation := campaignLaunchObservation{}
 	switch value := result.(type) {
@@ -1398,7 +1263,6 @@ func AttemptLaunched(effect Effect, result supervision.LaunchResult, receipt pro
 	}}
 }
 
-// AttemptTerminal records supervision's terminal result and its runtime receipt.
 func AttemptTerminal(effect Effect, terminal supervision.Terminal, receipt processruntime.Receipt, deadline time.Duration) Fact {
 	event := attemptTerminalEvent{
 		attempt: effect.value.attempt, generation: effect.value.generation,
@@ -1410,7 +1274,6 @@ func AttemptTerminal(effect Effect, terminal supervision.Terminal, receipt proce
 	return Fact{payload: event}
 }
 
-// WithConfirmationQueueCompleted records the runtime's queue-completion result on a terminal fact.
 func (fact Fact) WithConfirmationQueueCompleted(result processruntime.QueueResult) Fact {
 	event, ok := fact.payload.(attemptTerminalEvent)
 	if !ok {
@@ -1420,7 +1283,6 @@ func (fact Fact) WithConfirmationQueueCompleted(result processruntime.QueueResul
 	return Fact{payload: event, label: fact.label}
 }
 
-// WithRecordedEvidence preserves authoritative evidence carried only by the recorded fact.
 func (fact Fact) WithRecordedEvidence(recorded Fact) Fact {
 	derived, derivedOK := fact.payload.(attemptTerminalEvent)
 	authority, recordedOK := recorded.payload.(attemptTerminalEvent)
@@ -1432,7 +1294,6 @@ func (fact Fact) WithRecordedEvidence(recorded Fact) Fact {
 	return fact
 }
 
-// ResolvedMutationDeadline returns the mutation deadline retained by terminal evidence.
 func (fact Fact) ResolvedMutationDeadline() (time.Duration, bool) {
 	event, ok := fact.payload.(attemptTerminalEvent)
 	if !ok || event.resolvedMutationDeadline.duration == 0 {
@@ -1441,12 +1302,10 @@ func (fact Fact) ResolvedMutationDeadline() (time.Duration, bool) {
 	return event.resolvedMutationDeadline.duration, true
 }
 
-// RuntimeEmergencyStarted records one process-runtime fatal closure.
 func RuntimeEmergencyStarted(closure processruntime.Closure) Fact {
 	return Fact{payload: runtimeEmergencyStartedEvent{closure: campaignClosureValue(runtimeClosureValue(closure))}}
 }
 
-// RuntimeEmergencySettled records exact runtime-wide emergency settlement.
 func RuntimeEmergencySettled(settlement processruntime.EmergencySettlement) Fact {
 	value := runtimeEmergencySettlement(settlement)
 	return Fact{payload: runtimeEmergencySettledEvent{

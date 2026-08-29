@@ -9,10 +9,8 @@ import (
 	"github.com/gtramontina/ooze/internal/ooze/internal/supervision"
 )
 
-// ErrInvalidMutationAttemptPlan identifies invalid mutation-attempt policy inputs.
 var ErrInvalidMutationAttemptPlan = errors.New("invalid mutation attempt plan")
 
-// MutationAttemptPlanInput contains the facts needed to resolve mutation-attempt policy.
 type MutationAttemptPlanInput struct {
 	BaselineDuration time.Duration
 	Peers            int
@@ -20,13 +18,11 @@ type MutationAttemptPlanInput struct {
 	Profile          Profile
 }
 
-// MutationAttemptPlan is immutable resolved mutation-attempt policy.
 type MutationAttemptPlan struct {
 	deadline time.Duration
 	profile  Profile
 }
 
-// Spec describes the command facts retained by a mutation attempt plan.
 type Spec struct {
 	Attempt  string
 	Command  []string
@@ -51,7 +47,6 @@ func (spec Spec) snapshot() Spec {
 	return cloned
 }
 
-// NewMutationAttemptPlan resolves one mutation-attempt plan.
 func NewMutationAttemptPlan(input MutationAttemptPlanInput) (MutationAttemptPlan, error) {
 	switch {
 	case input.BaselineDuration <= 0:
@@ -89,13 +84,10 @@ func NewMutationAttemptPlan(input MutationAttemptPlanInput) (MutationAttemptPlan
 	return MutationAttemptPlan{deadline: deadline, profile: input.Profile}, nil
 }
 
-// Deadline returns the resolved command deadline.
 func (plan MutationAttemptPlan) Deadline() time.Duration { return plan.deadline }
 
-// Profile returns the resolved execution profile.
 func (plan MutationAttemptPlan) Profile() Profile { return plan.profile }
 
-// ConfirmationSpec derives the exclusive confirmation specification.
 func (plan MutationAttemptPlan) ConfirmationSpec(primary Spec, attempt, workspace string) (Spec, error) {
 	if err := primary.validate(); err != nil {
 		return Spec{}, fmt.Errorf("%w: primary spec: %v", ErrInvalidMutationAttemptPlan, err)
