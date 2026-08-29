@@ -32,6 +32,11 @@ jobs:
       - name: Report Go version
         run: go version
 
+      - name: Install gotestsum 1.13.0
+        run: |
+          go install gotest.tools/gotestsum@v1.13.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Test
         run: env -u NO_COLOR TERM=xterm go test -race -cover -timeout=60s -shuffle=on ./...
 

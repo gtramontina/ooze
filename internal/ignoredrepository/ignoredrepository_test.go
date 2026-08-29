@@ -11,6 +11,19 @@ import (
 )
 
 func TestIgnoredRepository(t *testing.T) {
+	t.Run("snapshots caller-owned patterns", func(t *testing.T) {
+		patterns := []*regexp.Regexp{regexp.MustCompile("source2")}
+		repository := ignoredrepository.New(patterns, fakerepository.New(fakerepository.FS{
+			"source1.go": []byte("source 1"),
+			"source2.go": []byte("source 2"),
+		}))
+		patterns[0] = regexp.MustCompile("source1")
+
+		assert.Equal(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.New("source1.go", []byte("source 1")),
+		}, repository.ListGoSourceFiles())
+	})
+
 	t.Run("empty repository yields empty results", func(t *testing.T) {
 		repository := ignoredrepository.New(
 			[]*regexp.Regexp{regexp.MustCompile(".*")},
@@ -98,16 +111,21 @@ func TestIgnoredRepository(t *testing.T) {
 }
 
 func TestIgnoredRepository_MaterializeTemporaryRepository(t *testing.T) {
-	t.Run("delegates to underlying repository", func(t *testing.T) {
+	t.Run("preserves filtering in the materialized snapshot", func(t *testing.T) {
 		expectedTempRepository := fakerepository.NewTemporary()
 		repository := ignoredrepository.New(
-			[]*regexp.Regexp{regexp.MustCompile("dummy")},
-			fakerepository.New(fakerepository.FS{}, expectedTempRepository),
+			[]*regexp.Regexp{regexp.MustCompile("ignored")},
+			fakerepository.New(fakerepository.FS{
+				"kept.go":    []byte("kept"),
+				"ignored.go": []byte("ignored"),
+			}, expectedTempRepository),
 		)
 
 		actualTempRepository := repository.MaterializeTemporaryRepository("temporary-path")
 
-		assert.Equal(t, expectedTempRepository, actualTempRepository)
-		assert.Equal(t, "temporary-path", expectedTempRepository.Root())
+		assert.EqualValues(t, "temporary-path", expectedTempRepository.Root())
+		assert.Equal(t, []*gosourcefile.GoSourceFile{
+			gosourcefile.New("kept.go", []byte("kept")),
+		}, actualTempRepository.ListGoSourceFiles())
 	})
 }

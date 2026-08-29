@@ -19,7 +19,7 @@ func TestFSTemporaryRepository(t *testing.T) {
 
 	t.Run("root path is absolute", func(t *testing.T) {
 		cwd, err := os.Getwd()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		repository := fsrepository.NewTemporary(".")
 		assert.Equal(t, cwd, repository.Root())
@@ -32,20 +32,20 @@ func TestFSTemporaryRepository(t *testing.T) {
 			repository.Overwrite("file.txt", []byte("some data"))
 
 			data, err := os.ReadFile(filepath.Join(dir, "file.txt"))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, []byte("some data"), data)
 		})
 
 		t.Run("an existing regular file", func(t *testing.T) {
 			dir := t.TempDir()
 			filePath := filepath.Join(dir, "file.txt")
-			assert.NoError(t, os.WriteFile(filePath, []byte("original data"), 0o600))
+			require.NoError(t, os.WriteFile(filePath, []byte("original data"), 0o600))
 
 			repository := fsrepository.NewTemporary(dir)
 			repository.Overwrite("file.txt", []byte("new data"))
 
 			data, err := os.ReadFile(filePath)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, []byte("new data"), data)
 		})
 
@@ -53,32 +53,32 @@ func TestFSTemporaryRepository(t *testing.T) {
 			dir := t.TempDir()
 			sourcePath := filepath.Join(dir, "file.txt")
 			linkedPath := filepath.Join(dir, "linked.txt")
-			assert.NoError(t, os.WriteFile(sourcePath, []byte("original data"), 0o600))
-			assert.NoError(t, os.Link(sourcePath, linkedPath))
+			require.NoError(t, os.WriteFile(sourcePath, []byte("original data"), 0o600))
+			require.NoError(t, os.Link(sourcePath, linkedPath))
 
 			repository := fsrepository.NewTemporary(dir)
 			repository.Overwrite("linked.txt", []byte("new data"))
 
 			data, err := os.ReadFile(linkedPath)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, []byte("new data"), data)
 
 			source, err := os.ReadFile(sourcePath)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, []byte("original data"), source)
 		})
 
 		t.Run("does not allow writing past the given root path", func(t *testing.T) {
 			dir := t.TempDir()
-			assert.NoError(t, os.MkdirAll(filepath.Join(dir, "cant-overwrite", "child"), 0o700))
-			assert.NoError(t, os.WriteFile(filepath.Join(dir, "cant-overwrite", "original.txt"), []byte("original data"), 0o600))
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "cant-overwrite", "child"), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "cant-overwrite", "original.txt"), []byte("original data"), 0o600))
 
 			repository := fsrepository.NewTemporary(filepath.Join(dir, "cant-overwrite", "child"))
 			assert.Panics(t, func() {
 				repository.Overwrite("../original.txt", []byte("new data"))
 			})
 			data, err := os.ReadFile(filepath.Join(dir, "cant-overwrite", "original.txt"))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, []byte("original data"), data)
 		})
 
@@ -102,6 +102,16 @@ func TestFSTemporaryRepository(t *testing.T) {
 				assert.True(t, info.IsDir())
 			})
 		}
+	})
+
+	t.Run("materializes workspaces from the captured repository", func(t *testing.T) {
+		snapshotRoot := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(snapshotRoot, "source.go"), []byte("package snapshot\n"), 0o600))
+		snapshot := fsrepository.NewTemporary(snapshotRoot)
+		workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+
+		workspace := snapshot.MaterializeTemporaryRepository(workspaceRoot)
+		assert.Equal(t, snapshot.ListGoSourceFiles(), workspace.ListGoSourceFiles())
 	})
 
 	t.Run("deleting", func(t *testing.T) {

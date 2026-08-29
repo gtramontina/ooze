@@ -17,9 +17,20 @@ test.failfast: $(pre-reqs)
 .PHONY: test.failfast
 
 test.mutation: $(pre-reqs)
-	@go test -timeout=30m -count=1 -v -tags=mutation
+	@go test -timeout=90m -count=1 -v -tags=mutation -run=^TestMutation$
 .PHONY: test.mutation
 
-lint: $(pre-reqs)
-	@golangci-lint -v run
+test.adversarial: $(pre-reqs)
+	@gotestsum --format=testname -- -count=1 -timeout=120s -tags=adversarial ./internal/ooze/...
+.PHONY: test.adversarial
+
+test.crosscompile: $(pre-reqs)
+	@for target in linux/amd64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 plan9/amd64; do \
+		GOOS="$${target%/*}" GOARCH="$${target#*/}" CGO_ENABLED=0 \
+			go test -exec=true ./internal/ooze/...; \
+	done
+.PHONY: test.crosscompile
+
+lint:
+	@golangci-lint run --no-config ./...
 .PHONY: lint

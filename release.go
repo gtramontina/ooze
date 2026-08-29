@@ -3,26 +3,15 @@ package ooze
 import (
 	"flag"
 	"os"
+	"reflect"
 	"testing"
 
-	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/color"
-	"github.com/gtramontina/ooze/internal/consolereporter"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/internal/fstemporarydir"
-	"github.com/gtramontina/ooze/internal/gotextdiff"
 	"github.com/gtramontina/ooze/internal/ignoredrepository"
 	"github.com/gtramontina/ooze/internal/iologger"
-	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
-	"github.com/gtramontina/ooze/internal/prettydiff"
-	"github.com/gtramontina/ooze/internal/scorecalculator"
-	"github.com/gtramontina/ooze/internal/testingtlaboratory"
-	"github.com/gtramontina/ooze/internal/verboselaboratory"
-	"github.com/gtramontina/ooze/internal/verbosereporter"
-	"github.com/gtramontina/ooze/internal/verboserepository"
-	"github.com/gtramontina/ooze/internal/verbosetemporarydir"
-	"github.com/gtramontina/ooze/internal/verbosetestrunner"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/arithmetic"
 	"github.com/gtramontina/ooze/viruses/arithmeticassignment"
@@ -48,10 +37,12 @@ func init() { //nolint:gochecknoinits
 
 var defaultOptions = Options{ //nolint:gochecknoglobals
 	Repository:                fsrepository.New("."),
-	TestRunner:                cmdtestrunner.New("go", "test", "-count=1", "./..."),
+	TestCommand:               []string{"go", "test", "-count=1", "./..."},
 	TemporaryDir:              fstemporarydir.New("ooze-"),
 	MinimumThreshold:          1.0,
-	Parallel:                  false,
+	Serial:                    false,
+	MutationTimeout:           0,
+	ForceColors:               false,
 	IgnoreSourceFilesPatterns: nil,
 	Viruses: []viruses.Virus{
 		arithmetic.New(),
@@ -82,15 +73,26 @@ var defaultOptions = Options{ //nolint:gochecknoglobals
 //   - WithRepositoryRoot: `.`
 //   - WithTestCommand: `go test -count=1 ./...`
 //   - WithMinimumThreshold: `1.0`
-//   - Parallel: `false`
+//   - Serial: `false` (automatic managed admission is the default)
+//   - WithMutationTimeout: baseline-derived
 //   - IgnoreSourceFiles: `nil`
 //   - WithViruses: all available (see viruses.Virus' implementations)
+//   - ForceColors: `false`
+//   - WithReporter: console output
+//   - WithObserver: none
 //
-// The results are then presented in the console. If the mutation score is equal
-// to or above the configured threshold (WithMinimumThreshold), the execution is
-// considered successful. Failed otherwise. Regardless of the execution result,
-// any surviving mutant (no tests failed after applying the source code
-// mutation) will also be presented in the console for analysis.
+// Automatic execution manages aggregate process-local admission. Serial chooses
+// process-local exclusive attempts while preserving the detected-capacity Go
+// execution profile. WithMutationTimeout is the sole absolute mutation-deadline
+// override.
+//
+// The default reporter writes one console report to stdout before returning.
+// Only a completed campaign publishes a score; it succeeds when the float32
+// detected/total score is greater than or equal to WithMinimumThreshold.
+// NoMutants and infrastructure aborts fail without a score. Cleanup uncertainty
+// and invariant violations emit one consolidated diagnostic and panic once. Go
+// may discard stdout for passing package-pattern runs without -v, so use go test
+// -v when retaining the report is required.
 func Release(t *testing.T, options ...Option) {
 	t.Helper()
 
@@ -101,43 +103,70 @@ func Release(t *testing.T, options ...Option) {
 
 	var logger ooze.Logger = iologger.New(os.Stdout)
 
-	var reporter ooze.Reporter = consolereporter.New(
-		logger,
-		prettydiff.New(gotextdiff.New()),
-		scorecalculator.New(),
-		opts.MinimumThreshold,
-	)
-
 	if opts.IgnoreSourceFilesPatterns != nil {
 		opts.Repository = ignoredrepository.New(opts.IgnoreSourceFilesPatterns, opts.Repository)
 	}
 
-	if verbose() {
-		opts.Repository = verboserepository.New(logger, opts.Repository)
-		opts.TemporaryDir = verbosetemporarydir.New(logger, opts.TemporaryDir)
-		opts.TestRunner = verbosetestrunner.New(logger, opts.TestRunner)
-		reporter = verbosereporter.New(logger, reporter)
+	colorsEnabled := opts.ForceColors || color.EnabledByDefault()
+	palette := color.NewPalette(colorsEnabled)
+	logger.Logf("%s %s", palette.Yellow("┃"), palette.Green("Releasing Ooze…"))
+	profile := ooze.AutomaticProfile
+	if opts.Serial {
+		profile = ooze.SerialProfile
 	}
-
-	var lab ooze.Laboratory = laboratory.New(opts.TestRunner, opts.TemporaryDir)
+	observer := opts.Observer
 	if verbose() {
-		lab = verboselaboratory.New(logger, lab)
+		observer = ComposeObservers(observer, verboseObserver{logger: iologger.New(os.Stderr)})
 	}
-
-	t.Cleanup(func() {
-		t.Helper()
-		res := reporter.Summarize()
-		if !res.IsOk() {
-			t.Fail()
+	dispatcher := newObserverDispatcher(observer)
+	var observe func(ooze.ManagedProgress)
+	if dispatcher != nil {
+		observe = func(progress ooze.ManagedProgress) {
+			dispatcher.publish(projectCampaignEvent(progress))
 		}
+	}
+	managed := ooze.ProcessManagedRelease(ooze.ManagedReleaseConfiguration{
+		Lineage: uint64(reflect.ValueOf(t).Pointer()), Repository: opts.Repository,
+		TemporaryDir: opts.TemporaryDir, Command: opts.TestCommand,
+		Environment: os.Environ(), Profile: profile, MutationTimeout: opts.MutationTimeout,
+		Viruses: opts.Viruses, Observe: observe,
 	})
+	observerPanic, observerFailure := dispatcher.finish()
+	if observerFailure != nil {
+		t.Errorf("ooze: observer failed: %v", observerFailure)
+	}
+	projected := ooze.ProjectManagedReport(managed, opts.MinimumThreshold, opts.Serial, colorsEnabled)
+	result := projectResult(managed, projected)
+	reporter := opts.Reporter
+	if reporter == nil {
+		reporter = consoleReporter{logger: logger}
+	}
+	if err := reporter.Report(result); err != nil {
+		t.Errorf("ooze: reporter failed: %v", err)
+	}
+	applyReleaseDisposition(t, result.report, observerPanic)
+}
 
-	lab = testingtlaboratory.New(t, lab, opts.Parallel)
+func applyReleaseDisposition(t *testing.T, report ooze.ManagedReport, observerPanic any) {
+	t.Helper()
+	if observerPanic != nil {
+		panic(observerPanic)
+	}
+	applyManagedReportDisposition(t, report)
+}
 
-	logger.Logf("%s %s", color.Yellow("┃"), color.Green("Releasing Ooze…"))
-	ooze.New(opts.Repository, lab, reporter).Release(
-		opts.Viruses...,
-	)
+func applyManagedReportDisposition(t *testing.T, report ooze.ManagedReport) {
+	t.Helper()
+	switch report.Disposition {
+	case ooze.ManagedReportPass:
+		return
+	case ooze.ManagedReportError:
+		t.Errorf("ooze: %s", report.CallerMessage)
+	case ooze.ManagedReportPanic:
+		panic(report.PanicValue)
+	default:
+		panic("ooze: report disposition is invalid")
+	}
 }
 
 func verbose() bool {

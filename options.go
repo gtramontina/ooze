@@ -3,11 +3,9 @@ package ooze
 import (
 	"regexp"
 	"strings"
+	"time"
 
-	"github.com/gtramontina/ooze/internal/cmdtestrunner"
-	"github.com/gtramontina/ooze/internal/color"
 	"github.com/gtramontina/ooze/internal/fsrepository"
-	"github.com/gtramontina/ooze/internal/laboratory"
 	"github.com/gtramontina/ooze/internal/ooze"
 	"github.com/gtramontina/ooze/viruses"
 )
@@ -16,12 +14,16 @@ type Option func(Options) Options
 
 type Options struct {
 	Repository                ooze.Repository
-	TestRunner                laboratory.TestRunner
-	TemporaryDir              laboratory.TemporaryDirectory
+	TestCommand               []string
+	TemporaryDir              ooze.ManagedTemporaryDirectory
 	MinimumThreshold          float32
-	Parallel                  bool
+	Serial                    bool
+	MutationTimeout           time.Duration
+	ForceColors               bool
 	IgnoreSourceFilesPatterns []*regexp.Regexp
 	Viruses                   []viruses.Virus
+	Reporter                  Reporter
+	Observer                  ProgressObserver
 }
 
 // WithRepositoryRoot configures which directory is the repository root. This is
@@ -37,12 +39,13 @@ func WithRepositoryRoot(repositoryRoot string) func(Options) Options {
 
 // WithTestCommand configures the test command to run, as string. You may
 // configure it as you wish, as a `makefile` phony target, for example. Or
-// simply run the standard `go test` command with extra flags, such as `timeout`
-// and `tags`.
+// simply run the standard `go test` command with extra flags. The command is
+// opaque: an inner timeout that exits before Ooze's deadline is reported as an
+// ordinary killed mutant rather than as timed out.
 func WithTestCommand(testCommand string) func(Options) Options {
 	return func(options Options) Options {
 		testCommandParts := strings.Split(testCommand, " ")
-		options.TestRunner = cmdtestrunner.New(testCommandParts[0], testCommandParts[1:]...)
+		options.TestCommand = append([]string(nil), testCommandParts...)
 
 		return options
 	}
@@ -58,13 +61,26 @@ func WithMinimumThreshold(minimumThreshold float32) func(Options) Options {
 	}
 }
 
-// Parallel indicates whether to run the tests on the mutants in parallel. Given
-// Ooze is executed via Go's testing framework, the level of parallelism can be
-// configured when running the mutation tests. For example, with
-// WithTestCommand(`go test -v -tags=mutation -parallel 3`).
-func Parallel() func(Options) Options {
+// Serial runs each managed attempt process-locally exclusively while preserving
+// the detected-capacity cooperative Go execution profile.
+func Serial() func(Options) Options {
 	return func(options Options) Options {
-		options.Parallel = true
+		options.Serial = true
+
+		return options
+	}
+}
+
+// WithMutationTimeout configures the absolute deadline for every primary and
+// confirmation attempt. The baseline keeps its separate managed bound. Omitting
+// this option leaves the deadline baseline-derived.
+func WithMutationTimeout(timeout time.Duration) func(Options) Options {
+	if timeout < 0 {
+		panic("mutation timeout must be positive")
+	}
+
+	return func(options Options) Options {
+		options.MutationTimeout = timeout
 
 		return options
 	}
@@ -97,7 +113,33 @@ func WithViruses(virus viruses.Virus, rest ...viruses.Virus) func(Options) Optio
 // running the mutation tests in a CI environment, for example.
 func ForceColors() func(Options) Options {
 	return func(options Options) Options {
-		color.Force()
+		options.ForceColors = true
+
+		return options
+	}
+}
+
+// WithReporter configures the reporter that publishes the terminal campaign result.
+func WithReporter(reporter Reporter) func(Options) Options {
+	if reporter == nil {
+		panic("reporter must not be nil")
+	}
+
+	return func(options Options) Options {
+		options.Reporter = reporter
+
+		return options
+	}
+}
+
+// WithObserver configures an observer for campaign domain events.
+func WithObserver(observer ProgressObserver) func(Options) Options {
+	if observer == nil {
+		panic("observer must not be nil")
+	}
+
+	return func(options Options) Options {
+		options.Observer = observer
 
 		return options
 	}

@@ -3,9 +3,10 @@ package ooze_test
 import (
 	"regexp"
 	"testing"
+	"time"
 
+	fatihcolor "github.com/fatih/color"
 	"github.com/gtramontina/ooze"
-	"github.com/gtramontina/ooze/internal/cmdtestrunner"
 	"github.com/gtramontina/ooze/internal/fsrepository"
 	"github.com/gtramontina/ooze/viruses"
 	"github.com/gtramontina/ooze/viruses/integerincrement"
@@ -23,11 +24,11 @@ func TestOptions(t *testing.T) {
 	t.Run("can configure test command to run", func(t *testing.T) {
 		{
 			options := ooze.WithTestCommand("yes")(ooze.Options{})
-			assert.Equal(t, cmdtestrunner.New("yes", []string{}...), options.TestRunner)
+			assert.Equal(t, []string{"yes"}, options.TestCommand)
 		}
 		{
 			options := ooze.WithTestCommand("echo some value")(ooze.Options{})
-			assert.Equal(t, cmdtestrunner.New("echo", "some", "value"), options.TestRunner)
+			assert.Equal(t, []string{"echo", "some", "value"}, options.TestCommand)
 		}
 	})
 
@@ -43,9 +44,28 @@ func TestOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("can configure parallel", func(t *testing.T) {
-		options := ooze.Parallel()(ooze.Options{})
-		assert.Equal(t, true, options.Parallel)
+	t.Run("can configure serial execution", func(t *testing.T) {
+		options := ooze.Serial()(ooze.Options{})
+		assert.True(t, options.Serial)
+	})
+
+	t.Run("can configure an absolute mutation timeout", func(t *testing.T) {
+		options := ooze.WithMutationTimeout(37 * time.Second)(ooze.Options{})
+		assert.Equal(t, 37*time.Second, options.MutationTimeout)
+	})
+
+	t.Run("freezes forced color without mutating process-global state", func(t *testing.T) {
+		before := fatihcolor.NoColor
+		options := ooze.ForceColors()(ooze.Options{})
+
+		assert.True(t, options.ForceColors)
+		assert.Equal(t, before, fatihcolor.NoColor)
+	})
+
+	t.Run("rejects a negative mutation timeout at configuration", func(t *testing.T) {
+		assert.PanicsWithValue(t, "mutation timeout must be positive", func() {
+			ooze.WithMutationTimeout(-time.Nanosecond)(ooze.Options{})
+		})
 	})
 
 	t.Run("can configure source files to ignore", func(t *testing.T) {

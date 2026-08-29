@@ -32,6 +32,12 @@ jobs:
     - name: "🧪 Test"
       run: devbox run -- make test
 
+    - name: "🎲 Production deterministic simulation"
+      run: devbox run -- go test -race -count=1 -run='^(TestSimulation|FuzzSimulation)' ./internal/ooze/internal/simulation
+
+    - name: "🧭 Cross-compile supported and sentinel targets"
+      run: devbox run -- make test.crosscompile
+
   required:
     name: CI
     if: ${{ always() }}

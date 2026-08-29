@@ -5,48 +5,149 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    - cron: "23 4 * * 2"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  ACCEPTANCE_TESTS: ^(TestNativeSupervisorDrainExpiryNeverManufacturesEmptiness|TestNativeSupervisorCapturePreservesPartialPrefixAndDiagnostic|TestNativeSupervisorDrainsWideFanout|TestDarwinManagedCensusInstrumentsPerDescendantShape|TestDarwinManagedPlatformLimitsRemainExplicit|TestDarwinNativeCommandCannotExecuteBeforeExplicitRelease|TestDarwinNativeSupervisorCapturesEscapeeBehindLiveGroupMember|TestDarwinNativeSupervisorEmergencyDrainsWithoutWaiter|TestLinuxNativeSupervisorReapsOrphanedEscapeeThroughGuardian|TestLinuxSubreaperVisibilityPerDescendantShapeAndRootState|TestWindowsNativeSupervisorRejectsBreakawayFromJob|TestWindowsNativeSupervisorDrainsChildInNestedJob|TestWindowsNativeJobKillOnCloseStopsExactSubject|TestWindowsJobVisibilityPerDescendantShapeAndRootState)$
 
 jobs:
 
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    env:
-      GOTOOLCHAIN: local
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
+            acceptance-count: 5
+            toolchain: devbox
+            go-command: devbox run -- go
           - name: macOS 26
             runner: macos-26
+            acceptance-count: 8
+            toolchain: devbox
+            go-command: devbox run -- go
           - name: Windows 2025
             runner: windows-2025
+            acceptance-count: 7
+            toolchain: raw-go
+            go-command: go
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
       - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
           cache: true
 
+      - name: Install gotestsum 1.13.0
+        if: ${{ matrix.toolchain == 'raw-go' }}
+        shell: bash
+        run: |
+          go install gotest.tools/gotestsum@v1.13.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Report Go version
-        run: go version
+        shell: bash
+        run: ${{ matrix.go-command }} version
+
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
 
       - name: Test
-        run: go test -race -cover -timeout=60s -shuffle=on ./...
+        shell: bash
+        run: ${{ matrix.go-command }} test -race -cover -timeout=60s -shuffle=on ./...
+
+      - name: Native acceptance
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          selected="$(${{ matrix.go-command }} test -tags=adversarial -list "$ACCEPTANCE_TESTS" ./internal/ooze/internal/supervision | grep -c '^Test')"
+          test "$selected" -eq "${{ matrix.acceptance-count }}"
+          set +e
+          ${{ matrix.go-command }} test -json -race -count=1 -timeout=3m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze/internal/supervision | tee native-acceptance.json
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          if grep -q '"Action":"skip"' native-acceptance.json; then
+            echo "unexpected skip in required native evidence" >&2
+            exit 1
+          fi
+
+  stress:
+    name: Stress / ${{ matrix.name }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+          - name: macOS 26
+            runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+          - name: Windows 2025
+            runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
+
+      - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
+
+      - name: Repeat bounded native acceptance
+        shell: bash
+        run: |
+          set +e
+          ${{ matrix.go-command }} test -json -race -count=10 -timeout=10m -shuffle=on -tags=adversarial -run "$ACCEPTANCE_TESTS" ./internal/ooze/internal/supervision | tee native-stress.json
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          if grep -q '"Action":"skip"' native-stress.json; then
+            echo "unexpected skip in required native evidence" >&2
+            exit 1
+          fi
 
   required:
     name: OS Compatibility
     if: ${{ always() }}
-    needs: test
+    needs: [ test, stress ]
     runs-on: ubuntu-24.04
     steps:
       - name: Verify supported operating systems
-        run: test "${{ needs.test.result }}" = "success"
+        run: test "${{ needs.test.result }}" = "success" && { test "${{ needs.stress.result }}" = "success" || { test "${{ github.event_name }}" = "pull_request" && test "${{ needs.stress.result }}" = "skipped"; }; }

@@ -1,6 +1,7 @@
 name: "🧬 Mutation Tests"
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: [ "🧩 Continuous Integration" ]
     branches: [ main ]
@@ -14,40 +15,59 @@ jobs:
 
   mutation:
     name: ${{ matrix.name }}
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ${{ matrix.runner }}
-    env:
-      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Ubuntu 24.04
             runner: ubuntu-24.04
+            toolchain: devbox
+            go-command: devbox run -- go
+            test-command: devbox run -- go test
           - name: macOS 26
             runner: macos-26
+            toolchain: devbox
+            go-command: devbox run -- go
+            test-command: devbox run -- go test
           - name: Windows 2025
             runner: windows-2025
+            toolchain: raw-go
+            go-command: go
+            test-command: go test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install Devbox
+        if: ${{ matrix.toolchain == 'devbox' }}
+        uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
 
       - name: Set up Go 1.26.6
+        if: ${{ matrix.toolchain == 'raw-go' }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
           cache: true
 
       - name: Report Go version
-        run: go version
+        shell: bash
+        run: ${{ matrix.go-command }} version
+
+      - name: Verify pinned Go 1.26.6
+        shell: bash
+        run: test "$(${{ matrix.go-command }} env GOVERSION)" = "go1.26.6"
 
       - name: Install gotestsum 1.13.0
+        if: ${{ matrix.toolchain == 'raw-go' }}
         shell: bash
         run: |
           go install gotest.tools/gotestsum@v1.13.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: "🧬 Mutation Tests"
-        run: go test -timeout=30m -count=1 -v -tags=mutation
+        shell: bash
+        run: ${{ matrix.test-command }} -timeout=90m -count=1 -v -tags=mutation -run=^TestMutation$
