@@ -1,6 +1,6 @@
 module github.com/gtramontina/ooze
 
-go 1.25.0
+go 1.26.0
 
 toolchain go1.26.6
 
@@ -16,7 +16,7 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/hexops/gotextdiff v1.0.3
 	github.com/stretchr/testify v1.12.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
